@@ -1,0 +1,40 @@
+{
+  "$schema": "https://www.schemastore.org/package",
+  "name": "pulpit-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Workspace for @thomasfosterau/pulpit: the versioned-content (CMS) kernel extracted from the website and gardeneria applications, on Effect.",
+  "license": "MIT",
+  "author": "Thomas Foster <me@thomasfoster.au>",
+  "type": "module",
+  "scripts": {
+    "changeset": "changeset",
+    "version": "changeset version && pnpm install --lockfile-only",
+    "release": "pnpm -r --filter './packages/*' publish --access public --no-git-checks --provenance && changeset tag",
+    "fallow": "fallow --summary",
+    "fallow:audit": "fallow audit",
+    "prepare": "vp config && effect-tsgo patch --typescript --oxlint"
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "catalog:",
+    "@changesets/cli": "catalog:",
+    "@effect/language-service": "catalog:",
+    "@effect/tsgo": "catalog:",
+    "@mpsuesser/oxlint-plugin-effect": "catalog:",
+    "@thomasfosterau/pulpit": "workspace:*",
+    "@types/node": "catalog:",
+    "@typescript/native": "catalog:",
+    "effect": "catalog:",
+    "effect-solutions": "catalog:",
+    "fallow": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=11"
+  },
+  "packageManager": "pnpm@11.18.0"
+}

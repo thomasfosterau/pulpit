@@ -1,0 +1,57 @@
+name: CI
+
+# ONE job, ONE required check: the pipeline's task graph lives in
+# vite.config.ts (the root `check` task), not in GitHub Actions `needs:`.
+# Copied in shape from the effect-drizzle-ext library (and through it the
+# gardeneria application). There is no integration suite yet: the kernel is
+# pure until its Drizzle-backed stores land (pulpit#4), at which point the
+# `postgres` service container and the `test:integration` step come back
+# from effect-drizzle-ext's copy of this file.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# No permissions by default; the single job grants only read access.
+permissions: {}
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      # A modest ceiling for every Node process in the pipeline. NODE_OPTIONS
+      # is inherited by every child, including each vitest fork.
+      NODE_OPTIONS: --max-old-space-size=2048
+      VITEST_MAX_WORKERS: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Restore the Vite+ task cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/.vite/task-cache
+          key: vp-task-v1-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            vp-task-v1-${{ runner.os }}-
+      - name: Format and lint
+        run: vp check
+      - name: Type gates (packages + emitted declarations)
+        run: vp run --concurrency-limit 2 check
+      - name: Unit tests
+        run: vp run -r test:unit
+      - name: Build
+        run: vp run -r build
+      - name: Audit
+        run: pnpm audit --audit-level high

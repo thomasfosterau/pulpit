@@ -1,0 +1,62 @@
+{
+  "name": "@thomasfosterau/pulpit",
+  "version": "0.0.0",
+  "description": "The versioned-content kernel for an Effect headless CMS: Content model fields and registry flags on effect-jsonapi, the append-only node/version chain operations, the subtype operation factory with owned/reference access, and the publication / moderation / cache-serveability predicates.",
+  "keywords": [
+    "cms",
+    "effect",
+    "effect-schema",
+    "headless-cms",
+    "json-api",
+    "jsonapi",
+    "typescript",
+    "versioning"
+  ],
+  "homepage": "https://github.com/thomasfosterau/pulpit#readme",
+  "bugs": {
+    "url": "https://github.com/thomasfosterau/pulpit/issues"
+  },
+  "license": "MIT",
+  "author": "Thomas Foster <me@thomasfoster.au>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thomasfosterau/pulpit.git",
+    "directory": "packages/pulpit"
+  },
+  "files": [
+    "dist",
+    "src",
+    "!src/**/*.test.ts",
+    "README.md",
+    "CLAUDE.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "access": "public"
+  },
+  "devDependencies": {
+    "@effect/language-service": "catalog:",
+    "@thomasfosterau/effect-jsonapi": "catalog:",
+    "@types/node": "catalog:",
+    "@vitest/coverage-istanbul": "catalog:",
+    "effect": "catalog:"
+  },
+  "peerDependencies": {
+    "@thomasfosterau/effect-jsonapi": "catalog:peers",
+    "effect": "catalog:peers"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
