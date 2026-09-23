@@ -101,3 +101,38 @@ registryWireTypes(REGISTRY, ["content"]).owned; // ["posts"]
 | `flaggedMembers(entries, flag)`, `branchMembers(entries, root, roots, parents?)` | The resources themselves, typed as the precise member tuple, ready for `Schema.Union`. |
 | `identifiersOf(members)` | The members' `identifier` schemas, for a linkage-ref union. |
 | `registryWireTypes(entries, roots)` | The wire types of every flag family and branch — what a wire-identity test pins and a subtype factory checks its `access` against. |
+
+## `./version-chain`
+
+The append-only chain discipline, bound to a `VersionChainStore` the application supplies.
+
+```ts
+import { defineVersionChain } from "@thomasfosterau/pulpit/version-chain";
+
+const chain = defineVersionChain("posts", store);
+yield * chain.create({ id: Option.none(), state: { title: "Hello" }, actorId });
+yield * chain.update({ id, patch: { title: "Hi", summary: null }, actorId }); // null clears, absent carries forward
+yield * chain.delete(id, actorId); // tombstone; idempotent
+yield * chain.restoreVersion(id, 0n, actorId); // appends version N+1 with version 0's state
+```
+
+Every write lands at `N_max + 1`; nothing is rewritten. A plain `update` never resurrects a tombstone (`restore` and `restoreVersion` do). A create is never an upsert (`NodeAlreadyExists`). `restoreVersion` refuses a version that cannot be fully reconstructed before writing anything. `history` is bounded.
+
+## `./subtype`
+
+`defineSubtype` binds a leaf's CRUD, version history and list over the chain store, a current-version `LeafStore`, and the viewer seam (`viewer`, `AccessPolicy`, `FollowerSeam`), gated by `LeafAccess`:
+
+- `reference` — writes at the corpus-write rung; reads public apart from soft-delete and `private`.
+- `owned` — creates at any account (stamping the owner); other writes at owner-or-moderator; reads through `canViewOwned` (three-state visibility plus `draft`), lists through `ownedListFilter`, the same facts as a `ListFilter`.
+
+A hidden row is always `NodeNotFound`, never `Forbidden`. `subtypeHandlers(ops, { transact, cache })` wraps the operations as the handler record effect-jsonapi#172's `resourceHandlers` is expected to accept, writing every mutation through the resource cache.
+
+## `./publication`
+
+| Export | What it is |
+| --- | --- |
+| `isPublishedAt(stamp, now)` / `isNotPublishedAt` | Stamped AND arrived, and its exact complement (a future stamp is scheduled, not out). |
+| `publishedFilter(column, wanted)` | The axis as a list-filter arm; none in, no predicate out. |
+| `ModerationState` | `pending \| approved \| rejected`. |
+| `isPubliclyServeable(resource, { owned?, publishGated?, now? })` | The KV cache's security gate (`CACHE-AUTH-005`): only what every viewer may read is serveable. |
+| `serveablePolicy(options)` | The same gate as effect-web#4's `serveable` hook. |

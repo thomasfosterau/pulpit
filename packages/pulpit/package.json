@@ -39,7 +39,8 @@
     "./registry": "./src/registry.ts",
     "./version-chain": "./src/version-chain.ts",
     "./filter": "./src/filter.ts",
-    "./subtype": "./src/subtype.ts"
+    "./subtype": "./src/subtype.ts",
+    "./publication": "./src/publication.ts"
   },
   "publishConfig": {
     "exports": {
@@ -66,6 +67,10 @@
       "./subtype": {
         "types": "./dist/subtype.d.ts",
         "default": "./dist/subtype.js"
+      },
+      "./publication": {
+        "types": "./dist/publication.d.ts",
+        "default": "./dist/publication.js"
       }
     },
     "access": "public"

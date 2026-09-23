@@ -37,3 +37,9 @@ export * as Filter from "./filter.ts";
  * predicates, the write gates, `defineSubtype` and its handlers seam.
  */
 export * as Subtype from "./subtype.ts";
+
+/**
+ * The publication axis, the moderation state, and the cache serveability
+ * policy (`isPubliclyServeable`, the `serveable` hook).
+ */
+export * as Publication from "./publication.ts";

@@ -6,6 +6,8 @@
  * application. Never executed; type-checked only.
  */
 
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Resource } from "@thomasfosterau/effect-jsonapi";
 import { Content, Registry } from "@thomasfosterau/pulpit";
@@ -25,6 +27,23 @@ import {
   validateRegistry,
   type RegistryEntry,
 } from "@thomasfosterau/pulpit/registry";
+import {
+  defineVersionChain,
+  type ChainWrite,
+  type NodeAlreadyExists,
+  type NodeNotFound,
+  type VersionChainOps,
+  type VersionChainStore,
+  type VersionConflict,
+} from "@thomasfosterau/pulpit/version-chain";
+import { and, eq, type ListFilter } from "@thomasfosterau/pulpit/filter";
+import {
+  defineSubtype,
+  ownedAccess,
+  type LeafRow,
+  type LeafStore,
+} from "@thomasfosterau/pulpit/subtype";
+import { isPubliclyServeable, serveablePolicy } from "@thomasfosterau/pulpit/publication";
 
 /** A compile-time assertion: `T` must be exactly `true`. */
 type Assert<T extends true> = T;
@@ -107,3 +126,65 @@ export const wire = registryWireTypes(REGISTRY, ["content"] as const);
 export type _Wire = Assert<
   Equals<typeof wire.branches, { readonly content: ReadonlyArray<string> }>
 >;
+
+// ── version-chain ────────────────────────────────────────────────────────
+
+class StoreFailure {
+  readonly _tag = "StoreFailure";
+}
+interface Transaction {
+  readonly _tag: "Transaction";
+}
+declare const store: VersionChainStore<StoreFailure, Transaction>;
+export const chain = defineVersionChain("posts", store);
+export type _Chain = Assert<Equals<typeof chain, VersionChainOps<StoreFailure, Transaction>>>;
+export type _Create = Assert<
+  Equals<
+    ReturnType<typeof chain.create>,
+    Effect.Effect<ChainWrite, StoreFailure | NodeAlreadyExists | VersionConflict, Transaction>
+  >
+>;
+
+// ── filter + subtype ─────────────────────────────────────────────────────
+
+interface Subquery {
+  readonly _tag: "Subquery";
+}
+export const filter = and<Subquery>(eq("visibility", "public"));
+export type _Filter = Assert<Equals<typeof filter, ListFilter<Subquery>>>;
+
+declare const leaves: LeafStore<LeafRow, Subquery, StoreFailure, Transaction>;
+interface PostDoc {
+  readonly id: string;
+}
+export const posts = defineSubtype({
+  type: "posts",
+  access: ownedAccess({ draft: true }),
+  chain: store,
+  leaves,
+  viewer: Effect.succeed(Option.none()),
+  policy: {
+    canViewPrivate: () => false,
+    canViewDeleted: () => false,
+    canModerate: () => false,
+    canWriteCorpus: () => false,
+  },
+  followers: {
+    isFollower: () => Effect.succeed(false),
+    following: (): Subquery => ({ _tag: "Subquery" }),
+  },
+  toResource: (row): PostDoc => ({ id: row.id }),
+});
+export type _Get = Assert<
+  Equals<
+    ReturnType<typeof posts.get>,
+    Effect.Effect<PostDoc, NodeNotFound | StoreFailure, Transaction>
+  >
+>;
+
+// ── publication ──────────────────────────────────────────────────────────
+
+export const hook = serveablePolicy({ owned: true });
+export type _Hook = Assert<Equals<ReturnType<typeof hook>, boolean>>;
+export type _HookInput = Assert<Equals<Parameters<typeof hook>, [resource: unknown]>>;
+export type _Gate = Assert<Equals<ReturnType<typeof isPubliclyServeable>, boolean>>;
