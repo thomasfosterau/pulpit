@@ -22,3 +22,9 @@ export * as Content from "./content.ts";
  * branches.
  */
 export * as Registry from "./registry.ts";
+
+/**
+ * The append-only node / version chain: create, update, restore, delete,
+ * getVersion, restoreVersion, history — over a store seam.
+ */
+export * as VersionChain from "./version-chain.ts";

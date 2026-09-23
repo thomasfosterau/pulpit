@@ -36,7 +36,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./content": "./src/content.ts",
-    "./registry": "./src/registry.ts"
+    "./registry": "./src/registry.ts",
+    "./version-chain": "./src/version-chain.ts"
   },
   "publishConfig": {
     "exports": {
@@ -51,6 +52,10 @@
       "./registry": {
         "types": "./dist/registry.d.ts",
         "default": "./dist/registry.js"
+      },
+      "./version-chain": {
+        "types": "./dist/version-chain.d.ts",
+        "default": "./dist/version-chain.js"
       }
     },
     "access": "public"
