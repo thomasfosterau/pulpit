@@ -45,12 +45,24 @@
   },
   "boundaries": {
     "zones": [
-      { "name": "pulpit", "patterns": ["packages/pulpit/**"] },
-      { "name": "dist-consumer", "patterns": ["tests/dist-consumer/**"] }
+      {
+        "name": "pulpit",
+        "patterns": ["packages/pulpit/**"]
+      },
+      {
+        "name": "dist-consumer",
+        "patterns": ["tests/dist-consumer/**"]
+      }
     ],
     "rules": [
-      { "from": "pulpit", "allow": [] },
-      { "from": "dist-consumer", "allow": ["pulpit"] }
+      {
+        "from": "pulpit",
+        "allow": []
+      },
+      {
+        "from": "dist-consumer",
+        "allow": ["pulpit"]
+      }
     ]
   },
   "health": {

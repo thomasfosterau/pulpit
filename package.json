@@ -21,7 +21,6 @@
     "@effect/language-service": "catalog:",
     "@effect/tsgo": "catalog:",
     "@mpsuesser/oxlint-plugin-effect": "catalog:",
-    "@thomasfosterau/pulpit": "workspace:*",
     "@types/node": "catalog:",
     "@typescript/native": "catalog:",
     "effect": "catalog:",

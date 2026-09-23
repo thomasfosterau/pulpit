@@ -3,12 +3,22 @@
  *
  * `@thomasfosterau/pulpit` — the versioned-content kernel.
  *
- * The package is empty at this point: the scaffold (pulpit#2) lands the
- * toolchain and the gates on an empty package; the kernel's modules arrive
- * slice by slice (pulpit#3 – #6).
+ * Every module is exported as a namespace from the package root, following
+ * the convention of `effect` and `@thomasfosterau/effect-jsonapi`; each is
+ * also a subpath (`@thomasfosterau/pulpit/content`, …) for a consumer that
+ * wants one module without the barrel.
  *
  * @module pulpit
  */
 
-/** The package version marker the empty scaffold ships; replaced by the kernel's exports. */
-export const PULPIT = "pulpit" as const;
+/**
+ * The Content model fields: `Visibility`, the visibility / draft / timestamp /
+ * tombstone spreads, `ownerRef`, the base `content` resource.
+ */
+export * as Content from "./content.ts";
+
+/**
+ * The registry flag vocabulary, `validateRegistry`, and the derived families /
+ * branches.
+ */
+export * as Registry from "./registry.ts";

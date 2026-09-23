@@ -95,6 +95,15 @@ export default defineConfig({
       "vite-plus/prefer-vite-plus-imports": "error",
     },
     overrides: [
+      // The type-level test slot: an expected-error directive IS the assertion
+      // there (each paired with its positive control), so the rule that bans
+      // suppressions has nothing to protect in these files.
+      {
+        files: ["**/tests/**/*.types.ts"],
+        rules: {
+          "effect/avoid-ts-ignore": "off",
+        },
+      },
       // Build/test configs are evaluated by Vite and Vitest in bare Node,
       // before any Effect runtime exists — there is no `Config` provider to
       // read from and no `FileSystem` service to call, so `process.env` and
