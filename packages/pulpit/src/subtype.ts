@@ -1,0 +1,678 @@
+/**
+ * @copyright Thomas Foster
+ *
+ * **The subtype operation factory** — a leaf's CRUD, version history and
+ * list, gated by its access kind, over the version chain and a
+ * current-version view.
+ *
+ * The behavioural spec is gardeneria's `apps/api/src/operations/subtype.ts`
+ * (`defineNodeSubtypeE`, `LeafAccess`, the gates `requireWriterE` /
+ * `requireCreatorE` / `stampOwnerE` / `ownedListFilterE`), its
+ * `packages/database/src/guards.ts` (`canViewOwnedE`, `ownedReadScopeE`) and
+ * website's `apps/api/src/operations/to-resource.ts`
+ * (`loadListVisibilityFilters`, the two-state list predicate). A `#NNN` here
+ * names a gardeneria issue.
+ *
+ * ## Access kinds
+ *
+ * - `reference` — corpus material. Create / update / delete / restore gate on
+ *   the corpus-write rung; reads are public apart from the soft-delete axis
+ *   and a Content leaf's `private` axis.
+ * - `owned` — a member's own row. Create gates on any signed-in account and
+ *   stamps the owner; every other write loads the owner and gates on
+ *   owner-or-moderator (a missing owner is `NotFound`, never an open gate);
+ *   `get` applies {@link canViewOwned} to the row; `list` applies the same
+ *   facts as a {@link ListFilter} ({@link ownedListFilter}), so the two can
+ *   never disagree.
+ *
+ * ## Invariants
+ *
+ * - A hidden row is {@link NodeNotFound}, never {@link Forbidden}
+ *   (`SEC-AUTH-ENUM-001`): a 403 would confirm the row exists.
+ * - Soft-deleted rows are visible only to the view-deleted rung, and a list
+ *   includes them only when the caller also asked (`includeDeleted`).
+ * - A declaration naming columns the view lacks fails closed — nothing lists.
+ * - The follower seam, when a runtime does not provide one, answers "nobody
+ *   follows anybody" — a `followers` row is then its owner's and the rung's
+ *   alone. Fail closed.
+ *
+ * ## Seams
+ *
+ * Three things the kernel does not own, each an explicit parameter rather
+ * than an import (their packages are unpublished; see
+ * `packages/pulpit/CLAUDE.md` → Seams):
+ *
+ * - the **viewer** and the **role axes** ({@link Viewer}, {@link AccessPolicy})
+ *   and the **follower** answer — effect-auth#221's session context, role
+ *   ladder and `IsFollower`;
+ * - the **current-version view** ({@link LeafStore}) — a Drizzle store over
+ *   effect-drizzle-ext's `makeCurrentVersionView`;
+ * - the **handlers config** the factory's operations plug into
+ *   ({@link subtypeHandlers}) — the shape effect-jsonapi#172's
+ *   `resourceHandlers` is expected to accept, with the effect-web#4 cache's
+ *   write-through.
+ *
+ * @module pulpit/subtype
+ */
+
+import * as Array from "effect/Array";
+import * as Effect from "effect/Effect";
+import * as HashMap from "effect/HashMap";
+import * as Match from "effect/Match";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { Visibility } from "./content.ts";
+import { always, and, eq, isIn, ne, never, or, type ListFilter } from "./filter.ts";
+import {
+  defineVersionChain,
+  NodeNotFound,
+  type ChainPatch,
+  type ChainState,
+  type ChainWrite,
+  type ColumnValue,
+  type VersionAction,
+  type VersionChainStore,
+  type VersionConflict,
+  type VersionNotFound,
+  type VersionSnapshot,
+  type NodeAlreadyExists,
+} from "./version-chain.ts";
+
+const isVisibility = Schema.is(Visibility);
+
+// ── The viewer seam ───────────────────────────────────────────────────
+
+/** The signed-in account the operation acts as: an id and a role on the application's ladder. */
+export interface ViewerAccount {
+  readonly id: string;
+  readonly role: string;
+}
+
+/** The viewer: an account, or none for an anonymous request (effect-auth's session context). */
+export type Viewer = Option.Option<ViewerAccount>;
+
+/**
+ * The role axes the kernel asks about — each an application-named rung
+ * (`VIEW_PRIVATE_MIN_ROLE`, `VIEW_DELETED_MIN_ROLE`, `MODERATE_MIN_ROLE`,
+ * `CORPUS_WRITE_MIN_ROLE`) compared by the application's one
+ * `hasRoleAtLeast`, which must fail closed on an unknown role. effect-auth's
+ * role-ladder factory produces these.
+ */
+export interface AccessPolicy {
+  /** May see `private` rows and drafts (gardeneria: moderator+; website: admin). */
+  readonly canViewPrivate: (account: ViewerAccount) => boolean;
+  /** May see soft-deleted rows (gardeneria: moderator+; website: admin). */
+  readonly canViewDeleted: (account: ViewerAccount) => boolean;
+  /** May write someone else's owned row (gardeneria: moderator+). */
+  readonly canModerate: (account: ViewerAccount) => boolean;
+  /** May write reference data directly (gardeneria: contributor+). */
+  readonly canWriteCorpus: (account: ViewerAccount) => boolean;
+}
+
+/**
+ * The follower seam — the `followers` visibility state's one external fact.
+ * `isFollower` answers one row's question; `following` answers a list's, as
+ * whatever the list filter's `in` node takes (a subquery in SQL, #1107).
+ */
+export interface FollowerSeam<Following, R> {
+  readonly isFollower: (followerId: string, ownerId: string) => Effect.Effect<boolean, never, R>;
+  readonly following: (followerId: string) => Following;
+}
+
+/**
+ * The fail-closed follower seam: nobody follows anybody. `nobody` is the
+ * matches-nothing value of the `in` node (SQL: `(select null::uuid where false)`).
+ */
+export const nobodyFollows = <Following>(nobody: Following): FollowerSeam<Following, never> => ({
+  isFollower: () => Effect.succeed(false),
+  following: () => nobody,
+});
+
+// ── Errors ────────────────────────────────────────────────────────────
+
+/** No signed-in viewer where one is required: the wire's 401. */
+export class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthorized", {}) {}
+
+/** A signed-in viewer below the rung a write needs: the wire's 403. Never used to hide a row. */
+export class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
+
+// ── Read scope and the row predicate ──────────────────────────────────
+
+/**
+ * The viewer's owned-material read scope — the three facts a LIST needs to
+ * build its filter from, and the set-shaped counterpart of
+ * {@link canViewOwned}:
+ *
+ * - `all` — the view-private rung: no visibility filter;
+ * - `public` — anonymous: `visibility = 'public'` only;
+ * - `member` — a signed-in account: `public`, OR their own rows, OR
+ *   `followers` rows whose owner they follow.
+ */
+export type ReadScope<Following> =
+  | { readonly kind: "all" }
+  | { readonly kind: "public" }
+  | { readonly kind: "member"; readonly userId: string; readonly following: Following };
+
+/** Resolve a viewer's {@link ReadScope}. */
+export const readScopeFor = <Following>(
+  viewer: Viewer,
+  policy: AccessPolicy,
+  followers: FollowerSeam<Following, unknown>,
+): ReadScope<Following> =>
+  Option.match(viewer, {
+    onNone: (): ReadScope<Following> => ({ kind: "public" }),
+    onSome: (account): ReadScope<Following> =>
+      policy.canViewPrivate(account)
+        ? { kind: "all" }
+        : { kind: "member", userId: account.id, following: followers.following(account.id) },
+  });
+
+/** The facts {@link canViewOwned} reads off an owned row. `draft: false` for a leaf without the axis. */
+export interface OwnedFacts {
+  readonly ownerId: string;
+  readonly visibility: Visibility;
+  readonly draft: boolean;
+}
+
+/**
+ * The owned-material read predicate — the single interpretation of the
+ * three-state visibility axis plus the orthogonal `draft` axis (#1118):
+ *
+ * | visibility  | who may view                                                   |
+ * | ----------- | -------------------------------------------------------------- |
+ * | `public`    | everyone, anonymous included                                   |
+ * | `followers` | the owner; the owner's followers; the view-private rung        |
+ * | `private`   | the owner; the view-private rung                               |
+ *
+ * `draft: true` narrows whatever `visibility` allows down to the owner and
+ * the rung — a `public` draft is exactly as hidden as a `private` one. Never
+ * fails; callers turn `false` into {@link NodeNotFound}.
+ */
+export const canViewOwned = <R>(
+  viewer: Viewer,
+  policy: AccessPolicy,
+  followers: FollowerSeam<unknown, R>,
+  row: OwnedFacts,
+): Effect.Effect<boolean, never, R> => {
+  if (!row.draft && row.visibility === "public") return Effect.succeed(true);
+  if (Option.isNone(viewer)) return Effect.succeed(false);
+  const account = viewer.value;
+  if (account.id === row.ownerId) return Effect.succeed(true);
+  if (policy.canViewPrivate(account)) return Effect.succeed(true);
+  // Not the owner, not privileged: a draft is hidden whatever its visibility.
+  if (row.draft) return Effect.succeed(false);
+  if (row.visibility === "private") return Effect.succeed(false);
+  return followers.isFollower(account.id, row.ownerId);
+};
+
+// ── Leaf access and the list filters ──────────────────────────────────
+
+/**
+ * The gate selector, mirroring the registry's `referenceData` ⊕ `owned`
+ * flags: an `owned` leaf names the VIEW columns its read paths consult, and
+ * `draftColumn` only when the leaf actually writes the flag.
+ */
+export type LeafAccess =
+  | { readonly kind: "reference" }
+  | {
+      readonly kind: "owned";
+      readonly ownerColumn: string;
+      readonly visibilityColumn: string;
+      readonly draftColumn: Option.Option<string>;
+    };
+
+/** The owned-leaf access declaration with the conventional factory-built column names. */
+export const ownedAccess = (
+  options: { readonly draft?: boolean } = {},
+): Extract<LeafAccess, { kind: "owned" }> => ({
+  kind: "owned",
+  ownerColumn: "ownerId",
+  visibilityColumn: "visibility",
+  draftColumn: options.draft === true ? Option.some("draft") : Option.none(),
+});
+
+/**
+ * The owned-leaf LIST filter — {@link ReadScope} rendered over the leaf's
+ * declared view columns. When the leaf carries a draft column, every
+ * non-owner arm additionally requires `draft = false`; the owner's own arm
+ * never does, so a member lists their own drafts. Columns the view lacks
+ * fail closed.
+ */
+export const ownedListFilter = <Following>(
+  access: Extract<LeafAccess, { kind: "owned" }>,
+  viewColumns: ReadonlySet<string>,
+  scope: ReadScope<Following>,
+): ListFilter<Following> => {
+  const declared = [
+    access.ownerColumn,
+    access.visibilityColumn,
+    ...Option.toArray(access.draftColumn),
+  ];
+  if (!declared.every((column) => viewColumns.has(column))) return never;
+  const published = (filter: ListFilter<Following>): ListFilter<Following> =>
+    Option.match(access.draftColumn, {
+      onNone: () => filter,
+      onSome: (draft) => and(filter, eq(draft, false)),
+    });
+  return Match.value(scope).pipe(
+    Match.discriminatorsExhaustive("kind")({
+      all: (): ListFilter<Following> => always,
+      public: () => published(eq(access.visibilityColumn, "public")),
+      member: (member) =>
+        or(
+          published(eq(access.visibilityColumn, "public")),
+          eq(access.ownerColumn, member.userId),
+          published(
+            and(
+              eq(access.visibilityColumn, "followers"),
+              isIn(access.ownerColumn, member.following),
+            ),
+          ),
+        ),
+    }),
+  );
+};
+
+/**
+ * The soft-delete arm of every list: tombstones only when the caller asked
+ * AND holds the view-deleted rung — asking without the rung changes nothing.
+ */
+export const softDeleteFilter = <Following>(
+  viewer: Viewer,
+  policy: AccessPolicy,
+  includeDeleted: boolean,
+): ListFilter<Following> =>
+  includeDeleted && Option.exists(viewer, policy.canViewDeleted) ? always : ne("action", "delete");
+
+/**
+ * The reference-leaf privacy arm (`PUB-009`): `visibility = 'public'` unless
+ * the viewer holds the view-private rung, or the view has no visibility
+ * column (an Entity leaf rides no such axis). Nothing to opt into.
+ */
+export const referencePrivacyFilter = <Following>(
+  viewer: Viewer,
+  policy: AccessPolicy,
+  viewColumns: ReadonlySet<string>,
+): ListFilter<Following> =>
+  !viewColumns.has("visibility") || Option.exists(viewer, policy.canViewPrivate)
+    ? always
+    : eq("visibility", "public");
+
+// ── The write gates ───────────────────────────────────────────────────
+
+const signedIn = (viewer: Viewer): Effect.Effect<ViewerAccount, Unauthorized> =>
+  Option.match(viewer, {
+    onNone: () => Effect.fail(new Unauthorized()),
+    onSome: Effect.succeed,
+  });
+
+const atRung = (
+  viewer: Viewer,
+  admits: (account: ViewerAccount) => boolean,
+): Effect.Effect<ViewerAccount, Unauthorized | Forbidden> =>
+  Effect.flatMap(signedIn(viewer), (account) =>
+    admits(account) ? Effect.succeed(account) : Effect.fail(new Forbidden()),
+  );
+
+/** The gate for a CREATE: reference data → the corpus-write rung; owned → any signed-in account. */
+export const requireCreator = (
+  access: LeafAccess,
+  viewer: Viewer,
+  policy: AccessPolicy,
+): Effect.Effect<ViewerAccount, Unauthorized | Forbidden> =>
+  access.kind === "reference" ? atRung(viewer, policy.canWriteCorpus) : signedIn(viewer);
+
+/**
+ * The gate for a write to an EXISTING row: reference data → the corpus-write
+ * rung; owned material → the row's owner or the moderate rung. A missing
+ * owner on an owned leaf is {@link NodeNotFound}, never an open gate.
+ */
+export const requireWriter = <E, R>(
+  access: LeafAccess,
+  viewer: Viewer,
+  policy: AccessPolicy,
+  row: { readonly type: string; readonly id: string },
+  ownerOf: Effect.Effect<Option.Option<string>, E, R>,
+): Effect.Effect<ViewerAccount, Unauthorized | Forbidden | NodeNotFound | E, R> =>
+  access.kind === "reference"
+    ? atRung(viewer, policy.canWriteCorpus)
+    : Effect.gen(function* () {
+        const account = yield* signedIn(viewer);
+        const owner = yield* ownerOf;
+        if (Option.isNone(owner)) return yield* new NodeNotFound(row);
+        if (account.id === owner.value || policy.canModerate(account)) return account;
+        return yield* new Forbidden();
+      });
+
+// ── The current-version view seam ─────────────────────────────────────
+
+/** A current-version view row: its node id, its head `action`, and the leaf's columns. */
+export interface LeafRow {
+  readonly id: string;
+  readonly action: VersionAction;
+  readonly [column: string]: ColumnValue;
+}
+
+/** One list page and the unpaged total of rows matching the filter. */
+export interface Page<A> {
+  readonly rows: ReadonlyArray<A>;
+  readonly total: number;
+}
+
+/** The hard cap on a page (`SEC-INPUT-003`): no request drives an unbounded `LIMIT`. */
+export const MAX_PAGE_LIMIT = 1000;
+
+/**
+ * The read seam over a leaf's fail-closed current-version view, plus the
+ * owner stamp. `columns` is the view's column set — what the owned filter
+ * checks its declaration against.
+ */
+export interface LeafStore<Row extends LeafRow, Following, E, R> {
+  readonly columns: ReadonlySet<string>;
+  readonly get: (id: string) => Effect.Effect<Option.Option<Row>, E, R>;
+  /** One `id = ANY($ids)` read, never `ids.length` sequential gets. */
+  readonly getMany: (ids: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<Row>, E, R>;
+  /** The page under `where`, ordered totally (the view's `id` closes every order), with the unpaged total. */
+  readonly list: (query: {
+    readonly where: ListFilter<Following>;
+    readonly limit: number;
+    readonly offset: number;
+  }) => Effect.Effect<Page<Row>, E, R>;
+  /** The owner of an owned node (`core.node_owner`), or none. */
+  readonly ownerOf: (id: string) => Effect.Effect<Option.Option<string>, E, R>;
+  /** Record a freshly created owned node's owner. */
+  readonly stampOwner: (id: string, ownerId: string) => Effect.Effect<void, E, R>;
+}
+
+// ── The factory ───────────────────────────────────────────────────────
+
+/** A leaf's declaration: its type and access, its seams, and its row → resource mapper. */
+export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, R> {
+  /** The leaf's JSON:API wire type — names spans and tags `NodeNotFound`. */
+  readonly type: string;
+  readonly access: LeafAccess;
+  readonly chain: VersionChainStore<E, R>;
+  readonly leaves: LeafStore<Row, Following, E, R>;
+  /** The request's viewer (effect-auth's session context). */
+  readonly viewer: Effect.Effect<Viewer, never, R>;
+  readonly policy: AccessPolicy;
+  readonly followers: FollowerSeam<Following, R>;
+  /** Shape a view row into the resource (sync; links resolved by the caller's mapper). */
+  readonly toResource: (row: Row) => Resource;
+}
+
+/** A list request, as the decoded query hands it over. */
+export interface ListRequest {
+  readonly limit: number;
+  readonly offset: number;
+  readonly includeDeleted: boolean;
+  /** The family's own extra predicate (a `?filter[published]=`), or `always`. */
+  readonly where: ListFilter<never>;
+}
+
+type Gate = Unauthorized | Forbidden;
+
+/** The operations {@link defineSubtype} produces for one leaf. */
+export interface SubtypeOps<Resource, E, R> {
+  readonly access: LeafAccess;
+  readonly create: (input: {
+    readonly id: Option.Option<string>;
+    readonly state: ChainState;
+  }) => Effect.Effect<ChainWrite, Gate | NodeAlreadyExists | VersionConflict | E, R>;
+  readonly update: (input: {
+    readonly id: string;
+    readonly patch: ChainPatch;
+  }) => Effect.Effect<ChainWrite, Gate | NodeNotFound | VersionConflict | E, R>;
+  readonly restore: (input: {
+    readonly id: string;
+    readonly patch: ChainPatch;
+  }) => Effect.Effect<ChainWrite, Gate | NodeNotFound | VersionConflict | E, R>;
+  readonly delete: (
+    id: string,
+  ) => Effect.Effect<
+    ChainWrite & { readonly alreadyDeleted: boolean },
+    Gate | NodeNotFound | VersionConflict | E,
+    R
+  >;
+  readonly get: (id: string) => Effect.Effect<Resource, NodeNotFound | E, R>;
+  /** Visible rows by id, in one read; a missing or hidden id is simply absent. */
+  readonly getMany: (
+    ids: ReadonlyArray<string>,
+  ) => Effect.Effect<HashMap.HashMap<string, Resource>, E, R>;
+  readonly list: (request: ListRequest) => Effect.Effect<Page<Resource>, E, R>;
+  /** Gated like a write: the history exposes every state, private and deleted included. */
+  readonly getVersion: (
+    id: string,
+    version: bigint,
+  ) => Effect.Effect<VersionSnapshot, Gate | NodeNotFound | VersionNotFound | E, R>;
+  readonly restoreVersion: (
+    id: string,
+    version: bigint,
+  ) => Effect.Effect<ChainWrite, Gate | NodeNotFound | VersionNotFound | VersionConflict | E, R>;
+}
+
+/**
+ * Bind a leaf's operations. Every produced operation is traced as
+ * `${type}.<operation>`; the write operations run in the caller's
+ * transaction (the boundary is the handler seam's, website #1883).
+ */
+export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
+  definition: SubtypeDefinition<Row, Resource, Following, E, R>,
+): SubtypeOps<Resource, E, R> => {
+  const { type, access, leaves, policy, followers, toResource } = definition;
+  const chain = defineVersionChain(type, definition.chain);
+  const actor = (account: ViewerAccount) => Option.some(account.id);
+  const writer = (viewer: Viewer, id: string) =>
+    requireWriter(access, viewer, policy, { type, id }, leaves.ownerOf(id));
+
+  const ownedFacts = (owned: Extract<LeafAccess, { kind: "owned" }>, row: Row): OwnedFacts => ({
+    ownerId: String(row[owned.ownerColumn]),
+    // A value outside the enum (a dropped projection, a schema drift) reads as
+    // `private`: fail closed.
+    visibility: Option.getOrElse(
+      Option.liftPredicate(row[owned.visibilityColumn], isVisibility),
+      (): Visibility => "private",
+    ),
+    draft: Option.match(owned.draftColumn, {
+      onNone: () => false,
+      onSome: (column) => row[column] === true,
+    }),
+  });
+
+  /** The row's own visibility, by access kind; the soft-delete axis is checked by the caller. */
+  const rowVisible = (viewer: Viewer, row: Row): Effect.Effect<boolean, never, R> =>
+    access.kind === "owned"
+      ? canViewOwned(viewer, policy, followers, ownedFacts(access, row))
+      : Effect.succeed(
+          row["visibility"] !== "private" || Option.exists(viewer, policy.canViewPrivate),
+        );
+
+  const visible = (viewer: Viewer, row: Row): Effect.Effect<boolean, never, R> =>
+    row.action === "delete" && !Option.exists(viewer, policy.canViewDeleted)
+      ? Effect.succeed(false)
+      : rowVisible(viewer, row);
+
+  const create = Effect.fn(`${type}.create`)(function* (input: {
+    readonly id: Option.Option<string>;
+    readonly state: ChainState;
+  }) {
+    const account = yield* requireCreator(access, yield* definition.viewer, policy);
+    const written = yield* chain.create({ ...input, actorId: actor(account) });
+    if (access.kind === "owned") yield* leaves.stampOwner(written.id, account.id);
+    return written;
+  });
+
+  const update = Effect.fn(`${type}.update`)(function* (input: {
+    readonly id: string;
+    readonly patch: ChainPatch;
+  }) {
+    const account = yield* writer(yield* definition.viewer, input.id);
+    return yield* chain.update({ ...input, actorId: actor(account) });
+  });
+
+  const restore = Effect.fn(`${type}.restore`)(function* (input: {
+    readonly id: string;
+    readonly patch: ChainPatch;
+  }) {
+    const account = yield* writer(yield* definition.viewer, input.id);
+    return yield* chain.restore({ ...input, actorId: actor(account) });
+  });
+
+  const softDelete = Effect.fn(`${type}.delete`)(function* (id: string) {
+    const account = yield* writer(yield* definition.viewer, id);
+    return yield* chain.delete(id, actor(account));
+  });
+
+  const get = Effect.fn(`${type}.get`)(function* (id: string) {
+    const viewer = yield* definition.viewer;
+    const row = yield* leaves.get(id);
+    // Hidden and missing are the same answer (SEC-AUTH-ENUM-001).
+    if (Option.isNone(row) || !(yield* visible(viewer, row.value))) {
+      return yield* new NodeNotFound({ type, id });
+    }
+    return toResource(row.value);
+  });
+
+  const getMany = Effect.fn(`${type}.getMany`)(function* (ids: ReadonlyArray<string>) {
+    if (!Array.isReadonlyArrayNonEmpty(ids)) return HashMap.empty<string, Resource>();
+    const viewer = yield* definition.viewer;
+    const rows = yield* leaves.getMany(Array.dedupe(ids));
+    const shown = yield* Effect.filter(rows, (row) => visible(viewer, row));
+    return HashMap.fromIterable(Array.map(shown, (row) => [row.id, toResource(row)] as const));
+  });
+
+  const list = Effect.fn(`${type}.list`)(function* (request: ListRequest) {
+    const viewer = yield* definition.viewer;
+    const privacy =
+      access.kind === "owned"
+        ? ownedListFilter(access, leaves.columns, readScopeFor(viewer, policy, followers))
+        : referencePrivacyFilter<Following>(viewer, policy, leaves.columns);
+    const where = and<Following>(
+      softDeleteFilter(viewer, policy, request.includeDeleted),
+      privacy,
+      request.where,
+    );
+    const page = yield* leaves.list({
+      where,
+      limit: Math.max(1, Math.min(Math.trunc(request.limit), MAX_PAGE_LIMIT)),
+      offset: Math.max(0, Math.trunc(request.offset)),
+    });
+    return { rows: page.rows.map(toResource), total: page.total };
+  });
+
+  const getVersion = Effect.fn(`${type}.getVersion`)(function* (id: string, version: bigint) {
+    yield* writer(yield* definition.viewer, id);
+    return yield* chain.getVersion(id, version);
+  });
+
+  const restoreVersion = Effect.fn(`${type}.restoreVersion`)(function* (
+    id: string,
+    version: bigint,
+  ) {
+    const account = yield* writer(yield* definition.viewer, id);
+    return yield* chain.restoreVersion(id, version, actor(account));
+  });
+
+  return {
+    access,
+    create,
+    update,
+    restore,
+    delete: softDelete,
+    get,
+    getMany,
+    list,
+    getVersion,
+    restoreVersion,
+  };
+};
+
+// ── The handlers seam ─────────────────────────────────────────────────
+
+/**
+ * The resource cache's write side (effect-web#4): `set` writes the resource
+ * through — the cache itself refuses (and evicts) a non-serveable one, so a
+ * `public → private` flip self-purges — and `delete` evicts.
+ */
+export interface ResourceCacheSeam<Resource, R> {
+  readonly set: (id: string, resource: Resource) => Effect.Effect<void, never, R>;
+  readonly delete: (id: string) => Effect.Effect<void, never, R>;
+}
+
+/**
+ * The handler record a leaf contributes to effect-jsonapi#172's
+ * `resourceHandlers` — one entry per endpoint, each returning the resource
+ * the document assembler wraps — plus the version-restore command, which has
+ * no JSON:API endpoint and is run SSR-direct.
+ *
+ * Every write re-reads the row after the chain write and writes it through
+ * the cache; that write-through is the reason these exist rather than each
+ * route calling the operation (`versionRestoreCommand`): the cache serves
+ * anonymous reads, and a write that skipped it would leave them on the
+ * superseded content until the TTL expired. The chain write runs inside
+ * `transact` (the handler seam's boundary, website #1883); the re-read
+ * stays outside it.
+ */
+export interface SubtypeHandlers<Resource, E, R> {
+  readonly list: SubtypeOps<Resource, E, R>["list"];
+  readonly get: SubtypeOps<Resource, E, R>["get"];
+  readonly create: (input: {
+    readonly id: Option.Option<string>;
+    readonly state: ChainState;
+  }) => Effect.Effect<Resource, Gate | NodeAlreadyExists | NodeNotFound | VersionConflict | E, R>;
+  readonly update: (input: {
+    readonly id: string;
+    readonly patch: ChainPatch;
+  }) => Effect.Effect<Resource, Gate | NodeNotFound | VersionConflict | E, R>;
+  readonly delete: (
+    id: string,
+  ) => Effect.Effect<void, Gate | NodeNotFound | VersionConflict | E, R>;
+  readonly restoreVersion: (input: {
+    readonly id: string;
+    readonly version: bigint;
+  }) => Effect.Effect<Resource, Gate | NodeNotFound | VersionNotFound | VersionConflict | E, R>;
+}
+
+/** What {@link subtypeHandlers} needs besides the operations. */
+export interface SubtypeHandlersConfig<Resource, R> {
+  /** The write boundary — always-open: a nested call is a SAVEPOINT (website #1883). */
+  readonly transact: <A, E2>(effect: Effect.Effect<A, E2, R>) => Effect.Effect<A, E2, R>;
+  /** The leaf's cache, when it has one. */
+  readonly cache: Option.Option<ResourceCacheSeam<Resource, R>>;
+}
+
+/**
+ * Wrap a leaf's operations as its handler record. An owned leaf may still
+ * be cached — `CACHE-AUTH-005` is enforced by the cache's serveability
+ * policy (`./publication`'s `isPubliclyServeable` with `owned: true`), which
+ * only ever holds its public rows.
+ */
+export const subtypeHandlers = <Resource, E, R>(
+  ops: SubtypeOps<Resource, E, R>,
+  config: SubtypeHandlersConfig<Resource, R>,
+): SubtypeHandlers<Resource, E, R> => {
+  const writeThrough = (id: string) =>
+    Effect.gen(function* () {
+      const resource = yield* ops.get(id);
+      if (Option.isSome(config.cache)) yield* config.cache.value.set(id, resource);
+      return resource;
+    });
+
+  return {
+    list: ops.list,
+    get: ops.get,
+    create: (input) =>
+      Effect.flatMap(config.transact(ops.create(input)), ({ id }) => writeThrough(id)),
+    update: (input) =>
+      Effect.flatMap(config.transact(ops.update(input)), ({ id }) => writeThrough(id)),
+    delete: (id) =>
+      Effect.gen(function* () {
+        yield* config.transact(ops.delete(id));
+        if (Option.isSome(config.cache)) yield* config.cache.value.delete(id);
+      }),
+    restoreVersion: (input) =>
+      Effect.flatMap(config.transact(ops.restoreVersion(input.id, input.version)), ({ id }) =>
+        writeThrough(id),
+      ),
+  };
+};

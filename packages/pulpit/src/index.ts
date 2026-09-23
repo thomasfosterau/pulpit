@@ -28,3 +28,12 @@ export * as Registry from "./registry.ts";
  * getVersion, restoreVersion, history — over a store seam.
  */
 export * as VersionChain from "./version-chain.ts";
+
+/** The list-filter vocabulary the read predicates render into, and its in-memory evaluator. */
+export * as Filter from "./filter.ts";
+
+/**
+ * The subtype operation factory: `LeafAccess`, the read scope and viewer
+ * predicates, the write gates, `defineSubtype` and its handlers seam.
+ */
+export * as Subtype from "./subtype.ts";

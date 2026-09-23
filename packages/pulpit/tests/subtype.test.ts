@@ -1,0 +1,501 @@
+/**
+ * The subtype factory's access semantics against the in-memory seams.
+ *
+ * - The row predicate: gardeneria's `packages/database/tests/guards.test.ts`
+ *   (`canViewOwnedE`, the follower seam) plus the draft axis (#1118).
+ * - The list filter: that it NEVER disagrees with the row predicate — every
+ *   row of the visibility × draft × owner matrix, for every viewer, with and
+ *   without a draft column. The apps assert this with integration tests
+ *   against a real database; here it is exhaustive.
+ * - The reference two-state predicate: website's
+ *   `apps/api/tests/list-visibility-filters.test.ts` matrix.
+ * - The gates: `requireOwnerOrRole`, the create / write split, a missing
+ *   owner failing `NotFound`.
+ * - The factory end to end: gardeneria's `owned-target-visibility.test.ts`
+ *   matrix (a private target refuses a stranger as `NotFound`, accepts its
+ *   owner and a moderator; a public one accepts a stranger), and the
+ *   handlers' cache write-through (website's `versionRestoreCommand`).
+ *
+ * @module tests/subtype
+ */
+
+import { describe, expect, it } from "vite-plus/test";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as HashMap from "effect/HashMap";
+import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
+import type { Visibility } from "../src/content.ts";
+import { always, and, eq, evaluate, ne, never } from "../src/filter.ts";
+import {
+  canViewOwned,
+  defineSubtype,
+  nobodyFollows,
+  ownedAccess,
+  ownedListFilter,
+  readScopeFor,
+  referencePrivacyFilter,
+  requireCreator,
+  requireWriter,
+  softDeleteFilter,
+  subtypeHandlers,
+  type LeafAccess,
+  type LeafRow,
+  type Viewer,
+  type ViewerAccount,
+} from "../src/subtype.ts";
+import { makeInMemoryChainStore } from "./in-memory-chain.ts";
+import {
+  admin,
+  contributor,
+  follower,
+  followersOf,
+  gardeneriaPolicy,
+  makeInMemoryLeafStore,
+  member,
+  moderator,
+  NOW,
+  otherMember,
+  websitePolicy,
+  type Following,
+} from "./in-memory-leaves.ts";
+
+const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
+const tagOf = async <A, E extends { readonly _tag: string }>(
+  effect: Effect.Effect<A, E>,
+): Promise<Option.Option<string>> => {
+  const exit = await Effect.runPromiseExit(effect);
+  return Exit.isFailure(exit)
+    ? Option.map(Exit.findErrorOption(exit), (error) => error._tag)
+    : Option.none();
+};
+
+const as = (account: ViewerAccount): Viewer => Option.some(account);
+const anonymous: Viewer = Option.none();
+
+/** `follower` follows `member`; nobody else follows anybody. */
+const follows = followersOf(new Map([[follower.id, [member.id]]]));
+const nobody = nobodyFollows<Following>(new Set());
+
+// ── The row predicate ─────────────────────────────────────────────────
+
+describe("canViewOwned (the owned-material read predicate)", () => {
+  const view = (
+    visibility: Visibility,
+    viewer: Viewer,
+    options: { readonly draft?: boolean; readonly followers?: typeof follows } = {},
+  ) =>
+    run(
+      canViewOwned(viewer, gardeneriaPolicy, options.followers ?? follows, {
+        ownerId: member.id,
+        visibility,
+        draft: options.draft ?? false,
+      }),
+    );
+
+  it("public: everyone, anonymous included", async () => {
+    expect(await view("public", anonymous)).toBe(true);
+    expect(await view("public", as(otherMember))).toBe(true);
+  });
+
+  it("private: the owner and moderator+, nobody else", async () => {
+    expect(await view("private", as(member))).toBe(true);
+    expect(await view("private", as(moderator))).toBe(true);
+    expect(await view("private", as(admin))).toBe(true);
+    expect(await view("private", as(otherMember))).toBe(false);
+    expect(await view("private", as(contributor))).toBe(false);
+    expect(await view("private", anonymous)).toBe(false);
+  });
+
+  it("followers: the owner, moderator+, and the owner's followers via the seam", async () => {
+    expect(await view("followers", as(member))).toBe(true);
+    expect(await view("followers", as(moderator))).toBe(true);
+    expect(await view("followers", as(follower))).toBe(true);
+    expect(await view("followers", as(contributor))).toBe(false);
+    expect(await view("followers", anonymous)).toBe(false);
+  });
+
+  it("followers: fails closed under the nobody-follows seam", async () => {
+    expect(await view("followers", as(follower), { followers: nobody })).toBe(false);
+  });
+
+  it("private never consults the follower seam", async () => {
+    const everyoneFollows = {
+      isFollower: () => Effect.succeed(true),
+      following: () => new Set<string>(),
+    };
+    expect(await view("private", as(otherMember), { followers: everyoneFollows })).toBe(false);
+  });
+
+  it("a draft narrows even public to the owner and moderator+ (#1118)", async () => {
+    expect(await view("public", anonymous, { draft: true })).toBe(false);
+    expect(await view("public", as(otherMember), { draft: true })).toBe(false);
+    expect(await view("followers", as(follower), { draft: true })).toBe(false);
+    expect(await view("public", as(member), { draft: true })).toBe(true);
+    expect(await view("private", as(moderator), { draft: true })).toBe(true);
+  });
+});
+
+describe("readScopeFor", () => {
+  it("anonymous reads public, a member reads their scope, the rung reads all", () => {
+    expect(readScopeFor(anonymous, gardeneriaPolicy, follows)).toEqual({ kind: "public" });
+    expect(readScopeFor(as(follower), gardeneriaPolicy, follows)).toEqual({
+      kind: "member",
+      userId: follower.id,
+      following: new Set([member.id]),
+    });
+    expect(readScopeFor(as(moderator), gardeneriaPolicy, follows)).toEqual({ kind: "all" });
+    // The rung is the policy's: website's admin-only axis puts a moderator in `member`.
+    expect(readScopeFor(as(moderator), websitePolicy, follows).kind).toBe("member");
+  });
+});
+
+// ── The list filter never disagrees with the row predicate ───────────
+
+describe("ownedListFilter ≡ canViewOwned", () => {
+  const viewers: ReadonlyArray<readonly [string, Viewer]> = [
+    ["anonymous", anonymous],
+    ["the owner", as(member)],
+    ["a follower", as(follower)],
+    ["a stranger", as(otherMember)],
+    ["a contributor", as(contributor)],
+    ["a moderator", as(moderator)],
+  ];
+  const rows: Array<
+    LeafRow & { readonly visibility: Visibility; readonly draft: boolean; readonly ownerId: string }
+  > = [];
+  for (const visibility of ["public", "followers", "private"] as const) {
+    for (const draft of [false, true]) {
+      for (const ownerId of [member.id, otherMember.id]) {
+        rows.push({
+          id: `${visibility}-${draft}-${ownerId}`,
+          action: "create",
+          visibility,
+          draft,
+          ownerId,
+        });
+      }
+    }
+  }
+  const columns = new Set(["id", "action", "ownerId", "visibility", "draft"]);
+
+  for (const withDraft of [true, false]) {
+    const access = ownedAccess({ draft: withDraft });
+    for (const [name, viewer] of viewers) {
+      it(`${withDraft ? "with" : "without"} a draft column, for ${name}`, async () => {
+        const filter = ownedListFilter(
+          access,
+          columns,
+          readScopeFor(viewer, gardeneriaPolicy, follows),
+        );
+        for (const row of rows) {
+          const listed = evaluate(filter, row, {
+            now: NOW,
+            contains: (set: Following, value) => Predicate.isString(value) && set.has(value),
+          });
+          const seen = await run(
+            canViewOwned(viewer, gardeneriaPolicy, follows, {
+              ownerId: row.ownerId,
+              visibility: row.visibility,
+              // A leaf without the axis reads every row as not-a-draft.
+              draft: withDraft && row.draft,
+            }),
+          );
+          expect(listed, `${row.id}`).toBe(seen);
+        }
+      });
+    }
+  }
+
+  it("fails closed when the declaration names a column the view lacks", () => {
+    const filter = ownedListFilter(
+      ownedAccess({ draft: true }),
+      new Set(["id", "action", "ownerId", "visibility"]),
+      { kind: "all" },
+    );
+    expect(filter).toEqual(never);
+  });
+});
+
+// ── The reference two-state predicate (website's matrix) ─────────────
+
+describe("the reference list predicates", () => {
+  const view = new Set(["id", "action", "visibility"]);
+  const reader: ViewerAccount = { id: "u1", role: "user" };
+  const filters = (viewer: Viewer, includeDeleted: boolean, columns = view) =>
+    and<never>(
+      softDeleteFilter(viewer, websitePolicy, includeDeleted),
+      referencePrivacyFilter(viewer, websitePolicy, columns),
+    );
+  const inline = (showDeleted: boolean, showPrivate: boolean) =>
+    and<never>(
+      showDeleted ? always : ne("action", "delete"),
+      showPrivate ? always : eq("visibility", "public"),
+    );
+
+  it("an anonymous viewer and a non-admin get both filters", () => {
+    expect(filters(anonymous, false)).toEqual(inline(false, false));
+    expect(filters(as(reader), false)).toEqual(inline(false, false));
+  });
+
+  it("an admin who did not ask for deleted rows still gets the soft-delete filter", () => {
+    expect(filters(as(admin), false)).toEqual(inline(false, true));
+  });
+
+  it("an admin who asked for deleted rows gets neither filter", () => {
+    expect(filters(as(admin), true)).toEqual(always);
+  });
+
+  it("`includeDeleted` alone does nothing without the rung, and never relaxes privacy", () => {
+    expect(filters(as(reader), true)).toEqual(filters(as(reader), false));
+    expect(filters(anonymous, true)).toEqual(inline(false, false));
+  });
+
+  it("a view with no visibility column rides no privacy axis", () => {
+    expect(filters(anonymous, false, new Set(["id", "action"]))).toEqual(ne("action", "delete"));
+  });
+});
+
+// ── The gates ─────────────────────────────────────────────────────────
+
+describe("the write gates", () => {
+  const reference: LeafAccess = { kind: "reference" };
+  const owned = ownedAccess();
+  const row = { type: "gardens", id: "g1" };
+  const ownedBy = (owner: Option.Option<string>) => Effect.succeed(owner);
+
+  it("create: reference data needs the corpus rung, an owned leaf any account", async () => {
+    expect(await tagOf(requireCreator(reference, anonymous, gardeneriaPolicy))).toEqual(
+      Option.some("Unauthorized"),
+    );
+    expect(await tagOf(requireCreator(reference, as(member), gardeneriaPolicy))).toEqual(
+      Option.some("Forbidden"),
+    );
+    expect(await tagOf(requireCreator(reference, as(contributor), gardeneriaPolicy))).toEqual(
+      Option.none(),
+    );
+    expect(await tagOf(requireCreator(owned, anonymous, gardeneriaPolicy))).toEqual(
+      Option.some("Unauthorized"),
+    );
+    expect(await tagOf(requireCreator(owned, as(member), gardeneriaPolicy))).toEqual(Option.none());
+  });
+
+  it("an owned write admits the owner whatever their rung, and moderator+ on anyone's row", async () => {
+    const gate = (viewer: Viewer) =>
+      tagOf(requireWriter(owned, viewer, gardeneriaPolicy, row, ownedBy(Option.some(member.id))));
+    expect(await gate(as(member))).toEqual(Option.none());
+    expect(await gate(as(moderator))).toEqual(Option.none());
+    expect(await gate(as(admin))).toEqual(Option.none());
+    // Another member below the rung: Forbidden, not NotFound — a write gate may confirm a row the viewer can already see.
+    expect(await gate(as(otherMember))).toEqual(Option.some("Forbidden"));
+    expect(await gate(as(contributor))).toEqual(Option.some("Forbidden"));
+    expect(await gate(anonymous)).toEqual(Option.some("Unauthorized"));
+  });
+
+  it("a missing owner on an owned leaf is NotFound, never an open gate", async () => {
+    expect(
+      await tagOf(
+        requireWriter(owned, as(moderator), gardeneriaPolicy, row, ownedBy(Option.none())),
+      ),
+    ).toEqual(Option.some("NodeNotFound"));
+  });
+
+  it("a reference write needs the corpus rung and never loads an owner", async () => {
+    const noOwnerLookup = Effect.die("the reference gate must not load an owner");
+    expect(
+      await tagOf(requireWriter(reference, as(contributor), gardeneriaPolicy, row, noOwnerLookup)),
+    ).toEqual(Option.none());
+    expect(
+      await tagOf(requireWriter(reference, as(member), gardeneriaPolicy, row, noOwnerLookup)),
+    ).toEqual(Option.some("Forbidden"));
+  });
+});
+
+// ── The factory end to end ────────────────────────────────────────────
+
+const ownedPosts = () => {
+  const chain = makeInMemoryChainStore();
+  const leaves = makeInMemoryLeafStore(chain, ["title", "visibility", "draft"]);
+  let viewer: Viewer = anonymous;
+  const ops = defineSubtype({
+    type: "posts",
+    access: ownedAccess({ draft: true }),
+    chain,
+    leaves,
+    viewer: Effect.sync(() => viewer),
+    policy: gardeneriaPolicy,
+    followers: follows,
+    toResource: (row: LeafRow) => ({
+      id: row.id,
+      title: row["title"],
+      visibility: row["visibility"],
+    }),
+  });
+  const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+    Effect.suspend(() => {
+      viewer = who;
+      return effect;
+    });
+  const post = async (visibility: Visibility, owner: ViewerAccount = member) => {
+    const written = await run(
+      actAs(
+        as(owner),
+        ops.create({ id: Option.none(), state: { title: "A post", visibility, draft: false } }),
+      ),
+    );
+    return written.id;
+  };
+  return { chain, leaves, ops, actAs, post };
+};
+
+describe("defineSubtype — an owned leaf", () => {
+  it("create stamps the creating account as owner, and records it as the actor", async () => {
+    const { chain, leaves, post } = ownedPosts();
+    const id = await post("public");
+    expect(leaves.owners.get(id)).toBe(member.id);
+    expect(chain.rows()[0]!.actorId).toEqual(Option.some(member.id));
+  });
+
+  it("a private target refuses a stranger and the anonymous as NotFound, never Forbidden", async () => {
+    const { ops, actAs, post } = ownedPosts();
+    const id = await post("private");
+    expect(await tagOf(actAs(as(otherMember), ops.get(id)))).toEqual(Option.some("NodeNotFound"));
+    expect(await tagOf(actAs(anonymous, ops.get(id)))).toEqual(Option.some("NodeNotFound"));
+  });
+
+  it("the same target still reads for whoever may see it", async () => {
+    const { ops, actAs, post } = ownedPosts();
+    const hidden = await post("private");
+    const open = await post("public");
+    expect(await tagOf(actAs(as(member), ops.get(hidden)))).toEqual(Option.none());
+    expect(await tagOf(actAs(as(moderator), ops.get(hidden)))).toEqual(Option.none());
+    expect(await tagOf(actAs(as(otherMember), ops.get(open)))).toEqual(Option.none());
+  });
+
+  it("a stranger cannot write; the owner can; a flip to private hides the row from the stranger", async () => {
+    const { ops, actAs, post } = ownedPosts();
+    const id = await post("public");
+    expect(await tagOf(actAs(as(otherMember), ops.update({ id, patch: { title: "x" } })))).toEqual(
+      Option.some("Forbidden"),
+    );
+    await run(actAs(as(member), ops.update({ id, patch: { visibility: "private" } })));
+    expect(await tagOf(actAs(as(otherMember), ops.get(id)))).toEqual(Option.some("NodeNotFound"));
+  });
+
+  it("a tombstone is hidden from all but the view-deleted rung", async () => {
+    const { ops, actAs, post } = ownedPosts();
+    const id = await post("public");
+    await run(actAs(as(member), ops.delete(id)));
+    expect(await tagOf(actAs(as(member), ops.get(id)))).toEqual(Option.some("NodeNotFound"));
+    expect(await tagOf(actAs(as(moderator), ops.get(id)))).toEqual(Option.none());
+  });
+
+  it("list and getMany apply the same facts as get", async () => {
+    const { ops, actAs, post } = ownedPosts();
+    const open = await post("public");
+    const followersOnly = await post("followers");
+    const hidden = await post("private");
+    const listed = async (who: Viewer, includeDeleted = false) =>
+      (
+        await run(actAs(who, ops.list({ limit: 50, offset: 0, includeDeleted, where: always })))
+      ).rows.map((row) => row.id);
+    expect(await listed(anonymous)).toEqual([open]);
+    expect((await listed(as(follower))).sort()).toEqual([open, followersOnly].sort());
+    expect((await listed(as(member))).sort()).toEqual([open, followersOnly, hidden].sort());
+    const many = await run(
+      actAs(as(otherMember), ops.getMany([open, followersOnly, hidden, "missing"])),
+    );
+    expect([...HashMap.keys(many)]).toEqual([open]);
+    // A tombstone lists only when the rung asked for it.
+    await run(actAs(as(member), ops.delete(open)));
+    expect(await listed(anonymous)).toEqual([]);
+    expect(await listed(as(moderator))).not.toContain(open);
+    expect(await listed(as(moderator), true)).toContain(open);
+  });
+
+  it("list clamps the page to the cap and reports the unpaged total", async () => {
+    const { ops, actAs, post } = ownedPosts();
+    await post("public");
+    await post("public");
+    const page = await run(
+      actAs(anonymous, ops.list({ limit: 1, offset: 0, includeDeleted: false, where: always })),
+    );
+    expect(page.rows).toHaveLength(1);
+    expect(page.total).toBe(2);
+    const huge = await run(
+      actAs(anonymous, ops.list({ limit: 1e9, offset: -5, includeDeleted: false, where: always })),
+    );
+    expect(huge.rows).toHaveLength(2);
+  });
+
+  it("the version history is gated like a write, and a restore appends", async () => {
+    const { chain, ops, actAs, post } = ownedPosts();
+    const id = await post("public");
+    await run(actAs(as(member), ops.update({ id, patch: { title: "Second" } })));
+    expect(await tagOf(actAs(as(otherMember), ops.getVersion(id, 0n)))).toEqual(
+      Option.some("Forbidden"),
+    );
+    const snapshot = await run(actAs(as(member), ops.getVersion(id, 0n)));
+    expect(snapshot.state["title"]).toBe("A post");
+    const restored = await run(actAs(as(moderator), ops.restoreVersion(id, 0n)));
+    expect(restored.version).toBe(2n);
+    expect(chain.rows()[2]!.actorId).toEqual(Option.some(moderator.id));
+  });
+});
+
+describe("defineSubtype — a reference leaf", () => {
+  it("writes at the corpus rung; reads are public", async () => {
+    const chain = makeInMemoryChainStore();
+    const leaves = makeInMemoryLeafStore(chain, ["name"]);
+    let viewer: Viewer = as(member);
+    const ops = defineSubtype({
+      type: "taxa",
+      access: { kind: "reference" },
+      chain,
+      leaves,
+      viewer: Effect.sync(() => viewer),
+      policy: gardeneriaPolicy,
+      followers: nobody,
+      toResource: (row: LeafRow) => ({ id: row.id }),
+    });
+    expect(await tagOf(ops.create({ id: Option.none(), state: { name: "Quercus" } }))).toEqual(
+      Option.some("Forbidden"),
+    );
+    viewer = as(contributor);
+    const { id } = await run(ops.create({ id: Option.none(), state: { name: "Quercus" } }));
+    expect(leaves.owners.size).toBe(0);
+    viewer = anonymous;
+    expect(await tagOf(ops.get(id))).toEqual(Option.none());
+  });
+});
+
+describe("subtypeHandlers — the handlers seam", () => {
+  it("writes every mutation through the cache inside the write boundary, and evicts on delete", async () => {
+    const { ops, actAs, post } = ownedPosts();
+    const cached = new Map<string, unknown>();
+    const log: Array<string> = [];
+    const handlers = subtypeHandlers(ops, {
+      transact: (effect) =>
+        Effect.andThen(
+          Effect.sync(() => log.push("transact")),
+          effect,
+        ),
+      cache: Option.some({
+        set: (id, resource) => Effect.sync(() => void cached.set(id, resource)),
+        delete: (id) => Effect.sync(() => void cached.delete(id)),
+      }),
+    });
+    const id = await post("public");
+    const updated = await run(
+      actAs(as(member), handlers.update({ id, patch: { title: "Cached" } })),
+    );
+    expect(updated).toMatchObject({ id, title: "Cached" });
+    expect(cached.get(id)).toEqual(updated);
+    const restored = await run(actAs(as(member), handlers.restoreVersion({ id, version: 0n })));
+    expect(cached.get(id)).toMatchObject({ title: "A post" });
+    expect(restored).toEqual(cached.get(id));
+    await run(actAs(as(member), handlers.delete(id)));
+    expect(cached.has(id)).toBe(false);
+    expect(log).toEqual(["transact", "transact", "transact"]);
+  });
+});
