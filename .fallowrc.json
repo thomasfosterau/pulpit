@@ -1,0 +1,73 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "entry": [
+    "packages/pulpit/src/index.ts",
+    "packages/pulpit/src/content.ts",
+    "packages/pulpit/src/registry.ts",
+    "packages/pulpit/src/version-chain.ts",
+    "packages/pulpit/src/subtype.ts",
+    "packages/pulpit/src/publication.ts",
+    "packages/pulpit/tests/**/*.test.ts",
+    "packages/pulpit/tests/**/*.types.ts",
+    "tests/dist-consumer/src/*.ts",
+    "**/vite.config.ts"
+  ],
+  "ignorePatterns": ["**/dist/**", "**/coverage/**"],
+  "ignoreDependencies": [
+    "@types/node",
+    "effect-solutions",
+    "@effect/tsgo",
+    "@effect/language-service",
+    "@typescript/native",
+    "typescript",
+    "vite",
+    "vitest",
+    "vite-plus",
+    "@changesets/cli",
+    "@changesets/changelog-github",
+    "@vitest/coverage-istanbul",
+    "fallow"
+  ],
+  "rules": {
+    "unused-files": "error",
+    "unused-exports": "error",
+    "unused-types": "error",
+    "unused-dependencies": "error",
+    "unused-dev-dependencies": "warn",
+    "unused-enum-members": "error",
+    "unused-class-members": "warn",
+    "unresolved-imports": "error",
+    "unlisted-dependencies": "error",
+    "duplicate-exports": "error",
+    "circular-dependencies": "error",
+    "boundary-violation": "error",
+    "stale-suppressions": "warn"
+  },
+  "boundaries": {
+    "zones": [
+      {
+        "name": "pulpit",
+        "patterns": ["packages/pulpit/**"]
+      },
+      {
+        "name": "dist-consumer",
+        "patterns": ["tests/dist-consumer/**"]
+      }
+    ],
+    "rules": [
+      {
+        "from": "pulpit",
+        "allow": []
+      },
+      {
+        "from": "dist-consumer",
+        "allow": ["pulpit"]
+      }
+    ]
+  },
+  "health": {
+    "maxCyclomatic": 20,
+    "maxCognitive": 15,
+    "maxCrap": 30
+  }
+}

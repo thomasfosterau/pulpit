@@ -1,0 +1,92 @@
+{
+  "name": "@thomasfosterau/pulpit",
+  "version": "0.0.0",
+  "description": "The versioned-content kernel for an Effect headless CMS: Content model fields and registry flags on effect-jsonapi, the append-only node/version chain operations, the subtype operation factory with owned/reference access, and the publication / moderation / cache-serveability predicates.",
+  "keywords": [
+    "cms",
+    "effect",
+    "effect-schema",
+    "headless-cms",
+    "json-api",
+    "jsonapi",
+    "typescript",
+    "versioning"
+  ],
+  "homepage": "https://github.com/thomasfosterau/pulpit#readme",
+  "bugs": {
+    "url": "https://github.com/thomasfosterau/pulpit/issues"
+  },
+  "license": "MIT",
+  "author": "Thomas Foster <me@thomasfoster.au>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thomasfosterau/pulpit.git",
+    "directory": "packages/pulpit"
+  },
+  "files": [
+    "dist",
+    "src",
+    "!src/**/*.test.ts",
+    "README.md",
+    "CLAUDE.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./content": "./src/content.ts",
+    "./registry": "./src/registry.ts",
+    "./version-chain": "./src/version-chain.ts",
+    "./filter": "./src/filter.ts",
+    "./subtype": "./src/subtype.ts",
+    "./publication": "./src/publication.ts"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./content": {
+        "types": "./dist/content.d.ts",
+        "default": "./dist/content.js"
+      },
+      "./registry": {
+        "types": "./dist/registry.d.ts",
+        "default": "./dist/registry.js"
+      },
+      "./version-chain": {
+        "types": "./dist/version-chain.d.ts",
+        "default": "./dist/version-chain.js"
+      },
+      "./filter": {
+        "types": "./dist/filter.d.ts",
+        "default": "./dist/filter.js"
+      },
+      "./subtype": {
+        "types": "./dist/subtype.d.ts",
+        "default": "./dist/subtype.js"
+      },
+      "./publication": {
+        "types": "./dist/publication.d.ts",
+        "default": "./dist/publication.js"
+      }
+    },
+    "access": "public"
+  },
+  "devDependencies": {
+    "@effect/language-service": "catalog:",
+    "@thomasfosterau/effect-jsonapi": "catalog:",
+    "@types/node": "catalog:",
+    "@vitest/coverage-istanbul": "catalog:",
+    "effect": "catalog:"
+  },
+  "peerDependencies": {
+    "@thomasfosterau/effect-jsonapi": "catalog:peers",
+    "effect": "catalog:peers"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

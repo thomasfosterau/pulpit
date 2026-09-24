@@ -1,0 +1,14 @@
+{
+  "name": "@pulpit/dist-consumer",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Type-checks a consumer fixture against the EMITTED declarations of @thomasfosterau/pulpit, asserting every exported type — the gate for the declaration-emit hazard a published library carries and its own tests cannot see.",
+  "type": "module",
+  "dependencies": {
+    "@thomasfosterau/effect-jsonapi": "catalog:",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

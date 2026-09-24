@@ -1,0 +1,121 @@
+name: Effect Canary
+
+# Runs the gate against the newest Effect *prerelease* (the "rc" npm dist-tag)
+# instead of the version pinned in pnpm-workspace.yaml / pnpm-lock.yaml, so
+# upstream breakage surfaces here on a schedule rather than in a consumer's
+# build. Copied in shape from the effect-jsonapi library.
+#
+# Scheduled + manual only — this never runs on push or pull_request, so a red
+# run can never block a PR merge. The job still finishes red in the Actions
+# tab (see the final step) and files/refreshes a GitHub issue, because nobody
+# watches the Actions tab for a weekly cron.
+on:
+  schedule:
+    # Mondays at 06:00 UTC.
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
+concurrency:
+  group: effect-canary-${{ github.ref }}
+  cancel-in-progress: true
+
+# No permissions by default; the single job grants only what it needs.
+permissions: {}
+
+jobs:
+  canary:
+    name: Type-check & test against effect@rc
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write # to file/refresh the failure-notification issue
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      # Float the whole workspace onto the newest Effect prerelease. Every
+      # package resolves `effect` through the strict catalog (and the `effect:
+      # "catalog:"` override forces a singleton), so the catalog entry is the
+      # one place to rewrite; the lockfile is then regenerated for the float
+      # (this job never commits it).
+      - name: Install latest Effect prerelease
+        run: |
+          set -euo pipefail
+          latest="$(npm view effect@rc version)"
+          echo "floating effect to ${latest}"
+          sed -i -E "s/^(  effect: ).*/\1${latest}/" pnpm-workspace.yaml
+          pnpm install --no-frozen-lockfile
+
+      # The two checks most likely to catch an Effect API/behaviour break.
+      # Lint and formatting are deliberately skipped: they have nothing to do
+      # with the Effect version and would only add unrelated noise to a
+      # canary result. Each step runs even if an earlier one fails, so a
+      # single run reports type-check / test status independently.
+      - name: Type gates (packages + emitted declarations, incl. type-level tests)
+        id: typecheck
+        continue-on-error: true
+        run: vp run --concurrency-limit 2 check
+
+      - name: Unit tests
+        id: test
+        continue-on-error: true
+        run: vp run -r test:unit
+
+      - name: Open or refresh an issue if the canary is red
+        if: |
+          steps.typecheck.outcome == 'failure' ||
+          steps.test.outcome == 'failure'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          set -euo pipefail
+
+          title="Effect canary is red against effect@rc"
+
+          body=$(jq -n \
+            --arg run "$RUN_URL" \
+            --arg typecheck "$TYPECHECK_OUTCOME" \
+            --arg test "$TEST_OUTCOME" \
+            '"The scheduled Effect canary failed against the latest `effect` prerelease (the `rc` npm dist-tag).\n\n" +
+             "- typecheck: " + $typecheck + "\n" +
+             "- test: " + $test + "\n\n" +
+             "Run: " + $run + "\n\n" +
+             "This does not block any PR by itself — it means the next Effect prerelease is likely to break this library once it stabilizes. Investigate the run, then either fix the break ahead of time or close this out if it turns out to be a fluke in that prerelease."')
+
+          existing=$(curl -sS -G \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            --data-urlencode "q=repo:$REPO type:issue state:open in:title \"$title\"" \
+            "https://api.github.com/search/issues" | jq -r '.items[0].number // empty')
+
+          if [ -n "$existing" ]; then
+            curl -sS -X POST \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$REPO/issues/$existing/comments" \
+              -d "{\"body\": $body}"
+          else
+            payload=$(jq -n --arg title "$title" --argjson body "$body" '{title: $title, body: $body}')
+            curl -sS -X POST \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$REPO/issues" \
+              -d "$payload"
+          fi
+
+      # continue-on-error above keeps the job running through both checks so
+      # the issue body above has full information; this step turns that into
+      # a real (visible, red) job failure once we're done.
+      - name: Fail the job if any check failed
+        if: |
+          steps.typecheck.outcome == 'failure' ||
+          steps.test.outcome == 'failure'
+        run: exit 1

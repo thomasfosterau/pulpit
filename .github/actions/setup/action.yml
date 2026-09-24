@@ -1,0 +1,93 @@
+# Composite setup shared by every CI job that needs the toolchain.
+# Sets up Node.js + pnpm, restores the pnpm store cache (keyed on
+# pnpm-lock.yaml by setup-node), and installs dependencies with a frozen
+# lockfile (retried — see the Install step's own comment for why).
+# `vp` and the dev bins (svelte-check, playwright, drizzle-kit,
+# alchemy, tsx) land in node_modules/.bin, which this adds to PATH so later
+# steps invoke `vp …` / `alchemy …` / `tsx …` directly.
+# see the gardeneria application, whose action this copies.
+#
+# Callers must run `actions/checkout` BEFORE this (a local composite action
+# needs the repo on disk first).
+name: Setup toolchain
+description: Set up Node.js and pnpm, restore the package cache, and install dependencies.
+runs:
+  using: composite
+  steps:
+    # pnpm before Node so setup-node's `cache: pnpm` can resolve the store path.
+    # The pnpm version comes from the `packageManager` field in package.json.
+    - name: Setup pnpm
+      uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+    - name: Setup Node.js
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      with:
+        node-version: latest
+        cache: pnpm
+
+    # The install is RETRIED, deliberately — do not collapse this back to a bare
+    # `pnpm install`. On 2026-07-26 a trunk push failed its whole CI run here,
+    # before a single check had run, on a transient filesystem race inside
+    # pnpm's own linker:
+    #
+    #   node_modules/workerd postinstall$ node install.js
+    #   [ERR_PNPM_ENOENT] ENOENT: no such file or directory, rename
+    #   'node_modules/@cloudflare/unenv-preset/node_modules/_tmp_2143_ffb1021847fe558f4a3ddbefb8588d5a'
+    #   -> 'node_modules/@cloudflare/unenv-preset/node_modules/workerd'
+    #
+    # `workerd` resolves into the tree twice — hoisted at the root and nested
+    # under `@cloudflare/unenv-preset` — and both copies are in `allowBuilds`
+    # (pnpm-workspace.yaml), so pnpm runs a build script for each. The failure
+    # is pnpm's atomic import of the nested copy: it stages the directory as
+    # `_tmp_<pid>_<hex>` and renames it into place, and that rename found its
+    # own source gone, concurrently with the second `workerd` build starting.
+    #
+    # Evidence: run 30191408746 (#1192's merge commit), job 89765405662, the
+    # `typecheck` job. That run's `check` and `fallow-audit` jobs installed
+    # successfully from the same commit in the same minute, which is what makes
+    # this a race rather than a defect in the commit or the lockfile. Note that
+    # trunk run 30190540534 — sometimes cited alongside it — failed in
+    # `lighthouse`, NOT here; only one trunk run has hit this so far (1 of 14
+    # trunk-push failures surveyed 2026-07-24..26, and 0 of 36 pull_request-run
+    # failures over the same window).
+    #
+    # That asymmetry is not a workflow difference — `ci.yml` is one workflow for
+    # both. It is the store cache. The failing job logged `pnpm cache is not
+    # found` and `reused 0, downloaded 992`, i.e. every package was imported
+    # fresh instead of hard-linked from a warm store, which widens the race
+    # window; warm jobs log `reused 991, downloaded 1` and install ~15s faster.
+    # And trunk is systematically the one that runs cold: a cache saved on a PR
+    # ref is not visible to the default branch, so on every lockfile change a PR
+    # run populates the new key and the following trunk push still misses it
+    # (observed directly — PR run 30190269532 restored key `8619a934…` warm at
+    # 05:59Z; trunk run 30191408746 missed that same key at 06:39Z).
+    #
+    # This is a MITIGATION, NOT A FIX. The race is upstream (pnpm's linker; see
+    # the tech-debt entry "Upstream report draft: pnpm's atomic package import
+    # races itself when one package resolves twice and builds"), and it cannot
+    # be reproduced on demand, so CI is the only place it is ever observed.
+    # Retrying is safe because `pnpm install` is idempotent: it reconciles
+    # node_modules against the committed lockfile on every attempt.
+    #
+    # What this deliberately does NOT do, because each trades a flaky install
+    # for an unverified dependency tree: skip `--frozen-lockfile`, disable
+    # postinstall scripts, or bypass the supply-chain lockfile policy check.
+    # All three still run on every attempt. A genuinely deterministic failure
+    # (lockfile drift, a policy violation) simply fails all three attempts and
+    # still turns the job red — it costs seconds, since those checks fail fast.
+    - name: Install dependencies
+      shell: bash
+      run: |
+        for attempt in 1 2 3; do
+          if pnpm install --frozen-lockfile; then
+            break
+          fi
+          if [ "$attempt" -eq 3 ]; then
+            echo "::error::pnpm install failed after 3 attempts"
+            exit 1
+          fi
+          delay=$((attempt * 15))
+          echo "::warning::pnpm install failed (attempt ${attempt}/3); retrying in ${delay}s"
+          sleep "$delay"
+        done
+        echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
