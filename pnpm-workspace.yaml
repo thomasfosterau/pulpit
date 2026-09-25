@@ -45,7 +45,7 @@ catalog:
   "@vitest/coverage-istanbul": 5.0.0
   effect: 4.0.0-rc.115
   effect-solutions: ^0.5.3
-  fallow: 3.25.0
+  fallow: 3.28.0
   # TypeScript 6/7 side-by-side: TS7 (the native Go compiler) ships no JS API
   # until 7.1, so JS-API consumers (@effect/language-service) stay on TS6 while
   # native `tsc` type-checks AND emits this library's `dist/`. The alias keeps
