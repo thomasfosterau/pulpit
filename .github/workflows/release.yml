@@ -70,9 +70,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      # `--ignore-scripts` also skips this workspace's own `prepare` script,
-      # which is what produces the Effect-patched native `tsc` the build runs
-      # under — so it is run explicitly, as our code rather than a dependency's.
+      # `--ignore-scripts` also skips this workspace's own `prepare` script
+      # (`vp config && effect-tsgo patch --typescript --oxlint`), which is what
+      # produces the Effect-patched native `tsc` the build runs under — so it
+      # is run explicitly here. Note what that means: it is the one lifecycle
+      # script that runs in this id-token job, and it is not only first-party
+      # code — `effect-tsgo patch` executes the `@effect/tsgo` dependency (and
+      # `vp config` installs the git hooks, which then run on the Changesets
+      # action's version commit). Both are pinned by the lockfile.
       - name: Patch the toolchain (effect-tsgo)
         run: pnpm run prepare
 
@@ -81,7 +86,9 @@ jobs:
 
       # When changesets are pending, this opens/updates a "Version Packages" PR
       # (via `pnpm run version`). Once that PR is merged (no changesets remain),
-      # it runs `pnpm run release`, which publishes with `pnpm publish` —
+      # it runs `pnpm run release`, which publishes with `pnpm publish
+      # --ignore-scripts` (no package lifecycle script — `prepublishOnly`,
+      # `prepack`, `publish`, … — runs in this job; none is defined today) —
       # pnpm 11 performs npm OIDC trusted publishing itself when the job holds
       # `id-token: write` and no token is configured (it no longer delegates
       # to the npm CLI, so npm is never upgraded here), and it (unlike
