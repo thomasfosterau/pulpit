@@ -10,7 +10,7 @@
   "scripts": {
     "changeset": "changeset",
     "version": "changeset version && vp fmt && pnpm install --lockfile-only",
-    "release": "pnpm -r --filter './packages/*' publish --access public --no-git-checks --provenance && changeset tag",
+    "release": "pnpm -r --filter './packages/*' publish --access public --no-git-checks && changeset tag",
     "fallow": "fallow --summary",
     "fallow:audit": "fallow audit",
     "prepare": "vp config && effect-tsgo patch --typescript --oxlint"
