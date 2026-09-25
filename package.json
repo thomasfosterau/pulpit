@@ -9,7 +9,7 @@
   "type": "module",
   "scripts": {
     "changeset": "changeset",
-    "version": "changeset version && pnpm install --lockfile-only",
+    "version": "changeset version && vp fmt && pnpm install --lockfile-only",
     "release": "pnpm -r --filter './packages/*' publish --access public --no-git-checks --provenance && changeset tag",
     "fallow": "fallow --summary",
     "fallow:audit": "fallow audit",

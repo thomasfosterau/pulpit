@@ -8,6 +8,8 @@ Releases are automated with [Changesets](https://github.com/changesets/changeset
 2. **Merge to `main`.** The [`release`](./.github/workflows/release.yml) workflow runs and, while changesets are pending, opens or updates a **"Version Packages"** PR that applies the version bump and rolls the changesets into `CHANGELOG.md`.
 3. **Merge the "Version Packages" PR.** With no changesets left, the workflow publishes the new version to npm (with provenance) via `pnpm publish` and trusted publishing, then tags the commit and creates the GitHub release.
 
+The version step (`pnpm run version`) runs `changeset version`, then `vp fmt`, then `pnpm install --lockfile-only`. Changesets v3 formats the changelogs it writes with whatever formatter it detects, and it detects the `oxfmt` shim that Vite+ installs; that shim only serves editors and exits non-zero when run directly. So `.changeset/config.json` sets `"format": false` and the script formats with `vp fmt` itself.
+
 The publish step uses `pnpm publish --provenance` rather than `npm publish`: pnpm 11 performs npm OIDC trusted publishing itself when the job holds `id-token: write` and no token is configured, and only pnpm rewrites the workspace's `catalog:` / `catalog:peers` specifiers and applies `publishConfig.exports` in the published manifest (an `npm publish` from the package directory would ship them verbatim). `changeset tag` then emits the `New tag:` lines the Changesets action uses to push the tag and create the GitHub release.
 
 ## Maintainer setup (one-time)
