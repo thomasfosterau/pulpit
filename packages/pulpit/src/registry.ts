@@ -1,6 +1,4 @@
 /**
- * @copyright Thomas Foster
- *
  * **The resource registry's flag vocabulary and construction-time checks** —
  * generic in the tree.
  *
@@ -46,6 +44,7 @@
  *
  * Client-safe (no Drizzle) and module-load-time static.
  *
+ * @copyright Thomas Foster
  * @module pulpit/registry
  */
 

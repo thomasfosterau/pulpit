@@ -135,7 +135,7 @@ describe("ownerRef", () => {
     expect(PostResource.relationships.owner.ref()).toBe(UserResource);
   });
 
-  it("is required in effect-jsonapi 0.14's generated create payload (the seam a handler strips)", () => {
+  it("is required in effect-jsonapi's generated create payload (the seam a handler strips)", () => {
     // Pinned rather than hidden: the operation layer stamps the owner from the
     // viewer, so an application's hand-written create struct omits it, but
     // the generated `createPayload` lists a `one` relationship as required.

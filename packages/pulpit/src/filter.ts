@@ -1,6 +1,4 @@
 /**
- * @copyright Thomas Foster
- *
  * **The list-filter vocabulary** — the kernel's read predicates as data.
  *
  * Every visibility, soft-delete and publication rule the kernel owns has two
@@ -30,6 +28,7 @@
  * | `notPublished` | `(col IS NULL OR col > now())` — parenthesised, so it cannot bind to a surrounding `AND` |
  * | `and` / `or` | `AND` / `OR` over the parts |
  *
+ * @copyright Thomas Foster
  * @module pulpit/filter
  */
 

@@ -1,6 +1,4 @@
 /**
- * @copyright Thomas Foster
- *
  * **The publication axis, the moderation state, and the cache serveability
  * policy.**
  *
@@ -45,6 +43,7 @@
  * #1475); a family with one closes it on the write path (evict on the
  * target's mutation) with the cache TTL floor as the backstop.
  *
+ * @copyright Thomas Foster
  * @module pulpit/publication
  */
 

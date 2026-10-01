@@ -1,6 +1,4 @@
 /**
- * @copyright Thomas Foster
- *
  * **The node / version chain discipline** — create, append, tombstone,
  * restore and history over an append-only chain, generic in the leaf.
  *
@@ -48,6 +46,7 @@
  * and nothing else. Authorisation is not this module's concern either: the
  * subtype factory (`./subtype`) gates before it calls in.
  *
+ * @copyright Thomas Foster
  * @module pulpit/version-chain
  */
 

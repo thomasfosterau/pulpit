@@ -1,6 +1,4 @@
 /**
- * @copyright Thomas Foster
- *
  * `@thomasfosterau/pulpit` — the versioned-content kernel.
  *
  * Every module is exported as a namespace from the package root, following
@@ -8,6 +6,7 @@
  * also a subpath (`@thomasfosterau/pulpit/content`, …) for a consumer that
  * wants one module without the barrel.
  *
+ * @copyright Thomas Foster
  * @module pulpit
  */
 

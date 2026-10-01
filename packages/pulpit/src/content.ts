@@ -1,6 +1,4 @@
 /**
- * @copyright Thomas Foster
- *
  * **The Content model half of the kernel** — the shared Content-axis field
  * spreads and the base `content` resource, defined via
  * `@thomasfosterau/effect-jsonapi`'s `Resource.make`.
@@ -16,6 +14,7 @@
  * rule: a value sets, `null` clears a nullable column, `undefined` carries
  * forward — declared on the descriptor, never re-spelled at a call site).
  *
+ * @copyright Thomas Foster
  * @module pulpit/content
  */
 

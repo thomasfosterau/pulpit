@@ -41,6 +41,9 @@ import {
   ownerRef,
 } from "@thomasfosterau/pulpit/content";
 
+// The account family the owner linkage points at (the application's own).
+const UserResource = Resource.make("users", { attributes: { name: Schema.String } });
+
 export const PostResource = Resource.make("posts", {
   attributes: {
     ...ownedContentLeafResourceFields, // createdAt, updatedAt, deletedAt?, visibility
@@ -69,6 +72,8 @@ export const PostResource = Resource.make("posts", {
 The flag vocabulary an application's resource registry is declared in, and the construction-time checks that keep it honest. The tree is the application's; the vocabulary and the checks are the kernel's.
 
 ```ts
+import { Resource } from "@thomasfosterau/effect-jsonapi";
+import * as Schema from "effect/Schema";
 import {
   parent,
   root,
@@ -76,6 +81,9 @@ import {
   registryWireTypes,
   type RegistryEntry,
 } from "@thomasfosterau/pulpit/registry";
+
+// In an application, the `PostResource` from the `./content` example above.
+const PostResource = Resource.make("posts", { attributes: { title: Schema.String } });
 
 const REGISTRY = [
   { key: "node", parent: root },
@@ -165,7 +173,7 @@ A SQL renderer must honour this contract:
 - `reference` — writes at the corpus-write rung; reads public apart from soft-delete and `private`.
 - `owned` — creates at any account (stamping the owner); other writes at owner-or-moderator; reads through `canViewOwned` (three-state visibility plus `draft`), lists through `ownedListFilter`, the same facts as a `ListFilter`.
 
-A hidden row is always `NodeNotFound`, never `Forbidden`. `subtypeHandlers(ops, { transact, cache })` wraps the operations as the handler record effect-jsonapi#172's `resourceHandlers` is expected to accept, writing every mutation through the resource cache.
+`get`, `getMany` and `list` treat a row the viewer may not see as missing (`NodeNotFound`, never `Forbidden`). The write and history operations don't: their gate answers `Forbidden` for an existing owned row the caller doesn't own. `subtypeHandlers(ops, { transact, cache })` wraps the operations as the handler record a JSON:API server is expected to accept (see [Seams](#seams)), writing every mutation through the resource cache.
 
 | Export | What it is |
 | --- | --- |
@@ -183,52 +191,54 @@ A hidden row is always `NodeNotFound`, never `Forbidden`. `subtypeHandlers(ops, 
 
 ## `./publication`
 
+The publication axis (stamped AND arrived), the moderation state, and the KV cache's serveability policy.
+
 | Export | What it is |
 | --- | --- |
 | `isPublishedAt(stamp, now)` / `isNotPublishedAt` | Stamped AND arrived, and its exact complement (a future stamp is scheduled, not out). |
 | `publishedFilter(column, wanted)` | The axis as a list-filter arm; none in, no predicate out. |
 | `ModerationState` | `pending \| approved \| rejected`. |
 | `isPubliclyServeable(resource, { owned?, publishGated?, now? })` | The KV cache's security gate (`CACHE-AUTH-005`): only what every viewer may read is serveable. |
-| `serveablePolicy(options)` | The same gate as effect-web#4's `serveable` hook. |
+| `serveablePolicy(options)` | The same gate as a resource cache's `serveable` hook (see [Seams](#seams)). |
 
 ## Seams
 
-The kernel is written against explicit interfaces, because the packages that will fill them are not published yet. Each seam below states the shape its real implementation must have.
+The kernel is written against explicit interfaces, because the packages that will fill them haven't published yet. Each seam below states the shape its real implementation must have; the issue numbers in parentheses are for maintainers and aren't needed to follow the contract.
 
-### `VersionChainStore<E, R>` — filled by effect-drizzle-ext's `./versioned-chain` (pulpit#4)
+### `VersionChainStore<E, R>`: the version-chain persistence
 
-The Drizzle store is built over `makeSubtypeTables` / `makeCurrentVersionView` and the application's root tables. Expected schema:
+Expected to be a Drizzle store built over the application's version tables (effect-drizzle-ext's `./versioned-chain`, once it publishes; pulpit#4). Expected schema:
 
 - a root version table (the apps' `core.node_version`) keyed `(id, version bigint)`, carrying `action` (`create | update | delete`, the single home of currency and tombstone state), `timestamp` and `user_id`; plus the identity row (`core.node`: `id`, `type`) inserted at version 0;
 - one version table per chain level keyed `(id, version)` with the `(id, version)` → parent-version FK, carrying that level's domain columns (6NF fact tables for a fact-scoped level).
 
-Method contract: `head` is `SELECT … ORDER BY version DESC LIMIT 1` on the root table; `snapshot` reads every level at `(id, version)` and returns none when ANY level is missing (no partial state); `append` inserts the root row and every level's row at the given version (at version 0 the identity row too) and maps a primary-key violation on `(id, version)` to `VersionConflict`; `entries` is `ORDER BY version ASC LIMIT $limit`; `mintId` is a UUID. `E` is `EffectDrizzleQueryError`; `R` is `CurrentTransaction` — the store never opens a transaction.
+Method contract: `head` is `SELECT … ORDER BY version DESC LIMIT 1` on the root table; `snapshot` reads every level at `(id, version)` and returns none when ANY level is missing (no partial state); `append` inserts the root row and every level's row at the given version (at version 0 the identity row too) and maps a primary-key violation on `(id, version)` to `VersionConflict`; `entries` is `ORDER BY version ASC LIMIT $limit`; `mintId` is a UUID. `E` is the store's query error and `R` the ambient transaction (`EffectDrizzleQueryError` and `CurrentTransaction` for the Drizzle store). The store never opens a transaction itself.
 
-### `LeafStore<Row, Following, E, R>` — filled by a Drizzle store over the current-version view (pulpit#5)
+### `LeafStore<Row, Following, E, R>`: the current-version view
 
-`columns` is the view's column-name set (`getColumns(view)`); `get` / `getMany` are `id = $id` / `id = ANY($ids)` reads with `LIMIT`; `list` renders its `ListFilter` (below), orders totally (the caller's order closed by `id`), and returns the page plus the unpaged total as a window column; `ownerOf` / `stampOwner` read and insert `core.node_owner`.
+Expected to be a Drizzle store over the leaf's current-version view (pulpit#5). `columns` is the view's column-name set (`getColumns(view)`); `get` / `getMany` are `id = $id` / `id = ANY($ids)` reads with `LIMIT`; `list` renders its `ListFilter` (below), orders totally (the caller's order closed by `id`), and returns the page plus the unpaged total as a window column; `ownerOf` / `stampOwner` read and insert the node's owner row (`core.node_owner`).
 
-### `ListFilter<Following>` → SQL — filled by effect-drizzle-ext's query helpers / effect-auth-drizzle (pulpit#5, #6)
+### `ListFilter<Following>` → SQL: the filter renderer
 
-The rendering contract is the table under [`./filter`](#filter). `Following` is the follower seam's subquery (`SQLWrapper`), rendered as `col IN (<subquery>)`, never a materialised array (gardeneria #1107). `published` / `notPublished` use the database's `now()` and are parenthesised.
+The rendering contract is the table under [`./filter`](#filter). `Following` is the follower seam's subquery (Drizzle's `SQLWrapper`), rendered as `col IN (<subquery>)`, never a materialised array. `published` / `notPublished` use the database's `now()` and are parenthesised.
 
-### The viewer, the role axes and the follower seam — filled by effect-auth#221 (pulpit#5)
+### The viewer, the role axes and the follower seam
 
-The lettered items below are the inputs listed in [effect-auth#221](https://github.com/thomasfosterau/effect-auth/issues/221).
+Expected to come from effect-auth once it publishes (pulpit#5). Until then the application supplies:
 
-- `Viewer = Option<{ id, role }>` — effect-auth's session context, item (b).
-- `AccessPolicy` — four predicates over a signed-in account (`canViewPrivate`, `canViewDeleted`, `canModerate`, `canWriteCorpus`), each an application-named rung compared by the role-ladder factory's `hasRoleAtLeast`, item (a). Must fail closed on an unknown role.
-- `FollowerSeam<Following, R>` — `isFollower(followerId, ownerId)` and `following(followerId)`, item (c); `nobodyFollows(nobody)` is the fail-closed default when a runtime provides none.
-- `ReadScope` and `canViewOwned` live here until effect-auth ships item (c); when it does, pulpit consumes its read scope and keeps only the rendering into `ListFilter`.
-- `Unauthorized` / `Forbidden` are defined here until effect-auth's item (a) owns them.
+- `Viewer = Option<{ id, role }>`: the request's signed-in account, or none for an anonymous request (effect-auth's session context).
+- `AccessPolicy`: four predicates over a signed-in account (`canViewPrivate`, `canViewDeleted`, `canModerate`, `canWriteCorpus`). Each compares the account's role against an application-named rung on its role ladder (effect-auth's role-ladder factory, `hasRoleAtLeast`). Each must fail closed on an unknown role.
+- `FollowerSeam<Following, R>`: `isFollower(followerId, ownerId)` answers one row's question, and `following(followerId)` returns the list filter's `in` set. `nobodyFollows(nobody)` is the fail-closed default when a runtime provides none.
+- `ReadScope` and `canViewOwned` (effect-auth's owned read scope) live here until effect-auth publishes its own; then pulpit consumes its read scope and keeps only the rendering into `ListFilter`.
+- `Unauthorized` / `Forbidden` (effect-auth's gate errors) are defined here until effect-auth publishes them.
 
-### `SubtypeHandlers` — the record effect-jsonapi#172's `resourceHandlers` is expected to accept (pulpit#5)
+### `SubtypeHandlers`: the handler record
 
-One entry per endpoint (`list`, `get`, `create`, `update`, `delete`) returning the resource the document assembler wraps, plus `restoreVersion`, which has no JSON:API endpoint and runs SSR-direct. Each write runs inside the handler seam's `transact` (always-open, website #1883), re-reads the row outside it, and writes it through the cache. When #172 lands, `subtypeHandlers` maps onto its real handler signatures (the request context, the query decode, the document assembly) and its error catalogue replaces the tags here.
+The record a JSON:API server's resource handlers are expected to accept (effect-jsonapi's server skeleton, once it ships; pulpit#5). One entry per endpoint (`list`, `get`, `create`, `update`, `delete`) returns the resource the document assembler wraps, plus `restoreVersion`, which has no JSON:API endpoint and is called directly. Each write runs inside the config's `transact` (always-open: a nested call opens a savepoint), re-reads the row outside it, and writes it through the cache. When the server skeleton ships, `subtypeHandlers` maps onto its real handler signatures (the request context, the query decode, the document assembly), and its error catalogue replaces the tags here.
 
-### `ResourceCacheSeam` and the `serveable` hook — filled by effect-web#4 (pulpit#5, #6)
+### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 
-The cache's write side is `set(id, resource)` / `delete(id)`, both never failing (a KV fault is swallowed by the cache). Its security policy is `serveablePolicy({ owned, publishGated })` from `./publication`, passed as `makeResourceCache`'s `serveable` option; the cache applies it on both paths and evicts on a non-serveable write.
+Expected to be a KV read-through resource cache (effect-web's, once it publishes; pulpit#5, pulpit#6). The cache's write side is `set(id, resource)` / `delete(id)`, both never failing (the cache swallows a KV fault). Its security policy is `serveablePolicy({ owned, publishGated })` from `./publication`, passed as the cache's `serveable` option; the cache applies it on both its read and write paths and evicts on a non-serveable write.
 
 ## License
 

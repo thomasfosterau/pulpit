@@ -1,6 +1,4 @@
 /**
- * @copyright Thomas Foster
- *
  * **The subtype operation factory** — a leaf's CRUD, version history and
  * list, gated by its access kind, over the version chain and a
  * current-version view.
@@ -27,8 +25,11 @@
  *
  * ## Invariants
  *
- * - A hidden row is {@link NodeNotFound}, never {@link Forbidden}
- *   (`SEC-AUTH-ENUM-001`): a 403 would confirm the row exists.
+ * - A read (`get` / `getMany` / `list`) answers a hidden row as
+ *   {@link NodeNotFound} or omits it, never {@link Forbidden}
+ *   (`SEC-AUTH-ENUM-001`): a 403 would confirm the row exists. The write and
+ *   history gate ({@link requireWriter}) does answer `Forbidden` for an
+ *   existing owned row the caller doesn't own (pulpit#24).
  * - Soft-deleted rows are visible only to the view-deleted rung, and a list
  *   includes them only when the caller also asked (`includeDeleted`).
  * - A declaration naming columns the view lacks fails closed — nothing lists.
@@ -52,6 +53,7 @@
  *   `resourceHandlers` is expected to accept, with the effect-web#4 cache's
  *   write-through.
  *
+ * @copyright Thomas Foster
  * @module pulpit/subtype
  */
 
