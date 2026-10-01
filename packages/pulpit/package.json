@@ -28,7 +28,6 @@
     "src",
     "!src/**/*.test.ts",
     "README.md",
-    "CLAUDE.md",
     "LICENSE"
   ],
   "type": "module",
