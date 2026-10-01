@@ -1,15 +1,8 @@
 #!/usr/bin/env bash
 #
-# Provision a checkout for NON-INTERACTIVE use.
-#
-# One file, two callers — the Claude Code SessionStart hook and the
-# devcontainer's `postCreateCommand` (which invokes this file directly) — so a
-# container shell and an agent session are provisioned identically. The two
-# used to be separate pieces of code, and the drift between them stayed
-# invisible until a task failed halfway through. (This logic previously lived
-# in scripts/setup-dev-env.sh; it moved here when the local-PostgreSQL half of
-# that script was replaced by Testcontainers in the integration suite's global
-# setup — see the Website decision record `integration-tests-on-local-postgres`.)
+# Provision a checkout for NON-INTERACTIVE use (the Claude Code SessionStart
+# hook, registered in .claude/settings.json). Copied from the gardeneria
+# application's hook.
 #
 # ## The problem it solves
 #
@@ -23,9 +16,8 @@
 # and the line that puts the toolchain on PATH — `. "$HOME/.vite-plus/env"` —
 # sits *below* it. So the environment is correct for a human at a prompt and
 # broken for every non-interactive shell, which is what an agent's tool calls
-# and a git hook both are. `fallow` (which AGENTS.md requires before every
-# commit) and `tsx` (which every repo tooling script runs under) are in
-# `node_modules/.bin`, which is on nobody's PATH.
+# and a git hook both are. `fallow` (which the fallow gate runs before every
+# commit) is in `node_modules/.bin`, which is on nobody's PATH.
 #
 # Rather than fight PATH — which this script cannot export into its caller —
 # it links the tools into `~/.local/bin`, a directory already on PATH in this
@@ -53,25 +45,19 @@
 #
 # ## Secrets
 #
-# This hook hydrates NO secrets. Sessions get no vendor credentials, so
-# anything needing them (`vp run dev`, `vp run dev:e2e`, `alchemy` CLI calls)
-# will not run here — see the local-preview notes for how a human supplies them
-# from a shell, and the 1Password runbook for the store itself. CI and
-# deploys are unaffected: they inject credentials via `op run --environment`
-# in the workflows, not through this hook.
+# This hook hydrates NO secrets; nothing in this repo needs one.
 #
 # ## Contract
 #
 # Idempotent, and never fatal. Every failure path logs and continues, because
 # the SessionStart hook must not block a session and a half-provisioned
-# container is more useful than a container that refused to start. Callers
+# session is more useful than one that refused to start. Callers
 # that want hard failure should check the tools themselves afterwards.
 #
 # Untrusted-content note: this script reads only fixed, hardcoded paths. It
 # takes no input from repo content, issue or PR bodies, or anything an agent
 # could have been persuaded to write earlier in a session. Do not add such
-# input without revisiting this note — it runs on every session start and
-# container create.
+# input without revisiting this note — it runs on every session start.
 
 set -uo pipefail
 
@@ -136,9 +122,8 @@ SHIM
 }
 
 # ── 1. Repo binaries the documented workflows invoke directly ─────────────────
-# AGENTS.md's fallow gate runs `fallow audit …` before every commit, and the
-# tooling scripts run as `tsx scripts/<name>.ts`. Both resolve only from
-# node_modules/.bin. `vp` is included for the remote/web runner, where the
+# The fallow gate runs `fallow audit …` before every commit, and `fallow`
+# resolves only from node_modules/.bin. `vp` is included for the remote/web runner, where the
 # global launcher does not exist.
 for tool in tsx fallow; do
   link_tool "$PROJECT_DIR/node_modules/.bin/$tool"
@@ -170,7 +155,7 @@ fi
 # ── 3. Dependencies ──────────────────────────────────────────────────────────
 # Unconditional, not only when node_modules is absent: a prebaked container can
 # carry a tree built from an OLDER lockfile, and stale dependencies masquerade
-# as trunk breakage. `--frozen-lockfile` is a sub-second no-op when in sync.
+# as breakage on `main`. `--frozen-lockfile` is a sub-second no-op when in sync.
 if [ -f "$PROJECT_DIR/pnpm-lock.yaml" ]; then
   log "syncing dependencies against the lockfile…"
   (cd "$PROJECT_DIR" && vp install --frozen-lockfile >/dev/null 2>&1) \
