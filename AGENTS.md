@@ -8,11 +8,10 @@
 
 - **The app copies are the behavioural spec and the test corpus, not code to transplant.** Target the idiomatic Effect shape (`effect/http`, `HttpApi`, `Layer`, `Schema`, `Schema.TaggedError`); port the tests, not the files. Where website and gardeneria have diverged, gardeneria is the reference unless an issue says otherwise.
 - **A `#NNN` citation inside a ported comment names an issue in the app it was ported from** (gardeneria unless stated): the evidence behind a decision, not a ticket in this tracker. An ID such as `VERSION-CHAIN-006` or `CACHE-AUTH-005` is a grep handle carried over from the apps' (deleted) specs; the rule it names is stated in [SECURITY.md → Invariant IDs](SECURITY.md#invariant-ids). Grep for it to find every site that honours it, and add a row there when you cite a new one.
-- **Seams before dependencies.** The kernel is written against explicit seam interfaces (the version-chain store, the read scope, the handlers config, the `serveable` hook) because the packages that will fill them (effect-drizzle-ext, effect-jsonapi#172's server skeleton, effect-auth#221's read scope, effect-web#4's cache) are not published. State a seam's expected shape in [`packages/pulpit/README.md` → Seams](packages/pulpit/README.md#seams), and stop where a real dependency is needed (see Work tracker).
 - **No application vocabulary.** No app tree (the registry's _flags_ are generic; its entries are the app's), no id brands beyond what an app injects, no Hyperdrive, no migrations tooling.
 - **Every external version lives in `pnpm-workspace.yaml`** (`catalogMode: strict` rejects anything else in a `package.json`). After editing the catalog, run `pnpm install` and commit the regenerated `pnpm-lock.yaml`; a stale lockfile fails CI with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`.
 
-The kernel's own invariants, terms and import boundary are in [`packages/pulpit/CLAUDE.md`](packages/pulpit/CLAUDE.md); they are not restated here.
+The kernel's own invariants, terms and import boundary, including the seams-before-dependencies rule, are in [`packages/pulpit/CLAUDE.md`](packages/pulpit/CLAUDE.md); they are not restated here.
 
 ## Conventions
 

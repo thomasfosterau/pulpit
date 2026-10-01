@@ -18,7 +18,7 @@ The publishing and install-script settings are explained in full in comments bes
 
 ### Provenance
 
-Nothing in the pipeline requests [provenance](https://docs.npmjs.com/generating-provenance-statements). Left unset, pnpm attaches it only when the OIDC token reports a **public** repository and the registry reports the package as public; this repository is private, so releases carry none today. Don't add `--provenance` or `pnpm_config_provenance`: an explicit request from a private repository fails the publish. That also applies to the one-off manual bootstrap publish below.
+Nothing in the pipeline requests [provenance](https://docs.npmjs.com/generating-provenance-statements), so a release from this private repository carries none; never add `--provenance` (it fails the publish from a private repository, including the manual bootstrap publish below). The full reasoning is beside the publish step in [release.yml](./.github/workflows/release.yml).
 
 ## Maintainer setup (one-time)
 
