@@ -1,6 +1,4 @@
 /**
- * @copyright Thomas Foster
- *
  * **The subtype operation factory** — a leaf's CRUD, version history and
  * list, gated by its access kind, over the version chain and a
  * current-version view.
@@ -27,8 +25,11 @@
  *
  * ## Invariants
  *
- * - A hidden row is {@link NodeNotFound}, never {@link Forbidden}
- *   (`SEC-AUTH-ENUM-001`): a 403 would confirm the row exists.
+ * - A read (`get` / `getMany` / `list`) answers a hidden row as
+ *   {@link NodeNotFound} or omits it, never {@link Forbidden}
+ *   (`SEC-AUTH-ENUM-001`): a 403 would confirm the row exists. The write and
+ *   history gate ({@link requireWriter}) does answer `Forbidden` for an
+ *   existing owned row the caller doesn't own (pulpit#24).
  * - Soft-deleted rows are visible only to the view-deleted rung, and a list
  *   includes them only when the caller also asked (`includeDeleted`).
  * - A declaration naming columns the view lacks fails closed — nothing lists.
@@ -39,8 +40,8 @@
  * ## Seams
  *
  * Three things the kernel does not own, each an explicit parameter rather
- * than an import (their packages are unpublished; see
- * `packages/pulpit/CLAUDE.md` → Seams):
+ * than an import (their packages are unpublished; see the package README →
+ * Seams):
  *
  * - the **viewer** and the **role axes** ({@link Viewer}, {@link AccessPolicy})
  *   and the **follower** answer — effect-auth#221's session context, role
@@ -52,6 +53,7 @@
  *   `resourceHandlers` is expected to accept, with the effect-web#4 cache's
  *   write-through.
  *
+ * @copyright Thomas Foster
  * @module pulpit/subtype
  */
 
@@ -115,7 +117,12 @@ export interface AccessPolicy {
  * whatever the list filter's `in` node takes (a subquery in SQL, #1107).
  */
 export interface FollowerSeam<Following, R> {
+  /** Whether `followerId` follows `ownerId`: the single-row question `canViewOwned` asks. */
   readonly isFollower: (followerId: string, ownerId: string) => Effect.Effect<boolean, never, R>;
+  /**
+   * The owners `followerId` follows, as the list filter's `in` set (a
+   * subquery in SQL, never a materialised array).
+   */
   readonly following: (followerId: string) => Following;
 }
 
@@ -368,7 +375,9 @@ export const MAX_PAGE_LIMIT = 1000;
  * checks its declaration against.
  */
 export interface LeafStore<Row extends LeafRow, Following, E, R> {
+  /** The view's column names; an owned declaration naming a column outside this set lists nothing. */
   readonly columns: ReadonlySet<string>;
+  /** One row of the current-version view by id, or none. Applies no visibility policy. */
   readonly get: (id: string) => Effect.Effect<Option.Option<Row>, E, R>;
   /** One `id = ANY($ids)` read, never `ids.length` sequential gets. */
   readonly getMany: (ids: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<Row>, E, R>;
@@ -390,12 +399,17 @@ export interface LeafStore<Row extends LeafRow, Following, E, R> {
 export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, R> {
   /** The leaf's JSON:API wire type — names spans and tags `NodeNotFound`. */
   readonly type: string;
+  /** How the leaf is gated: `reference` corpus material or `owned` per-member rows. */
   readonly access: LeafAccess;
+  /** The version-chain store the writes append through. */
   readonly chain: VersionChainStore<E, R>;
+  /** The current-version view the reads and lists go through, plus the owner stamp. */
   readonly leaves: LeafStore<Row, Following, E, R>;
   /** The request's viewer (effect-auth's session context). */
   readonly viewer: Effect.Effect<Viewer, never, R>;
+  /** The application's role axes. */
   readonly policy: AccessPolicy;
+  /** The follower seam; {@link nobodyFollows} when the runtime provides none. */
   readonly followers: FollowerSeam<Following, R>;
   /** Shape a view row into the resource (sync; links resolved by the caller's mapper). */
   readonly toResource: (row: Row) => Resource;
@@ -414,19 +428,43 @@ type Gate = Unauthorized | Forbidden;
 
 /** The operations {@link defineSubtype} produces for one leaf. */
 export interface SubtypeOps<Resource, E, R> {
+  /** The access declaration the operations gate by. */
   readonly access: LeafAccess;
+  /**
+   * Create the node at version 0, stamping the viewer as owner on an owned
+   * leaf. Fails `Unauthorized` when anonymous, `Forbidden` below the
+   * corpus-write rung on a reference leaf, `NodeAlreadyExists` when a
+   * caller-supplied id is taken.
+   */
   readonly create: (input: {
     readonly id: Option.Option<string>;
     readonly state: ChainState;
   }) => Effect.Effect<ChainWrite, Gate | NodeAlreadyExists | VersionConflict | E, R>;
+  /**
+   * Append a tri-state patch. Fails `Unauthorized` when anonymous,
+   * `Forbidden` below the write rung (the corpus-write rung for reference
+   * data, owner-or-moderator for an owned row), and `NodeNotFound` when an
+   * owned row has no owner or the node is unknown or tombstoned.
+   */
   readonly update: (input: {
     readonly id: string;
     readonly patch: ChainPatch;
   }) => Effect.Effect<ChainWrite, Gate | NodeNotFound | VersionConflict | E, R>;
+  /**
+   * {@link SubtypeOps.update}, except a tombstone does not fail: the node
+   * comes back live (`VERSION-CHAIN-006`). Fails as `update` does, apart from
+   * the tombstone.
+   */
   readonly restore: (input: {
     readonly id: string;
     readonly patch: ChainPatch;
   }) => Effect.Effect<ChainWrite, Gate | NodeNotFound | VersionConflict | E, R>;
+  /**
+   * Tombstone the node (idempotent: an already tombstoned node reports
+   * `alreadyDeleted: true` and writes nothing). Fails `Unauthorized` when
+   * anonymous, `Forbidden` below the write rung, and `NodeNotFound` when an
+   * owned row has no owner or the node is unknown.
+   */
   readonly delete: (
     id: string,
   ) => Effect.Effect<
@@ -434,17 +472,30 @@ export interface SubtypeOps<Resource, E, R> {
     Gate | NodeNotFound | VersionConflict | E,
     R
   >;
+  /**
+   * The row as a resource. Fails `NodeNotFound` when it is missing OR hidden
+   * from the viewer (`SEC-AUTH-ENUM-001`).
+   */
   readonly get: (id: string) => Effect.Effect<Resource, NodeNotFound | E, R>;
   /** Visible rows by id, in one read; a missing or hidden id is simply absent. */
   readonly getMany: (
     ids: ReadonlyArray<string>,
   ) => Effect.Effect<HashMap.HashMap<string, Resource>, E, R>;
+  /**
+   * One page of the rows the viewer may see, with the unpaged total. The
+   * limit is clamped to {@link MAX_PAGE_LIMIT}.
+   */
   readonly list: (request: ListRequest) => Effect.Effect<Page<Resource>, E, R>;
   /** Gated like a write: the history exposes every state, private and deleted included. */
   readonly getVersion: (
     id: string,
     version: bigint,
   ) => Effect.Effect<VersionSnapshot, Gate | NodeNotFound | VersionNotFound | E, R>;
+  /**
+   * Re-apply the state at `version` as a new version, gated like a write.
+   * Fails `VersionNotFound`, before writing anything, when that version
+   * cannot be fully reconstructed.
+   */
   readonly restoreVersion: (
     id: string,
     version: bigint,
@@ -595,7 +646,12 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
  * `public → private` flip self-purges — and `delete` evicts.
  */
 export interface ResourceCacheSeam<Resource, R> {
+  /**
+   * Write the resource through; the cache refuses (and evicts) one that
+   * isn't serveable. Never fails.
+   */
   readonly set: (id: string, resource: Resource) => Effect.Effect<void, never, R>;
+  /** Evict the resource. Never fails. */
   readonly delete: (id: string) => Effect.Effect<void, never, R>;
 }
 
@@ -606,8 +662,8 @@ export interface ResourceCacheSeam<Resource, R> {
  * no JSON:API endpoint and is run SSR-direct.
  *
  * Every write re-reads the row after the chain write and writes it through
- * the cache; that write-through is the reason these exist rather than each
- * route calling the operation (`versionRestoreCommand`): the cache serves
+ * the cache; that write-through is why these exist rather than each route
+ * calling the operation directly: the cache serves
  * anonymous reads, and a write that skipped it would leave them on the
  * superseded content until the TTL expired. The chain write runs inside
  * `transact` (the handler seam's boundary, website #1883); the re-read

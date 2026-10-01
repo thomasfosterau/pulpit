@@ -1,6 +1,4 @@
 /**
- * @copyright Thomas Foster
- *
  * **The list-filter vocabulary** — the kernel's read predicates as data.
  *
  * Every visibility, soft-delete and publication rule the kernel owns has two
@@ -10,8 +8,8 @@
  * `publishedFilter`), which ties the rule to one database layer and makes the
  * two readings impossible to compare. Here the set-shaped answer is a small
  * predicate tree, {@link ListFilter}: a Drizzle renderer (the seam
- * effect-drizzle-ext / effect-auth-drizzle fill, see
- * `packages/pulpit/CLAUDE.md` → Seams) turns it into SQL, and
+ * effect-drizzle-ext / effect-auth-drizzle fill, see the package README →
+ * Seams) turns it into SQL, and
  * {@link evaluate} runs it against an in-memory row — which is what lets the
  * unit suite prove the list filter and the row predicate never disagree.
  *
@@ -30,6 +28,7 @@
  * | `notPublished` | `(col IS NULL OR col > now())` — parenthesised, so it cannot bind to a surrounding `AND` |
  * | `and` / `or` | `AND` / `OR` over the parts |
  *
+ * @copyright Thomas Foster
  * @module pulpit/filter
  */
 

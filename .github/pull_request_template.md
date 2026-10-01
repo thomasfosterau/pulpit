@@ -2,17 +2,13 @@
 
 Describe what changed and why. If this closes an issue, add `Closes #N` so it auto-closes on merge to `main`.
 
-## Validation
+## Verification
 
-Tick what you ran. Pre-commit covers format + lint; there is no pre-push hook.
+Run the gates in [AGENTS.md → Verification](https://github.com/thomasfosterau/pulpit/blob/main/AGENTS.md#verification), in order, and list each command with its final pass/fail. If a gate couldn't run, say which and why.
 
-- [ ] `vp fmt --check` / `vp lint`
-- [ ] `vp run check` (packages + the dist-consumer declaration check)
-- [ ] `vp run -r test:unit`
-- [ ] `vp run test:integration` (needs a local PostgreSQL server or a Docker daemon)
-- [ ] `vp run -r build`
-- [ ] `fallow audit --base origin/main`
-- [ ] A changeset under `.changeset/` for every published-package change
+## Changeset
+
+- [ ] A changeset under `.changeset/` for every change to the published package's behaviour (or: none needed, because …)
 
 ## Notes
 

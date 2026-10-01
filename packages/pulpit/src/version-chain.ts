@@ -1,6 +1,4 @@
 /**
- * @copyright Thomas Foster
- *
  * **The node / version chain discipline** — create, append, tombstone,
  * restore and history over an append-only chain, generic in the leaf.
  *
@@ -43,11 +41,12 @@
  * The chain is read and written through a {@link VersionChainStore} the
  * application supplies — in production, a Drizzle store over
  * effect-drizzle-ext's `./versioned-chain` tables and views, which is not yet
- * published (see `packages/pulpit/CLAUDE.md` → Seams for the expected table
- * shape). The operations here own the discipline; the store owns persistence
+ * published (see the package README → Seams for the expected table shape).
+ * The operations here own the discipline; the store owns persistence
  * and nothing else. Authorisation is not this module's concern either: the
  * subtype factory (`./subtype`) gates before it calls in.
  *
+ * @copyright Thomas Foster
  * @module pulpit/version-chain
  */
 
@@ -63,6 +62,7 @@ import * as Schema from "effect/Schema";
 
 /** What one version row recorded: the create, an edit (restores included), or a tombstone. */
 export const VersionAction = Schema.Literals(["create", "update", "delete"]);
+/** The {@link VersionAction} literal union: `"create" | "update" | "delete"`. */
 export type VersionAction = typeof VersionAction.Type;
 
 /**
@@ -209,17 +209,33 @@ export const applyPatch = (state: ChainState, patch: ChainPatch) => ({
   ...Record.filter(patch, (value): value is ColumnValue => value !== undefined),
 });
 
-/** The create / update inputs: the leaf's state (or patch), the node id, the acting account. */
+/**
+ * The input to {@link VersionChainOps.create}: the node id, the leaf's
+ * initial state, the acting account.
+ */
 export interface CreateInput {
   /** A caller-supplied node id (client-generated ids); minted by the store when absent. */
   readonly id: Option.Option<string>;
+  /** The leaf's full state at version 0. */
   readonly state: ChainState;
+  /** The acting account, recorded on the version row; none for a write with no session behind it. */
   readonly actorId: Option.Option<string>;
 }
 
+/**
+ * The input to {@link VersionChainOps.update} and
+ * {@link VersionChainOps.restore}: the node, a tri-state patch, the acting
+ * account.
+ */
 export interface UpdateInput {
+  /** The node to append to. */
   readonly id: string;
+  /**
+   * The tri-state patch over the current state: a value sets, `null` clears,
+   * an absent key carries forward.
+   */
   readonly patch: ChainPatch;
+  /** The acting account, recorded on the version row; none for a write with no session behind it. */
   readonly actorId: Option.Option<string>;
 }
 
