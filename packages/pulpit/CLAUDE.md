@@ -17,7 +17,7 @@ The versioned-content kernel. Peers: `effect`, `@thomasfosterau/effect-jsonapi`.
 
 - Declare a registry entry's parent with `parent("key")`, never `Option.some("key")`: `Option.some` widens the literal to `string` even under `as const`, and every `PickChildren` derivation silently goes empty.
 - A registry violation is thrown at import (`RegistryDeclarationError`), never an Effect failure — no runtime exists when a registry is declared.
-- `ownerRef`'s `owner` is a `Relationship.one`, which effect-jsonapi 0.14 lists as **required** in the generated `createPayload`. The operation layer stamps the owner from the viewer; a handler serving the generated payload strips the linkage. Pinned in `tests/content.test.ts` so the day effect-jsonapi#172 ships a read-only linkage descriptor is visible.
+- `ownerRef`'s `owner` is a `Relationship.one`, which effect-jsonapi 0.16 lists as **required** in the generated `createPayload`. The operation layer stamps the owner from the viewer; a handler serving the generated payload strips the linkage. Pinned in `tests/content.test.ts` so the day effect-jsonapi#172 ships a read-only linkage descriptor is visible.
 
 - The version chain is append-only (`VERSION-CHAIN-001/002`); the only write over a tombstone is the explicit restore (`VERSION-CHAIN-006`).
 - A hidden row is `NotFound`, never `Forbidden` (`SEC-AUTH-ENUM-001`). A write gate may say `Forbidden`: it only runs on a row the caller has named, and an owned write first loads the owner (`NotFound` when there is none).

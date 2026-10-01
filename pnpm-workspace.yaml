@@ -24,7 +24,7 @@ catalogMode: strict
 catalog:
   "@changesets/changelog-github": ^1.0.1
   "@changesets/cli": ^3.0.3
-  "@effect/language-service": ^0.87.2
+  "@effect/language-service": ^0.87.3
   # Effect Language Service as a native (TypeScript-Go) binary — the TS7 side
   # of the 6/7 split. `effect-tsgo patch` overwrites the native `tsc` binary
   # with an Effect-patched build matched by gitHead, so this pins in lockstep
@@ -40,10 +40,10 @@ catalog:
   "@effect/tsgo": 0.45.0
   "@mpsuesser/oxlint-plugin-effect": ^0.5.0
   # The JSON:API model layer the `./content` and `./registry` subpaths build on.
-  "@thomasfosterau/effect-jsonapi": ^0.14.0
+  "@thomasfosterau/effect-jsonapi": ^0.16.0
   "@types/node": ^26.4.1
   "@vitest/coverage-istanbul": 5.0.0
-  effect: 4.0.0-rc.115
+  effect: 4.0.0-rc.118
   effect-solutions: ^0.5.3
   fallow: 3.28.0
   # TypeScript 6/7 side-by-side: TS7 (the native Go compiler) ships no JS API
@@ -67,12 +67,12 @@ catalog:
 
 # Peer ranges the PUBLISHED package declares. Kept as a named catalog so the
 # strict catalog mode still governs them while they stay ranges (an exact
-# `4.0.0-rc.115` peer would reject a consumer on rc.112). `pnpm publish`
+# `4.0.0-rc.118` peer would reject a consumer on a later prerelease). `pnpm publish`
 # replaces `catalog:peers` with these ranges in the published manifest.
 catalogs:
   peers:
-    "@thomasfosterau/effect-jsonapi": ">=0.14.0"
-    effect: ">=4.0.0-rc.112"
+    "@thomasfosterau/effect-jsonapi": ">=0.16.0"
+    effect: ">=4.0.0-rc.118"
 
 overrides:
   vite: "catalog:"
@@ -80,6 +80,12 @@ overrides:
   # `effect` MUST be a singleton (see the header): force every resolution to
   # the catalog version so a hoisting reshuffle cannot introduce a second copy.
   effect: "catalog:"
+  # `@mpsuesser/oxlint-plugin-effect` 0.5.0 is built on effect 4.0.0-beta.100
+  # and calls `Schema.isIncludes` (renamed `isIncluding` in rc.118), so the
+  # catalog `effect` override above makes `vite.config.ts` fail to load. Keep
+  # the plugin on its own private beta.100 copy. Remove this once the plugin
+  # ships an rc.118 build (website#2015).
+  "@mpsuesser/oxlint-plugin-effect>effect": "4.0.0-beta.100"
 nodeLinker: hoisted
 allowBuilds:
   esbuild: true

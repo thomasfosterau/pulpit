@@ -6,7 +6,7 @@ A headless content management system built on top of Effect — starting with it
 | --- | --- |
 | [`@thomasfosterau/pulpit`](packages/pulpit/README.md) | The versioned-content kernel: the Content model fields and registry flags on `@thomasfosterau/effect-jsonapi`, the append-only node/version chain operations, the subtype operation factory with owned / reference-data access, and the publication, moderation and cache-serveability predicates. Peers: `effect`, `@thomasfosterau/effect-jsonapi`. |
 
-Built against `effect@4.0.0-rc` and `@thomasfosterau/effect-jsonapi@0.14`.
+Built against `effect@4.0.0-rc.118` and `@thomasfosterau/effect-jsonapi@0.16`.
 
 **Disclaimer:** this repository and its package have been created using Claude Code. The API is in flux; expect churn and breaking changes.
 
