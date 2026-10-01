@@ -61,6 +61,7 @@ import { always, notPublished, published, type ListFilter } from "./filter.ts";
  * only SOME viewers may read it.
  */
 export const ModerationState = Schema.Literals(["pending", "approved", "rejected"]);
+/** The {@link ModerationState} literal union: `"pending" | "approved" | "rejected"`. */
 export type ModerationState = typeof ModerationState.Type;
 
 /** Stamped, and the stamp has arrived at `now`. */

@@ -40,6 +40,7 @@ import * as Schema from "effect/Schema";
  * {@link ownedVisibilityResourceFields}.
  */
 export const Visibility = Schema.Literals(["public", "followers", "private"]);
+/** The {@link Visibility} literal union: `"public" | "followers" | "private"`. */
 export type Visibility = typeof Visibility.Type;
 
 /**
@@ -150,7 +151,7 @@ export const ownedContentLeafResourceFields = {
  * to resolve (deleting an account does not cascade to its rows); consumers
  * degrade to a neutral label rather than erroring.
  *
- * Note that effect-jsonapi 0.14 lists a `one` relationship as **required** in
+ * Note that effect-jsonapi lists a `one` relationship as **required** in
  * the generated `createPayload`; an application serving the generated payload
  * strips the linkage at its handler seam, which is where a read-only linkage
  * descriptor belongs once effect-jsonapi#172's server skeleton lands.
