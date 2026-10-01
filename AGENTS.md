@@ -6,7 +6,7 @@ Project conventions live here; personal style preferences live in user memory. `
 
 ## Standing invariants
 
-- **The app copies are the behavioural spec and the test corpus, not code to transplant.** Target the idiomatic Effect shape (`effect/unstable/http`, `HttpApi`, `Layer`, `Schema`, `Schema.TaggedError`); port the tests, not the files. Where website and gardeneria have diverged, gardeneria is the reference unless an issue says otherwise.
+- **The app copies are the behavioural spec and the test corpus, not code to transplant.** Target the idiomatic Effect shape (`effect/http`, `HttpApi`, `Layer`, `Schema`, `Schema.TaggedError`); port the tests, not the files. Where website and gardeneria have diverged, gardeneria is the reference unless an issue says otherwise.
 - **A `#NNN` citation inside a ported comment names an issue in the app it was ported from** (gardeneria unless stated) — the evidence behind a decision, not a ticket in this tracker. An ID such as `PUB-009`, `VERSION-CHAIN-006`, `SEC-AUTH-ENUM-001` or `CACHE-AUTH-005` is the stable handle for an invariant written up in that app; grep for it here to find every site that honours it.
 - **The version chain is append-only.** Every write lands at `N_max + 1`; no existing version row is ever rewritten, deleted or reordered (`VERSION-CHAIN-001/002`). A restore is a new version whose content came from history.
 - **Nothing owned-private is ever served from the KV read-through cache** (`CACHE-AUTH-005`). The serveability policy in `./publication` is the one place that rule is spelled; every axis it checks is one the operation layer gates on.
