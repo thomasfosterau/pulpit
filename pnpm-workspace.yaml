@@ -12,9 +12,10 @@
 # lockfile fails CI at once with ERR_PNPM_LOCKFILE_CONFIG_MISMATCH.
 #
 # Versions are kept in lockstep with the consuming applications' catalogs
-# (the freshest, preferenceflow's, at scaffold time: effect, vite-plus, the
-# TypeScript 6/7 pair, fallow) — the apps consume this library, so the library
-# builds against exactly what they run.
+# (the freshest, preferenceflow's, at scaffold time: effect, the TypeScript
+# 6/7 pair, fallow; vite-plus and @effect/tsgo have since moved ahead of them) — the
+# apps consume this library, so the library builds against exactly what they
+# run.
 packages:
   - packages/*
   - tests/*
@@ -28,16 +29,20 @@ catalog:
   # Effect Language Service as a native (TypeScript-Go) binary — the TS7 side
   # of the 6/7 split. `effect-tsgo patch` overwrites the native `tsc` binary
   # with an Effect-patched build matched by gitHead, so this pins in lockstep
-  # with `@typescript/native` below (0.45.0 ships against typescript 7.0.2) and
-  # with the `oxlint` that `vite-plus` pulls in: each @effect/tsgo release
-  # ships artifacts for an explicit set of component versions and hard-errors
+  # with `@typescript/native` below (0.47.2 ships against typescript 7.0.2, and
+  # also 7.1.0-dev.20260929.1) and with the `oxlint` and `oxlint-tsgolint` that
+  # `vite-plus` pulls in: each @effect/tsgo release ships artifacts for an
+  # explicit set of component versions and hard-errors
   # (UnsupportedTargetPackageVersionError) on anything else, failing `pnpm
-  # install` itself rather than a later task — 0.45.0 supports oxlint 1.81.0 /
-  # 1.82.0, which is why vite-plus is 0.3.1 below and not the 0.3.0 the apps
-  # pin (0.3.0 carries oxlint 1.79.0, which 0.45.0 refuses). Read the
-  # `components` table in node_modules/@effect/tsgo/dist/effect-tsgo.cjs before
-  # bumping any of the three.
-  "@effect/tsgo": 0.45.0
+  # install` itself rather than a later task. 0.47.2 supports oxlint
+  # 1.82.0–1.86.0 and oxlint-tsgolint 7.0.2001 / 7.0.2003, so vite-plus 0.3.3
+  # (oxlint 1.83.0, tsgolint 7.0.2001) is the pairing; 0.3.1 (oxlint 1.81.0)
+  # is no longer supported. vite-plus 1.0.0 (oxlint 1.85.0) also pairs but
+  # moves task cache settings under `cache` and vitest to 5.x: that is a
+  # separate migration. Read the `components` table in
+  # node_modules/@effect/tsgo/dist/effect-tsgo.cjs before bumping any of the
+  # three.
+  "@effect/tsgo": 0.47.2
   "@mpsuesser/oxlint-plugin-effect": ^0.5.0
   # The JSON:API model layer the `./content` and `./registry` subpaths build on.
   "@thomasfosterau/effect-jsonapi": ^0.16.0
@@ -54,15 +59,16 @@ catalog:
   # @typescript/native's gitHead must match @effect/tsgo's bundled binary.
   typescript: "npm:@typescript/typescript6@6.0.2"
   "@typescript/native": "npm:typescript@7.0.2"
-  # vite-plus pins `oxlint`, `oxfmt` and `vitest` to exact versions, so this
-  # entry — not a catalog entry of its own — is what decides the oxlint version
-  # `effect-tsgo patch --oxlint` has to support (see the @effect/tsgo note
-  # above): 0.3.0 carries oxlint 1.79.0, 0.3.1 carries 1.81.0. `vite` is the
-  # same release under its aliased core package, and `vitest` must match
-  # vite-plus's exact pin (0.3.1 → 4.1.11) because the `vitest: "catalog:"`
-  # override forces every resolution to the catalog singleton.
-  vite-plus: 0.3.1
-  vite: npm:@voidzero-dev/vite-plus-core@0.3.1
+  # vite-plus pins `oxlint`, `oxfmt`, `oxlint-tsgolint` and `vitest` to exact
+  # versions, so this entry — not a catalog entry of its own — is what decides
+  # the oxlint version `effect-tsgo patch --oxlint` has to support (see the
+  # @effect/tsgo note above): 0.3.1 carries oxlint 1.81.0, 0.3.2 1.82.0, 0.3.3
+  # 1.83.0. `vite` is the same release under its aliased core package, and
+  # `vitest` must match vite-plus's exact pin (0.3.3 → 4.1.11) because the
+  # `vitest: "catalog:"` override forces every resolution to the catalog
+  # singleton.
+  vite-plus: 0.3.3
+  vite: npm:@voidzero-dev/vite-plus-core@0.3.3
   vitest: 4.1.11
 
 # Peer ranges the PUBLISHED package declares. Kept as a named catalog so the
