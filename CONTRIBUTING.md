@@ -16,7 +16,7 @@ Hooks are managed by Vite+; the editable [.vite-hooks/pre-commit](.vite-hooks/pr
 
 ## CI expectations
 
-[ci.yml](.github/workflows/ci.yml) runs steps 1–5 of the gates in [AGENTS.md → Verification](AGENTS.md#verification) in one job. [release.yml](.github/workflows/release.yml) runs changesets/action on `main`: it opens the version PR while unreleased changesets exist and publishes the package once it merges, via npm trusted publishing (see [PUBLISHING.md](PUBLISHING.md)). [effect-canary.yml](.github/workflows/effect-canary.yml) floats the workspace onto `effect@rc` weekly and files an issue when the gates go red.
+[ci.yml](.github/workflows/ci.yml) runs steps 1–5 of the gates in [AGENTS.md → Verification](AGENTS.md#verification) in one job. [release.yml](.github/workflows/release.yml) runs changesets/action on `main`: it opens the version PR while unreleased changesets exist and publishes the package once it merges, via npm trusted publishing (see [PUBLISHING.md](PUBLISHING.md)).
 
 ## Pre-PR checklist
 
