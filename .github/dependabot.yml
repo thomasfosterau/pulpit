@@ -11,6 +11,17 @@
 # update types; a bare `dependency-name` ignore would block security updates
 # too).
 #
+# @effect/tsgo, `typescript` (the TS6 alias) and `@typescript/native` (TS7) are
+# one set: `effect-tsgo patch` matches the native `tsc` and the `oxlint` that
+# vite-plus pulls in by gitHead / version and hard-errors
+# (UnsupportedTargetPackageVersionError) on any pairing it ships no artifact
+# for, so a PR moving one of them alone goes red. They move BY HAND, as a set
+# together with vite-plus, after checking the `components` table in
+# node_modules/@effect/tsgo/dist/effect-tsgo.cjs (see pnpm-workspace.yaml).
+# Their *version* updates are ignored the same way; SECURITY updates stay
+# enabled. @effect/tsgo is also excluded from the `effect` group, whose
+# `@effect/*` pattern would otherwise pull it in.
+#
 # `cooldown` mirrors pnpm-workspace.yaml's `minimumReleaseAge`.
 version: 2
 updates:
@@ -34,12 +45,35 @@ updates:
         patterns:
           - "effect"
           - "@effect/*"
+        exclude-patterns:
+          - "@effect/tsgo"
       vitest-toolchain:
         patterns:
           - "vitest"
           - "@vitest/coverage-istanbul"
           - "vite-plus"
     ignore:
+      - dependency-name: "@effect/tsgo"
+        update-types:
+          [
+            "version-update:semver-major",
+            "version-update:semver-minor",
+            "version-update:semver-patch",
+          ]
+      - dependency-name: "typescript"
+        update-types:
+          [
+            "version-update:semver-major",
+            "version-update:semver-minor",
+            "version-update:semver-patch",
+          ]
+      - dependency-name: "@typescript/native"
+        update-types:
+          [
+            "version-update:semver-major",
+            "version-update:semver-minor",
+            "version-update:semver-patch",
+          ]
       - dependency-name: "vite"
         update-types:
           [
