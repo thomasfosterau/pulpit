@@ -1,9 +1,14 @@
 name: Effect Canary
 
-# Runs the gate against the newest Effect *prerelease* (the "rc" npm dist-tag)
-# instead of the version pinned in pnpm-workspace.yaml / pnpm-lock.yaml, so
-# upstream breakage surfaces here on a schedule rather than in a consumer's
-# build. Copied in shape from the effect-jsonapi library.
+# Runs the gate against the newest Effect *release* (the `latest` npm
+# dist-tag) instead of the version pinned in pnpm-workspace.yaml /
+# pnpm-lock.yaml, so upstream breakage surfaces here on a schedule rather than
+# in a consumer's build. Copied in shape from the effect-jsonapi library.
+#
+# The tag was `rc` until effect 4.0.0 shipped; `rc` has not moved since, so
+# floating onto it would only re-test the old floor (and run BELOW the catalog
+# pin once that is on 4.0.x). Switch the tag again if the project moves to
+# tracking a different line (e.g. a 4.1 prerelease tag); never `snapshot`.
 #
 # Scheduled + manual only — this never runs on push or pull_request, so a red
 # run can never block a PR merge. The job still finishes red in the Actions
@@ -24,7 +29,7 @@ permissions: {}
 
 jobs:
   canary:
-    name: Type-check & test against effect@rc
+    name: Type-check & test against effect@latest
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -37,17 +42,21 @@ jobs:
 
       - uses: ./.github/actions/setup
 
-      # Float the whole workspace onto the newest Effect prerelease. Every
+      # Float the whole workspace onto the newest Effect release. Every
       # package resolves `effect` through the strict catalog (and the `effect:
       # "catalog:"` override forces a singleton), so the catalog entry is the
       # one place to rewrite; the lockfile is then regenerated for the float
-      # (this job never commits it).
-      - name: Install latest Effect prerelease
+      # (this job never commits it). The `sed` is scoped to the top-level
+      # `catalog:` block (up to the next top-level key), so the `effect:
+      # "catalog:"` line under `overrides:` and the `catalogs.peers` range are
+      # left alone; the `grep` fails the step if the rewrite missed.
+      - name: Install latest Effect release
         run: |
           set -euo pipefail
-          latest="$(npm view effect@rc version)"
+          latest="$(npm view effect@latest version)"
           echo "floating effect to ${latest}"
-          sed -i -E "s/^(  effect: ).*/\1${latest}/" pnpm-workspace.yaml
+          sed -i -E "/^catalog:/,/^[^ #]/ s/^(  effect: ).*/\1${latest}/" pnpm-workspace.yaml
+          grep -E "^  effect: ${latest}$" pnpm-workspace.yaml
           pnpm install --no-frozen-lockfile
 
       # The two checks most likely to catch an Effect API/behaviour break.
@@ -78,17 +87,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          title="Effect canary is red against effect@rc"
+          title="Effect canary is red against effect@latest"
 
           body=$(jq -n \
             --arg run "$RUN_URL" \
             --arg typecheck "$TYPECHECK_OUTCOME" \
             --arg test "$TEST_OUTCOME" \
-            '"The scheduled Effect canary failed against the latest `effect` prerelease (the `rc` npm dist-tag).\n\n" +
+            '"The scheduled Effect canary failed against the latest `effect` release (the `latest` npm dist-tag).\n\n" +
              "- typecheck: " + $typecheck + "\n" +
              "- test: " + $test + "\n\n" +
              "Run: " + $run + "\n\n" +
-             "This does not block any PR by itself — it means the next Effect prerelease is likely to break this library once it stabilizes. Investigate the run, then either fix the break ahead of time or close this out if it turns out to be a fluke in that prerelease."')
+             "This does not block any PR by itself — it means the newest Effect release breaks this library, so the next catalog bump will too. Investigate the run, then either fix the break ahead of time or close this out if it turns out to be a fluke in that release."')
 
           existing=$(curl -sS -G \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
