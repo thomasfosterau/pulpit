@@ -10,7 +10,7 @@ The versioned-content kernel of an Effect headless CMS: the Content model fields
 pnpm add @thomasfosterau/pulpit effect @thomasfosterau/effect-jsonapi
 ```
 
-`effect` (`>=4.0.0-rc.118`) and `@thomasfosterau/effect-jsonapi` (`>=0.16.0`) are required peer dependencies; the package is built against `effect@4.0.0-rc.118` and `@thomasfosterau/effect-jsonapi@0.16.0`. Node.js 22 or newer is required.
+`effect` (`>=4.0.0-rc.118`) and `@thomasfosterau/effect-jsonapi` (`>=0.16.0`) are required peer dependencies; the package is built against `effect@4.0.0` and `@thomasfosterau/effect-jsonapi@0.16.0`. Node.js 22 or newer is required.
 
 ## API
 
