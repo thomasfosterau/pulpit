@@ -155,7 +155,7 @@ fi
 # ── 3. Dependencies ──────────────────────────────────────────────────────────
 # Unconditional, not only when node_modules is absent: a prebaked container can
 # carry a tree built from an OLDER lockfile, and stale dependencies masquerade
-# as breakage on `main`. `--frozen-lockfile` is a sub-second no-op when in sync.
+# as breakage on `trunk`. `--frozen-lockfile` is a sub-second no-op when in sync.
 if [ -f "$PROJECT_DIR/pnpm-lock.yaml" ]; then
   log "syncing dependencies against the lockfile…"
   (cd "$PROJECT_DIR" && vp install --frozen-lockfile >/dev/null 2>&1) \
