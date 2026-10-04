@@ -1,10 +1,10 @@
 ## Summary
 
-Describe what changed and why. If this closes an issue, add `Closes #N` so it auto-closes on merge to `main`.
+Describe what changed and why. If this closes an issue, add `Closes #N` so it auto-closes on merge to `trunk`.
 
 ## Verification
 
-Run the gates in [AGENTS.md → Verification](https://github.com/thomasfosterau/pulpit/blob/main/AGENTS.md#verification), in order, and list each command with its final pass/fail. If a gate couldn't run, say which and why.
+Run the gates in [AGENTS.md → Verification](https://github.com/thomasfosterau/pulpit/blob/trunk/AGENTS.md#verification), in order, and list each command with its final pass/fail. If a gate couldn't run, say which and why.
 
 ## Changeset
 

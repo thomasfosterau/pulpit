@@ -10,14 +10,14 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [trunk]
     types: [opened, reopened, synchronize, ready_for_review]
   push:
-    branches: [main]
+    branches: [trunk]
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/trunk' }}
 
 # No permissions by default; the single job grants only read access.
 permissions: {}

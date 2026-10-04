@@ -1,6 +1,6 @@
 name: Release
 
-# Changesets release flow: on every push to `main`, changesets/action either
+# Changesets release flow: on every push to `trunk`, changesets/action either
 # opens/updates the "Version Packages" PR (when unreleased changesets exist)
 # or, when that PR has merged and no changesets remain, publishes the package
 # to npm and tags the release. Copied in shape from the effect-jsonapi library;
@@ -8,7 +8,7 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches: [trunk]
 
 concurrency:
   group: release-${{ github.ref }}
