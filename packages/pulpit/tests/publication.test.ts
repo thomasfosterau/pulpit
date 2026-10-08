@@ -158,6 +158,16 @@ describe("isPubliclyServeable — the tombstone and draft axes", () => {
     expect(isPubliclyServeable({ attributes: { visibility: "public", draft: true } })).toBe(false);
     expect(isPubliclyServeable({ attributes: { visibility: "public", draft: false } })).toBe(true);
   });
+
+  it("REFUSES a present draft that is not exactly `false`, `null` included", () => {
+    expect(
+      [null, "false", 0, "no"].map((draft) =>
+        isPubliclyServeable({ attributes: { visibility: "public", draft } }),
+      ),
+    ).toEqual([false, false, false, false]);
+    // No key at all: the resource does not ride the axis.
+    expect(isPubliclyServeable({ attributes: { visibility: "public" } })).toBe(true);
+  });
 });
 
 describe("isPubliclyServeable — the owned-family posture (#1096)", () => {

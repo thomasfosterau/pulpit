@@ -165,8 +165,11 @@ export const isPubliclyServeable = (
   if (visibility !== undefined && visibility !== "public") return false;
   const moderationState = read("moderationState");
   if (moderationState !== undefined && moderationState !== "approved") return false;
-  // The draft axis: a draft is a gate wherever it is present.
-  if (read("draft") === true) return false;
+  // The draft axis: a draft is a gate wherever it is present, and a present
+  // value that is not exactly `false` (`null` included) reads as a draft, as
+  // the operation layer's row predicate reads it (SEC-AUTH-ENUM-001).
+  const draft = read("draft");
+  if (draft !== undefined && draft !== false) return false;
   // A tombstone is an admin-only read, and emitters omit the key while live
   // (#691): present at all — `null` included — refuses.
   return read("deletedAt") === undefined;
