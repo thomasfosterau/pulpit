@@ -53,6 +53,7 @@ import {
   rungGate,
   type EdgeCardinalityExceeded,
   type EdgeConflict,
+  type EdgeDeclarationError,
   type EdgeNotFound,
   type EdgeRow,
   type EdgeStore,
@@ -356,6 +357,7 @@ export type _CardinalityTag = Assert<
 export type _CardinalityMax = Assert<Equals<EdgeCardinalityExceeded["max"], number>>;
 export type _CardinalityEnd = Assert<Equals<EdgeCardinalityExceeded["end"], string>>;
 export type _ConflictTag = Assert<Equals<EdgeConflict["_tag"], "EdgeConflict">>;
+export type _DeclarationTag = Assert<Equals<EdgeDeclarationError["_tag"], "EdgeDeclarationError">>;
 export type _EdgeGate = Assert<
   Equals<
     ReturnType<EdgeWriteGate<StoreFailure, Transaction>>,

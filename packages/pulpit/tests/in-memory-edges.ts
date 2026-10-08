@@ -7,7 +7,8 @@
  * (with `NULLS NOT DISTINCT`, as gardeneria's `page_slugs_unique_variant`)
  * — and nothing the operations are responsible for. `list` joins each end's
  * view the way the SQL store's INNER JOIN does: under the end's alias, and
- * dropping an edge whose end has no row.
+ * dropping an edge whose end has no row — and reports the unpaged total as
+ * the SQL store's window column does (README → Seams).
  *
  * @module tests/in-memory-edges
  */
@@ -64,8 +65,12 @@ export const makeInMemoryNodes = (columns: ReadonlyArray<string>): InMemoryNodes
 export interface InMemoryEdgeStore extends EdgeStore<EdgeRow, Following, never, never> {
   /** Every stored edge, hidden ones included, in insertion order. */
   readonly rows: () => ReadonlyArray<EdgeRow>;
-  /** Simulate a concurrent writer: the next insert finds its unique key just taken. */
-  readonly raceNextInsert: () => void;
+  /**
+   * Simulate a concurrent writer: the next insert finds its unique key just
+   * taken by `winner`, which is stored in its place (the racing writer's
+   * values, which share the key and may differ elsewhere).
+   */
+  readonly raceNextInsert: (winner: EdgeValues) => void;
 }
 
 /** Two column values the unique key treats as equal: `NULLS NOT DISTINCT`, an absent key read as `NULL`. */
@@ -85,7 +90,7 @@ export const makeInMemoryEdgeStore = (options: {
 }): InMemoryEdgeStore => {
   let stored: ReadonlyArray<EdgeRow> = [];
   let minted = 0;
-  let race = false;
+  let race = Option.none<EdgeValues>();
 
   const collides = (values: EdgeValues) =>
     Arr.findFirst(
@@ -143,19 +148,21 @@ export const makeInMemoryEdgeStore = (options: {
 
   return {
     get: (id) => Effect.sync(() => Arr.findFirst(stored, (row) => row.id === id)),
+    // The total as the SQL store's window column reads it: every matching
+    // row when the page has one, and 0 for an empty page (past the end too).
     list: ({ where, limit, offset }) =>
-      Effect.map(matching(where), (rows) => ({
-        rows: rows.slice(offset, offset + limit),
-        total: rows.length,
-      })),
+      Effect.map(matching(where), (rows) => {
+        const page = rows.slice(offset, offset + limit);
+        return { rows: page, total: Arr.isReadonlyArrayNonEmpty(page) ? rows.length : 0 };
+      }),
     countAt: (column, nodeId) =>
       Effect.sync(() => stored.filter((row) => row[column] === nodeId).length),
     existing: (values) => Effect.sync(() => Option.map(collides(values), (row) => row.id)),
     insert: (values) =>
       Effect.sync(() => {
-        if (race) {
-          race = false;
-          write(values);
+        if (Option.isSome(race)) {
+          write(race.value);
+          race = Option.none();
           return Option.none();
         }
         return Option.isSome(collides(values)) ? Option.none() : Option.some(write(values));
@@ -167,8 +174,8 @@ export const makeInMemoryEdgeStore = (options: {
         return stored.length < before;
       }),
     rows: () => stored,
-    raceNextInsert: () => {
-      race = true;
+    raceNextInsert: (winner) => {
+      race = Option.some(winner);
     },
   };
 };

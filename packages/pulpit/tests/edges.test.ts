@@ -31,6 +31,7 @@ import * as Record from "effect/Record";
 import {
   canViewEndpoint,
   defineEdgeOps,
+  EdgeDeclarationError,
   endpointColumn,
   endpointFilter,
   rungGate,
@@ -43,6 +44,7 @@ import {
 import { always, eq, evaluate, type FilterRow } from "../src/filter.ts";
 import {
   defineSubtype,
+  MAX_PAGE_LIMIT,
   nobodyFollows,
   ownedAccess,
   requireWriter,
@@ -57,6 +59,7 @@ import {
   makeInMemoryEdgeStore,
   makeInMemoryNodes,
   type Following,
+  type InMemoryEdgeStore,
   type InMemoryNodes,
 } from "./in-memory-edges.ts";
 import {
@@ -123,12 +126,36 @@ const ownedEnd = (column: string, nodes: InMemoryNodes): EdgeEnd<never, never> =
 
 type Definition = EdgeDefinition<EdgeValues, EdgeRow, EdgeRow, Following, never, never>;
 
+/**
+ * The in-memory store, recording what the operations ask of it: each list's
+ * page window, and each cardinality count's `column:nodeId` (the node a SQL
+ * store locks), in call order.
+ */
+const recorded = (store: InMemoryEdgeStore) => {
+  let windows: ReadonlyArray<{ readonly limit: number; readonly offset: number }> = [];
+  let counted: ReadonlyArray<string> = [];
+  const edges: InMemoryEdgeStore = {
+    ...store,
+    list: (query) =>
+      Effect.suspend(() => {
+        windows = [...windows, { limit: query.limit, offset: query.offset }];
+        return store.list(query);
+      }),
+    countAt: (column, nodeId) =>
+      Effect.suspend(() => {
+        counted = [...counted, `${column}:${nodeId}`];
+        return store.countAt(column, nodeId);
+      }),
+  };
+  return { edges, seen: { windows: () => windows, counted: () => counted } };
+};
+
 /** One edge family over the in-memory store; the create input is the edge's column values. */
 const family = (
   declaration: Pick<Definition, "ends" | "onConflict" | "writeGate">,
   uniqueKey: ReadonlyArray<string> = [],
 ) => {
-  const edges = makeInMemoryEdgeStore({ ends: declaration.ends, uniqueKey });
+  const { edges, seen } = recorded(makeInMemoryEdgeStore({ ends: declaration.ends, uniqueKey }));
   let viewer: Viewer = anonymous;
   const ops = defineEdgeOps({
     ...declaration,
@@ -149,7 +176,7 @@ const family = (
     const page = await run(actAs(who, ops.list({ limit: 1000, offset: 0, where })));
     return { ids: page.rows.map((row) => row.id), total: page.total };
   };
-  return { edges, ops, actAs, listed };
+  return { edges, seen, ops, actAs, listed };
 };
 
 /** Two reference leaves, `s1` / `s2` and `p1` / `p2` / `p3`, all public. */
@@ -218,6 +245,16 @@ describe("ported: an edge joining two reference leaves (gardeneria's anatomy / c
     expect(await listed(anonymous, eq("subjectId", "s1"))).toEqual({ ids: [first.id], total: 1 });
   });
 
+  it("refuses a re-assertion below the gate with the gate's answer, never the stored edge", async () => {
+    const { ops, actAs } = corpus({ onConflict: "ignore" }, ["subjectId", "partId"]);
+    const input = { subjectId: "s1", partId: "p1" };
+    await run(actAs(as(contributor), ops.create(input)));
+    // The collision resolves only past the gate, so it never hands an id to a
+    // caller who may not write (and an "ignore" re-assertion is still a write).
+    expect(await tagOf(actAs(anonymous, ops.create(input)))).toEqual(Option.some("Unauthorized"));
+    expect(await tagOf(actAs(as(member), ops.create(input)))).toEqual(Option.some("Forbidden"));
+  });
+
   it("refuses a duplicate when the family resolves no conflict", async () => {
     const { edges, ops, actAs } = corpus({}, ["subjectId", "partId"]);
     const input = { subjectId: "s1", partId: "p1" };
@@ -237,7 +274,7 @@ describe("ported: an edge joining two reference leaves (gardeneria's anatomy / c
   });
 
   it("lists in creation order with the unpaged total, the page clamped to the cap", async () => {
-    const { ops, actAs } = corpus();
+    const { ops, actAs, seen } = corpus();
     const pairs = [
       ["s1", "p1"],
       ["s1", "p2"],
@@ -257,6 +294,23 @@ describe("ported: an edge joining two reference leaves (gardeneria's anatomy / c
     expect(page.total).toBe(4);
     const huge = await run(actAs(anonymous, ops.list({ limit: 1e9, offset: -5, where: always })));
     expect(huge.rows.map((row) => row.id)).toEqual(ids.map((written) => written.id));
+    await run(actAs(anonymous, ops.list({ limit: 0, offset: 1.5, where: always })));
+    // The store is asked for at most the cap, whatever the request says
+    // (SEC-INPUT-003): four rows alone can't tell a clamped limit from none.
+    expect(seen.windows()).toEqual([
+      { limit: 2, offset: 1 },
+      { limit: MAX_PAGE_LIMIT, offset: 0 },
+      { limit: 1, offset: 1 },
+    ]);
+  });
+
+  it("reports a total of 0 for a page past the end, as the store's window column does", async () => {
+    const { ops, actAs } = corpus();
+    await run(actAs(as(contributor), ops.create({ subjectId: "s1", partId: "p1" })));
+    expect(await run(actAs(anonymous, ops.list({ limit: 10, offset: 5, where: always })))).toEqual({
+      rows: [],
+      total: 0,
+    });
   });
 });
 
@@ -492,11 +546,11 @@ const actions: ReadonlyArray<VersionAction> = ["create", "update", "delete"];
 
 describe("EDGE-001: the endpoint filter never disagrees with the endpoint predicate", () => {
   const ownedRows = Arr.flatMap(actions, (action) =>
-    Arr.flatMap(["public", "followers", "private", "unknown"], (visibility) =>
+    Arr.flatMap(["public", "followers", "private", "unknown", null], (visibility) =>
       Arr.flatMap([false, true, null], (draft) =>
-        Arr.map([member.id, otherMember.id], (ownerId) =>
+        Arr.map([member.id, otherMember.id, null], (ownerId) =>
           node(
-            `${action}-${visibility}-${String(draft)}-${ownerId}`,
+            `${action}-${String(visibility)}-${String(draft)}-${String(ownerId)}`,
             { ownerId, visibility, draft },
             action,
           ),
@@ -517,8 +571,8 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
   });
 
   const referenceRows = Arr.flatMap(actions, (action) =>
-    Arr.map(["public", "followers", "private"], (visibility) =>
-      node(`${action}-${visibility}`, { visibility }, action),
+    Arr.map(["public", "followers", "private", "unknown", null], (visibility) =>
+      node(`${action}-${String(visibility)}`, { visibility }, action),
     ),
   );
 
@@ -541,7 +595,9 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
         [withAxis, withoutAxis].map((seen) => seen.map(({ id, readable }) => [id, readable])),
       );
       // A view with no visibility axis hides only the tombstones.
-      expect(withoutAxis.filter((reading) => reading.readable)).toHaveLength(6);
+      expect(withoutAxis.filter((reading) => reading.readable)).toHaveLength(
+        referenceRows.filter((row) => row.action !== "delete").length,
+      );
     },
   );
 
@@ -932,6 +988,84 @@ describe("cardinality: an end's maxEdges is declared and enforced", () => {
     links.parts.put(node("p1", { visibility: "public" }, "delete"));
     expect(await tagOf(link(links, "s1", "p2"))).toEqual(Option.some("EdgeCardinalityExceeded"));
   });
+
+  it("known limitation (pulpit#77): a tombstoned partner holds its slot until it is restored", async () => {
+    const links = bounded({ subject: 1 });
+    const { id } = await run(link(links, "s1", "p1"));
+    links.parts.put(node("p1", { visibility: "public" }, "delete"));
+    // The edge is hidden from everyone, so nobody can delete it …
+    const writers = [as(contributor), as(moderator), as(admin)];
+    expect(
+      await Promise.all(writers.map((who) => tagOf(links.actAs(who, links.ops.delete(id))))),
+    ).toEqual(writers.map(() => Option.some("EdgeNotFound")));
+    // … it still holds s1's only slot …
+    expect(await errorOf(link(links, "s1", "p2"))).toEqual(
+      Option.some(
+        expect.objectContaining({
+          _tag: "EdgeCardinalityExceeded",
+          end: "subject",
+          nodeId: "s1",
+          max: 1,
+        }),
+      ),
+    );
+    // … and no list shows it, not even the rung's.
+    expect(await links.listed(as(admin), eq("subjectId", "s1"))).toEqual({ ids: [], total: 0 });
+    // Only restoring the partner frees the slot: then the edge can be deleted.
+    links.parts.put(node("p1", { visibility: "public" }, "update"));
+    await run(links.actAs(as(contributor), links.ops.delete(id)));
+    expect(await tagOf(link(links, "s1", "p2"))).toEqual(Option.none());
+  });
+
+  it("counts a self-referential family's bounded ends in ascending node id, the order a store locks them", async () => {
+    const nodes = makeInMemoryNodes(["visibility"]);
+    nodes.put(node("n1", { visibility: "public" }));
+    nodes.put(node("n2", { visibility: "public" }));
+    const { ops, actAs, seen } = family({
+      ends: {
+        from: { ...referenceEnd("fromId", nodes), maxEdges: 2 },
+        to: { ...referenceEnd("toId", nodes), maxEdges: 2 },
+      },
+    });
+    // The pair both ways: declaration order would lock n2 then n1 for the
+    // first and n1 then n2 for the second, and two such creates in parallel
+    // would deadlock.
+    await run(actAs(as(contributor), ops.create({ fromId: "n2", toId: "n1" })));
+    await run(actAs(as(contributor), ops.create({ fromId: "n1", toId: "n2" })));
+    expect(seen.counted()).toEqual(["toId:n1", "fromId:n2", "fromId:n1", "toId:n2"]);
+  });
+});
+
+describe("a family declaration is checked when it is declared", () => {
+  const withLimit = (maxEdges: number) => () =>
+    family({
+      ends: { subject: { ...referenceEnd("subjectId", makeInMemoryNodes([])), maxEdges } },
+    });
+
+  it.each([Number.NaN, 1.5, 0, -1, Number.POSITIVE_INFINITY, 2 ** 53])(
+    "throws EdgeDeclarationError for maxEdges %s, rather than failing open or refusing every create",
+    (maxEdges) => {
+      expect(withLimit(maxEdges)).toThrow(EdgeDeclarationError);
+      expect(withLimit(maxEdges)).toThrow(
+        /'subject' declares maxEdges .*not a positive safe integer/,
+      );
+    },
+  );
+
+  it("accepts a positive safe integer", () => {
+    expect(withLimit(1)).not.toThrow();
+    expect(withLimit(Number.MAX_SAFE_INTEGER)).not.toThrow();
+  });
+
+  it("throws EdgeDeclarationError for an end alias containing a '.'", () => {
+    const nodes = makeInMemoryNodes([]);
+    expect(() => family({ ends: { "note.term": referenceEnd("termId", nodes) } })).toThrow(
+      EdgeDeclarationError,
+    );
+    expect(() => family({ ends: { "note.term": referenceEnd("termId", nodes) } })).toThrow(
+      /alias 'note.term' contains a '.'/,
+    );
+  });
 });
 
 describe("a create racing another writer for the unique key", () => {
@@ -948,7 +1082,7 @@ describe("a create racing another writer for the unique key", () => {
 
   it("resolves to the winner's edge under `ignore`", async () => {
     const { edges, ops, actAs } = racing("ignore");
-    edges.raceNextInsert();
+    edges.raceNextInsert({ subjectId: "s1", partId: "p1" });
     const written = await run(
       actAs(as(contributor), ops.create({ subjectId: "s1", partId: "p1" })),
     );
@@ -958,9 +1092,31 @@ describe("a create racing another writer for the unique key", () => {
 
   it("fails EdgeConflict under `fail`", async () => {
     const { edges, ops, actAs } = racing("fail");
-    edges.raceNextInsert();
+    edges.raceNextInsert({ subjectId: "s1", partId: "p1" });
     expect(
       await tagOf(actAs(as(contributor), ops.create({ subjectId: "s1", partId: "p1" }))),
     ).toEqual(Option.some("EdgeConflict"));
+  });
+
+  it("never resolves a race to a winner the viewer cannot read", async () => {
+    // The key leaves the page out, so the winner can join another page: one
+    // tombstoned since, whose edge is hidden from everyone.
+    const pages = makeInMemoryNodes([]);
+    pages.put(node("page-1", {}, "delete"));
+    pages.put(node("page-2", {}));
+    const { edges, ops, actAs } = family(
+      {
+        ends: {
+          page: { column: "pageId", type: "pages", access: { kind: "reference" }, nodes: pages },
+        },
+        onConflict: "ignore",
+      },
+      ["path"],
+    );
+    edges.raceNextInsert({ pageId: "page-1", path: "retired" });
+    expect(
+      await errorOf(actAs(as(contributor), ops.create({ pageId: "page-2", path: "retired" }))),
+    ).toEqual(Option.some(expect.objectContaining({ _tag: "EdgeConflict", type: "links" })));
+    expect(edges.rows().map((row) => row["pageId"])).toEqual(["page-1"]);
   });
 });

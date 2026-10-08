@@ -45,9 +45,15 @@
  *   edges may share one node at that end. Every stored edge at the node
  *   counts, hidden ones included: an edge hidden now comes back when its
  *   other end does, so it must not leave room to overshoot the limit. A
- *   writer at a full node therefore learns that it holds edges the writer
- *   may not read, though not which. A re-assertion of a stored edge resolves
- *   before the count, so it stays idempotent at a full node.
+ *   re-assertion of a stored edge resolves before the count, so it stays
+ *   idempotent at a full node. Two consequences, both documented rather than
+ *   designed away (see {@link EdgeEnd.maxEdges}): a writer learns how many
+ *   hidden edges a node it can read holds, and a tombstoned partner keeps
+ *   its slot until it is restored (pulpit#77).
+ * - **A write discloses only past its gate.** A create runs in the order
+ *   ends → write gate → unique-key collision → cardinality count, so only a
+ *   caller the gate admits learns anything from {@link EdgeConflict} or
+ *   {@link EdgeCardinalityExceeded} (README → `./edges`).
  * - **Every list is bounded** (`SEC-INPUT-003`): a page is capped at
  *   `MAX_PAGE_LIMIT`.
  *
@@ -68,6 +74,7 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
+import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
@@ -139,6 +146,21 @@ export class EdgeCardinalityExceeded extends Schema.TaggedError<EdgeCardinalityE
   },
 ) {}
 
+/**
+ * An edge family declared against the rules: an end's alias contains a `.`,
+ * or its `maxEdges` is not a positive safe integer. Thrown by
+ * {@link defineEdgeOps} when the family is declared, never an Effect failure,
+ * like `RegistryDeclarationError`: a malformed family must stop its module
+ * loading rather than fail open (a `NaN` limit admits every create) or
+ * refuse every create (a limit of `0`).
+ *
+ * @since 0.1.0
+ */
+export class EdgeDeclarationError extends Schema.TaggedError<EdgeDeclarationError>()(
+  "EdgeDeclarationError",
+  { message: Schema.String },
+) {}
+
 // ── The ends ──────────────────────────────────────────────────────────
 
 /**
@@ -171,9 +193,26 @@ export interface EdgeEnd<E, R> {
   /** The endpoint leaf's current-version view. */
   readonly nodes: EndpointView<E, R>;
   /**
-   * The most edges one node at this end may hold (a positive integer).
-   * Absent, unlimited. A create that would exceed it fails
+   * The most edges one node at this end may hold: a positive safe integer,
+   * or {@link defineEdgeOps} throws {@link EdgeDeclarationError}. Absent,
+   * unlimited. A create that would exceed it fails
    * {@link EdgeCardinalityExceeded}.
+   *
+   * Every stored edge at the node counts, hidden ones included, which has
+   * two consequences:
+   *
+   * - **Disclosure.** Suppose a node N is readable, its limit is `k`, and the
+   *   caller can see `v` of its edges. A refusal tells a writer that N holds
+   *   at least `k − v` edges it cannot read. A writer that creates `s` edges
+   *   at N until one is refused, then deletes them, learns the exact hidden
+   *   count `h = k − v − s`, and repeating the probe shows that count
+   *   change over time. Only a caller past the write gate learns this.
+   * - **A tombstoned partner holds its slot (pulpit#77).** An edge whose other
+   *   end is tombstoned is hidden from everyone, the view-deleted rung
+   *   included, so nobody can `delete` it, and it still counts. With
+   *   `maxEdges: 1`, tombstoning the partner freezes the node until the
+   *   partner is restored. This is a known limitation, and the choice of fix
+   *   is the owner's.
    */
   // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such, so there is no value to model as an `Option`
   readonly maxEdges?: number | undefined;
@@ -183,7 +222,9 @@ export interface EdgeEnd<E, R> {
  * A family's ends, keyed by alias. The alias is how a list filter names an
  * end's node columns ({@link endpointColumn}), the name under which the store
  * joins that end's view, and the `end` an {@link EdgeCardinalityExceeded}
- * reports. An alias never contains a `.`.
+ * reports. An alias never contains a `.` ({@link defineEdgeOps} throws
+ * {@link EdgeDeclarationError} on one), because `alias.column` must name one
+ * end's column unambiguously.
  *
  * @since 0.1.0
  */
@@ -417,7 +458,9 @@ export interface EdgeStore<Row extends EdgeRow, Following, E, R> {
    * under the end's alias, so `alias.column` names that view's column and a
    * bare column the edge table's; an edge whose end has no row in its view
    * is never listed. Ordered by `createdAt`, then `id` (a total order, so a
-   * page cursor cannot skip or repeat a row, #1231).
+   * page cursor cannot skip or repeat a row, #1231). The total is a window
+   * column (`count(*) OVER ()`): exact whenever the page has a row, and `0`
+   * for an empty page, a page past the end included.
    */
   readonly list: (query: {
     readonly where: ListFilter<Following>;
@@ -427,8 +470,11 @@ export interface EdgeStore<Row extends EdgeRow, Following, E, R> {
   /**
    * How many stored edges hold `nodeId` in `column`, hidden ones included:
    * no join and no policy. Called inside the create's transaction, for the
-   * cardinality check; a SQL store locks the node first, so two creates at
-   * one node serialise (README → Seams).
+   * cardinality check, once per bounded end in ascending `nodeId` order. A
+   * SQL store locks the node first (`FOR NO KEY UPDATE`, under READ
+   * COMMITTED), so two creates at one node serialise, and the sorted order
+   * means two creates locking the same pair of nodes cannot deadlock
+   * (README → Seams).
    */
   readonly countAt: (column: string, nodeId: string) => Effect.Effect<number, E, R>;
   /** The id of the stored edge `values` would collide with on the family's unique key, or none (always none without one). */
@@ -506,10 +552,10 @@ export interface EdgeWrite {
  */
 export interface EdgeOps<Create, Resource, E, R> {
   /**
-   * One page of the edges the viewer may read, with the unpaged total
-   * (`EDGE-001`: an edge with a hidden or tombstoned end is omitted). The
-   * limit is clamped to `MAX_PAGE_LIMIT` (`SEC-INPUT-003`). Fails only with
-   * the store's `E`.
+   * One page of the edges the viewer may read, with the unpaged total as the
+   * store reports it (`EDGE-001`: an edge with a hidden or tombstoned end is
+   * omitted). The limit is clamped to `MAX_PAGE_LIMIT` (`SEC-INPUT-003`).
+   * Fails only with the store's `E`.
    */
   readonly list: (request: EdgeListRequest) => Effect.Effect<Page<Resource>, E, R>;
   /**
@@ -523,7 +569,10 @@ export interface EdgeOps<Create, Resource, E, R> {
    * so a 403 never confirms a node); the gate's `Unauthorized` / `Forbidden`
    * (or `NodeNotFound`); `EdgeConflict` on a unique-key collision the
    * conflict policy does not resolve; `EdgeCardinalityExceeded` when an end's
-   * node already holds its `maxEdges`.
+   * node already holds its `maxEdges`. The last two are answered only past
+   * the gate, and each can disclose a hidden edge to that caller: a refusal
+   * counts hidden edges ({@link EdgeEnd.maxEdges}), and when the unique key
+   * leaves an end out, a collision says a hidden edge holds the key.
    */
   readonly create: (
     input: Create,
@@ -545,11 +594,36 @@ export interface EdgeOps<Create, Resource, E, R> {
   >;
 }
 
+/** What is wrong with one end's declaration: an alias with a `.`, or a `maxEdges` that is not a positive safe integer. */
+const declarationProblem = <E, R>([alias, end]: readonly [string, EdgeEnd<E, R>]) => {
+  if (alias.includes(".")) {
+    return Option.some(`the end alias '${alias}' contains a '.', which endpointColumn reserves`);
+  }
+  const max = end.maxEdges;
+  if (max !== undefined && !(Number.isSafeInteger(max) && max > 0)) {
+    return Option.some(
+      `the end '${alias}' declares maxEdges ${String(max)}, not a positive safe integer`,
+    );
+  }
+  return Option.none<string>();
+};
+
+/** Throw {@link EdgeDeclarationError} on the first malformed end. */
+const validateEnds = <E, R>(type: string, ends: EdgeEnds<E, R>): void => {
+  const problem = Arr.findFirst(Record.toEntries(ends), declarationProblem);
+  if (Option.isSome(problem)) {
+    throw new EdgeDeclarationError({ message: `${type}: ${problem.value}` });
+  }
+};
+
 /** The request's page window: the limit clamped to `[1, MAX_PAGE_LIMIT]` (`SEC-INPUT-003`), the offset to `≥ 0`. */
 const pageWindow = (request: EdgeListRequest) => ({
   limit: Math.max(1, Math.min(Math.trunc(request.limit), MAX_PAGE_LIMIT)),
   offset: Math.max(0, Math.trunc(request.offset)),
 });
+
+/** The ends a create bounds, in the order their nodes are locked: ascending `nodeId`, so no two creates lock a pair in opposite orders. */
+const byNodeId = Order.mapInput(Order.String, (at: { readonly nodeId: string }) => at.nodeId);
 
 /**
  * Bind an edge family's operations. Every produced operation is traced as
@@ -557,12 +631,17 @@ const pageWindow = (request: EdgeListRequest) => ({
  * boundary is the caller's, website #1883), and a create's cardinality
  * count and insert share it (README → Seams).
  *
+ * Throws {@link EdgeDeclarationError}, when the family is declared, for an
+ * end alias containing a `.` or a `maxEdges` that is not a positive safe
+ * integer.
+ *
  * @since 0.1.0
  */
 export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, E, R>(
   definition: EdgeDefinition<Create, Row, Resource, Following, E, R>,
 ): EdgeOps<Create, Resource, E, R> => {
   const { type, ends, edges, policy, followers, toResource } = definition;
+  validateEnds(type, ends);
   const endEntries = Record.toEntries(ends);
   const writeGate: EdgeWriteGate<E, R> = definition.writeGate ?? corpusWriteGate;
   const onConflict = definition.onConflict ?? "fail";
@@ -660,7 +739,13 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     // edge that is already there stays idempotent at a full end.
     const collided = yield* edges.existing(values);
     if (Option.isSome(collided)) return yield* resolveCollision(viewer, collided.value);
-    yield* Effect.forEach(nodes, withinLimit, { concurrency: 1, discard: true });
+    // Each bounded end's count locks its node (README → Seams), so the nodes
+    // are visited in one global order: a self-referential family's two
+    // bounded ends cannot deadlock two creates naming the pair both ways.
+    yield* Effect.forEach(Arr.sort(nodes, byNodeId), withinLimit, {
+      concurrency: 1,
+      discard: true,
+    });
     const inserted = yield* edges.insert(values);
     if (Option.isSome(inserted)) return { id: inserted.value, created: true };
     // A racing writer took the key between `existing` and the insert.
