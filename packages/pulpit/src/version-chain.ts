@@ -500,10 +500,12 @@ export interface VersionChainOps<E, R> {
   ) => Effect.Effect<VersionSnapshot, E | VersionNotFound, R>;
   /**
    * The field-level change set from version `from` to version `to` of one
-   * node: two {@link getVersion} reads and {@link diffStates}. Read-only.
-   * Fails {@link VersionNotFound} for whichever version (`from` first)
-   * cannot be fully reconstructed. A tombstone on either side is that side's
-   * `action`, never an entry in `changes` (see {@link VersionComparison}).
+   * node: two {@link VersionChainOps.getVersion} reads and {@link diffStates}.
+   * Read-only. Fails {@link VersionNotFound} for whichever version (`from`
+   * first) cannot be fully reconstructed. A tombstone on either side is that
+   * side's `action`, never an entry in `changes` (see
+   * {@link VersionComparison}). Ungated, like `getVersion`: `./subtype` gates
+   * history reads (`READ-009`), and a gated `compare` there is pulpit#82.
    */
   readonly compare: (
     id: string,

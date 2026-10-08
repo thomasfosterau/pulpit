@@ -381,19 +381,33 @@ describe("compare — two getVersion reads and diffStates", () => {
   });
 
   it.each([
-    ["from", 8n, 1n, 8n],
-    ["to", 0n, 9n, 9n],
-    ["from and to", 8n, 9n, 8n],
+    ["from", 8n, 1n, 8n, [8n]],
+    ["to", 0n, 9n, 9n, [0n, 9n]],
+    ["from and to", 8n, 9n, 8n, [8n]],
   ] as const)(
     "fails VersionNotFound for a missing %s version, naming it (from first)",
-    async (_side, from, to, missing) => {
-      const { store, chain, run, exit } = await created();
+    async (_side, from, to, missing, read) => {
+      const { store, run, exit } = await created();
+      // Every snapshot read, logged before it yields: a compare that read both
+      // versions concurrently would log `to` even when `from` is missing.
+      const reads: Array<readonly [string, bigint]> = [];
+      const chain = defineVersionChain("posts", {
+        ...store,
+        snapshot: (id, version) =>
+          Effect.gen(function* () {
+            reads.push([id, version]);
+            yield* Effect.yieldNow;
+            return yield* store.snapshot(id, version);
+          }),
+      });
       await run(chain.update({ id: ID, patch: { title: "Second" }, actorId: ACTOR }));
+      reads.length = 0;
       const error = Option.getOrUndefined(
         Exit.findErrorOption(await exit(chain.compare(ID, from, to))),
       );
       expect(error).toBeInstanceOf(VersionNotFound);
       expect(error).toMatchObject({ type: "posts", id: ID, version: missing });
+      expect(reads).toStrictEqual(read.map((version) => [ID, version]));
       expect(store.rows()).toHaveLength(2);
     },
   );
