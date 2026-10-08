@@ -128,6 +128,7 @@ const program = <E, R>(store: VersionChainStore<E, R>) =>
     const actorId = Option.none<string>();
     const { id } = yield* chain.create({ id: Option.none(), state: { title: "Hello" }, actorId });
     yield* chain.update({ id, patch: { title: "Hi", summary: null }, actorId }); // null clears; an absent key carries forward
+    yield* chain.update({ id, patch: { title: "Hey" }, actorId, expectedVersion: 1n }); // StaleVersion unless the head is 1
     yield* chain.delete(id, actorId); // tombstone; idempotent
     yield* chain.restoreVersion(id, 0n, actorId); // appends version N+1 with version 0's state
   });
@@ -135,12 +136,15 @@ const program = <E, R>(store: VersionChainStore<E, R>) =>
 
 Every write lands at `N_max + 1`; nothing is rewritten. A plain `update` never resurrects a tombstone (`restore` and `restoreVersion` do). A create is never an upsert (`NodeAlreadyExists`). `restoreVersion` refuses a version that cannot be fully reconstructed before writing anything. `history` is bounded (`MAX_HISTORY_LIMIT`).
 
+**Optimistic concurrency.** `update`, `restore`, `delete` and `restoreVersion` take an optional `expectedVersion` (a `Precondition`): the head version the caller last read. If the head has moved, the write fails `StaleVersion`, which carries the head it found (`current`), and nothing is written. Without one, a write extends whatever the head is, so a column that two patches both set is last-writer-wins. The check runs against the same head read the append extends, and the append lands at that head + 1. A writer that slips in between therefore takes the `(id, version)` key first, and the later append fails `VersionConflict`. The store's key is what makes the check atomic, so the seam needs nothing new. A delete over a tombstone stays idempotent whatever the precondition (the delete it asked for has happened). A missing node is still `NodeNotFound`, and a plain `update` over a tombstone is still `NodeNotFound`, whatever version it expects.
+
 | Export | What it is |
 | --- | --- |
 | `defineVersionChain(type, store)` | The operations (`create`, `update`, `restore`, `delete`, `getVersion`, `restoreVersion`, `history`) for one leaf type. |
 | `VersionChainStore<E, R>` | The persistence seam (see [Seams](#seams)). |
 | `ChainState`, `ChainPatch`, `applyPatch` | A leaf's state at one version, the tri-state patch over it (a value sets, `null` clears, `undefined` carries forward), and the merge. |
-| `NodeNotFound`, `VersionNotFound`, `NodeAlreadyExists`, `VersionConflict` | The tagged failures: the wire's 404 / 404 / 409, and a concurrent writer's `(id, version)` collision, which is never retried. |
+| `Precondition` | The optional `expectedVersion` every write to an existing node takes. |
+| `NodeNotFound`, `VersionNotFound`, `NodeAlreadyExists`, `StaleVersion`, `VersionConflict` | The tagged failures: the wire's 404 / 404 / 409, a failed expected-version precondition (412 for an `If-Match`, or 409; it carries the head), and a concurrent writer's `(id, version)` collision, which is never retried. |
 
 ## `./filter`
 
@@ -175,6 +179,8 @@ A SQL renderer must honour this contract:
 - `owned` — creates at any account (stamping the owner); other writes at owner-or-moderator; reads through `canViewOwned` (three-state visibility plus `draft`), lists through `ownedListFilter`, the same facts as a `ListFilter`.
 
 `get`, `getMany` and `list` treat a row the viewer may not see as missing (`NodeNotFound`, never `Forbidden`). The write and history operations don't: their gate answers `Forbidden` for an existing owned row the caller doesn't own. `subtypeHandlers(ops, { transact, cache })` wraps the operations as the handler record a JSON:API server is expected to accept (see [Seams](#seams)), writing every mutation through the resource cache.
+
+`update`, `restore`, `delete` and `restoreVersion` (and the handlers' `update`, `delete` and `restoreVersion`) take the chain's optional `expectedVersion` and fail `StaleVersion` when it is not the head. The write gate runs first, so only a caller who may write learns the head version.
 
 | Export | What it is |
 | --- | --- |
@@ -273,6 +279,8 @@ Expected to come from effect-auth once it publishes (pulpit#5). Its default bran
 ### `SubtypeHandlers`: the handler record
 
 The record a JSON:API server's resource handlers are expected to accept. effect-jsonapi's server skeleton has shipped as its `ResourceHandlers` namespace (`make`, `readOnly`, `related`; exported since 0.15.0, and pulpit's peer is `>=0.16.0`), but `subtypeHandlers` isn't wired to it yet (pulpit#5). One entry per endpoint (`list`, `get`, `create`, `update`, `delete`) returns the resource the document assembler wraps, plus `restoreVersion`, which has no JSON:API endpoint and is called directly. Each write runs inside the config's `transact` (always-open: a nested call opens a savepoint), re-reads the row outside it, and writes it through the cache. When it is wired, `subtypeHandlers` maps onto `ResourceHandlers`' real handler signatures (the request context, the query decode, the document assembly), and its error catalogue replaces the tags here.
+
+`update`, `delete` and `restoreVersion` take an optional `expectedVersion`. Mapping a request's `If-Match` onto it, and a `StaleVersion` failure onto `412 Precondition Failed`, is the HTTP layer's job, and so effect-jsonapi's: 0.16.3 has no such mapping. A resource doesn't yet carry its head version (`meta.version` or an ETag) for a client to send back; pulpit#65 tracks that.
 
 ### `DocumentStore<Document, E, R>`: the content-addressed document store
 

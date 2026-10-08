@@ -44,6 +44,7 @@ import {
   type Viewer,
   type ViewerAccount,
 } from "../src/subtype.ts";
+import type { Precondition } from "../src/version-chain.ts";
 import { makeInMemoryChainStore } from "./in-memory-chain.ts";
 import {
   admin,
@@ -450,6 +451,100 @@ describe("defineSubtype — an owned leaf", () => {
     const restored = await run(actAs(as(moderator), ops.restoreVersion(id, 0n)));
     expect(restored.version).toBe(2n);
     expect(chain.rows()[2]!.actorId).toEqual(Option.some(moderator.id));
+  });
+});
+
+describe("defineSubtype — the expected-version precondition", () => {
+  /** An owned post at head 1, written by its owner. */
+  const atHeadOne = async () => {
+    const context = ownedPosts();
+    const id = await context.post("public");
+    await run(context.actAs(as(member), context.ops.update({ id, patch: { title: "Second" } })));
+    return { ...context, id };
+  };
+
+  type Ops = ReturnType<typeof ownedPosts>["ops"];
+  type Write = (
+    ops: Ops,
+    id: string,
+    precondition: Precondition,
+  ) => Effect.Effect<{ readonly version: bigint }, { readonly _tag: string }>;
+
+  const writes: ReadonlyArray<readonly [string, Write]> = [
+    ["update", (ops, id, p) => ops.update({ id, patch: { title: "Third" }, ...p })],
+    ["restore", (ops, id, p) => ops.restore({ id, patch: { title: "Third" }, ...p })],
+    ["delete", (ops, id, p) => ops.delete(id, p)],
+    ["restoreVersion", (ops, id, p) => ops.restoreVersion(id, 0n, p)],
+  ];
+
+  describe.each(writes)("%s", (_name, write) => {
+    it("writes when the expected version is the head", async () => {
+      const { chain, ops, actAs, id } = await atHeadOne();
+      const written = await run(actAs(as(member), write(ops, id, { expectedVersion: 1n })));
+      expect(written.version).toBe(2n);
+      expect(chain.rows()).toHaveLength(3);
+    });
+
+    it("writes nothing on a stale version, failing StaleVersion with the head", async () => {
+      const { chain, ops, actAs, id } = await atHeadOne();
+      const before = chain.rows();
+      const exit = await Effect.runPromiseExit(
+        actAs(as(member), write(ops, id, { expectedVersion: 0n })),
+      );
+      expect(Option.getOrUndefined(Exit.findErrorOption(exit))).toMatchObject({
+        _tag: "StaleVersion",
+        type: "posts",
+        id,
+        expected: 0n,
+        current: 1n,
+      });
+      expect(chain.rows()).toEqual(before);
+    });
+
+    it("without one, writes over whatever the head is", async () => {
+      const { chain, ops, actAs, id } = await atHeadOne();
+      const written = await run(actAs(as(member), write(ops, id, {})));
+      expect(written.version).toBe(2n);
+      expect(chain.rows()).toHaveLength(3);
+    });
+
+    it("gates first: a caller who may not write learns Forbidden, never the head", async () => {
+      const { chain, ops, actAs, id } = await atHeadOne();
+      expect(await tagOf(actAs(as(otherMember), write(ops, id, { expectedVersion: 0n })))).toEqual(
+        Option.some("Forbidden"),
+      );
+      expect(chain.rows()).toHaveLength(2);
+    });
+  });
+
+  it("the handlers thread it through, and a stale write neither caches nor evicts", async () => {
+    const { ops, actAs, id } = await atHeadOne();
+    const cached = new Map<string, unknown>([[id, "cached"]]);
+    const handlers = subtypeHandlers(ops, {
+      transact: (effect) => effect,
+      cache: Option.some({
+        set: (key, resource) => Effect.sync(() => void cached.set(key, resource)),
+        delete: (key) => Effect.sync(() => void cached.delete(key)),
+      }),
+    });
+    const stale = { expectedVersion: 0n };
+    expect(
+      await tagOf(actAs(as(member), handlers.update({ id, patch: { title: "x" }, ...stale }))),
+    ).toEqual(Option.some("StaleVersion"));
+    expect(await tagOf(actAs(as(member), handlers.delete(id, stale)))).toEqual(
+      Option.some("StaleVersion"),
+    );
+    expect(
+      await tagOf(actAs(as(member), handlers.restoreVersion({ id, version: 0n, ...stale }))),
+    ).toEqual(Option.some("StaleVersion"));
+    expect(cached.get(id)).toBe("cached");
+    const updated = await run(
+      actAs(as(member), handlers.update({ id, patch: { title: "Third" }, expectedVersion: 1n })),
+    );
+    expect(cached.get(id)).toEqual(updated);
+    await run(actAs(as(member), handlers.restoreVersion({ id, version: 0n, expectedVersion: 2n })));
+    await run(actAs(as(member), handlers.delete(id, { expectedVersion: 3n })));
+    expect(cached.has(id)).toBe(false);
   });
 });
 

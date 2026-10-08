@@ -15,7 +15,11 @@ import {
   applyPatch,
   defineVersionChain,
   MAX_HISTORY_LIMIT,
+  StaleVersion,
   type ChainState,
+  type ChainWrite,
+  type Precondition,
+  type VersionChainOps,
 } from "../src/version-chain.ts";
 import { makeInMemoryChainStore } from "./in-memory-chain.ts";
 
@@ -250,6 +254,161 @@ describe("history", () => {
   it("fails NodeNotFound for an id with no versions", async () => {
     const { chain, exit } = setup();
     expect(tagOf(await exit(chain.history(ID)))).toEqual(Option.some("NodeNotFound"));
+  });
+});
+
+describe("expectedVersion — the optimistic-concurrency precondition", () => {
+  /** A node at head 1: version 0 created, version 1 updated. */
+  const atHeadOne = async () => {
+    const context = setup();
+    await context.run(
+      context.chain.create({ id: Option.some(ID), state: initial, actorId: ACTOR }),
+    );
+    await context.run(context.chain.update({ id: ID, patch: { title: "Second" }, actorId: ACTOR }));
+    return context;
+  };
+
+  type Write = (
+    chain: VersionChainOps<never, never>,
+    precondition: Precondition,
+  ) => Effect.Effect<ChainWrite, { readonly _tag: string }>;
+
+  /** Every write that extends an existing chain, each taking the precondition. */
+  const writes: ReadonlyArray<readonly [string, Write]> = [
+    [
+      "update",
+      (chain, precondition) =>
+        chain.update({ id: ID, patch: { title: "Third" }, actorId: ACTOR, ...precondition }),
+    ],
+    [
+      "restore",
+      (chain, precondition) =>
+        chain.restore({ id: ID, patch: { title: "Third" }, actorId: ACTOR, ...precondition }),
+    ],
+    ["delete", (chain, precondition) => chain.delete(ID, ACTOR, precondition)],
+    ["restoreVersion", (chain, precondition) => chain.restoreVersion(ID, 0n, ACTOR, precondition)],
+  ];
+
+  describe.each(writes)("%s", (_name, write) => {
+    it("writes when the expected version is the head", async () => {
+      const { store, chain, run } = await atHeadOne();
+      const written = await run(write(chain, { expectedVersion: 1n }));
+      expect(written.version).toBe(2n);
+      expect(store.rows()).toHaveLength(3);
+    });
+
+    it("writes nothing when the expected version is stale, and the error carries the head", async () => {
+      const { store, chain, exit } = await atHeadOne();
+      const before = store.rows();
+      const result = await exit(write(chain, { expectedVersion: 0n }));
+      expect(Option.map(Exit.findErrorOption(result), (error) => error._tag)).toEqual(
+        Option.some("StaleVersion"),
+      );
+      const error = Option.getOrUndefined(Exit.findErrorOption(result));
+      expect(error).toBeInstanceOf(StaleVersion);
+      expect(error).toMatchObject({ type: "posts", id: ID, expected: 0n, current: 1n });
+      // The chain is exactly as it was: no row appended, none rewritten.
+      expect(store.rows()).toEqual(before);
+    });
+
+    it("an expected version ahead of the head is stale too", async () => {
+      const { store, chain, exit } = await atHeadOne();
+      const result = await exit(write(chain, { expectedVersion: 5n }));
+      expect(tagOf(result)).toEqual(Option.some("StaleVersion"));
+      expect(store.rows()).toHaveLength(2);
+    });
+
+    it("without one (absent, or an explicit undefined) the write extends whatever the head is", async () => {
+      const absent = await atHeadOne();
+      expect((await absent.run(write(absent.chain, {}))).version).toBe(2n);
+      const explicit = await atHeadOne();
+      const written = await explicit.run(write(explicit.chain, { expectedVersion: undefined }));
+      expect(written.version).toBe(2n);
+    });
+  });
+
+  it("is race-safe: two writers expecting the same head, interleaved, cannot both write", async () => {
+    const { store, run, exit } = await atHeadOne();
+    // Writer B reads head 1 (and its state); in the gap before B appends,
+    // writer A, who also read head 1, appends version 2. B's append extends
+    // the head it read, so it lands on version 2 and hits the (id, version)
+    // key, rather than re-reading and silently writing version 3 over A.
+    let raced = false;
+    const interleaved = defineVersionChain("posts", {
+      ...store,
+      snapshot: (id, version) =>
+        Effect.tap(store.snapshot(id, version), () =>
+          raced
+            ? Effect.void
+            : Effect.andThen(
+                Effect.sync(() => {
+                  raced = true;
+                }),
+                defineVersionChain("posts", store).update({
+                  id: ID,
+                  patch: { title: "A" },
+                  actorId: ACTOR,
+                  expectedVersion: 1n,
+                }),
+              ),
+        ),
+    });
+    const loser = await exit(
+      interleaved.update({ id: ID, patch: { title: "B" }, actorId: ACTOR, expectedVersion: 1n }),
+    );
+    expect(tagOf(loser)).toEqual(Option.some("VersionConflict"));
+    expect(store.rows()).toHaveLength(3);
+    expect(store.rows()[2]!.state["title"]).toBe("A");
+    // A writer that re-reads now sees head 2, and its stale expectation is refused up front.
+    const late = await exit(
+      interleaved.update({ id: ID, patch: { title: "B" }, actorId: ACTOR, expectedVersion: 1n }),
+    );
+    expect(tagOf(late)).toEqual(Option.some("StaleVersion"));
+    expect(store.rows()).toHaveLength(3);
+    expect(
+      (await run(interleaved.update({ id: ID, patch: {}, actorId: ACTOR, expectedVersion: 2n })))
+        .version,
+    ).toBe(3n);
+  });
+
+  it("a delete over a tombstone stays idempotent, whatever the precondition", async () => {
+    const { store, chain, run } = await atHeadOne();
+    await run(chain.delete(ID, ACTOR, { expectedVersion: 1n }));
+    const again = await run(chain.delete(ID, ACTOR, { expectedVersion: 1n }));
+    expect(again).toEqual({ id: ID, version: 2n, alreadyDeleted: true });
+    expect(store.rows()).toHaveLength(3);
+  });
+
+  it("restore over a tombstone checks the tombstone's version; update still refuses it as NotFound", async () => {
+    const { store, chain, run, exit } = await atHeadOne();
+    await run(chain.delete(ID, ACTOR));
+    expect(
+      tagOf(await exit(chain.update({ id: ID, patch: {}, actorId: ACTOR, expectedVersion: 2n }))),
+    ).toEqual(Option.some("NodeNotFound"));
+    expect(
+      tagOf(await exit(chain.restore({ id: ID, patch: {}, actorId: ACTOR, expectedVersion: 1n }))),
+    ).toEqual(Option.some("StaleVersion"));
+    expect(store.rows()).toHaveLength(3);
+    const restored = await run(
+      chain.restore({ id: ID, patch: {}, actorId: ACTOR, expectedVersion: 2n }),
+    );
+    expect(restored.version).toBe(3n);
+  });
+
+  it("an unknown id is NodeNotFound and an unknown restore target VersionNotFound, before the precondition", async () => {
+    const { chain, exit } = await atHeadOne();
+    const other = "00000000-0000-4000-8000-00000000ffff";
+    expect(
+      tagOf(
+        await exit(chain.update({ id: other, patch: {}, actorId: ACTOR, expectedVersion: 0n })),
+      ),
+    ).toEqual(Option.some("NodeNotFound"));
+    expect(tagOf(await exit(chain.delete(other, ACTOR, { expectedVersion: 0n })))).toEqual(
+      Option.some("NodeNotFound"),
+    );
+    expect(tagOf(await exit(chain.restoreVersion(ID, 9n, ACTOR, { expectedVersion: 0n })))).toEqual(
+      Option.some("VersionNotFound"),
+    );
   });
 });
 
