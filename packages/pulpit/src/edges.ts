@@ -25,7 +25,8 @@
  *
  * - **An edge is readable only if the viewer can read every end**
  *   (`EDGE-001`). Each end's node is checked against its own leaf's access
- *   declaration, exactly as that leaf's `get` checks it. `get` answers a
+ *   declaration, as that leaf's list filter reads it (pulpit#73 tracks
+ *   where the subtype's own `get` still reads it more loosely). `get` answers a
  *   hidden edge as {@link EdgeNotFound} and `list` omits it, never `Forbidden`
  *   (`SEC-AUTH-ENUM-001`); a related list (the edges at one node) is a `list`
  *   filtered on that end, so it omits every edge whose other end is hidden.
