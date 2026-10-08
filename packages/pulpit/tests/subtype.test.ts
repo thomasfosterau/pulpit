@@ -55,6 +55,7 @@ import {
   type ViewerAccount,
 } from "../src/subtype.ts";
 import type { ColumnValue, Precondition } from "../src/version-chain.ts";
+import { ABSENT } from "./fixtures.ts";
 import { makeInMemoryChainStore } from "./in-memory-chain.ts";
 import {
   admin,
@@ -586,8 +587,6 @@ describe("defineSubtype — a reference leaf", () => {
 
 // ── get ≡ list, end to end, over every row state ─────────────────────
 
-/** A column the seeded state omits, so the row carries no such key (`ColumnValue` has no `undefined`). */
-const ABSENT = Symbol("absent");
 type Seeded = ColumnValue | typeof ABSENT;
 
 /** One seeded node: its creating account (and so its owner), its state, and whether it is tombstoned. */

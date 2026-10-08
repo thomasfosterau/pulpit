@@ -54,6 +54,7 @@ import {
   type ViewerAccount,
 } from "../src/subtype.ts";
 import type { ColumnValue, VersionAction } from "../src/version-chain.ts";
+import { ABSENT } from "./fixtures.ts";
 import { makeInMemoryChainStore } from "./in-memory-chain.ts";
 import {
   makeInMemoryEdgeStore,
@@ -544,14 +545,21 @@ const readings = (end: EdgeEnd<never, never>, viewer: Viewer, rows: ReadonlyArra
 
 const actions: ReadonlyArray<VersionAction> = ["create", "update", "delete"];
 
+/** The two booleans, `null`, a stringly `"false"`, and no key at all. */
+const drafts: ReadonlyArray<ColumnValue | typeof ABSENT> = [false, true, null, "false", ABSENT];
+
+/** A draft for a row id: a string quoted, so `"false"` never collides with `false`. */
+const showDraft = (draft: ColumnValue | typeof ABSENT): string =>
+  draft === ABSENT ? "absent" : Predicate.isString(draft) ? `"${draft}"` : String(draft);
+
 describe("EDGE-001: the endpoint filter never disagrees with the endpoint predicate", () => {
   const ownedRows = Arr.flatMap(actions, (action) =>
     Arr.flatMap(["public", "followers", "private", "unknown", null], (visibility) =>
-      Arr.flatMap([false, true, null], (draft) =>
+      Arr.flatMap(drafts, (draft) =>
         Arr.map([member.id, otherMember.id, null], (ownerId) =>
           node(
-            `${action}-${String(visibility)}-${String(draft)}-${String(ownerId)}`,
-            { ownerId, visibility, draft },
+            `${action}-${String(visibility)}-${showDraft(draft)}-${String(ownerId)}`,
+            draft === ABSENT ? { ownerId, visibility } : { ownerId, visibility, draft },
             action,
           ),
         ),

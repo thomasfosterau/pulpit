@@ -69,9 +69,9 @@ import * as HashMap from "effect/HashMap";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { Visibility } from "./content.ts";
+import type { Visibility } from "./content.ts";
 import { always, and, eq, isIn, ne, never, or, type ListFilter } from "./filter.ts";
-import { declaresColumns } from "./internal/owned-columns.ts";
+import { declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
 import {
   defineVersionChain,
   NodeNotFound,
@@ -88,8 +88,6 @@ import {
   type VersionSnapshot,
   type NodeAlreadyExists,
 } from "./version-chain.ts";
-
-const isVisibility = Schema.is(Visibility);
 
 // ── The viewer seam ───────────────────────────────────────────────────
 
@@ -609,23 +607,6 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   const actor = (account: ViewerAccount) => Option.some(account.id);
   const writer = (viewer: Viewer, id: string) =>
     requireWriter(access, viewer, policy, { type, id }, leaves.ownerOf(id));
-
-  const ownedFacts = (owned: Extract<LeafAccess, { kind: "owned" }>, row: Row): OwnedFacts => ({
-    ownerId: String(row[owned.ownerColumn]),
-    // A value outside the enum (a dropped projection, a schema drift) reads as
-    // `private`: fail closed.
-    visibility: Option.getOrElse(
-      Option.liftPredicate(row[owned.visibilityColumn], isVisibility),
-      (): Visibility => "private",
-    ),
-    // Anything but an explicit `false` (a `NULL`, a value outside the type) is
-    // a draft, as `ownedListFilter`'s `draft = false` arms read it: fail closed
-    // (SEC-AUTH-ENUM-001).
-    draft: Option.match(owned.draftColumn, {
-      onNone: () => false,
-      onSome: (column) => row[column] !== false,
-    }),
-  });
 
   // The view's column set is fixed at bind time, so the owned leaf's
   // declared-column check is answered once, not per row.

@@ -78,9 +78,8 @@ import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
-import { Visibility } from "./content.ts";
 import { and, eq, or, type ListFilter } from "./filter.ts";
-import { declaresColumns } from "./internal/owned-columns.ts";
+import { declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
 import {
   canViewOwned,
   Forbidden,
@@ -93,14 +92,11 @@ import {
   type FollowerSeam,
   type LeafAccess,
   type LeafRow,
-  type OwnedFacts,
   type Page,
   type Viewer,
   type ViewerAccount,
 } from "./subtype.ts";
 import { NodeNotFound, type ColumnValue } from "./version-chain.ts";
-
-const isVisibility = Schema.is(Visibility);
 
 // ── Errors ────────────────────────────────────────────────────────────
 
@@ -278,26 +274,6 @@ const qualify = <Following>(alias: string, filter: ListFilter<Following>): ListF
     }),
   );
 
-type OwnedAccess = Extract<LeafAccess, { kind: "owned" }>;
-
-/**
- * The facts `canViewOwned` reads, off an endpoint row. A visibility outside
- * the enum reads as `private`, and a draft column holding anything but
- * `false` reads as a draft, so each agrees with the list filter's
- * `eq(…, "public")` / `eq(draft, false)` arms.
- */
-const ownedFactsOf = (access: OwnedAccess, row: LeafRow): OwnedFacts => ({
-  ownerId: String(row[access.ownerColumn]),
-  visibility: Option.getOrElse(
-    Option.liftPredicate(row[access.visibilityColumn], isVisibility),
-    (): Visibility => "private",
-  ),
-  draft: Option.match(access.draftColumn, {
-    onNone: () => false,
-    onSome: (column) => row[column] !== false,
-  }),
-});
-
 /** A live node: its head is a `create` or an `update`, never a tombstone. */
 const isLive = (row: LeafRow): boolean => row.action === "create" || row.action === "update";
 
@@ -330,7 +306,7 @@ export const canViewEndpoint = <E, R>(
     );
   }
   if (!declaresColumns(access, columns)) return Effect.succeed(false);
-  return canViewOwned(viewer, policy, followers, ownedFactsOf(access, node.value));
+  return canViewOwned(viewer, policy, followers, ownedFacts(access, node.value));
 };
 
 /**
