@@ -47,9 +47,13 @@ export default defineConfig({
       // let the `rm` hit and be skipped while `tsc` re-emitted over the old
       // tree, leaving a renamed module's files behind. As one task, every miss
       // cleans, and a hit restores `dist/**` from the cache, so a deleted
-      // `dist/` comes back. A restore adds files and never prunes, so a file
-      // written into `dist/` by hand survives a hit; `vp run --no-cache build`
-      // clears it.
+      // `dist/` comes back. A restore writes the cached files (adding missing
+      // ones, overwriting edited ones) but never prunes, so a stray file in
+      // `dist/` survives a hit: one written by hand or by a bare `tsc`, or
+      // left by a different task config on another branch.
+      // `tsconfig.build.json` sets `noEmitOnError`, so a failed build writes
+      // nothing for the next hit to keep. `vp run -r --no-cache build`
+      // clears a stray.
       build: {
         command: "(rm -rf dist && tsc -p tsconfig.build.json)",
         input: [...cacheInputs, "!dist/**"],
