@@ -1,6 +1,6 @@
 # @thomasfosterau/pulpit
 
-The versioned-content kernel of an Effect headless CMS: the Content model fields and registry flags on `@thomasfosterau/effect-jsonapi`, the append-only node/version chain operations, the subtype operation factory with owned / reference-data access, and the publication, moderation and cache-serveability predicates.
+The versioned-content kernel of an Effect headless CMS: the Content model fields and registry flags on `@thomasfosterau/effect-jsonapi`, the append-only node/version chain operations, the subtype operation factory with owned / reference-data access, the publication, moderation and cache-serveability predicates, and the content-addressed document store seam.
 
 **Disclaimer:** This repository and package have been created using Claude Code. The package's API and functionality is in flux, so expect churn and breaking changes.
 
@@ -18,13 +18,14 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`). |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`) and `validateRegistry`. |
 | `./version-chain` | The append-only node/version chain operations over a `VersionChainStore` seam. |
 | `./filter` | `ListFilter`, the read-predicate tree a store renders to SQL, and its in-memory `evaluate`. |
 | `./subtype` | `LeafAccess`, the read scope and viewer predicates, the write gates, `defineSubtype`, `subtypeHandlers`. |
 | `./publication` | The publication and moderation predicates and the cache serveability policy. |
+| `./documents` | The content-addressed `DocumentStore` seam, the `DocumentHash` it is keyed by, and the `documentRef` field spread. |
 
 The operations are written against seams that the application fills; their expected shapes are in [Seams](#seams).
 
@@ -201,6 +202,43 @@ The publication axis (stamped AND arrived), the moderation state, and the KV cac
 | `isPubliclyServeable(resource, { owned?, publishGated?, now? })` | The KV cache's security gate (`CACHE-AUTH-005`): only what every viewer may read is serveable. |
 | `serveablePolicy(options)` | The same gate as a resource cache's `serveable` hook (see [Seams](#seams)). |
 
+## `./documents`
+
+The content-addressed document store. A version row carries a document's hash rather than another copy of the document, so a long document edited many times is stored once per distinct content, and history (which is never pruned) stays small. A stored document is never rewritten and a changed document is a new hash (`DOC-001`), so `restoreVersion` restores the reference, and the old hash still reads back the old document.
+
+```ts
+import { Resource } from "@thomasfosterau/effect-jsonapi";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import { documentRef, type DocumentStore } from "@thomasfosterau/pulpit/documents";
+import { defineVersionChain, type VersionChainStore } from "@thomasfosterau/pulpit/version-chain";
+
+export const NoteResource = Resource.make("notes", {
+  attributes: { ...documentRef("title"), ...documentRef("body") }, // each a DocumentHash
+});
+
+const program = <Document, E, R>(
+  documents: DocumentStore<Document, E, R>,
+  store: VersionChainStore<E, R>,
+  title: Document,
+  body: Document,
+) =>
+  Effect.gen(function* () {
+    const chain = defineVersionChain("notes", store);
+    const state = { title: yield* documents.put(title), body: yield* documents.put(body) };
+    const { id } = yield* chain.create({ id: Option.none(), state, actorId: Option.none() });
+    return { id, body: yield* documents.get(state.body) }; // put is idempotent: the same document, the same hash
+  });
+```
+
+The document type is a parameter: its schema and validation are the application's, and pulpit never imports them. The hash is the store's to derive; the algorithm and the bytes it is taken over are in [Seams](#seams).
+
+| Export | What it is |
+| --- | --- |
+| `DocumentStore<Document, E, R>` | The store seam: `put` (idempotent, returns the hash), `get`, `getMany` (see [Seams](#seams)). |
+| `DocumentHash` | A SHA-256 document hash as 64 lowercase hex characters. |
+| `documentRef(key)` | The attribute spread for a version row's document reference: the hash, required on the resource and at create, carried forward at update, never cleared. |
+
 ## Seams
 
 The kernel is written against explicit interfaces, so that it doesn't depend on the packages that fill them before they publish. Each seam below states the shape its real implementation must have, and which package (if any) is expected to fill it; the issue numbers in parentheses are for maintainers and aren't needed to follow the contract.
@@ -235,6 +273,28 @@ Expected to come from effect-auth once it publishes (pulpit#5). Its default bran
 ### `SubtypeHandlers`: the handler record
 
 The record a JSON:API server's resource handlers are expected to accept. effect-jsonapi's server skeleton has shipped as its `ResourceHandlers` namespace (`make`, `readOnly`, `related`; exported since 0.15.0, and pulpit's peer is `>=0.16.0`), but `subtypeHandlers` isn't wired to it yet (pulpit#5). One entry per endpoint (`list`, `get`, `create`, `update`, `delete`) returns the resource the document assembler wraps, plus `restoreVersion`, which has no JSON:API endpoint and is called directly. Each write runs inside the config's `transact` (always-open: a nested call opens a savepoint), re-reads the row outside it, and writes it through the cache. When it is wired, `subtypeHandlers` maps onto `ResourceHandlers`' real handler signatures (the request context, the query decode, the document assembly), and its error catalogue replaces the tags here.
+
+### `DocumentStore<Document, E, R>`: the content-addressed document store
+
+Filled by the application, over its own document tables (the apps' `inline_documents` / `block_documents`; pulpit#53). No library is expected to provide one. Expected schema: a table per document family holding the document as `jsonb`, keyed by its hash, which the database generates:
+
+```sql
+hash_id bytea PRIMARY KEY GENERATED ALWAYS AS (digest(document_jsonb::text, 'sha256')) STORED,
+document_jsonb jsonb NOT NULL
+```
+
+**The hash contract.** The hash is SHA-256 (pgcrypto's `digest(…, 'sha256')`) over the UTF-8 bytes of the document's canonical text. The canonical text is PostgreSQL's `jsonb` text output (`document_jsonb::text`, in a `UTF8` database):
+
+- object keys are deduplicated (the last wins) and ordered shorter-first by UTF-8 byte length, then bytewise;
+- `": "` follows each key and `", "` separates members and elements, with no other whitespace;
+- a string escapes `"`, `\` and the control characters below U+0020 (as `\b`, `\f`, `\n`, `\r`, `\t`, otherwise `\u00xx` in lowercase hex), and nothing else;
+- a number is written as `numeric` prints it, never with an exponent (`1e21` is `1000000000000000000000`, `1e-7` is `0.0000001`).
+
+So structurally equal documents share a hash whatever their member order. The hash is exchanged as a `DocumentHash`, the 32 bytes as 64 lowercase hex characters (`encode(hash_id, 'hex')`). A store that does not run on Postgres must reproduce these bytes exactly; the in-memory fake under `tests/` is a reference implementation, pinned to hashes taken from Postgres.
+
+Method contract: `put` is `INSERT … ON CONFLICT DO NOTHING RETURNING hash_id`, and when the insert returns no row it reads the existing row's hash (gardeneria matches the stored `jsonb` structurally, `document_jsonb = $document`); it never updates a stored row (`DOC-001`). `get` is `hash_id = $hash`; `getMany` is one `hash_id = ANY($hashes)` read, returning the documents found keyed by hash. `E` and `R` are as for the chain store, and the store never opens a transaction itself. A first insert's side effects (both apps enqueue an embedding job) stay outside this seam until the lifecycle-events seam lands (pulpit#45).
+
+**The apps' column differs.** Both apps generate the hash as `digest(document_jsonb::text::bytea, 'sha256')`. The `::bytea` cast parses the text as `bytea` escape-format input, so it agrees with the contract only on a document whose canonical text has no backslash. A document with a `"`, a newline, a tab or another escaped character in a string fails to insert (`invalid input syntax for type bytea`), and one with a literal backslash hashes different bytes. The contract's spelling, `digest(document_jsonb::text, 'sha256')`, uses pgcrypto's `text` overload, which is immutable and therefore valid in a generated column; `convert_to(…, 'UTF8')` gives the same bytes but is only stable, so a generated column can't use it.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 
