@@ -1,5 +1,6 @@
 /**
- * Shared test helpers: the one wire question every projection case asks.
+ * Shared test helpers: the one wire question every projection case asks,
+ * and the sentinel for a column a seeded row omits.
  *
  * @module tests/fixtures
  */
@@ -22,3 +23,9 @@ export const decodes = (schema: Schema.Top, value: Fixture): boolean =>
   // SAFETY: the fixture schemas are all service-free, which `Schema.Top` cannot
   // say; the widening is the only way to hand one to the decoder generically.
   Schema.decodeUnknownExit(schema as never)(value)._tag === "Success";
+
+/**
+ * A column a seeded row omits, so the row carries no such key (`ColumnValue`
+ * has no `undefined`): the "absent" case beside `null` and the typed values.
+ */
+export const ABSENT: unique symbol = Symbol("absent");

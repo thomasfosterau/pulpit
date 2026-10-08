@@ -69,7 +69,7 @@ import * as HashMap from "effect/HashMap";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { Visibility } from "./content.ts";
+import type { Visibility } from "./content.ts";
 import { always, and, eq, isIn, ne, never, or, type ListFilter } from "./filter.ts";
 import { declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
 import {

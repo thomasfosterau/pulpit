@@ -54,8 +54,8 @@ export const declaresColumns = (access: OwnedColumns, viewColumns: ReadonlySet<s
  * `NULL`, an absent key, a value outside the type) reads as a draft, since
  * its `eq(draft, false)` arms list only `false`. A leaf without the draft
  * axis reads `draft: false`. The owner is the column's value through
- * `String`, so a `NULL` owner reads as `"null"` (see pulpit#75). Callers
- * check {@link declaresColumns} first. Never throws.
+ * `String`, so a `NULL` owner reads as `"null"` (pulpit#85; see
+ * pulpit#75). Callers check {@link declaresColumns} first. Never throws.
  *
  * @internal
  */
