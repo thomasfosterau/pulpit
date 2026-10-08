@@ -73,6 +73,7 @@ export const RESOURCE_FLAGS = [
 /** One of {@link RESOURCE_FLAGS}. */
 export type RegistryFlag = (typeof RESOURCE_FLAGS)[number];
 
+/* oxlint-disable effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option` */
 /**
  * One node in an application's registry tree. Marker levels carry no
  * `resource`; concrete leaves carry the `Resource.make` definition. The
@@ -86,20 +87,21 @@ export interface RegistryEntry {
   /** Parent key in the settled tree — `Option.none()` only for the root. */
   readonly parent: Option.Option<string>;
   /** The `Resource.make` definition; omitted for marker levels. */
-  readonly resource?: Resource.Any;
+  readonly resource?: Resource.Any | undefined;
   /** The application's id brand for this level. For resource leaves it must equal `resource.Id`. */
-  readonly id?: BrandedId;
+  readonly id?: BrandedId | undefined;
   /** Page-able: has a `/type/<id>` route and is a page-family member. */
-  readonly pageable?: true;
+  readonly pageable?: true | undefined;
   /** Agent: an agent-family member. */
-  readonly agent?: true;
+  readonly agent?: true | undefined;
   /** Owned: `owner_id` + `visibility`, gated per viewer (never `referenceData`). */
-  readonly owned?: true;
+  readonly owned?: true | undefined;
   /** Reference data: corpus-written, proposable, publicly readable (never `owned`). */
-  readonly referenceData?: true;
+  readonly referenceData?: true | undefined;
   /** Searchable: a search plane emits it. */
-  readonly searchable?: true;
+  readonly searchable?: true | undefined;
 }
+/* oxlint-enable effect/prefer-option-over-null */
 
 /**
  * Declare an entry's `parent` with its key literal preserved —

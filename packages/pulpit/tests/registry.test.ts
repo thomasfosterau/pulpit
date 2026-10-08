@@ -161,6 +161,35 @@ describe("registry — construction-time validation", () => {
     expect(() => run(entries)).not.toThrow();
   });
 
+  it("reads an explicitly undefined resource, id or flag as absent", () => {
+    const entries: readonly RegistryEntry[] = [
+      { key: "node", parent: root, resource: undefined, id: undefined, agent: undefined },
+      {
+        key: "comments",
+        parent: parent("node"),
+        resource: CommentResource,
+        id: CommentId,
+        owned: true,
+        referenceData: undefined,
+        pageable: undefined,
+      },
+    ];
+    expect(() => run(entries)).not.toThrow();
+    const wire = registryWireTypes(entries, ["node"]);
+    expect(wire.owned).toEqual(["comments"]);
+    expect(wire.referenceData).toEqual([]);
+    expect(wire.pageable).toEqual([]);
+    expect(wire.agent).toEqual([]);
+    expect(flaggedMembers(entries, "pageable")).toEqual([]);
+    expect(flaggedMembers(entries, "owned")).toEqual([CommentResource]);
+  });
+
+  it("still requires a resource when one is explicitly undefined", () => {
+    expect(() => run([{ key: "node", parent: root, resource: undefined, pageable: true }])).toThrow(
+      /flagged 'pageable' but declares no resource/,
+    );
+  });
+
   it("throws the tagged declaration error", () => {
     expect(() =>
       run([

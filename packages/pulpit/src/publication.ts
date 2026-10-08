@@ -85,15 +85,17 @@ export const publishedFilter = <Following = never>(
     onSome: (isWanted) => (isWanted ? published(column) : notPublished(column)),
   });
 
+/* oxlint-disable effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option` */
 /** A family's cache posture: which absent axes are refusals. */
 export interface ServeabilityOptions {
   /** An owned family: a missing `visibility` refuses (#1096). */
-  readonly owned?: boolean;
+  readonly owned?: boolean | undefined;
   /** A stamp-gated family: a missing, unparseable or future `publishedAt` refuses. */
-  readonly publishGated?: boolean;
+  readonly publishGated?: boolean | undefined;
   /** The instant a stamp must have arrived by; the wall clock when omitted. */
-  readonly now?: Date;
+  readonly now?: Date | undefined;
 }
+/* oxlint-enable effect/prefer-option-over-null */
 
 /* oxlint-disable effect/no-unknown-parameters, effect/no-unknown-returns -- the cache's security gate must accept whatever the KV hands back, including a value that fails to parse: refusing malformed input IS its contract, so the untyped value is the boundary itself */
 /**
