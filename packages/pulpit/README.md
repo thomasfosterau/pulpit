@@ -224,12 +224,12 @@ The rendering contract is the table under [`./filter`](#filter). `Following` is 
 
 ### The viewer, the role axes and the follower seam
 
-Expected to come from effect-auth once it publishes (pulpit#5). Its default branch already has them, unpublished (release PR effect-auth#177): `OwnedAccess` (`canView`, `readScope`, the fail-closed `IsFollower` service, `serveableAxes`), `Guard` (`requireRoleAtLeast`, `requireOwnerOrRole`, `Unauthorized`, `Forbidden`), `Ladder` and `Cacheability.publiclyServeable`, plus `ownedListFilter` in `@thomasfosterau/effect-auth-drizzle`. Until it publishes, the application supplies:
+Expected to come from effect-auth once it publishes (pulpit#5). Its default branch already has them, unpublished (release PR effect-auth#177): `OwnedAccess` (`canView`, `readScope`, the `IsFollower` service, read fail-closed, `serveableAxes`), `Guard` (`Unauthorized`, `Forbidden`, and the kit `Guard.make` returns: `requireRoleAtLeast`, `requireOwnerOrRole`), `Ladder` and `Cacheability.publiclyServeable`, plus `ownedListFilter` in `@thomasfosterau/effect-auth-drizzle`. Until it publishes, the application supplies:
 
 - `Viewer = Option<{ id, role }>`: the request's signed-in account, or none for an anonymous request (effect-auth's session context).
-- `AccessPolicy`: four predicates over a signed-in account (`canViewPrivate`, `canViewDeleted`, `canModerate`, `canWriteCorpus`). Each compares the account's role against an application-named rung on its role ladder (effect-auth's `Ladder.make`, checked through `Guard`'s `hasRoleAtLeast` / `requireRoleAtLeast`). Each must fail closed on an unknown role.
+- `AccessPolicy`: four predicates over a signed-in account (`canViewPrivate`, `canViewDeleted`, `canModerate`, `canWriteCorpus`). Each compares the account's role against an application-named rung on its role ladder (effect-auth's `Ladder.make`, checked through the `Guard.make` kit's `hasRoleAtLeast` / `requireRoleAtLeast`). Each must fail closed on an unknown role.
 - `FollowerSeam<Following, R>`: `isFollower(followerId, ownerId)` answers one row's question, and `following(followerId)` returns the list filter's `in` set (effect-auth's `IsFollower`). `nobodyFollows(nobody)` is the fail-closed default when a runtime provides none (effect-auth's `isFollowerNever`).
-- `ReadScope` and `canViewOwned` (effect-auth's `OwnedAccess.readScope` and `OwnedAccess.canView`) live here until effect-auth publishes its own; then pulpit consumes its read scope and keeps only the rendering into `ListFilter`.
+- `ReadScope` and `canViewOwned` (effect-auth's `OwnedReadScope` / `OwnedAccess.readScope` and `OwnedAccess.canView`) live here until effect-auth publishes its own; then pulpit consumes its read scope and keeps only the rendering into `ListFilter`.
 - `Unauthorized` / `Forbidden` (effect-auth's `Guard` errors) are defined here until effect-auth publishes them.
 
 ### `SubtypeHandlers`: the handler record
