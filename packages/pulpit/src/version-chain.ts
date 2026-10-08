@@ -1,6 +1,7 @@
 /**
  * **The node / version chain discipline** — create, append, tombstone,
- * restore and history over an append-only chain, generic in the leaf.
+ * restore, history and field-level compare over an append-only chain,
+ * generic in the leaf.
  *
  * Every node carries an append-only chain of `(version, action, timestamp,
  * actor)` rows (`READ-009` / `PUB-003`): each edit appends a row rather than
@@ -65,6 +66,7 @@ import * as Array from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
@@ -87,7 +89,9 @@ export type VersionAction = typeof VersionAction.Type;
 /**
  * One column's value in a leaf's state: a JSON value, or one of the two
  * non-JSON scalars a Drizzle row carries (`Date` for timestamps, `bigint` for
- * `bigint` columns). Documents are carried inline as their parsed JSON.
+ * `bigint` columns). A content-addressed document is carried as its
+ * `DocumentHash` (`./documents`' `documentRef`), never as a copy; a document
+ * a leaf keeps inline is its parsed JSON.
  *
  * @since 0.1.0
  */
@@ -298,6 +302,99 @@ export const applyPatch = (state: ChainState, patch: ChainPatch) => ({
   ...Record.filter(patch, (value): value is ColumnValue => value !== undefined),
 });
 
+// ── Version compare ───────────────────────────────────────────────────
+
+/**
+ * How one column differs between two states, read from the first state to
+ * the second: `added` (absent before, present after), `removed` (present
+ * before, absent after) or `changed` (present on both sides, structurally
+ * unequal). A `null` is a present value: a column cleared to `null` is
+ * `changed`, never `removed`, and a column absent from a state is a column
+ * that state does not have, not one it cleared.
+ *
+ * @since 0.1.0
+ */
+export type AttributeChange =
+  | { readonly _tag: "added"; readonly after: ColumnValue }
+  | { readonly _tag: "removed"; readonly before: ColumnValue }
+  | { readonly _tag: "changed"; readonly before: ColumnValue; readonly after: ColumnValue };
+
+/**
+ * The field-level change set between two states, keyed by column: one
+ * {@link AttributeChange} per column that differs. An unchanged column has
+ * no key, so two equal states diff to `{}`.
+ *
+ * @since 0.1.0
+ */
+export type StateDiff = { readonly [column: string]: AttributeChange };
+
+/** One column's change, or none when both sides hold structurally equal values. */
+const changeOf = (
+  before: Option.Option<ColumnValue>,
+  after: Option.Option<ColumnValue>,
+): Option.Option<AttributeChange> => {
+  if (Option.isNone(before)) {
+    return Option.map(after, (value): AttributeChange => ({ _tag: "added", after: value }));
+  }
+  if (Option.isNone(after)) return Option.some({ _tag: "removed", before: before.value });
+  return Equal.equals(before.value, after.value)
+    ? Option.none()
+    : Option.some({ _tag: "changed", before: before.value, after: after.value });
+};
+
+/**
+ * The field-level change set from state `from` to state `to`: every column
+ * that is added, removed or changed, with its before and after values;
+ * unchanged columns are omitted. Pure and total, with no error channel.
+ *
+ * Presence is read per key, so the tri-state distinction survives: a column
+ * holding `null` is present (a clear), and only a column with no key is
+ * absent. Values compare structurally with `Equal.equals`: JSON objects and
+ * arrays by content (key order ignored), a `Date` by its instant, a `bigint`
+ * by value, and a `Date` never equals the string of its instant. A
+ * content-addressed document is held as its `DocumentHash`, so it compares by
+ * hash: changed or unchanged, never a textual diff, which is the UI's job.
+ *
+ * The diff is directed: swapping the arguments swaps `added` and `removed`
+ * and each change's `before` and `after`. A state's values are compared as
+ * immutable (Effect caches structural hashes), as a {@link ChainState} is.
+ *
+ * @since 0.1.0
+ */
+export const diffStates = (from: ChainState, to: ChainState): StateDiff =>
+  Record.fromEntries(
+    Array.flatMap(Array.dedupe([...Record.keys(from), ...Record.keys(to)]), (column) =>
+      Array.fromOption(
+        Option.map(
+          changeOf(Record.get(from, column), Record.get(to, column)),
+          (change) => [column, change] as const,
+        ),
+      ),
+    ),
+  );
+
+/**
+ * What {@link VersionChainOps.compare} returns: both versions as read
+ * (entry and full state) and the {@link StateDiff} from the first to the
+ * second.
+ *
+ * A tombstone is not an attribute: it is the version's `action`, so it shows
+ * as `from.action` / `to.action` being `"delete"` and never as a key in
+ * `changes`. A tombstone carries its state forward, so a version compared
+ * with the tombstone that followed it has no changes; a history view labels
+ * the version deleted from its action and lists only what the content did.
+ *
+ * @since 0.1.0
+ */
+export interface VersionComparison {
+  /** The version compared from, with its state. */
+  readonly from: VersionSnapshot;
+  /** The version compared to, with its state. */
+  readonly to: VersionSnapshot;
+  /** `diffStates(from.state, to.state)`. */
+  readonly changes: StateDiff;
+}
+
 /**
  * The input to {@link VersionChainOps.create}: the node id, the leaf's
  * initial state, the acting account.
@@ -401,6 +498,20 @@ export interface VersionChainOps<E, R> {
     id: string,
     version: bigint,
   ) => Effect.Effect<VersionSnapshot, E | VersionNotFound, R>;
+  /**
+   * The field-level change set from version `from` to version `to` of one
+   * node: two {@link VersionChainOps.getVersion} reads and {@link diffStates}.
+   * Read-only. Fails {@link VersionNotFound} for whichever version (`from`
+   * first) cannot be fully reconstructed. A tombstone on either side is that
+   * side's `action`, never an entry in `changes` (see
+   * {@link VersionComparison}). Ungated, like `getVersion`: `./subtype` gates
+   * history reads (`READ-009`), and a gated `compare` there is pulpit#82.
+   */
+  readonly compare: (
+    id: string,
+    from: bigint,
+    to: bigint,
+  ) => Effect.Effect<VersionComparison, E | VersionNotFound, R>;
   /**
    * Re-apply the full snapshot at `(id, version)` as a NEW `update` version —
    * over a tombstone too. Fails {@link VersionNotFound}, before writing
@@ -560,6 +671,12 @@ export const defineVersionChain = <E, R>(
     return snapshot.value;
   });
 
+  const compare = Effect.fn(`${type}.compare`)(function* (id: string, from: bigint, to: bigint) {
+    const before = yield* getVersion(id, from);
+    const after = yield* getVersion(id, to);
+    return { from: before, to: after, changes: diffStates(before.state, after.state) };
+  });
+
   const restoreVersion = Effect.fn(`${type}.restoreVersion`)(function* (
     id: string,
     version: bigint,
@@ -590,5 +707,14 @@ export const defineVersionChain = <E, R>(
     });
   });
 
-  return { create, update, restore, delete: softDelete, getVersion, restoreVersion, history };
+  return {
+    create,
+    update,
+    restore,
+    delete: softDelete,
+    getVersion,
+    compare,
+    restoreVersion,
+    history,
+  };
 };
