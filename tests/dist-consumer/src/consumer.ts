@@ -32,6 +32,8 @@ import {
   type ChainWrite,
   type NodeAlreadyExists,
   type NodeNotFound,
+  type Precondition,
+  type StaleVersion,
   type VersionChainOps,
   type VersionChainStore,
   type VersionConflict,
@@ -145,6 +147,44 @@ export type _Create = Assert<
     Effect.Effect<ChainWrite, StoreFailure | NodeAlreadyExists | VersionConflict, Transaction>
   >
 >;
+export type _Update = Assert<
+  Equals<
+    ReturnType<typeof chain.update>,
+    Effect.Effect<
+      ChainWrite,
+      StoreFailure | NodeNotFound | StaleVersion | VersionConflict,
+      Transaction
+    >
+  >
+>;
+export type _Precondition = Assert<
+  // oxlint-disable-next-line effect/prefer-option-over-null -- asserts the emitted declaration keeps the workspace's `?: T | undefined` optional-field convention (AGENTS.md → Conventions)
+  Equals<Precondition, { readonly expectedVersion?: bigint | undefined }>
+>;
+// The whole parameter list, read off a reference signature so the
+// precondition is pinned as an optional trailing parameter.
+export type _DeletePrecondition = Assert<
+  Equals<
+    Parameters<typeof chain.delete>,
+    Parameters<(id: string, actorId: Option.Option<string>, precondition?: Precondition) => void>
+  >
+>;
+export type _RestoreVersionPrecondition = Assert<
+  Equals<
+    Parameters<typeof chain.restoreVersion>,
+    Parameters<
+      (
+        id: string,
+        version: bigint,
+        actorId: Option.Option<string>,
+        precondition?: Precondition,
+      ) => void
+    >
+  >
+>;
+export type _StaleVersionTag = Assert<Equals<StaleVersion["_tag"], "StaleVersion">>;
+export type _StaleVersionExpected = Assert<Equals<StaleVersion["expected"], bigint>>;
+export type _StaleVersion = Assert<Equals<StaleVersion["current"], bigint>>;
 
 // ── filter + subtype ─────────────────────────────────────────────────────
 

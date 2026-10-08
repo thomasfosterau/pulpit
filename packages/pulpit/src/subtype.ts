@@ -73,6 +73,8 @@ import {
   type ChainState,
   type ChainWrite,
   type ColumnValue,
+  type Precondition,
+  type StaleVersion,
   type VersionAction,
   type VersionChainStore,
   type VersionConflict,
@@ -523,33 +525,36 @@ export interface SubtypeOps<Resource, E, R> {
   /**
    * Append a tri-state patch. Fails `Unauthorized` when anonymous,
    * `Forbidden` below the write rung (the corpus-write rung for reference
-   * data, owner-or-moderator for an owned row), and `NodeNotFound` when an
-   * owned row has no owner or the node is unknown or tombstoned.
+   * data, owner-or-moderator for an owned row), `NodeNotFound` when an
+   * owned row has no owner or the node is unknown or tombstoned, and
+   * `StaleVersion` when `input.expectedVersion` is not the head (checked
+   * after the gate, so only a writer learns the head).
    */
-  readonly update: (input: {
-    readonly id: string;
-    readonly patch: ChainPatch;
-  }) => Effect.Effect<ChainWrite, Gate | NodeNotFound | VersionConflict | E, R>;
+  readonly update: (
+    input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
+  ) => Effect.Effect<ChainWrite, Gate | NodeNotFound | StaleVersion | VersionConflict | E, R>;
   /**
    * {@link SubtypeOps.update}, except a tombstone does not fail: the node
    * comes back live (`VERSION-CHAIN-006`). Fails as `update` does, apart from
    * the tombstone.
    */
-  readonly restore: (input: {
-    readonly id: string;
-    readonly patch: ChainPatch;
-  }) => Effect.Effect<ChainWrite, Gate | NodeNotFound | VersionConflict | E, R>;
+  readonly restore: (
+    input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
+  ) => Effect.Effect<ChainWrite, Gate | NodeNotFound | StaleVersion | VersionConflict | E, R>;
   /**
    * Tombstone the node (idempotent: an already tombstoned node reports
-   * `alreadyDeleted: true` and writes nothing). Fails `Unauthorized` when
-   * anonymous, `Forbidden` below the write rung, and `NodeNotFound` when an
-   * owned row has no owner or the node is unknown.
+   * `alreadyDeleted: true` and writes nothing, whatever the precondition).
+   * Fails `Unauthorized` when anonymous, `Forbidden` below the write rung,
+   * `NodeNotFound` when an owned row has no owner or the node is unknown,
+   * and `StaleVersion` when a live node's head is not
+   * `precondition.expectedVersion`.
    */
   readonly delete: (
     id: string,
+    precondition?: Precondition,
   ) => Effect.Effect<
     ChainWrite & { readonly alreadyDeleted: boolean },
-    Gate | NodeNotFound | VersionConflict | E,
+    Gate | NodeNotFound | StaleVersion | VersionConflict | E,
     R
   >;
   /**
@@ -574,12 +579,18 @@ export interface SubtypeOps<Resource, E, R> {
   /**
    * Re-apply the state at `version` as a new version, gated like a write.
    * Fails `VersionNotFound`, before writing anything, when that version
-   * cannot be fully reconstructed.
+   * cannot be fully reconstructed, and `StaleVersion` when the head is not
+   * `precondition.expectedVersion`.
    */
   readonly restoreVersion: (
     id: string,
     version: bigint,
-  ) => Effect.Effect<ChainWrite, Gate | NodeNotFound | VersionNotFound | VersionConflict | E, R>;
+    precondition?: Precondition,
+  ) => Effect.Effect<
+    ChainWrite,
+    Gate | NodeNotFound | VersionNotFound | StaleVersion | VersionConflict | E,
+    R
+  >;
 }
 
 /**
@@ -635,25 +646,26 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     return written;
   });
 
-  const update = Effect.fn(`${type}.update`)(function* (input: {
-    readonly id: string;
-    readonly patch: ChainPatch;
-  }) {
+  const update = Effect.fn(`${type}.update`)(function* (
+    input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
+  ) {
     const account = yield* writer(yield* definition.viewer, input.id);
     return yield* chain.update({ ...input, actorId: actor(account) });
   });
 
-  const restore = Effect.fn(`${type}.restore`)(function* (input: {
-    readonly id: string;
-    readonly patch: ChainPatch;
-  }) {
+  const restore = Effect.fn(`${type}.restore`)(function* (
+    input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
+  ) {
     const account = yield* writer(yield* definition.viewer, input.id);
     return yield* chain.restore({ ...input, actorId: actor(account) });
   });
 
-  const softDelete = Effect.fn(`${type}.delete`)(function* (id: string) {
+  const softDelete = Effect.fn(`${type}.delete`)(function* (
+    id: string,
+    precondition: Precondition = {},
+  ) {
     const account = yield* writer(yield* definition.viewer, id);
-    return yield* chain.delete(id, actor(account));
+    return yield* chain.delete(id, actor(account), precondition);
   });
 
   const get = Effect.fn(`${type}.get`)(function* (id: string) {
@@ -701,9 +713,10 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   const restoreVersion = Effect.fn(`${type}.restoreVersion`)(function* (
     id: string,
     version: bigint,
+    precondition: Precondition = {},
   ) {
     const account = yield* writer(yield* definition.viewer, id);
-    return yield* chain.restoreVersion(id, version, actor(account));
+    return yield* chain.restoreVersion(id, version, actor(account), precondition);
   });
 
   return {
@@ -753,6 +766,10 @@ export interface ResourceCacheSeam<Resource, R> {
  * `transact` (the handler seam's boundary, website #1883); the re-read
  * stays outside it.
  *
+ * `update`, `delete` and `restoreVersion` take the operations' optional
+ * expected version ({@link Precondition}); the HTTP layer maps a request's
+ * `If-Match` onto it and a `StaleVersion` failure onto the 412.
+ *
  * @since 0.1.0
  */
 export interface SubtypeHandlers<Resource, E, R> {
@@ -762,17 +779,20 @@ export interface SubtypeHandlers<Resource, E, R> {
     readonly id: Option.Option<string>;
     readonly state: ChainState;
   }) => Effect.Effect<Resource, Gate | NodeAlreadyExists | NodeNotFound | VersionConflict | E, R>;
-  readonly update: (input: {
-    readonly id: string;
-    readonly patch: ChainPatch;
-  }) => Effect.Effect<Resource, Gate | NodeNotFound | VersionConflict | E, R>;
+  readonly update: (
+    input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
+  ) => Effect.Effect<Resource, Gate | NodeNotFound | StaleVersion | VersionConflict | E, R>;
   readonly delete: (
     id: string,
-  ) => Effect.Effect<void, Gate | NodeNotFound | VersionConflict | E, R>;
-  readonly restoreVersion: (input: {
-    readonly id: string;
-    readonly version: bigint;
-  }) => Effect.Effect<Resource, Gate | NodeNotFound | VersionNotFound | VersionConflict | E, R>;
+    precondition?: Precondition,
+  ) => Effect.Effect<void, Gate | NodeNotFound | StaleVersion | VersionConflict | E, R>;
+  readonly restoreVersion: (
+    input: { readonly id: string; readonly version: bigint } & Precondition,
+  ) => Effect.Effect<
+    Resource,
+    Gate | NodeNotFound | VersionNotFound | StaleVersion | VersionConflict | E,
+    R
+  >;
 }
 
 /**
@@ -813,14 +833,17 @@ export const subtypeHandlers = <Resource, E, R>(
       Effect.flatMap(config.transact(ops.create(input)), ({ id }) => writeThrough(id)),
     update: (input) =>
       Effect.flatMap(config.transact(ops.update(input)), ({ id }) => writeThrough(id)),
-    delete: (id) =>
+    delete: (id, precondition) =>
       Effect.gen(function* () {
-        yield* config.transact(ops.delete(id));
+        yield* config.transact(ops.delete(id, precondition));
         if (Option.isSome(config.cache)) yield* config.cache.value.delete(id);
       }),
     restoreVersion: (input) =>
-      Effect.flatMap(config.transact(ops.restoreVersion(input.id, input.version)), ({ id }) =>
-        writeThrough(id),
+      Effect.flatMap(
+        config.transact(
+          ops.restoreVersion(input.id, input.version, { expectedVersion: input.expectedVersion }),
+        ),
+        ({ id }) => writeThrough(id),
       ),
   };
 };

@@ -35,6 +35,16 @@
  *   at that version — before anything is written.
  * - **Every chain read is bounded** (`PERF-DB-001`): `history` takes a
  *   `limit`, capped at {@link MAX_HISTORY_LIMIT}.
+ * - **An expected version is a precondition on the append.** A write to an
+ *   existing node (`update`, `restore`, `delete`, `restoreVersion`) may
+ *   carry the head version its caller last read ({@link Precondition}); a
+ *   head that has moved fails {@link StaleVersion} and nothing is written.
+ *   It is checked against the very head the append extends, and the append
+ *   lands at that head + 1, so a writer that slips in between the read and
+ *   the append takes the `(id, version)` key first and this one fails
+ *   {@link VersionConflict}: the store's primary key is what makes the check
+ *   atomic. Without one, a write extends whatever the head is (last writer
+ *   wins on a column two patches both set).
  *
  * ## The seam
  *
@@ -195,6 +205,28 @@ export class VersionConflict extends Schema.TaggedError<VersionConflict>()("Vers
 }) {}
 
 /**
+ * An expected-version precondition that no longer holds: the head moved past
+ * the version the caller last read, so the write would have overwritten an
+ * edit the caller never saw. Nothing was written. Carries the head the write
+ * would have extended (`current`), so the caller can re-read and re-apply;
+ * the wire's 412 (a failed `If-Match`) or 409.
+ *
+ * A writer that passes the check but loses the race to the append fails
+ * {@link VersionConflict} instead: the same stale read, caught one step later
+ * by the store's key.
+ *
+ * @since 0.1.0
+ */
+export class StaleVersion extends Schema.TaggedError<StaleVersion>()("StaleVersion", {
+  type: Schema.String,
+  id: Schema.String,
+  /** The version the caller expected the head to be. */
+  expected: Schema.BigInt,
+  /** The head version the write found. */
+  current: Schema.BigInt,
+}) {}
+
+/**
  * The chain's head version has no reconstructable state — the store broke its
  * own contract (a head it reports must be readable). A defect, never a typed
  * failure: there is nothing a caller could do about it.
@@ -282,13 +314,33 @@ export interface CreateInput {
 }
 
 /**
- * The input to {@link VersionChainOps.update} and
- * {@link VersionChainOps.restore}: the node, a tri-state patch, the acting
- * account.
+ * An optimistic-concurrency precondition on a write to an existing node: the
+ * head version the caller last read. Every write that extends a chain
+ * ({@link VersionChainOps.update}, {@link VersionChainOps.restore},
+ * {@link VersionChainOps.delete}, {@link VersionChainOps.restoreVersion})
+ * accepts one.
  *
  * @since 0.1.0
  */
-export interface UpdateInput {
+export interface Precondition {
+  /**
+   * The head version the caller last read. When present, the write fails
+   * {@link StaleVersion}, writing nothing, unless the head it extends is
+   * exactly this version; absent (or `undefined`), the write extends whatever
+   * the head is.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option`
+  readonly expectedVersion?: bigint | undefined;
+}
+
+/**
+ * The input to {@link VersionChainOps.update} and
+ * {@link VersionChainOps.restore}: the node, a tri-state patch, the acting
+ * account, and an optional expected version.
+ *
+ * @since 0.1.0
+ */
+export interface UpdateInput extends Precondition {
   /** The node to append to. */
   readonly id: string;
   /**
@@ -312,29 +364,36 @@ export interface VersionChainOps<E, R> {
   ) => Effect.Effect<ChainWrite, E | NodeAlreadyExists | VersionConflict, R>;
   /**
    * Append an `update` version carrying the patch over the current state.
-   * Fails {@link NodeNotFound} for an unknown id and for a tombstoned node.
+   * Fails {@link NodeNotFound} for an unknown id and for a tombstoned node,
+   * and {@link StaleVersion} when `input.expectedVersion` is not the head.
    */
   readonly update: (
     input: UpdateInput,
-  ) => Effect.Effect<ChainWrite, E | NodeNotFound | VersionConflict, R>;
+  ) => Effect.Effect<ChainWrite, E | NodeNotFound | StaleVersion | VersionConflict, R>;
   /**
    * {@link update}, except a tombstone does not fail: the explicit restore
-   * surface (`VERSION-CHAIN-006`) — the node comes back live.
+   * surface (`VERSION-CHAIN-006`) — the node comes back live. Fails
+   * {@link NodeNotFound} for an unknown id and {@link StaleVersion} when
+   * `input.expectedVersion` is not the head.
    */
   readonly restore: (
     input: UpdateInput,
-  ) => Effect.Effect<ChainWrite, E | NodeNotFound | VersionConflict, R>;
+  ) => Effect.Effect<ChainWrite, E | NodeNotFound | StaleVersion | VersionConflict, R>;
   /**
    * Append a `delete` version carrying the state forward. Idempotent: on a
    * tombstoned node it returns the existing tombstone with
-   * `alreadyDeleted: true` and writes nothing.
+   * `alreadyDeleted: true` and writes nothing, whatever the precondition
+   * says (the delete it asked for has happened). Fails {@link NodeNotFound}
+   * for an unknown id and {@link StaleVersion} when a live node's head is
+   * not `precondition.expectedVersion`.
    */
   readonly delete: (
     id: string,
     actorId: Option.Option<string>,
+    precondition?: Precondition,
   ) => Effect.Effect<
     ChainWrite & { readonly alreadyDeleted: boolean },
-    E | NodeNotFound | VersionConflict,
+    E | NodeNotFound | StaleVersion | VersionConflict,
     R
   >;
   /** The reconstructed state at `(id, version)`. Read-only. */
@@ -345,13 +404,17 @@ export interface VersionChainOps<E, R> {
   /**
    * Re-apply the full snapshot at `(id, version)` as a NEW `update` version —
    * over a tombstone too. Fails {@link VersionNotFound}, before writing
-   * anything, when the version cannot be fully reconstructed.
+   * anything, when the version cannot be fully reconstructed, and
+   * {@link StaleVersion} when the head is not
+   * `precondition.expectedVersion` (the precondition is on the head the
+   * restore extends, not on the version it restores).
    */
   readonly restoreVersion: (
     id: string,
     version: bigint,
     actorId: Option.Option<string>,
-  ) => Effect.Effect<ChainWrite, E | VersionNotFound | VersionConflict, R>;
+    precondition?: Precondition,
+  ) => Effect.Effect<ChainWrite, E | VersionNotFound | StaleVersion | VersionConflict, R>;
   /**
    * The chain, oldest first, at most `limit` entries (default and cap
    * {@link MAX_HISTORY_LIMIT}). Fails {@link NodeNotFound} when the id has no
@@ -380,14 +443,26 @@ export const defineVersionChain = <E, R>(
   type: string,
   store: VersionChainStore<E, R>,
 ): VersionChainOps<E, R> => {
+  /**
+   * Append at `previous + 1`, after checking the precondition against that
+   * same `previous`. The check and the append's version come from one read,
+   * so a writer that lands in between takes `previous + 1` first and this
+   * append fails the store's `(id, version)` key ({@link VersionConflict}):
+   * success means the head was still `expectedVersion` when the row went in.
+   */
   const appendNext = (
     id: string,
     previous: VersionChainEntry,
     action: VersionAction,
     state: ChainState,
     actorId: Option.Option<string>,
-  ): Effect.Effect<ChainWrite, E | VersionConflict, R> =>
+    precondition: Precondition,
+  ): Effect.Effect<ChainWrite, E | StaleVersion | VersionConflict, R> =>
     Effect.gen(function* () {
+      const expected = precondition.expectedVersion;
+      if (expected !== undefined && expected !== previous.version) {
+        return yield* new StaleVersion({ type, id, expected, current: previous.version });
+      }
       const version = previous.version + 1n;
       const timestamp = yield* now;
       yield* store.append({ id, type, version, action, timestamp, state, actorId });
@@ -446,6 +521,7 @@ export const defineVersionChain = <E, R>(
         "update",
         applyPatch(head.value.state, input.patch),
         input.actorId,
+        input,
       );
     });
 
@@ -460,13 +536,21 @@ export const defineVersionChain = <E, R>(
   const softDelete = Effect.fn(`${type}.delete`)(function* (
     id: string,
     actorId: Option.Option<string>,
+    precondition: Precondition = {},
   ) {
     const head = yield* current(id);
     if (Option.isNone(head)) return yield* new NodeNotFound({ type, id });
     if (head.value.action === "delete") {
       return { id, version: head.value.version, alreadyDeleted: true };
     }
-    const written = yield* appendNext(id, head.value, "delete", head.value.state, actorId);
+    const written = yield* appendNext(
+      id,
+      head.value,
+      "delete",
+      head.value.state,
+      actorId,
+      precondition,
+    );
     return { ...written, alreadyDeleted: false };
   });
 
@@ -480,6 +564,7 @@ export const defineVersionChain = <E, R>(
     id: string,
     version: bigint,
     actorId: Option.Option<string>,
+    precondition: Precondition = {},
   ) {
     // Read the whole historical state FIRST, so an unreconstructable version
     // fails before the chain is touched at all.
@@ -490,7 +575,7 @@ export const defineVersionChain = <E, R>(
     // `update`, not a fourth action: a restore is an ordinary edit whose
     // content came from history, and `action` stays the currency / tombstone
     // axis every fail-closed view reads (#864 A8).
-    return yield* appendNext(id, head.value, "update", snapshot.value.state, actorId);
+    return yield* appendNext(id, head.value, "update", snapshot.value.state, actorId, precondition);
   });
 
   const history = Effect.fn(`${type}.history`)(function* (
