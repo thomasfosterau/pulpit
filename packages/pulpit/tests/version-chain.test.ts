@@ -325,6 +325,40 @@ describe("expectedVersion — the optimistic-concurrency precondition", () => {
       const written = await explicit.run(write(explicit.chain, { expectedVersion: undefined }));
       expect(written.version).toBe(2n);
     });
+
+    it("loses to a writer that appends between its head read and its append", async () => {
+      const { store, exit } = await atHeadOne();
+      // The first head read (the one this write's check and append both
+      // extend) lets a concurrent update append version 2 before returning.
+      // Hooked on `head`, not `snapshot`: restoreVersion reads the restored
+      // snapshot before the head.
+      let raced = false;
+      const interleaved = defineVersionChain("posts", {
+        ...store,
+        head: (id) =>
+          Effect.tap(store.head(id), () =>
+            raced
+              ? Effect.void
+              : Effect.andThen(
+                  Effect.sync(() => {
+                    raced = true;
+                  }),
+                  // The concurrent writer must succeed; a failure of its own is a defect here.
+                  Effect.orDie(
+                    defineVersionChain("posts", store).update({
+                      id: ID,
+                      patch: { title: "A" },
+                      actorId: ACTOR,
+                    }),
+                  ),
+                ),
+          ),
+      });
+      const loser = await exit(write(interleaved, { expectedVersion: 1n }));
+      expect(tagOf(loser)).toEqual(Option.some("VersionConflict"));
+      expect(store.rows()).toHaveLength(3);
+      expect(store.rows()[2]).toMatchObject({ action: "update", state: { title: "A" } });
+    });
   });
 
   it("is race-safe: two writers expecting the same head, interleaved, cannot both write", async () => {
@@ -358,7 +392,7 @@ describe("expectedVersion — the optimistic-concurrency precondition", () => {
     );
     expect(tagOf(loser)).toEqual(Option.some("VersionConflict"));
     expect(store.rows()).toHaveLength(3);
-    expect(store.rows()[2]!.state["title"]).toBe("A");
+    expect(store.rows()[2]).toMatchObject({ state: { title: "A" } });
     // A writer that re-reads now sees head 2, and its stale expectation is refused up front.
     const late = await exit(
       interleaved.update({ id: ID, patch: { title: "B" }, actorId: ACTOR, expectedVersion: 1n }),

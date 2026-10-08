@@ -23,6 +23,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
+import * as MutableHashMap from "effect/MutableHashMap";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import type { Visibility } from "../src/content.ts";
@@ -519,12 +520,12 @@ describe("defineSubtype — the expected-version precondition", () => {
 
   it("the handlers thread it through, and a stale write neither caches nor evicts", async () => {
     const { ops, actAs, id } = await atHeadOne();
-    const cached = new Map<string, unknown>([[id, "cached"]]);
+    const cached = MutableHashMap.make<Array<readonly [string, unknown]>>([id, "cached"]);
     const handlers = subtypeHandlers(ops, {
       transact: (effect) => effect,
       cache: Option.some({
-        set: (key, resource) => Effect.sync(() => void cached.set(key, resource)),
-        delete: (key) => Effect.sync(() => void cached.delete(key)),
+        set: (key, resource) => Effect.sync(() => void MutableHashMap.set(cached, key, resource)),
+        delete: (key) => Effect.sync(() => void MutableHashMap.remove(cached, key)),
       }),
     });
     const stale = { expectedVersion: 0n };
@@ -537,14 +538,14 @@ describe("defineSubtype — the expected-version precondition", () => {
     expect(
       await tagOf(actAs(as(member), handlers.restoreVersion({ id, version: 0n, ...stale }))),
     ).toEqual(Option.some("StaleVersion"));
-    expect(cached.get(id)).toBe("cached");
+    expect(MutableHashMap.get(cached, id)).toEqual(Option.some("cached"));
     const updated = await run(
       actAs(as(member), handlers.update({ id, patch: { title: "Third" }, expectedVersion: 1n })),
     );
-    expect(cached.get(id)).toEqual(updated);
+    expect(MutableHashMap.get(cached, id)).toEqual(Option.some(updated));
     await run(actAs(as(member), handlers.restoreVersion({ id, version: 0n, expectedVersion: 2n })));
     await run(actAs(as(member), handlers.delete(id, { expectedVersion: 3n })));
-    expect(cached.has(id)).toBe(false);
+    expect(MutableHashMap.has(cached, id)).toBe(false);
   });
 });
 
