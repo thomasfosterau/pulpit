@@ -12,6 +12,7 @@ The versioned-content kernel: the only published package in this repo.
 The IDs below are defined in the root [SECURITY.md → Invariant IDs](../../SECURITY.md#invariant-ids).
 
 - **The version chain is append-only** (`VERSION-CHAIN-001/002`). Every write lands at `N_max + 1`; no version row is ever rewritten, deleted or reordered. A restore is a new version whose content came from history, and the only write over a tombstone is the explicit `restore` / `restoreVersion` (`VERSION-CHAIN-006`).
+- **A stored document is never rewritten** (`DOC-001`). A `DocumentStore`'s `put` writes only an unseen hash and never updates a stored row; a changed document is a new hash. Hashing is the store's job, to the contract in [README.md → Seams](README.md#seams); the in-memory fake in `tests/in-memory-documents.ts` implements it and is pinned to hashes taken from Postgres, so change the two together.
 - **Update inputs are tri-state**: a value sets, `null` clears a nullable column, `undefined` carries forward. Declare it on the `Resource.make` descriptor; never spell `input.x ?? null`, which turns a carry-forward into a clear.
 - **A read never reveals a hidden row** (`SEC-AUTH-ENUM-001`): `get` fails `NodeNotFound`, never `Forbidden`, and `getMany` / `list` omit the row, because a 403 would confirm it exists. The write and history gate (`requireWriter`) currently answers `Forbidden` for an existing owned row the caller doesn't own, which does confirm existence; pulpit#24 asks whether that is intended. Don't extend that behaviour to a read.
 - **The owned list filter and `canViewOwned` never disagree.** `tests/subtype.test.ts` checks every row × viewer; change one, change both.
@@ -24,9 +25,10 @@ The IDs below are defined in the root [SECURITY.md → Invariant IDs](../../SECU
 
 - **Node** — a stable identity (`id`) with an append-only chain of versions. The apps spell it `core.node` + `core.node_version`; the kernel knows only the shape.
 - **Version chain** — the `(version, action, timestamp)` rows a node accumulates. `action` is `create` (version 0), `update` (an appended version, a restore included) or `delete` (a tombstone that still carries the leaf columns forward).
+- **Document** — a content-addressed JSON value (a ProseKit tree, in the apps) stored once by its hash; a version row carries the hash (`documentRef`), never a copy. Its type and schema are the application's.
 - **Leaf** — a concrete subtype (a post, a garden, an image): its own version table keyed `(id, version)` and its current-version view.
 - **Content axes** — `visibility` (`public | followers | private`) and the binary `draft` flag, both on the Content branch's version row; a tombstone is the third, orthogonal axis.
 - **Registry** — an application's ordered list of `RegistryEntry` (marker levels without a resource, leaves with one). The kernel owns the flag vocabulary and `validateRegistry`; the tree is the application's.
-- **Store** — a seam implementation that persists and applies no policy (`VersionChainStore`, `LeafStore`). Policy is the kernel's; persistence is the store's.
+- **Store** — a seam implementation that persists and applies no policy (`VersionChainStore`, `LeafStore`, `DocumentStore`). Policy is the kernel's; persistence is the store's.
 - **List filter** — a read predicate as data (`ListFilter`), rendered to SQL by a store and evaluated in memory by the fakes.
 - **Access kind** — `reference` (corpus material written at the corpus-write rung, publicly readable) or `owned` (a member's own row, `owner_id` + `visibility`, gated per viewer). Mirrors the registry's `referenceData` ⊕ `owned` flags.

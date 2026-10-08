@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Resource } from "@thomasfosterau/effect-jsonapi";
-import { Content, Registry } from "@thomasfosterau/pulpit";
+import { Content, Documents, Registry } from "@thomasfosterau/pulpit";
 import {
   ContentResource,
   contentVisibilityResourceFields,
@@ -44,6 +44,7 @@ import {
   type LeafStore,
 } from "@thomasfosterau/pulpit/subtype";
 import { isPubliclyServeable, serveablePolicy } from "@thomasfosterau/pulpit/publication";
+import { DocumentHash, documentRef, type DocumentStore } from "@thomasfosterau/pulpit/documents";
 
 /** A compile-time assertion: `T` must be exactly `true`. */
 type Assert<T extends true> = T;
@@ -188,3 +189,39 @@ export const hook = serveablePolicy({ owned: true });
 export type _Hook = Assert<Equals<ReturnType<typeof hook>, boolean>>;
 export type _HookInput = Assert<Equals<Parameters<typeof hook>, [resource: unknown]>>;
 export type _Gate = Assert<Equals<ReturnType<typeof isPubliclyServeable>, boolean>>;
+
+// ── documents ────────────────────────────────────────────────────────────
+
+export type _Hash = Assert<Equals<DocumentHash, string>>;
+export type _HashBarrel = Assert<Equals<typeof Documents.DocumentHash, typeof DocumentHash>>;
+
+interface ProseDocument {
+  readonly type: "doc";
+}
+declare const documents: DocumentStore<ProseDocument, StoreFailure, Transaction>;
+export type _Put = Assert<
+  Equals<ReturnType<typeof documents.put>, Effect.Effect<string, StoreFailure, Transaction>>
+>;
+export type _GetDocument = Assert<
+  Equals<
+    ReturnType<typeof documents.get>,
+    Effect.Effect<Option.Option<ProseDocument>, StoreFailure, Transaction>
+  >
+>;
+
+// A version row's document reference: the hash, required on the resource
+// and at create, optional (carried forward) at update.
+export const Note = Resource.make("notes", {
+  attributes: { ...documentRef("title"), ...documentRef("body") },
+});
+export type _NoteAttributes = Assert<
+  Equals<typeof Note.Type.attributes, { readonly title: string; readonly body: string }>
+>;
+/* oxlint-disable effect/prefer-option-over-null -- the assertion must spell the upstream projection exactly, and effect-jsonapi's update presence is `?: T | undefined` */
+export type _NoteUpdate = Assert<
+  Equals<
+    Omit<typeof Note.updateInput.Type, "id">,
+    { readonly title?: string | undefined; readonly body?: string | undefined }
+  >
+>;
+/* oxlint-enable effect/prefer-option-over-null */

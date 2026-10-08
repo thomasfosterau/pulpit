@@ -42,3 +42,10 @@ export * as Subtype from "./subtype.ts";
  * policy (`isPubliclyServeable`, the `serveable` hook).
  */
 export * as Publication from "./publication.ts";
+
+/**
+ * The content-addressed document store seam (`DocumentStore`), the
+ * `DocumentHash` it is keyed by, and the `documentRef` field spread a version
+ * row carries the reference in.
+ */
+export * as Documents from "./documents.ts";

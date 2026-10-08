@@ -39,7 +39,8 @@
     "./version-chain": "./src/version-chain.ts",
     "./filter": "./src/filter.ts",
     "./subtype": "./src/subtype.ts",
-    "./publication": "./src/publication.ts"
+    "./publication": "./src/publication.ts",
+    "./documents": "./src/documents.ts"
   },
   "publishConfig": {
     "exports": {
@@ -70,6 +71,10 @@
       "./publication": {
         "types": "./dist/publication.d.ts",
         "default": "./dist/publication.js"
+      },
+      "./documents": {
+        "types": "./dist/documents.d.ts",
+        "default": "./dist/documents.js"
       }
     },
     "access": "public"
