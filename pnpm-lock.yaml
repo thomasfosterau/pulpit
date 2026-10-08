@@ -22,8 +22,8 @@ catalogs:
       specifier: 0.47.2
       version: 0.47.2
     '@mpsuesser/oxlint-plugin-effect':
-      specifier: ^0.5.0
-      version: 0.5.0
+      specifier: ^0.6.0
+      version: 0.6.0
     '@thomasfosterau/effect-jsonapi':
       specifier: ^0.16.3
       version: 0.16.3
@@ -78,7 +78,7 @@ importers:
         version: 0.47.2
       '@mpsuesser/oxlint-plugin-effect':
         specifier: 'catalog:'
-        version: 0.5.0
+        version: 0.6.0
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.4
@@ -607,8 +607,8 @@ packages:
     resolution: {integrity: sha512-6QEf6yqFbETdwGITKq57aYoPfX/3K8XFNwsAlx0C1M7o8cb79sv1M3w+tWuWvIcSbNqrLF7OD7YpZMVVz335hQ==}
     engines: {node: '>=20.0.0'}
 
-  '@mpsuesser/oxlint-plugin-effect@0.5.0':
-    resolution: {integrity: sha512-RksB0kBL3aEzMdSgozRgKjVc9++k8EsmoqS9QQ4+AS9TVBVcHyA+Q6dE9gcsRqYWbsGNQQ58STDJAwlwczsAqg==}
+  '@mpsuesser/oxlint-plugin-effect@0.6.0':
+    resolution: {integrity: sha512-q0QNOQxvOU/FLBsJI5qpAmnX7g8xzhfgKDzesDliqD1YIj18DBxal2x3IZIcjMupZf5uVhv8hu9p1p4PKF1teA==}
 
   '@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4':
     resolution: {integrity: sha512-LCkGo6JDfaBhgST7UpPWgNgLINpcpabaHfyz5OBx75nUYxBsaEPxjnyNjWpeb/xBup/682QnBfRBy2/LvPutZQ==}
@@ -925,8 +925,8 @@ packages:
     resolution: {integrity: sha512-S0uyoxakDINJ4DPgqxGlEEvrdSMeQb7Z2lKVjxoY2gwsbZbfg2Xr8Klfeo5ZeraHmmdBCELFUHkSe6KEmBpMvg==}
     engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
 
-  '@oxlint/plugins@1.83.0':
-    resolution: {integrity: sha512-qD64wr6SS1DL7YbJQ8WWjyUfFfrJsvAy9Vo0sG/PYUQy30w0uemN2h6j4xuvj4noyETDpzcGC20sv+FH7GrN5A==}
+  '@oxlint/plugins@1.87.0':
+    resolution: {integrity: sha512-OtSZ6NxNkS7bkVy7zk9zGnajz2hVIu0uRPP/dJvJesGRaXtimpA4lpxap7FaIJndG2UIoKhnBU4DxyDQIWv6yg==}
     engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
 
   '@pkgjs/parseargs@0.11.0':
@@ -1547,8 +1547,8 @@ packages:
   eastasianwidth@0.2.0:
     resolution: {integrity: sha512-I88TYZWc9XiYHRQ4/3c5rjjfgkjhLyW2luGIheGERbNQ6OY7yTybanSpDXZa8y7VUP9YmDcYa+eyq4ca7iLqWA==}
 
-  effect-oxlint@0.3.4:
-    resolution: {integrity: sha512-VaI72NhDI+OBk8rkWBxR3D+k8iQN5KX4caiTRtWR/KDlif4KdxmjPelQqflwwprxkGldEpLry9fQvvzlBWY6bA==}
+  effect-oxlint@0.4.0:
+    resolution: {integrity: sha512-IA3ihFKGK0JoZVSPPgPP58988jj4PZ5/asFOhaSYHwDyRRRbkBJn7FX8RiPi++MFpXQvb+3fQpKdPzOvUK9xPQ==}
     peerDependencies:
       effect: 4.0.0
 
@@ -2765,11 +2765,11 @@ snapshots:
       tinyglobby: 0.2.17
       yaml: 2.9.1
 
-  '@mpsuesser/oxlint-plugin-effect@0.5.0':
+  '@mpsuesser/oxlint-plugin-effect@0.6.0':
     dependencies:
-      '@oxlint/plugins': 1.83.0
+      '@oxlint/plugins': 1.87.0
       effect: 4.0.0-beta.100
-      effect-oxlint: 0.3.4(effect@4.0.0-beta.100)
+      effect-oxlint: 0.4.0(effect@4.0.0-beta.100)
 
   '@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4':
     optional: true
@@ -2927,7 +2927,7 @@ snapshots:
 
   '@oxlint/plugins@1.79.0': {}
 
-  '@oxlint/plugins@1.83.0': {}
+  '@oxlint/plugins@1.87.0': {}
 
   '@pkgjs/parseargs@0.11.0':
     optional: true
@@ -3362,9 +3362,9 @@ snapshots:
 
   eastasianwidth@0.2.0: {}
 
-  effect-oxlint@0.3.4(effect@4.0.0-beta.100):
+  effect-oxlint@0.4.0(effect@4.0.0-beta.100):
     dependencies:
-      '@oxlint/plugins': 1.83.0
+      '@oxlint/plugins': 1.87.0
       effect: 4.0.0-beta.100
 
   effect-solutions@0.5.3:
