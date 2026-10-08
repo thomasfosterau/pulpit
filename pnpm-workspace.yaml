@@ -92,6 +92,19 @@ overrides:
   # the plugin on its own private beta.100 copy. Remove this once the plugin
   # ships an rc.118 build (website#2015).
   "@mpsuesser/oxlint-plugin-effect>effect": "4.0.0-beta.100"
+  # Security floors for dev-only transitive tooling, so `pnpm audit
+  # --audit-level high` passes (#41). Every parent's range already admits the
+  # fixed release, so no catalog bump reaches them; the floor stops a lockfile
+  # re-resolution from landing back on a vulnerable copy. `^`, not `>=`, keeps
+  # each inside the major its parents ask for.
+  # - shell-quote GHSA-pqg4-j6r4-53mv (critical), fixed in 1.11.0, via
+  #   @changesets/cli > launch-editor (`^1.8.4`). Remove once launch-editor's
+  #   own range floors at `^1.11.0`.
+  # - source-map-js GHSA-68fv-2mgg-jv7q (high), fixed in 1.2.2, via postcss
+  #   (under vite-plus-core) and magicast (`^1.2.1`, latest 0.5.5). Remove once
+  #   both parents' ranges floor at `^1.2.2` (postcss 8.5.29 already does).
+  "shell-quote@1": "^1.11.0"
+  "source-map-js@1": "^1.2.2"
 nodeLinker: hoisted
 allowBuilds:
   esbuild: true
