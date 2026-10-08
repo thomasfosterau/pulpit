@@ -29,14 +29,21 @@ import {
 } from "@thomasfosterau/pulpit/registry";
 import {
   defineVersionChain,
+  diffStates,
+  type AttributeChange,
+  type ChainState,
   type ChainWrite,
   type NodeAlreadyExists,
   type NodeNotFound,
   type Precondition,
   type StaleVersion,
+  type StateDiff,
   type VersionChainOps,
   type VersionChainStore,
+  type VersionComparison,
   type VersionConflict,
+  type VersionNotFound,
+  type VersionSnapshot,
 } from "@thomasfosterau/pulpit/version-chain";
 import { and, eq, type ListFilter } from "@thomasfosterau/pulpit/filter";
 import {
@@ -199,6 +206,32 @@ export type _RestoreVersionPrecondition = Assert<
 export type _StaleVersionTag = Assert<Equals<StaleVersion["_tag"], "StaleVersion">>;
 export type _StaleVersionExpected = Assert<Equals<StaleVersion["expected"], bigint>>;
 export type _StaleVersion = Assert<Equals<StaleVersion["current"], bigint>>;
+export type _DiffStates = Assert<
+  Equals<typeof diffStates, (from: ChainState, to: ChainState) => StateDiff>
+>;
+export type _StateDiff = Assert<Equals<StateDiff, { readonly [column: string]: AttributeChange }>>;
+export type _AttributeChangeTag = Assert<
+  Equals<AttributeChange["_tag"], "added" | "removed" | "changed">
+>;
+export type _Compare = Assert<
+  Equals<
+    ReturnType<typeof chain.compare>,
+    Effect.Effect<VersionComparison, StoreFailure | VersionNotFound, Transaction>
+  >
+>;
+export type _CompareParameters = Assert<
+  Equals<Parameters<typeof chain.compare>, [id: string, from: bigint, to: bigint]>
+>;
+export type _Comparison = Assert<
+  Equals<
+    VersionComparison,
+    {
+      readonly from: VersionSnapshot;
+      readonly to: VersionSnapshot;
+      readonly changes: StateDiff;
+    }
+  >
+>;
 
 // ── filter + subtype ─────────────────────────────────────────────────────
 

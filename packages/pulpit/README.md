@@ -21,7 +21,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`). |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`) and `validateRegistry`. |
-| `./version-chain` | The append-only node/version chain operations over a `VersionChainStore` seam. |
+| `./version-chain` | The append-only node/version chain operations over a `VersionChainStore` seam, and the field-level version compare (`diffStates`, `compare`). |
 | `./filter` | `ListFilter`, the read-predicate tree a store renders to SQL, and its in-memory `evaluate`. |
 | `./subtype` | `LeafAccess`, the read scope and viewer predicates, the write gates, `defineSubtype`, `subtypeHandlers`. |
 | `./publication` | The publication and moderation predicates and the cache serveability policy. |
@@ -132,6 +132,7 @@ const program = <E, R>(store: VersionChainStore<E, R>) =>
     yield* chain.update({ id, patch: { title: "Hey" }, actorId, expectedVersion: 1n }); // StaleVersion unless the head is 1
     yield* chain.delete(id, actorId); // tombstone; idempotent
     yield* chain.restoreVersion(id, 0n, actorId); // appends version N+1 with version 0's state
+    const { changes } = yield* chain.compare(id, 0n, 1n); // { title: changed "Hello" → "Hi", summary: added null }
   });
 ```
 
@@ -139,12 +140,15 @@ Every write lands at `N_max + 1`; nothing is rewritten. A plain `update` never r
 
 **Optimistic concurrency.** `update`, `restore`, `delete` and `restoreVersion` take an optional `expectedVersion` (a `Precondition`): the head version the caller last read. If the head has moved, the write fails `StaleVersion`, which carries the head it found (`current`), and nothing is written. Without one, a write extends whatever the head is, so a column that two patches both set is last-writer-wins. The check runs against the same head read the append extends, and the append lands at that head + 1. A writer that slips in between therefore takes the `(id, version)` key first, and the later append fails `VersionConflict`. The store's key is what makes the check atomic, so the seam needs nothing new. A delete over a tombstone stays idempotent whatever the precondition (the delete it asked for has happened). A missing node is still `NodeNotFound`, and a plain `update` over a tombstone is still `NodeNotFound`, whatever version it expects.
 
+**Comparing versions.** `diffStates(from, to)` is the field-level change set between two states: one entry per column that is `added`, `removed` or `changed`, each with its `before` and `after` values. Unchanged columns are omitted, so equal states diff to `{}`. A `null` is a value, so a column cleared to `null` is `changed`, and only a column with no key is absent (`added` / `removed`). Values compare structurally with Effect's `Equal.equals`: JSON objects and arrays by content (ignoring key order), a `Date` by its instant, and a `bigint` by value. A content-addressed document is held as its hash (`documentRef`), so it compares by hash, and a textual diff of the document is the UI's job. `compare(id, from, to)` makes two `getVersion` reads and returns both snapshots with `changes: diffStates(from.state, to.state)`. It fails `VersionNotFound` for either version, checking `from` first. A tombstone is the version's `action`, never an attribute: a version compared with the tombstone after it has no changes, and `to.action === "delete"` says the node was deleted there. `compare` applies no gate; `./subtype` doesn't wrap it yet.
+
 | Export | What it is |
 | --- | --- |
-| `defineVersionChain(type, store)` | The operations (`create`, `update`, `restore`, `delete`, `getVersion`, `restoreVersion`, `history`) for one leaf type. |
+| `defineVersionChain(type, store)` | The operations (`create`, `update`, `restore`, `delete`, `getVersion`, `compare`, `restoreVersion`, `history`) for one leaf type. |
 | `VersionChainStore<E, R>` | The persistence seam (see [Seams](#seams)). |
 | `ChainState`, `ChainPatch`, `applyPatch` | A leaf's state at one version, the tri-state patch over it (a value sets, `null` clears, `undefined` carries forward), and the merge. |
 | `Precondition` | The optional `expectedVersion` every write to an existing node takes. |
+| `diffStates(from, to)`, `StateDiff`, `AttributeChange`, `VersionComparison` | The pure field-level change set between two states, its shape (`added` / `removed` / `changed` per column, with `before` / `after`), and what `compare` returns. |
 | `NodeNotFound`, `VersionNotFound`, `NodeAlreadyExists`, `StaleVersion`, `VersionConflict` | The tagged failures: the wire's 404 / 404 / 409, a failed expected-version precondition (412 for an `If-Match`, or 409; it carries the head), and a concurrent writer's `(id, version)` collision, which is never retried. |
 
 ## `./filter`

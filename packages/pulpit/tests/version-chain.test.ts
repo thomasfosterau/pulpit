@@ -8,14 +8,18 @@
  */
 
 import { describe, expect, it } from "vite-plus/test";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Record from "effect/Record";
 import {
   applyPatch,
   defineVersionChain,
+  diffStates,
   MAX_HISTORY_LIMIT,
   StaleVersion,
+  VersionNotFound,
   type ChainState,
   type ChainWrite,
   type Precondition,
@@ -212,6 +216,203 @@ describe("getVersion / restoreVersion — history as data", () => {
       Option.some("VersionNotFound"),
     );
     expect(tagOf(await exit(chain.getVersion(ID, 0n)))).toEqual(Option.some("VersionNotFound"));
+    expect(store.rows()).toHaveLength(2);
+  });
+});
+
+describe("diffStates — the field-level change set", () => {
+  it("a null set and a cleared value are present values: a clear is changed, never removed", () => {
+    expect(diffStates({ summary: "s" }, { summary: null })).toStrictEqual({
+      summary: { _tag: "changed", before: "s", after: null },
+    });
+    expect(diffStates({ summary: null }, { summary: "s" })).toStrictEqual({
+      summary: { _tag: "changed", before: null, after: "s" },
+    });
+    expect(diffStates({ summary: null }, { summary: null })).toStrictEqual({});
+  });
+
+  it("an attribute absent on one side is added or removed, and null on the other is not absence", () => {
+    expect(diffStates({ title: "a" }, { title: "a", summary: null })).toStrictEqual({
+      summary: { _tag: "added", after: null },
+    });
+    expect(diffStates({ title: "a", summary: null }, { title: "a" })).toStrictEqual({
+      summary: { _tag: "removed", before: null },
+    });
+    expect(diffStates({}, { body: "b" })).toStrictEqual({ body: { _tag: "added", after: "b" } });
+    expect(diffStates({ body: "b" }, {})).toStrictEqual({ body: { _tag: "removed", before: "b" } });
+  });
+
+  it("equal states diff to the empty set, and unchanged columns are omitted", () => {
+    expect(diffStates(initial, { ...initial })).toStrictEqual({});
+    expect(diffStates({}, {})).toStrictEqual({});
+    expect(Record.keys(diffStates(initial, { ...initial, title: "Second" }))).toStrictEqual([
+      "title",
+    ]);
+  });
+
+  it("is directed: swapping the sides swaps added / removed and before / after", () => {
+    const forward = diffStates({ title: "a", gone: 1 }, { title: "b", fresh: 2 });
+    expect(forward).toStrictEqual({
+      title: { _tag: "changed", before: "a", after: "b" },
+      gone: { _tag: "removed", before: 1 },
+      fresh: { _tag: "added", after: 2 },
+    });
+    expect(diffStates({ title: "b", fresh: 2 }, { title: "a", gone: 1 })).toStrictEqual({
+      title: { _tag: "changed", before: "b", after: "a" },
+      fresh: { _tag: "removed", before: 2 },
+      gone: { _tag: "added", after: 1 },
+    });
+  });
+
+  it("compares JSON structurally: by content, not by reference, and ignoring key order", () => {
+    const meta = { tags: ["a", "b"], seo: { title: "t", index: true } };
+    const sameContent = { seo: { index: true, title: "t" }, tags: ["a", "b"] };
+    expect(diffStates({ meta }, { meta: sameContent })).toStrictEqual({});
+    // An array is ordered, and a nested change is a change of the column.
+    const reordered = { ...meta, tags: ["b", "a"] };
+    expect(diffStates({ meta }, { meta: reordered })).toStrictEqual({
+      meta: { _tag: "changed", before: meta, after: reordered },
+    });
+    const nested = { ...meta, seo: { title: "t", index: false } };
+    expect(diffStates({ meta }, { meta: nested })).toStrictEqual({
+      meta: { _tag: "changed", before: meta, after: nested },
+    });
+  });
+
+  it("compares a Date by its instant and a bigint by value, never by their JSON spelling", () => {
+    const at = "2026-01-01T00:00:00.000Z";
+    // A fresh Date each call: equal instants, never the same object.
+    const date = (iso: string) => DateTime.toDate(DateTime.makeUnsafe(iso));
+    expect(diffStates({ at: date(at), n: 10n }, { at: date(at), n: 10n })).toStrictEqual({});
+    const later = date("2026-01-01T00:00:00.001Z");
+    expect(diffStates({ at: date(at) }, { at: later })).toStrictEqual({
+      at: { _tag: "changed", before: date(at), after: later },
+    });
+    // A Date is not the ISO string it serialises to, and a bigint is not the number.
+    expect(diffStates({ at: date(at) }, { at })).toStrictEqual({
+      at: { _tag: "changed", before: date(at), after: at },
+    });
+    expect(diffStates({ n: 10n }, { n: 10 })).toStrictEqual({
+      n: { _tag: "changed", before: 10n, after: 10 },
+    });
+    expect(diffStates({ n: 10n }, { n: 11n })).toStrictEqual({
+      n: { _tag: "changed", before: 10n, after: 11n },
+    });
+  });
+
+  it("compares a content-addressed document reference by hash: changed or unchanged", () => {
+    const first = "a".repeat(64);
+    const second = "b".repeat(64);
+    expect(diffStates({ body: first }, { body: first })).toStrictEqual({});
+    expect(diffStates({ body: first }, { body: second })).toStrictEqual({
+      body: { _tag: "changed", before: first, after: second },
+    });
+  });
+});
+
+describe("compare — two getVersion reads and diffStates", () => {
+  const created = async () => {
+    const context = setup();
+    await context.run(
+      context.chain.create({ id: Option.some(ID), state: initial, actorId: ACTOR }),
+    );
+    return context;
+  };
+
+  it.each([0n, 1n])("the same version on both sides (%s) is the empty set", async (version) => {
+    const { chain, run } = await created();
+    await run(chain.update({ id: ID, patch: { title: "Second" }, actorId: ACTOR }));
+    const same = await run(chain.compare(ID, version, version));
+    expect(same.changes).toStrictEqual({});
+    expect([same.from.version, same.to.version]).toStrictEqual([version, version]);
+  });
+
+  it("reports what the tri-state patch did: a set and a clear change, a carry-forward does not", async () => {
+    const { store, chain, run } = await created();
+    await run(
+      chain.update({
+        id: ID,
+        patch: { title: "Second", summary: null, body: undefined },
+        actorId: ACTOR,
+      }),
+    );
+    const comparison = await run(chain.compare(ID, 0n, 1n));
+    expect(comparison.changes).toStrictEqual({
+      title: { _tag: "changed", before: "First", after: "Second" },
+      summary: { _tag: "changed", before: "s", after: null },
+    });
+    expect(comparison.from).toMatchObject({ version: 0n, action: "create", state: initial });
+    expect(comparison.to).toMatchObject({ version: 1n, action: "update" });
+    // Read-only.
+    expect(store.rows()).toHaveLength(2);
+  });
+
+  it("reports a column a version gained as added, and one a restore dropped as removed", async () => {
+    const { chain, run } = await created();
+    await run(chain.update({ id: ID, patch: { subtitle: null }, actorId: ACTOR }));
+    await run(chain.restoreVersion(ID, 0n, ACTOR));
+    expect((await run(chain.compare(ID, 0n, 1n))).changes).toStrictEqual({
+      subtitle: { _tag: "added", after: null },
+    });
+    expect((await run(chain.compare(ID, 1n, 2n))).changes).toStrictEqual({
+      subtitle: { _tag: "removed", before: null },
+    });
+  });
+
+  it("a tombstone on the to side is its action, not an attribute: the state it carried forward is unchanged", async () => {
+    const { chain, run } = await created();
+    await run(chain.delete(ID, ACTOR));
+    const comparison = await run(chain.compare(ID, 0n, 1n));
+    expect(comparison.changes).toStrictEqual({});
+    expect([comparison.from.action, comparison.to.action]).toStrictEqual(["create", "delete"]);
+  });
+
+  it("a tombstone on the from side: a restore over it reports only what the content did", async () => {
+    const { chain, run } = await created();
+    await run(chain.delete(ID, ACTOR));
+    await run(chain.restore({ id: ID, patch: { title: "Back" }, actorId: ACTOR }));
+    const comparison = await run(chain.compare(ID, 1n, 2n));
+    expect(comparison.changes).toStrictEqual({
+      title: { _tag: "changed", before: "First", after: "Back" },
+    });
+    expect([comparison.from.action, comparison.to.action]).toStrictEqual(["delete", "update"]);
+    // Across the tombstone, from the live version before it, the same change.
+    expect((await run(chain.compare(ID, 0n, 2n))).changes).toStrictEqual(comparison.changes);
+  });
+
+  it.each([
+    ["from", 8n, 1n, 8n],
+    ["to", 0n, 9n, 9n],
+    ["from and to", 8n, 9n, 8n],
+  ] as const)(
+    "fails VersionNotFound for a missing %s version, naming it (from first)",
+    async (_side, from, to, missing) => {
+      const { store, chain, run, exit } = await created();
+      await run(chain.update({ id: ID, patch: { title: "Second" }, actorId: ACTOR }));
+      const error = Option.getOrUndefined(
+        Exit.findErrorOption(await exit(chain.compare(ID, from, to))),
+      );
+      expect(error).toBeInstanceOf(VersionNotFound);
+      expect(error).toMatchObject({ type: "posts", id: ID, version: missing });
+      expect(store.rows()).toHaveLength(2);
+    },
+  );
+
+  it("fails VersionNotFound for an unknown node, and for a version a partial chain cannot rebuild", async () => {
+    const { store, chain, run, exit } = await created();
+    await run(chain.update({ id: ID, patch: { title: "Second" }, actorId: ACTOR }));
+    expect(tagOf(await exit(chain.compare("unknown", 0n, 0n)))).toStrictEqual(
+      Option.some("VersionNotFound"),
+    );
+    store.dropState(ID, 1n);
+    const partial = Option.getOrUndefined(
+      Exit.findErrorOption(await exit(chain.compare(ID, 0n, 1n))),
+    );
+    expect(partial).toMatchObject({ _tag: "VersionNotFound", version: 1n });
+    const partialFrom = Option.getOrUndefined(
+      Exit.findErrorOption(await exit(chain.compare(ID, 1n, 0n))),
+    );
+    expect(partialFrom).toMatchObject({ _tag: "VersionNotFound", version: 1n });
     expect(store.rows()).toHaveLength(2);
   });
 });
