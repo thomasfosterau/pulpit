@@ -544,14 +544,18 @@ const readings = (end: EdgeEnd<never, never>, viewer: Viewer, rows: ReadonlyArra
 
 const actions: ReadonlyArray<VersionAction> = ["create", "update", "delete"];
 
+/** A draft column the row omits, so it carries no such key (`ColumnValue` has no `undefined`). */
+const ABSENT = Symbol("absent");
+const drafts: ReadonlyArray<ColumnValue | typeof ABSENT> = [false, true, null, ABSENT];
+
 describe("EDGE-001: the endpoint filter never disagrees with the endpoint predicate", () => {
   const ownedRows = Arr.flatMap(actions, (action) =>
     Arr.flatMap(["public", "followers", "private", "unknown", null], (visibility) =>
-      Arr.flatMap([false, true, null], (draft) =>
+      Arr.flatMap(drafts, (draft) =>
         Arr.map([member.id, otherMember.id, null], (ownerId) =>
           node(
-            `${action}-${String(visibility)}-${String(draft)}-${String(ownerId)}`,
-            { ownerId, visibility, draft },
+            `${action}-${String(visibility)}-${draft === ABSENT ? "absent" : String(draft)}-${String(ownerId)}`,
+            draft === ABSENT ? { ownerId, visibility } : { ownerId, visibility, draft },
             action,
           ),
         ),
