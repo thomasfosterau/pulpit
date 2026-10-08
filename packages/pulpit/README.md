@@ -1,6 +1,6 @@
 # @thomasfosterau/pulpit
 
-The versioned-content kernel of an Effect headless CMS: the Content model fields and registry flags on `@thomasfosterau/effect-jsonapi`, the append-only node/version chain operations, the subtype operation factory with owned / reference-data access, the publication, moderation and cache-serveability predicates, and the content-addressed document store seam.
+The versioned-content kernel of an Effect headless CMS: the Content model fields and registry flags on `@thomasfosterau/effect-jsonapi`, the append-only node/version chain operations, the subtype operation factory with owned / reference-data access, the publication, moderation and cache-serveability predicates, the content-addressed document store seam, and the edge operations factory.
 
 **Disclaimer:** This repository and package have been created using Claude Code. The package's API and functionality is in flux, so expect churn and breaking changes.
 
@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`). |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`) and `validateRegistry`. |
 | `./version-chain` | The append-only node/version chain operations over a `VersionChainStore` seam. |
@@ -26,6 +26,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./subtype` | `LeafAccess`, the read scope and viewer predicates, the write gates, `defineSubtype`, `subtypeHandlers`. |
 | `./publication` | The publication and moderation predicates and the cache serveability policy. |
 | `./documents` | The content-addressed `DocumentStore` seam, the `DocumentHash` it is keyed by, and the `documentRef` field spread. |
+| `./edges` | `defineEdgeOps`, the edge operations factory over an `EdgeStore` seam: relations between nodes, readable only when every end is, with declared cardinality limits. |
 
 The operations are written against seams that the application fills; their expected shapes are in [Seams](#seams).
 
@@ -245,6 +246,104 @@ The document type is a parameter: its schema and validation are the application'
 | `DocumentHash` | A SHA-256 document hash as 64 lowercase hex characters. |
 | `documentRef(key)` | The attribute spread for a version row's document reference: the hash, required on the resource and at create, carried forward at update, never cleared. |
 
+## `./edges`
+
+`defineEdgeOps` binds the operations of an edge family: a relation between nodes, stored as a row of its own (an id, a `createdAt`, one column per end holding that end's node id, and the family's own qualifier columns) outside both nodes' tables. It is ported from gardeneria's `defineEdgeOpsE`:
+
+- `list`: one page under the family's own `where`, at most `MAX_PAGE_LIMIT` (1000) rows, ordered by `createdAt` then `id`, with the unpaged total.
+- `get`: one edge by id.
+- `create`: asserts the edge. On a collision with a stored edge on the family's unique key, `onConflict: "ignore"` returns the stored edge's id with `created: false` (a re-assertion is idempotent, and never rewrites the stored qualifiers); `"fail"`, the default, fails `EdgeConflict`.
+- `delete`: a hard `DELETE`. There is no update: correcting an edge is deleting it and asserting the right one.
+
+Writes gate on the declaration's `writeGate`. The default, `corpusWriteGate`, is the corpus-write rung, right for an edge between two reference leaves. `rungGate((policy) => policy.canModerate)` puts a family on another rung. An owned-child edge (gardeneria's observation → disorder) passes a gate that reads its owned end's owner, typically `requireWriter` from `./subtype`.
+
+On top of the port, pulpit enforces three rules:
+
+- **Endpoint visibility** (`EDGE-001`). Each end declares its endpoint leaf's `access` and its current-version view (`nodes`; the leaf's own `LeafStore` fits). An edge is readable only if the viewer can read the node at every end, by the same rule that leaf's own `get` applies. `get` fails `EdgeNotFound` for a hidden edge, and `list` omits it, never `Forbidden` (`SEC-AUTH-ENUM-001`). A related list (the edges at one node) is `list` filtered on that end's column, so it omits every edge whose other end is hidden, and the related list of a hidden node is empty. The list filter (`endpointFilter`) and the per-endpoint predicate (`canViewEndpoint`) read the same facts, so they never disagree. A create naming a node the viewer can't read fails `NodeNotFound`, before the write gate runs, so a 403 never confirms that the node exists.
+- **Endpoint lifecycle.** A tombstoned end hides its edges from every viewer, the view-deleted rung included, and a create can't name it. Nothing is deleted, so restoring the node (`restore`) brings its edges back as they were.
+- **Cardinality.** An end's `maxEdges` bounds how many edges one node at that end may hold; a create past it fails `EdgeCardinalityExceeded` (with the end, the node and the limit). Every stored edge at the node counts, including hidden ones, because a hidden edge reappears when its other end does. So a writer at a full node learns that it holds edges the writer may not read, though not which. A re-assertion of a stored edge resolves before the count, so it stays idempotent at a full node.
+
+**An edge isn't a node.** It has no version chain, so the chain's append-only rules (`VERSION-CHAIN-001/002`) don't govern it, and its hard delete rewrites no version row. Tombstoning a node leaves its edges stored.
+
+### Taxonomies
+
+pulpit ships no category or tag vocabulary: a taxonomy is a reference-data leaf plus an edge family.
+
+- **The terms** are a `reference` leaf (`defineSubtype` with `access: { kind: "reference" }`), written at the corpus rung, versioned like any other node. A hierarchy is a parent column on that leaf, or a second edge family between terms.
+- **An assignment** is an edge family whose ends are the term leaf and the classified leaf. `maxEdges` on the classified end says how many terms one node may hold (1 for a single-choice taxonomy); on the term end, how many nodes one term may classify. `onConflict: "ignore"` makes re-assigning a term idempotent.
+- **Who may assign** is the write gate: the corpus rung for curated assignments, or a gate on the classified node's owner when members classify their own rows.
+- **A node's terms, and a term's nodes,** are `list` filtered on one end. Either list hides what the viewer can't read at the other end, and a tombstoned term drops out of every list until it is restored.
+
+```ts
+import type * as Effect from "effect/Effect";
+import { defineEdgeOps, type EdgeRow, type EdgeStore } from "@thomasfosterau/pulpit/edges";
+import { eq } from "@thomasfosterau/pulpit/filter";
+import {
+  ownedAccess,
+  requireWriter,
+  type AccessPolicy,
+  type FollowerSeam,
+  type LeafRow,
+  type LeafStore,
+  type Viewer,
+} from "@thomasfosterau/pulpit/subtype";
+
+const assignments = <Following, E, R>(seams: {
+  readonly terms: LeafStore<LeafRow, Following, E, R>;
+  readonly notes: LeafStore<LeafRow, Following, E, R>;
+  readonly edges: EdgeStore<EdgeRow, Following, E, R>;
+  readonly viewer: Effect.Effect<Viewer, never, R>;
+  readonly policy: AccessPolicy;
+  readonly followers: FollowerSeam<Following, R>;
+}) =>
+  defineEdgeOps({
+    type: "note-terms",
+    ends: {
+      term: { column: "termId", type: "terms", access: { kind: "reference" }, nodes: seams.terms },
+      note: {
+        column: "noteId",
+        type: "notes",
+        access: ownedAccess({ draft: true }),
+        nodes: seams.notes,
+        maxEdges: 10, // at most ten terms on one note
+      },
+    },
+    edges: seams.edges,
+    viewer: seams.viewer,
+    policy: seams.policy,
+    followers: seams.followers,
+    values: (input: { readonly termId: string; readonly noteId: string }) => ({ ...input }),
+    toResource: (row) => ({ id: row.id, termId: row["termId"], noteId: row["noteId"] }),
+    onConflict: "ignore",
+    // A member classifies their own notes; a moderator anyone's.
+    writeGate: ({ viewer, policy, edge }) => {
+      const noteId = String(edge["noteId"]);
+      return requireWriter(
+        ownedAccess(),
+        viewer,
+        policy,
+        { type: "notes", id: noteId },
+        seams.notes.ownerOf(noteId),
+      );
+    },
+  });
+
+// A note's terms: the edges at one end, without any the viewer can't read.
+const termsOf = <Following, E, R>(
+  ops: ReturnType<typeof assignments<Following, E, R>>,
+  noteId: string,
+) => ops.list({ limit: 50, offset: 0, where: eq("noteId", noteId) });
+```
+
+| Export | What it is |
+| --- | --- |
+| `defineEdgeOps(definition)`, `EdgeDefinition`, `EdgeOps` | The factory, its declaration (type, ends, store, viewer seams, create mapping, conflict policy, write gate, row → resource mapper) and the operations it produces. |
+| `EdgeEnd`, `EdgeEnds`, `EndpointView` | One end (its edge column, endpoint type and access, the endpoint view, `maxEdges`), the ends by alias, and the endpoint view a `LeafStore` satisfies. |
+| `canViewEndpoint`, `endpointFilter`, `endpointColumn(alias, column)` | The per-endpoint read predicate, the same facts as a list filter over every end, and the filter column naming an end's node column. |
+| `EdgeWriteGate`, `EdgeWriteRequest`, `corpusWriteGate`, `rungGate(rung)` | The write gate, what it is asked about, the default corpus-rung gate, and a gate on any rung. |
+| `EdgeStore`, `EdgeRow`, `EdgeValues`, `EdgeListRequest`, `EdgeWrite` | The edge-table seam, its row and column values, the list request, and a create's outcome. |
+| `EdgeNotFound`, `EdgeConflict`, `EdgeCardinalityExceeded` | A missing or hidden edge (404), an unresolved unique-key collision (409, never naming the stored edge), and a create past a declared limit (409). |
+
 ## Seams
 
 The kernel is written against explicit interfaces, so that it doesn't depend on the packages that fill them before they publish. Each seam below states the shape its real implementation must have, and which package (if any) is expected to fill it; the issue numbers in parentheses are for maintainers and aren't needed to follow the contract.
@@ -303,6 +402,21 @@ So structurally equal documents share a hash whatever their member order, provid
 Method contract: `put` is `INSERT … ON CONFLICT DO NOTHING RETURNING hash_id`, and when the insert returns no row it reads the row that conflicted, `hash_id = digest($document::jsonb::text, 'sha256')`; it never updates a stored row (`DOC-001`). `get` is `hash_id = $hash`; `getMany` is one `hash_id = ANY($hashes)` read, returning the documents found keyed by hash. `E` and `R` are as for the chain store, and the store never opens a transaction itself. A first insert's side effects (both apps enqueue an embedding job) stay outside this seam until the lifecycle-events seam lands (pulpit#45).
 
 **The apps' column differs.** Both apps generate the hash as `digest(document_jsonb::text::bytea, 'sha256')`. The `::bytea` cast parses the text as `bytea` escape-format input, so it agrees with the contract only on a document whose canonical text has no backslash. A document with a `"`, a newline, a tab or another escaped character in a string or key fails to insert (`invalid input syntax for type bytea`), and one with a literal backslash hashes different bytes (pulpit#71 tracks the apps' fix). Gardeneria's no-row lookup, `document_jsonb = $document`, also differs from the contract's: `jsonb` `=` ignores a number's scale, so it can match a row stored at another hash. The contract's spelling, `digest(document_jsonb::text, 'sha256')`, uses pgcrypto's `text` overload, which is immutable and therefore valid in a generated column; `convert_to(…, 'UTF8')` gives the same bytes but is only stable, so a generated column can't use it.
+
+### `EdgeStore<Row, Following, E, R>`: the edge table
+
+Filled by the application over each edge family's own table (pulpit#52); no library is expected to provide one. Expected schema: `id` (a UUID primary key), `created_at` (`timestamptz NOT NULL DEFAULT now()`), one column per end holding the node id (a foreign key to the node identity table, `core.node`) with an index each, the family's qualifier columns, and, for a family that resolves re-assertions, a unique index on its natural key (`NULLS NOT DISTINCT` when a key column is nullable).
+
+Method contract:
+
+- `get` is `id = $id LIMIT 1`.
+- `list` INNER JOINs each end's current-version view on `view.id = edge.<end column>`, under the end's alias, so an edge whose end has no view row is never listed. It renders `where` with the `ListFilter` renderer: a column `alias.name` resolves to that alias's view column, and a bare column to the edge table's. It orders by `created_at, id`, applies `LIMIT` / `OFFSET`, and returns the unpaged total as a window column.
+- `countAt(column, nodeId)` is `count(*)` over the edge table where `column = $nodeId`, with no join. The create calls it inside its transaction for the cardinality check, and the store locks the node first (`SELECT 1 FROM core.node WHERE id = $nodeId FOR UPDATE`), so two creates at one node serialise and can't both take the last place.
+- `existing(values)` is the id of the stored edge whose unique-key columns match `values` (`IS NOT DISTINCT FROM`), `LIMIT 1`; always none for a family without a unique key.
+- `insert(values)` is `INSERT … ON CONFLICT DO NOTHING RETURNING id`: the new id, or none when the key was taken (a racing writer, which the create then resolves through `existing`).
+- `delete(id)` is `DELETE … WHERE id = $id RETURNING id`: whether a row went.
+
+`E` and `R` are as for the chain store, and the store never opens a transaction itself. Each end's `EndpointView` is the endpoint leaf's own `LeafStore` (its `columns` and `get`).
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 
