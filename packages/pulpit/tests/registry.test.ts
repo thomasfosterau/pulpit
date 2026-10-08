@@ -180,6 +180,14 @@ describe("registry — construction-time validation", () => {
     expect(wire.referenceData).toEqual([]);
     expect(wire.pageable).toEqual([]);
     expect(wire.agent).toEqual([]);
+    expect(flaggedMembers(entries, "pageable")).toEqual([]);
+    expect(flaggedMembers(entries, "owned")).toEqual([CommentResource]);
+  });
+
+  it("still requires a resource when one is explicitly undefined", () => {
+    expect(() => run([{ key: "node", parent: root, resource: undefined, pageable: true }])).toThrow(
+      /flagged 'pageable' but declares no resource/,
+    );
   });
 
   it("throws the tagged declaration error", () => {
