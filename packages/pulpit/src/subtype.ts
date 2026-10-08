@@ -40,18 +40,20 @@
  * ## Seams
  *
  * Three things the kernel does not own, each an explicit parameter rather
- * than an import (their packages are unpublished; see the package README →
- * Seams):
+ * than an import (see the package README → Seams for each one's expected
+ * shape and which package, if any, fills it):
  *
  * - the **viewer** and the **role axes** ({@link Viewer}, {@link AccessPolicy})
- *   and the **follower** answer — effect-auth#221's session context, role
- *   ladder and `IsFollower`;
+ *   and the **follower** answer — effect-auth's session context, role ladder
+ *   and `IsFollower`, on effect-auth's `trunk` as `OwnedAccess` / `Guard` /
+ *   `Ladder` / `Cacheability` but unpublished (release PR effect-auth#177);
  * - the **current-version view** ({@link LeafStore}) — a Drizzle store over
  *   effect-drizzle-ext's `makeCurrentVersionView`;
  * - the **handlers config** the factory's operations plug into
- *   ({@link subtypeHandlers}) — the shape effect-jsonapi#172's
- *   `resourceHandlers` is expected to accept, with the effect-web#4 cache's
- *   write-through.
+ *   ({@link subtypeHandlers}) — the record a JSON:API server's resource
+ *   handlers are expected to accept (effect-jsonapi's `ResourceHandlers`,
+ *   exported since 0.15.0 but not yet wired here; pulpit#5), with the
+ *   write-through to the resource cache the application fills.
  *
  * @copyright Thomas Foster
  * @module pulpit/subtype
@@ -736,9 +738,12 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
 // ── The handlers seam ─────────────────────────────────────────────────
 
 /**
- * The resource cache's write side (effect-web#4): `set` writes the resource
- * through — the cache itself refuses (and evicts) a non-serveable one, so a
- * `public → private` flip self-purges — and `delete` evicts.
+ * The resource cache's write side: `set` writes the resource through — the
+ * cache itself refuses (and evicts) a non-serveable one, so a
+ * `public → private` flip self-purges — and `delete` evicts. The application
+ * fills it with a cache it owns; no library is expected to provide one
+ * (effect-web dropped its Cloudflare package, and the planned cache with it,
+ * on effect-web#33).
  *
  * @since 0.1.0
  */
@@ -753,10 +758,15 @@ export interface ResourceCacheSeam<Resource, R> {
 }
 
 /**
- * The handler record a leaf contributes to effect-jsonapi#172's
- * `resourceHandlers` — one entry per endpoint, each returning the resource
- * the document assembler wraps — plus the version-restore command, which has
- * no JSON:API endpoint and is run SSR-direct.
+ * The handler record a leaf contributes to a JSON:API server's resource
+ * handlers — one entry per endpoint, each returning the resource the document
+ * assembler wraps — plus the version-restore command, which has no JSON:API
+ * endpoint and is run SSR-direct.
+ *
+ * effect-jsonapi's server skeleton has shipped as its `ResourceHandlers`
+ * namespace (exported since 0.15.0; pulpit's peer is `>=0.16.0`), but
+ * {@link subtypeHandlers} isn't wired to it yet (pulpit#5): when it is, this
+ * record maps onto `ResourceHandlers`' real handler signatures.
  *
  * Every write re-reads the row after the chain write and writes it through
  * the cache; that write-through is why these exist rather than each route

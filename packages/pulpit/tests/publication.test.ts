@@ -253,7 +253,7 @@ describe("isPubliclyServeable — the publication axis (#1096)", () => {
   });
 });
 
-describe("serveablePolicy — the hook effect-web#4's cache takes", () => {
+describe("serveablePolicy — the hook the application's resource cache takes", () => {
   it("binds a family's posture into `(resource) => boolean`", () => {
     const ownedHook = serveablePolicy({ owned: true });
     expect(ownedHook({ attributes: { visibility: "public" } })).toBe(true);
