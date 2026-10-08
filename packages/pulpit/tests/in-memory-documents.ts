@@ -112,22 +112,34 @@ export interface InMemoryDocumentStore<Document extends Schema.Json> extends Doc
 > {
   /** Every stored document by hash — what the never-rewritten assertions read. */
   readonly stored: () => HashMap.HashMap<DocumentHash, Document>;
+  /**
+   * How many times `put` wrote a row: a real insert counts, a no-op `put` of a
+   * stored hash does not. The never-rewritten assertions read it, because
+   * `HashMap.set` with a structurally equal value is indistinguishable from no
+   * write in {@link stored}.
+   */
+  readonly writes: () => number;
 }
 
 export const makeInMemoryDocumentStore = <
   Document extends Schema.Json,
 >(): InMemoryDocumentStore<Document> => {
   let documents = HashMap.empty<DocumentHash, Document>();
+  let writes = 0;
   return {
     put: (document) =>
       Effect.map(hashOf(document), (hash) => {
         // `ON CONFLICT DO NOTHING`: the first document at a hash is kept.
-        if (!HashMap.has(documents, hash)) documents = HashMap.set(documents, hash, document);
+        if (!HashMap.has(documents, hash)) {
+          documents = HashMap.set(documents, hash, document);
+          writes += 1;
+        }
         return hash;
       }),
     get: (hash) => Effect.sync(() => HashMap.get(documents, hash)),
     getMany: (hashes) =>
       Effect.sync(() => HashMap.filter(documents, (_document, hash) => hashes.includes(hash))),
     stored: () => documents,
+    writes: () => writes,
   };
 };

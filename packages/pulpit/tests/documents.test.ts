@@ -87,10 +87,10 @@ const VECTORS: ReadonlyArray<{
     hash: "4a83ea253068c9c9d06bc59357266d2c023966f59e02cbd58ac1bd872ec89f29",
   },
   {
-    name: "a tab and a control character",
-    document: paragraph("tab\there \u0001 ctl / slash"),
-    text: '{"type": "doc", "content": [{"type": "paragraph", "content": [{"text": "tab\\there \\u0001 ctl / slash", "type": "text"}]}]}',
-    hash: "5c60f91401a19b4741ebd766e439325a3f198a7f1ab34282fbb2d5a01236d858",
+    name: "a tab and control characters, escaped in lowercase hex",
+    document: paragraph("tab\there \u0001 \u000b \u001f ctl / slash"),
+    text: '{"type": "doc", "content": [{"type": "paragraph", "content": [{"text": "tab\\there \\u0001 \\u000b \\u001f ctl / slash", "type": "text"}]}]}',
+    hash: "363f051dc515fb6be05f1838dea36489243fa73d61e5e613161133fb97f97d77",
   },
   {
     name: "key order by byte length, non-ASCII, and numbers without an exponent",
@@ -142,16 +142,24 @@ describe("put — idempotent, never rewritten (DOC-001)", () => {
     const second = await run(store.put(document));
     expect(second).toBe(first);
     expect(HashMap.size(store.stored())).toBe(1);
+    expect(store.writes()).toBe(1);
   });
 
-  it("an equal document never replaces the stored one", async () => {
+  it("an equal document never replaces the stored one; a different one is a new write", async () => {
     const store = makeInMemoryDocumentStore();
     const original = paragraph("Hello");
     const hash = await run(store.put(original));
-    await run(store.put(paragraph("Hello")));
+    expect(store.writes()).toBe(1);
+    // A structurally equal copy reaches the same hash and writes nothing.
+    // `stored()` alone can't show that: `HashMap.set` keeps the existing value
+    // when the new one is `Equal`, so only the write count tells them apart.
+    expect(await run(store.put(paragraph("Hello")))).toBe(hash);
+    expect(store.writes()).toBe(1);
     expect(Option.exists(HashMap.get(store.stored(), hash), (stored) => stored === original)).toBe(
       true,
     );
+    await run(store.put(paragraph("Hello, world")));
+    expect(store.writes()).toBe(2);
   });
 
   it("a changed document is a new hash, and the old one is untouched", async () => {
