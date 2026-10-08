@@ -45,8 +45,9 @@
  *
  * - the **viewer** and the **role axes** ({@link Viewer}, {@link AccessPolicy})
  *   and the **follower** answer — effect-auth's session context, role ladder
- *   and `IsFollower`, on effect-auth's `trunk` as `OwnedAccess` / `Guard` /
- *   `Ladder` / `Cacheability` but unpublished (release PR effect-auth#177);
+ *   and `IsFollower`. Its read scope (`OwnedAccess` / `Guard` / `Ladder` /
+ *   `Cacheability`) is on effect-auth's `trunk` but unpublished (release PR
+ *   effect-auth#177);
  * - the **current-version view** ({@link LeafStore}) — a Drizzle store over
  *   effect-drizzle-ext's `makeCurrentVersionView`;
  * - the **handlers config** the factory's operations plug into
