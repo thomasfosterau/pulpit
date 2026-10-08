@@ -45,6 +45,7 @@
  *
  * @copyright Thomas Foster
  * @module pulpit/publication
+ * @since 0.1.0
  */
 
 import * as DateTime from "effect/DateTime";
@@ -58,16 +59,30 @@ import { always, notPublished, published, type ListFilter } from "./filter.ts";
  * serveable from the cache. A `pending` / `rejected` row is still readable by
  * its author at the operation layer — it is refused from the cache because
  * only SOME viewers may read it.
+ *
+ * @since 0.1.0
  */
 export const ModerationState = Schema.Literals(["pending", "approved", "rejected"]);
-/** The {@link ModerationState} literal union: `"pending" | "approved" | "rejected"`. */
+/**
+ * The {@link ModerationState} literal union: `"pending" | "approved" | "rejected"`.
+ *
+ * @since 0.1.0
+ */
 export type ModerationState = typeof ModerationState.Type;
 
-/** Stamped, and the stamp has arrived at `now`. */
+/**
+ * Stamped, and the stamp has arrived at `now`.
+ *
+ * @since 0.1.0
+ */
 export const isPublishedAt = (publishedAt: Option.Option<Date>, now: Date): boolean =>
   Option.exists(publishedAt, (stamp) => stamp.getTime() <= now.getTime());
 
-/** Not out at `now`: unstamped, or stamped in the future — the exact complement of {@link isPublishedAt}. */
+/**
+ * Not out at `now`: unstamped, or stamped in the future — the exact complement of {@link isPublishedAt}.
+ *
+ * @since 0.1.0
+ */
 export const isNotPublishedAt = (publishedAt: Option.Option<Date>, now: Date): boolean =>
   !isPublishedAt(publishedAt, now);
 
@@ -75,6 +90,8 @@ export const isNotPublishedAt = (publishedAt: Option.Option<Date>, now: Date): b
  * The axis as one list-filter arm, for a `?filter[published]=` that may be
  * absent: none in, `always` out (no predicate) — so a list reads one line per
  * axis.
+ *
+ * @since 0.1.0
  */
 export const publishedFilter = <Following = never>(
   column: string,
@@ -86,7 +103,11 @@ export const publishedFilter = <Following = never>(
   });
 
 /* oxlint-disable effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option` */
-/** A family's cache posture: which absent axes are refusals. */
+/**
+ * A family's cache posture: which absent axes are refusals.
+ *
+ * @since 0.1.0
+ */
 export interface ServeabilityOptions {
   /** An owned family: a missing `visibility` refuses (#1096). */
   readonly owned?: boolean | undefined;
@@ -121,6 +142,8 @@ const hasArrivedStamp = (publishedAt: unknown, now: Date): boolean => {
  * Whether a cached resource may be served from the cache to a viewer who
  * reaches the cache at all (a viewer who bypasses it for freshness reads the
  * database directly). See the module doc for the rule.
+ *
+ * @since 0.1.0
  */
 export const isPubliclyServeable = (
   resource: unknown,
@@ -152,6 +175,8 @@ export const isPubliclyServeable = (
 /**
  * The `serveable` hook effect-web#4's `makeResourceCache` takes, bound to a
  * family's posture: `(resource) => boolean`.
+ *
+ * @since 0.1.0
  */
 export const serveablePolicy =
   (options: Omit<ServeabilityOptions, "now"> = {}) =>

@@ -18,7 +18,8 @@ The kernel's own invariants, terms and import boundary, including the seams-befo
 - **Optional fields are `?: T | undefined`, never bare `?: T`.** The workspace compiles with `exactOptionalPropertyTypes`, under which a bare `?:` rejects a caller forwarding its own `undefined`.
 - **Relative imports carry their `.ts` extension** (`rewriteRelativeImportExtensions` in `tsconfig.base.json`).
 - **Tests import from `vite-plus/test`**, never `vitest`. `tests/<module>.test.ts` mirrors the module it covers; `tests/*.types.ts` holds compile-time assertions, type-checked by `vp run check` and never executed.
-- **Every export has a TSDoc summary** that says what it is for, before any tag; an operation's doc names its error channel and any invariant ID it honours.
+- **Every export has a TSDoc summary** that says what it is for, before any tag; an operation's doc names its error channel and any invariant ID it honours. Every export and every module header (`src/index.ts` aside) also carries `@since <version>`, the release it first ships in: `vp run -r docgen` fails on a missing one.
+- **`vp run -r docgen` executes your `@example`s.** `@effect/docgen` compiles each JSDoc `@example` under `src/` with the native `tsc` and then runs it under `tsx`, so an example is a complete program: it imports everything it uses, the package itself by its name (`@thomasfosterau/pulpit`, which docgen rewrites to `src/`) exactly as a consumer would, uses no `declare const` (nothing to run), and must not throw. `assert.…` calls get `node:assert` imported for you, which makes an assertion the cheapest way to show a result. Docgen parses `src/` with the TypeScript 5.5 bundled in its own bin (`parseCompilerOptions` in `packages/pulpit/docgen.json`) and type-checks the examples with the native `tsc` (`examplesCompilerOptions`). `src/index.ts` is excluded there, so keep its docs free of code samples.
 - **Tagged errors are `Schema.TaggedError<Self>()(tag, fields)`** (see Effect below).
 
 ## Commands
@@ -27,6 +28,7 @@ The kernel's own invariants, terms and import boundary, including the seams-befo
 - `vp check` — format + lint (Oxfmt + Oxlint). `vp run check` — the type gate: the package's `check` (which also type-checks `tests/**/*.types.ts`) plus the dist-consumer declaration check, which builds `dist/` and asserts the emitted types. They are different commands.
 - `vp run -r test:unit` — unit tests (pure code; no database).
 - `vp run -r build` — emit `dist/`.
+- `vp run -r docgen` — build, then type-check and execute every JSDoc `@example` and generate the API docs under `packages/pulpit/docs/` (gitignored).
 - `fallow audit --base origin/trunk` — the fallow gate over your change set.
 - `pnpm changeset` — add a changeset (see Branches and pull requests).
 
@@ -40,10 +42,11 @@ Before you report work as done, run the gates below in order and quote each comm
 2. `vp run check`
 3. `vp run -r test:unit`
 4. `vp run -r build`
-5. `pnpm audit --audit-level high`
-6. `fallow audit --base origin/trunk`
+5. `vp run -r docgen`
+6. `pnpm audit --audit-level high`
+7. `fallow audit --base origin/trunk`
 
-Steps 1–5 are what CI runs (`.github/workflows/ci.yml`); step 6 is the fallow gate the PreToolUse hook also runs on commit and push. For CI parity from a clean tree, first run `rm -rf node_modules packages/*/node_modules tests/*/node_modules && pnpm install --frozen-lockfile`: a warm tree hides a peer that a dependency requires but `packages/pulpit/package.json` does not declare (declare it under `peerDependencies` via `catalog:peers`).
+Steps 1–6 are what CI runs (`.github/workflows/ci.yml`); step 7 is the fallow gate the PreToolUse hook also runs on commit and push. For CI parity from a clean tree, first run `rm -rf node_modules packages/*/node_modules tests/*/node_modules && pnpm install --frozen-lockfile`: a warm tree hides a peer that a dependency requires but `packages/pulpit/package.json` does not declare (declare it under `peerDependencies` via `catalog:peers`).
 
 ## Branches and pull requests
 

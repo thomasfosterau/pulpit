@@ -46,6 +46,7 @@
  *
  * @copyright Thomas Foster
  * @module pulpit/registry
+ * @since 0.1.0
  */
 
 import type { Resource } from "@thomasfosterau/effect-jsonapi";
@@ -58,10 +59,18 @@ import * as Schema from "effect/Schema";
 
 // ── Entry shape ───────────────────────────────────────────────────────
 
-/** Any branded-id schema (a UUID string on the wire) an application's ids module declares. */
+/**
+ * Any branded-id schema (a UUID string on the wire) an application's ids module declares.
+ *
+ * @since 0.1.0
+ */
 export type BrandedId = Schema.Codec<unknown, string>;
 
-/** The capability flags, in the order the derived families list them. */
+/**
+ * The capability flags, in the order the derived families list them.
+ *
+ * @since 0.1.0
+ */
 export const RESOURCE_FLAGS = [
   "pageable",
   "agent",
@@ -70,7 +79,11 @@ export const RESOURCE_FLAGS = [
   "searchable",
 ] as const;
 
-/** One of {@link RESOURCE_FLAGS}. */
+/**
+ * One of {@link RESOURCE_FLAGS}.
+ *
+ * @since 0.1.0
+ */
 export type RegistryFlag = (typeof RESOURCE_FLAGS)[number];
 
 /* oxlint-disable effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option` */
@@ -80,6 +93,8 @@ export type RegistryFlag = (typeof RESOURCE_FLAGS)[number];
  * capability flags are the membership predicates the families / unions
  * filter on; they must be literal `true` so the type-level derivation
  * ({@link PickResources}) can select them.
+ *
+ * @since 0.1.0
  */
 export interface RegistryEntry {
   /** Stable key: the JSON:API wire `type` for resource leaves, else a marker / leaf name. */
@@ -108,10 +123,16 @@ export interface RegistryEntry {
  * `parent: parent("place")` rather than `Option.some("place")`, whose `A` is
  * inferred as `string` even under `as const` and would leave every
  * {@link PickChildren} derivation empty. Runtime-identical to `Option.some`.
+ *
+ * @since 0.1.0
  */
 export const parent = <const Key extends string>(key: Key): Option.Option<Key> => Option.some(key);
 
-/** The tree root's `parent`: it has none. */
+/**
+ * The tree root's `parent`: it has none.
+ *
+ * @since 0.1.0
+ */
 export const root: Option.Option<never> = Option.none();
 
 /**
@@ -119,6 +140,8 @@ export const root: Option.Option<never> = Option.none();
  * {@link validateRegistry}, never an Effect failure: no runtime exists yet
  * when a registry is declared, and a malformed tree must stop the module
  * from loading at all rather than surface as a wrong wire contract later.
+ *
+ * @since 0.1.0
  */
 export class RegistryDeclarationError extends Schema.TaggedError<RegistryDeclarationError>()(
   "RegistryDeclarationError",
@@ -130,6 +153,8 @@ export class RegistryDeclarationError extends Schema.TaggedError<RegistryDeclara
  * after the generic checks: `Option.some(message)` fails the registry with
  * that message, `Option.none()` passes. `byKey` is the index of every entry
  * so a check can resolve parents.
+ *
+ * @since 0.1.0
  */
 export type RegistryCheck = (
   entry: RegistryEntry,
@@ -145,6 +170,8 @@ const fail = (message: string): never => {
 /**
  * Index entries by key, throwing on a duplicate — the first check, since every
  * other check resolves through the index.
+ *
+ * @since 0.1.0
  */
 export const indexByKey = (
   entries: readonly RegistryEntry[],
@@ -204,6 +231,52 @@ const checkEntry = (
  * each failure path with a malformed fixture — the throws are the contract,
  * not just belt-and-braces. An application calls it once at module load with
  * its real registry, passing its tree-specific `checks`.
+ *
+ * @example
+ * ```ts
+ * import { Resource } from "@thomasfosterau/effect-jsonapi";
+ * import { Registry } from "@thomasfosterau/pulpit";
+ * import * as Option from "effect/Option";
+ * import * as Schema from "effect/Schema";
+ *
+ * const PostResource = Resource.make("posts", { attributes: { title: Schema.String } });
+ *
+ * const REGISTRY = [
+ *   { key: "node", parent: Registry.root },
+ *   { key: "content", parent: Registry.parent("node") },
+ *   {
+ *     key: "posts",
+ *     parent: Registry.parent("content"),
+ *     resource: PostResource,
+ *     id: PostResource.Id,
+ *     owned: true,
+ *   },
+ * ] as const satisfies readonly Registry.RegistryEntry[];
+ *
+ * // A well-formed tree passes.
+ * Registry.validateRegistry(REGISTRY);
+ *
+ * // A parent that names no declared entry is thrown at load, not returned.
+ * assert.throws(
+ *   () =>
+ *     Registry.validateRegistry([...REGISTRY, { key: "pages", parent: Registry.parent("blog") }]),
+ *   Registry.RegistryDeclarationError,
+ * );
+ *
+ * // So is an application's own check: here, every leaf must be pageable.
+ * assert.throws(
+ *   () =>
+ *     Registry.validateRegistry(REGISTRY, [
+ *       (entry) =>
+ *         entry.resource !== undefined && entry.pageable !== true
+ *           ? Option.some(`leaf '${entry.key}' is not pageable`)
+ *           : Option.none(),
+ *     ]),
+ *   Registry.RegistryDeclarationError,
+ * );
+ * ```
+ *
+ * @since 0.1.0
  */
 export const validateRegistry = (
   entries: readonly RegistryEntry[],
@@ -221,6 +294,8 @@ export const validateRegistry = (
  * `file`). `Option.none()` for the tree root itself, and for an unresolved
  * parent (an unknown parent resolves to nothing rather than throwing —
  * {@link validateRegistry} is where that is an error).
+ *
+ * @since 0.1.0
  */
 export const branchOf = <Root extends string>(
   entry: RegistryEntry,
@@ -246,7 +321,11 @@ export const branchOf = <Root extends string>(
 // bridged onto it with a single cast — the array and the type follow the same
 // (registry-declaration) order, which `validateRegistry` guarantees.
 
-/** The resources of every entry whose `Flag` capability is literally `true`, as a tuple. */
+/**
+ * The resources of every entry whose `Flag` capability is literally `true`, as a tuple.
+ *
+ * @since 0.1.0
+ */
 export type PickResources<
   T extends readonly RegistryEntry[],
   Flag extends RegistryFlag,
@@ -268,6 +347,8 @@ export type PickResources<
  * application types its branch unions from this over the branch root PLUS
  * every marker level beneath it, so a leaf hanging off a marker types into
  * the branch exactly as one hanging off the root does.
+ *
+ * @since 0.1.0
  */
 export type PickChildren<
   T extends readonly RegistryEntry[],
@@ -299,7 +380,11 @@ const asMemberTuple = <T extends ReadonlyArray<Schema.Top>>(
   // the static tuple cannot disagree once `validateRegistry` has run.
   members as T;
 
-/** The `identifier` (linkage-ref) schema of each resource in a member tuple. */
+/**
+ * The `identifier` (linkage-ref) schema of each resource in a member tuple.
+ *
+ * @since 0.1.0
+ */
 export type Identifiers<Members extends readonly Resource.Any[]> = {
   readonly [K in keyof Members]: Members[K]["identifier"];
 };
@@ -309,6 +394,8 @@ export type Identifiers<Members extends readonly Resource.Any[]> = {
  * in registry order, typed as the precise member tuple. A capability flag
  * implies a resource ({@link validateRegistry}, which an application runs
  * first), so the projection is total and the bridge cast is sound.
+ *
+ * @since 0.1.0
  */
 export const flaggedMembers = <const T extends readonly RegistryEntry[], Flag extends RegistryFlag>(
   entries: T,
@@ -332,6 +419,8 @@ export const flaggedMembers = <const T extends readonly RegistryEntry[], Flag ex
  * `entity` branch names `"entity" | "place" | "agent" | …`). A leaf hanging
  * off a marker the caller forgot to name is in the array but not the tuple,
  * which a wire-identity pin catches. `parents` defaults to the root alone.
+ *
+ * @since 0.1.0
  */
 export const branchMembers = <
   const T extends readonly RegistryEntry[],
@@ -353,7 +442,11 @@ export const branchMembers = <
   );
 };
 
-/** The `identifier` schemas of a member tuple, for a branch's linkage-ref union. */
+/**
+ * The `identifier` schemas of a member tuple, for a branch's linkage-ref union.
+ *
+ * @since 0.1.0
+ */
 export const identifiersOf = <const Members extends readonly Resource.Any[]>(
   members: Members,
 ): Identifiers<Members> =>
@@ -366,6 +459,8 @@ export const identifiersOf = <const Members extends readonly Resource.Any[]>(
  * wire-identity pinning test asserts against the frozen contract, and what a
  * subtype factory checks its per-leaf `access` declaration against
  * (`owned` / `referenceData`).
+ *
+ * @since 0.1.0
  */
 export interface RegistryWireTypes<Root extends string> {
   readonly pageable: ReadonlyArray<string>;
@@ -380,6 +475,8 @@ export interface RegistryWireTypes<Root extends string> {
  * Project the wire types of every flag family and every branch of `roots`.
  * A capability-flagged entry always carries its resource, so the projection
  * never drops one.
+ *
+ * @since 0.1.0
  */
 export const registryWireTypes = <Root extends string>(
   entries: readonly RegistryEntry[],

@@ -27,3 +27,6 @@ dist/
 .vite/
 # The generated git-hook runner; the editable hook itself is committed.
 .vite-hooks/_/
+
+# Generated API documentation (`vp run -r docgen`). Regenerated; never committed.
+packages/pulpit/docs/

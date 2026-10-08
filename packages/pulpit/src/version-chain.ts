@@ -48,6 +48,7 @@
  *
  * @copyright Thomas Foster
  * @module pulpit/version-chain
+ * @since 0.1.0
  */
 
 import * as Array from "effect/Array";
@@ -60,15 +61,25 @@ import * as Schema from "effect/Schema";
 
 // ── Vocabulary ────────────────────────────────────────────────────────
 
-/** What one version row recorded: the create, an edit (restores included), or a tombstone. */
+/**
+ * What one version row recorded: the create, an edit (restores included), or a tombstone.
+ *
+ * @since 0.1.0
+ */
 export const VersionAction = Schema.Literals(["create", "update", "delete"]);
-/** The {@link VersionAction} literal union: `"create" | "update" | "delete"`. */
+/**
+ * The {@link VersionAction} literal union: `"create" | "update" | "delete"`.
+ *
+ * @since 0.1.0
+ */
 export type VersionAction = typeof VersionAction.Type;
 
 /**
  * One column's value in a leaf's state: a JSON value, or one of the two
  * non-JSON scalars a Drizzle row carries (`Date` for timestamps, `bigint` for
  * `bigint` columns). Documents are carried inline as their parsed JSON.
+ *
+ * @since 0.1.0
  */
 export type ColumnValue = Schema.Json | Date | bigint;
 
@@ -76,17 +87,25 @@ export type ColumnValue = Schema.Json | Date | bigint;
  * A leaf's domain state at one version: every column of every level of its
  * chain, keyed by column name (the leaf-most level wins on a shared name).
  * Generated columns (a `search_vector`) are not part of it — they regenerate.
+ *
+ * @since 0.1.0
  */
 export type ChainState = { readonly [column: string]: ColumnValue };
 
 /**
  * A tri-state patch over a {@link ChainState}: a value sets, `null` clears,
  * an absent or `undefined` key carries the previous version's value forward.
+ *
+ * @since 0.1.0
  */
 // oxlint-disable-next-line effect/prefer-option-over-null -- the tri-state rule IS the `undefined` arm: it is how a decoded update input says "not supplied", and an `Option` here would have to be unwrapped from every generated update projection first
 export type ChainPatch = { readonly [column: string]: ColumnValue | undefined };
 
-/** One entry in a node's append-only version chain. */
+/**
+ * One entry in a node's append-only version chain.
+ *
+ * @since 0.1.0
+ */
 export interface VersionChainEntry {
   /** The version number (0 is the create). */
   readonly version: bigint;
@@ -96,12 +115,20 @@ export interface VersionChainEntry {
   readonly timestamp: Date;
 }
 
-/** One version's reconstructed state, for the edits (browse / compare) surface. */
+/**
+ * One version's reconstructed state, for the edits (browse / compare) surface.
+ *
+ * @since 0.1.0
+ */
 export interface VersionSnapshot extends VersionChainEntry {
   readonly state: ChainState;
 }
 
-/** The row a write appends: the entry, the node's leaf type, the acting account, the full state. */
+/**
+ * The row a write appends: the entry, the node's leaf type, the acting account, the full state.
+ *
+ * @since 0.1.0
+ */
 export interface VersionRow extends VersionSnapshot {
   readonly id: string;
   /** The concrete leaf's wire type, threaded onto the node row at version 0 (#864 S3). */
@@ -110,7 +137,11 @@ export interface VersionRow extends VersionSnapshot {
   readonly actorId: Option.Option<string>;
 }
 
-/** What a chain write returns: the node and the version it landed at. */
+/**
+ * What a chain write returns: the node and the version it landed at.
+ *
+ * @since 0.1.0
+ */
 export interface ChainWrite {
   readonly id: string;
   readonly version: bigint;
@@ -118,20 +149,32 @@ export interface ChainWrite {
 
 // ── Errors ────────────────────────────────────────────────────────────
 
-/** No such node, or (for a plain update) a tombstoned one: the wire's 404. */
+/**
+ * No such node, or (for a plain update) a tombstoned one: the wire's 404.
+ *
+ * @since 0.1.0
+ */
 export class NodeNotFound extends Schema.TaggedError<NodeNotFound>()("NodeNotFound", {
   type: Schema.String,
   id: Schema.String,
 }) {}
 
-/** No reconstructable version at `(id, version)`: an unknown version, or a partial chain. */
+/**
+ * No reconstructable version at `(id, version)`: an unknown version, or a partial chain.
+ *
+ * @since 0.1.0
+ */
 export class VersionNotFound extends Schema.TaggedError<VersionNotFound>()("VersionNotFound", {
   type: Schema.String,
   id: Schema.String,
   version: Schema.BigInt,
 }) {}
 
-/** A create whose caller-supplied id already belongs to a node — never an upsert: the wire's 409. */
+/**
+ * A create whose caller-supplied id already belongs to a node — never an upsert: the wire's 409.
+ *
+ * @since 0.1.0
+ */
 export class NodeAlreadyExists extends Schema.TaggedError<NodeAlreadyExists>()(
   "NodeAlreadyExists",
   { type: Schema.String, id: Schema.String },
@@ -143,6 +186,8 @@ export class NodeAlreadyExists extends Schema.TaggedError<NodeAlreadyExists>()(
  * primary key is what enforces append-only under concurrency); never retried
  * here, because a retry would silently base the write on a version the
  * caller never read.
+ *
+ * @since 0.1.0
  */
 export class VersionConflict extends Schema.TaggedError<VersionConflict>()("VersionConflict", {
   id: Schema.String,
@@ -153,6 +198,8 @@ export class VersionConflict extends Schema.TaggedError<VersionConflict>()("Vers
  * The chain's head version has no reconstructable state — the store broke its
  * own contract (a head it reports must be readable). A defect, never a typed
  * failure: there is nothing a caller could do about it.
+ *
+ * @since 0.1.0
  */
 export class BrokenChain extends Schema.TaggedError<BrokenChain>()("BrokenChain", {
   type: Schema.String,
@@ -170,6 +217,8 @@ export class BrokenChain extends Schema.TaggedError<BrokenChain>()("BrokenChain"
  * to the caller, website #1883).
  *
  * Every method reads or writes exactly what it says and applies no policy.
+ *
+ * @since 0.1.0
  */
 export interface VersionChainStore<E, R> {
   /** The node's latest version entry, or none for an id with no versions. */
@@ -200,10 +249,18 @@ export interface VersionChainStore<E, R> {
 
 // ── The operations ────────────────────────────────────────────────────
 
-/** The hard cap on a history read (`PERF-DB-001`): a chain is tiny in practice; this bounds a pathological one. */
+/**
+ * The hard cap on a history read (`PERF-DB-001`): a chain is tiny in practice; this bounds a pathological one.
+ *
+ * @since 0.1.0
+ */
 export const MAX_HISTORY_LIMIT = 1000;
 
-/** Apply a tri-state patch to a state: a value sets, `null` clears, `undefined` carries forward. */
+/**
+ * Apply a tri-state patch to a state: a value sets, `null` clears, `undefined` carries forward.
+ *
+ * @since 0.1.0
+ */
 export const applyPatch = (state: ChainState, patch: ChainPatch) => ({
   ...state,
   ...Record.filter(patch, (value): value is ColumnValue => value !== undefined),
@@ -212,6 +269,8 @@ export const applyPatch = (state: ChainState, patch: ChainPatch) => ({
 /**
  * The input to {@link VersionChainOps.create}: the node id, the leaf's
  * initial state, the acting account.
+ *
+ * @since 0.1.0
  */
 export interface CreateInput {
   /** A caller-supplied node id (client-generated ids); minted by the store when absent. */
@@ -226,6 +285,8 @@ export interface CreateInput {
  * The input to {@link VersionChainOps.update} and
  * {@link VersionChainOps.restore}: the node, a tri-state patch, the acting
  * account.
+ *
+ * @since 0.1.0
  */
 export interface UpdateInput {
   /** The node to append to. */
@@ -239,7 +300,11 @@ export interface UpdateInput {
   readonly actorId: Option.Option<string>;
 }
 
-/** The chain operations for one leaf type, bound to a store. */
+/**
+ * The chain operations for one leaf type, bound to a store.
+ *
+ * @since 0.1.0
+ */
 export interface VersionChainOps<E, R> {
   /** Insert the node and its version 0 (`create`). Fails {@link NodeAlreadyExists} on a taken id. */
   readonly create: (
@@ -308,6 +373,8 @@ const now: Effect.Effect<Date> = Effect.map(Clock.currentTimeMillis, (millis) =>
 /**
  * Bind the chain operations for one leaf `type` to a store. Every produced
  * operation is traced as `${type}.<operation>`.
+ *
+ * @since 0.1.0
  */
 export const defineVersionChain = <E, R>(
   type: string,

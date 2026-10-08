@@ -50,6 +50,18 @@ export default defineConfig({
         input: cacheInputs,
         output: [],
       },
+      // Type-checks AND executes every JSDoc `@example` (docgen.json), and
+      // generates the API docs under docs/ (gitignored). Not part of `check`:
+      // it is a CI step of its own, so a broken example fails visibly on its
+      // own line. Behind `build`, the edge the setup recorded on pulpit#8
+      // asks for, so one `vp run -r docgen` also proves the package still
+      // emits; docgen itself rewrites an example's `@thomasfosterau/pulpit`
+      // import to `src/`, never `dist/`.
+      docgen: {
+        command: "docgen",
+        dependsOn: ["build"],
+        cache: false,
+      },
       "test:coverage": {
         command: "vp test run tests --coverage",
         env: ["VITEST_MAX_WORKERS", "NODE_OPTIONS"],

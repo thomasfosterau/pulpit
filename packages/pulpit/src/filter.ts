@@ -30,6 +30,7 @@
  *
  * @copyright Thomas Foster
  * @module pulpit/filter
+ * @since 0.1.0
  */
 
 import * as Array from "effect/Array";
@@ -40,13 +41,23 @@ import type { ColumnValue } from "./version-chain.ts";
  * A value an `eq` / `ne` node compares against. No `null`: `col = NULL` is
  * never true in SQL, so a null comparison would read differently in the
  * renderer and the evaluator.
+ *
+ * @since 0.1.0
  */
 export type Scalar = string | number | boolean;
 
-/** A row as {@link evaluate} reads it: the view's columns by name. */
+/**
+ * A row as {@link evaluate} reads it: the view's columns by name.
+ *
+ * @since 0.1.0
+ */
 export type FilterRow = { readonly [column: string]: ColumnValue };
 
-/** A read predicate over a current-version view's columns. */
+/**
+ * A read predicate over a current-version view's columns.
+ *
+ * @since 0.1.0
+ */
 export type ListFilter<Following> =
   | { readonly kind: "always" }
   | { readonly kind: "never" }
@@ -58,26 +69,54 @@ export type ListFilter<Following> =
   | { readonly kind: "and"; readonly filters: ReadonlyArray<ListFilter<Following>> }
   | { readonly kind: "or"; readonly filters: ReadonlyArray<ListFilter<Following>> };
 
-/** No predicate: every row. */
+/**
+ * No predicate: every row.
+ *
+ * @since 0.1.0
+ */
 export const always = { kind: "always" } as const;
 
-/** Fail closed: no row. */
+/**
+ * Fail closed: no row.
+ *
+ * @since 0.1.0
+ */
 export const never = { kind: "never" } as const;
 
-/** `column = value`. */
+/**
+ * `column = value`.
+ *
+ * @since 0.1.0
+ */
 export const eq = (column: string, value: Scalar) => ({ kind: "eq", column, value }) as const;
 
-/** `column <> value`. */
+/**
+ * `column <> value`.
+ *
+ * @since 0.1.0
+ */
 export const ne = (column: string, value: Scalar) => ({ kind: "ne", column, value }) as const;
 
-/** `column IN (following)`. */
+/**
+ * `column IN (following)`.
+ *
+ * @since 0.1.0
+ */
 export const isIn = <Following>(column: string, set: Following) =>
   ({ kind: "in", column, set }) as const;
 
-/** Stamped, and the stamp has arrived. */
+/**
+ * Stamped, and the stamp has arrived.
+ *
+ * @since 0.1.0
+ */
 export const published = (column: string) => ({ kind: "published", column }) as const;
 
-/** Not out: unstamped, or stamped in the future — the exact complement of {@link published}. */
+/**
+ * Not out: unstamped, or stamped in the future — the exact complement of {@link published}.
+ *
+ * @since 0.1.0
+ */
 export const notPublished = (column: string) => ({ kind: "notPublished", column }) as const;
 
 /** No parts → the identity; one part → that part, bare; more → the combined node. */
@@ -98,6 +137,8 @@ const collapse = <Following>(
  * Conjunction. `always` parts drop out, a `never` part makes the whole
  * `never`, and a single remaining part is returned bare — so composing
  * optional filters reads as one call, the shape the apps' `combine` had.
+ *
+ * @since 0.1.0
  */
 export const and = <Following>(
   ...filters: ReadonlyArray<ListFilter<Following>>
@@ -113,6 +154,8 @@ export const and = <Following>(
 /**
  * Disjunction. `never` parts drop out, an `always` part makes the whole
  * `always`, and a single remaining part is returned bare.
+ *
+ * @since 0.1.0
  */
 export const or = <Following>(
   ...filters: ReadonlyArray<ListFilter<Following>>
@@ -125,7 +168,11 @@ export const or = <Following>(
   );
 };
 
-/** What {@link evaluate} needs besides the row: the query's clock and the `in` test. */
+/**
+ * What {@link evaluate} needs besides the row: the query's clock and the `in` test.
+ *
+ * @since 0.1.0
+ */
 export interface EvaluationContext<Following> {
   /** The instant `published` / `notPublished` compare against — the query's `now()`. */
   readonly now: Date;
@@ -141,6 +188,8 @@ const instantOf = (value: ColumnValue): number =>
  * Run a filter against one row — the in-memory reading of the rendering
  * contract above. A column the row lacks matches no `eq`, satisfies every
  * `ne`, and is unpublished.
+ *
+ * @since 0.1.0
  */
 export const evaluate = <Following>(
   filter: ListFilter<Following>,

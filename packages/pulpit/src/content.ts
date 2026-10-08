@@ -16,6 +16,7 @@
  *
  * @copyright Thomas Foster
  * @module pulpit/content
+ * @since 0.1.0
  */
 
 import { Relationship, Resource } from "@thomasfosterau/effect-jsonapi";
@@ -37,9 +38,15 @@ import * as Schema from "effect/Schema";
  * Content branch's version row; owned Entity / File leaves carry the same
  * column on their own version row, declared with
  * {@link ownedVisibilityResourceFields}.
+ *
+ * @since 0.1.0
  */
 export const Visibility = Schema.Literals(["public", "followers", "private"]);
-/** The {@link Visibility} literal union: `"public" | "followers" | "private"`. */
+/**
+ * The {@link Visibility} literal union: `"public" | "followers" | "private"`.
+ *
+ * @since 0.1.0
+ */
 export type Visibility = typeof Visibility.Type;
 
 /**
@@ -51,6 +58,8 @@ export type Visibility = typeof Visibility.Type;
  *
  * `Resource.attribute(schema, { create: "optional" })` is the
  * required-on-resource, optional-at-both-inputs, never-cleared descriptor.
+ *
+ * @since 0.1.0
  */
 export const contentVisibilityResourceFields = {
   visibility: Resource.attribute(Visibility, { create: "optional" }),
@@ -62,6 +71,8 @@ export const contentVisibilityResourceFields = {
  * non-null), for Content subtypes' hand-written `Create` structs — a form
  * adapter passes `value | undefined`, which `createInput`'s strict
  * `optionalKey` rejects, so the create struct is hand-written.
+ *
+ * @since 0.1.0
  */
 export const contentVisibilityCreateFields = {
   visibility: Schema.optional(Visibility),
@@ -74,6 +85,8 @@ export const contentVisibilityCreateFields = {
  * no `draft` flag — a garden is not a draft of anything. Same descriptor as
  * the Content pair: required on the resource, optional at both inputs, never
  * cleared.
+ *
+ * @since 0.1.0
  */
 export const ownedVisibilityResourceFields = {
   visibility: Resource.attribute(Visibility, { create: "optional" }),
@@ -84,6 +97,8 @@ export const ownedVisibilityResourceFields = {
  * `createdAt` (the node's version-0 commit time) and `updatedAt` (its current
  * version's), server-computed and present on the resource only
  * (`readOnlyAttribute`), never accepted as command input.
+ *
+ * @since 0.1.0
  */
 export const nodeTimestampResourceFields = {
   createdAt: Resource.readOnlyAttribute(Schema.Date),
@@ -95,6 +110,8 @@ export const nodeTimestampResourceFields = {
  * (`resource: "optional"` — emitters omit the key entirely while live, #691)
  * and is in no write projection. A tombstone is written by the chain's
  * `delete` operation (`./version-chain`), never by an input.
+ *
+ * @since 0.1.0
  */
 export const tombstoneResourceFields = {
   deletedAt: Resource.attribute(Schema.Date, {
@@ -109,6 +126,8 @@ export const tombstoneResourceFields = {
  * timestamps and the tombstone. Reference data has no visibility axis of its
  * own — the corpus is publicly readable; a Content-branch reference leaf reads
  * `private` off the branch row like every other Content subtype.
+ *
+ * @since 0.1.0
  */
 export const referenceLeafResourceFields = {
   ...nodeTimestampResourceFields,
@@ -128,6 +147,8 @@ export const referenceLeafResourceFields = {
  * publication *stamp* (`publishedAt`, the axis `./publication` reads) carries
  * that on its own row instead — a different axis from `draft`'s hard gate
  * (#1118).
+ *
+ * @since 0.1.0
  */
 export const ownedContentLeafResourceFields = {
   ...referenceLeafResourceFields,
@@ -154,6 +175,8 @@ export const ownedContentLeafResourceFields = {
  * the generated `createPayload`; an application serving the generated payload
  * strips the linkage at its handler seam, which is where a read-only linkage
  * descriptor belongs once effect-jsonapi#172's server skeleton lands.
+ *
+ * @since 0.1.0
  */
 export const ownerRef = <Owner extends Resource.Any>(owner: () => Owner) => ({
   owner: Relationship.one(owner),
@@ -164,6 +187,8 @@ export const ownerRef = <Owner extends Resource.Any>(owner: () => Owner) => ({
  * exactly {@link referenceLeafResourceFields}, named for the resource that
  * carries them so a subtype extending the base and a leaf spreading the
  * fields declare the same wire shape.
+ *
+ * @since 0.1.0
  */
 export const contentResourceAttributeFields = referenceLeafResourceFields;
 
@@ -173,20 +198,38 @@ export const contentResourceAttributeFields = referenceLeafResourceFields;
  * carries with the auto-derived `Resource.Id<"content">`. An application whose
  * ids are branded hierarchically (a `PostId` that is also a `ContentId` and a
  * `NodeId`) declares the base with its own brand so the two agree.
+ *
+ * @since 0.1.0
  */
 export const makeContentResource = <IdSchema extends Schema.Codec<any, string>>(id: IdSchema) =>
   Resource.make("content", { id, attributes: contentResourceAttributeFields });
 
-/** The base Content resource with the auto-derived id (timestamps + soft-delete tombstone). */
+/**
+ * The base Content resource with the auto-derived id (timestamps + soft-delete tombstone).
+ *
+ * @since 0.1.0
+ */
 export const ContentResource = Resource.make("content", {
   attributes: contentResourceAttributeFields,
 });
 
-/** Inferred type for a base content resource. */
+/**
+ * Inferred type for a base content resource.
+ *
+ * @since 0.1.0
+ */
 export type Content = typeof ContentResource.Type;
 
-/** Lightweight `{ type, id }` reference to content. */
+/**
+ * Lightweight `{ type, id }` reference to content.
+ *
+ * @since 0.1.0
+ */
 export const ContentRef = ContentResource.identifier;
 
-/** Inferred type for a content reference. */
+/**
+ * Inferred type for a content reference.
+ *
+ * @since 0.1.0
+ */
 export type ContentRef = typeof ContentRef.Type;

@@ -55,6 +55,7 @@
  *
  * @copyright Thomas Foster
  * @module pulpit/subtype
+ * @since 0.1.0
  */
 
 import * as Array from "effect/Array";
@@ -84,13 +85,21 @@ const isVisibility = Schema.is(Visibility);
 
 // ── The viewer seam ───────────────────────────────────────────────────
 
-/** The signed-in account the operation acts as: an id and a role on the application's ladder. */
+/**
+ * The signed-in account the operation acts as: an id and a role on the application's ladder.
+ *
+ * @since 0.1.0
+ */
 export interface ViewerAccount {
   readonly id: string;
   readonly role: string;
 }
 
-/** The viewer: an account, or none for an anonymous request (effect-auth's session context). */
+/**
+ * The viewer: an account, or none for an anonymous request (effect-auth's session context).
+ *
+ * @since 0.1.0
+ */
 export type Viewer = Option.Option<ViewerAccount>;
 
 /**
@@ -99,6 +108,8 @@ export type Viewer = Option.Option<ViewerAccount>;
  * `CORPUS_WRITE_MIN_ROLE`) compared by the application's one
  * `hasRoleAtLeast`, which must fail closed on an unknown role. effect-auth's
  * role-ladder factory produces these.
+ *
+ * @since 0.1.0
  */
 export interface AccessPolicy {
   /** May see `private` rows and drafts (gardeneria: moderator+; website: admin). */
@@ -115,6 +126,8 @@ export interface AccessPolicy {
  * The follower seam — the `followers` visibility state's one external fact.
  * `isFollower` answers one row's question; `following` answers a list's, as
  * whatever the list filter's `in` node takes (a subquery in SQL, #1107).
+ *
+ * @since 0.1.0
  */
 export interface FollowerSeam<Following, R> {
   /** Whether `followerId` follows `ownerId`: the single-row question `canViewOwned` asks. */
@@ -129,6 +142,8 @@ export interface FollowerSeam<Following, R> {
 /**
  * The fail-closed follower seam: nobody follows anybody. `nobody` is the
  * matches-nothing value of the `in` node (SQL: `(select null::uuid where false)`).
+ *
+ * @since 0.1.0
  */
 export const nobodyFollows = <Following>(nobody: Following): FollowerSeam<Following, never> => ({
   isFollower: () => Effect.succeed(false),
@@ -137,10 +152,18 @@ export const nobodyFollows = <Following>(nobody: Following): FollowerSeam<Follow
 
 // ── Errors ────────────────────────────────────────────────────────────
 
-/** No signed-in viewer where one is required: the wire's 401. */
+/**
+ * No signed-in viewer where one is required: the wire's 401.
+ *
+ * @since 0.1.0
+ */
 export class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthorized", {}) {}
 
-/** A signed-in viewer below the rung a write needs: the wire's 403. Never used to hide a row. */
+/**
+ * A signed-in viewer below the rung a write needs: the wire's 403. Never used to hide a row.
+ *
+ * @since 0.1.0
+ */
 export class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
 
 // ── Read scope and the row predicate ──────────────────────────────────
@@ -154,13 +177,19 @@ export class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) 
  * - `public` — anonymous: `visibility = 'public'` only;
  * - `member` — a signed-in account: `public`, OR their own rows, OR
  *   `followers` rows whose owner they follow.
+ *
+ * @since 0.1.0
  */
 export type ReadScope<Following> =
   | { readonly kind: "all" }
   | { readonly kind: "public" }
   | { readonly kind: "member"; readonly userId: string; readonly following: Following };
 
-/** Resolve a viewer's {@link ReadScope}. */
+/**
+ * Resolve a viewer's {@link ReadScope}.
+ *
+ * @since 0.1.0
+ */
 export const readScopeFor = <Following>(
   viewer: Viewer,
   policy: AccessPolicy,
@@ -174,7 +203,11 @@ export const readScopeFor = <Following>(
         : { kind: "member", userId: account.id, following: followers.following(account.id) },
   });
 
-/** The facts {@link canViewOwned} reads off an owned row. `draft: false` for a leaf without the axis. */
+/**
+ * The facts {@link canViewOwned} reads off an owned row. `draft: false` for a leaf without the axis.
+ *
+ * @since 0.1.0
+ */
 export interface OwnedFacts {
   readonly ownerId: string;
   readonly visibility: Visibility;
@@ -194,6 +227,8 @@ export interface OwnedFacts {
  * `draft: true` narrows whatever `visibility` allows down to the owner and
  * the rung — a `public` draft is exactly as hidden as a `private` one. Never
  * fails; callers turn `false` into {@link NodeNotFound}.
+ *
+ * @since 0.1.0
  */
 export const canViewOwned = <R>(
   viewer: Viewer,
@@ -218,6 +253,8 @@ export const canViewOwned = <R>(
  * The gate selector, mirroring the registry's `referenceData` ⊕ `owned`
  * flags: an `owned` leaf names the VIEW columns its read paths consult, and
  * `draftColumn` only when the leaf actually writes the flag.
+ *
+ * @since 0.1.0
  */
 export type LeafAccess =
   | { readonly kind: "reference" }
@@ -228,7 +265,11 @@ export type LeafAccess =
       readonly draftColumn: Option.Option<string>;
     };
 
-/** The owned-leaf access declaration with the conventional factory-built column names. */
+/**
+ * The owned-leaf access declaration with the conventional factory-built column names.
+ *
+ * @since 0.1.0
+ */
 export const ownedAccess = (
   // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option`
   options: { readonly draft?: boolean | undefined } = {},
@@ -245,6 +286,8 @@ export const ownedAccess = (
  * non-owner arm additionally requires `draft = false`; the owner's own arm
  * never does, so a member lists their own drafts. Columns the view lacks
  * fail closed.
+ *
+ * @since 0.1.0
  */
 export const ownedListFilter = <Following>(
   access: Extract<LeafAccess, { kind: "owned" }>,
@@ -284,6 +327,8 @@ export const ownedListFilter = <Following>(
 /**
  * The soft-delete arm of every list: tombstones only when the caller asked
  * AND holds the view-deleted rung — asking without the rung changes nothing.
+ *
+ * @since 0.1.0
  */
 export const softDeleteFilter = <Following>(
   viewer: Viewer,
@@ -296,6 +341,8 @@ export const softDeleteFilter = <Following>(
  * The reference-leaf privacy arm (`PUB-009`): `visibility = 'public'` unless
  * the viewer holds the view-private rung, or the view has no visibility
  * column (an Entity leaf rides no such axis). Nothing to opt into.
+ *
+ * @since 0.1.0
  */
 export const referencePrivacyFilter = <Following>(
   viewer: Viewer,
@@ -322,7 +369,11 @@ const atRung = (
     admits(account) ? Effect.succeed(account) : Effect.fail(new Forbidden()),
   );
 
-/** The gate for a CREATE: reference data → the corpus-write rung; owned → any signed-in account. */
+/**
+ * The gate for a CREATE: reference data → the corpus-write rung; owned → any signed-in account.
+ *
+ * @since 0.1.0
+ */
 export const requireCreator = (
   access: LeafAccess,
   viewer: Viewer,
@@ -334,6 +385,8 @@ export const requireCreator = (
  * The gate for a write to an EXISTING row: reference data → the corpus-write
  * rung; owned material → the row's owner or the moderate rung. A missing
  * owner on an owned leaf is {@link NodeNotFound}, never an open gate.
+ *
+ * @since 0.1.0
  */
 export const requireWriter = <E, R>(
   access: LeafAccess,
@@ -354,26 +407,40 @@ export const requireWriter = <E, R>(
 
 // ── The current-version view seam ─────────────────────────────────────
 
-/** A current-version view row: its node id, its head `action`, and the leaf's columns. */
+/**
+ * A current-version view row: its node id, its head `action`, and the leaf's columns.
+ *
+ * @since 0.1.0
+ */
 export interface LeafRow {
   readonly id: string;
   readonly action: VersionAction;
   readonly [column: string]: ColumnValue;
 }
 
-/** One list page and the unpaged total of rows matching the filter. */
+/**
+ * One list page and the unpaged total of rows matching the filter.
+ *
+ * @since 0.1.0
+ */
 export interface Page<A> {
   readonly rows: ReadonlyArray<A>;
   readonly total: number;
 }
 
-/** The hard cap on a page (`SEC-INPUT-003`): no request drives an unbounded `LIMIT`. */
+/**
+ * The hard cap on a page (`SEC-INPUT-003`): no request drives an unbounded `LIMIT`.
+ *
+ * @since 0.1.0
+ */
 export const MAX_PAGE_LIMIT = 1000;
 
 /**
  * The read seam over a leaf's fail-closed current-version view, plus the
  * owner stamp. `columns` is the view's column set — what the owned filter
  * checks its declaration against.
+ *
+ * @since 0.1.0
  */
 export interface LeafStore<Row extends LeafRow, Following, E, R> {
   /** The view's column names; an owned declaration naming a column outside this set lists nothing. */
@@ -396,7 +463,11 @@ export interface LeafStore<Row extends LeafRow, Following, E, R> {
 
 // ── The factory ───────────────────────────────────────────────────────
 
-/** A leaf's declaration: its type and access, its seams, and its row → resource mapper. */
+/**
+ * A leaf's declaration: its type and access, its seams, and its row → resource mapper.
+ *
+ * @since 0.1.0
+ */
 export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, R> {
   /** The leaf's JSON:API wire type — names spans and tags `NodeNotFound`. */
   readonly type: string;
@@ -416,7 +487,11 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
   readonly toResource: (row: Row) => Resource;
 }
 
-/** A list request, as the decoded query hands it over. */
+/**
+ * A list request, as the decoded query hands it over.
+ *
+ * @since 0.1.0
+ */
 export interface ListRequest {
   readonly limit: number;
   readonly offset: number;
@@ -427,7 +502,11 @@ export interface ListRequest {
 
 type Gate = Unauthorized | Forbidden;
 
-/** The operations {@link defineSubtype} produces for one leaf. */
+/**
+ * The operations {@link defineSubtype} produces for one leaf.
+ *
+ * @since 0.1.0
+ */
 export interface SubtypeOps<Resource, E, R> {
   /** The access declaration the operations gate by. */
   readonly access: LeafAccess;
@@ -507,6 +586,8 @@ export interface SubtypeOps<Resource, E, R> {
  * Bind a leaf's operations. Every produced operation is traced as
  * `${type}.<operation>`; the write operations run in the caller's
  * transaction (the boundary is the handler seam's, website #1883).
+ *
+ * @since 0.1.0
  */
 export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   definition: SubtypeDefinition<Row, Resource, Following, E, R>,
@@ -645,6 +726,8 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
  * The resource cache's write side (effect-web#4): `set` writes the resource
  * through — the cache itself refuses (and evicts) a non-serveable one, so a
  * `public → private` flip self-purges — and `delete` evicts.
+ *
+ * @since 0.1.0
  */
 export interface ResourceCacheSeam<Resource, R> {
   /**
@@ -669,6 +752,8 @@ export interface ResourceCacheSeam<Resource, R> {
  * superseded content until the TTL expired. The chain write runs inside
  * `transact` (the handler seam's boundary, website #1883); the re-read
  * stays outside it.
+ *
+ * @since 0.1.0
  */
 export interface SubtypeHandlers<Resource, E, R> {
   readonly list: SubtypeOps<Resource, E, R>["list"];
@@ -690,7 +775,11 @@ export interface SubtypeHandlers<Resource, E, R> {
   }) => Effect.Effect<Resource, Gate | NodeNotFound | VersionNotFound | VersionConflict | E, R>;
 }
 
-/** What {@link subtypeHandlers} needs besides the operations. */
+/**
+ * What {@link subtypeHandlers} needs besides the operations.
+ *
+ * @since 0.1.0
+ */
 export interface SubtypeHandlersConfig<Resource, R> {
   /** The write boundary — always-open: a nested call is a SAVEPOINT (website #1883). */
   readonly transact: <A, E2>(effect: Effect.Effect<A, E2, R>) => Effect.Effect<A, E2, R>;
@@ -703,6 +792,8 @@ export interface SubtypeHandlersConfig<Resource, R> {
  * be cached — `CACHE-AUTH-005` is enforced by the cache's serveability
  * policy (`./publication`'s `isPubliclyServeable` with `owned: true`), which
  * only ever holds its public rows.
+ *
+ * @since 0.1.0
  */
 export const subtypeHandlers = <Resource, E, R>(
   ops: SubtypeOps<Resource, E, R>,

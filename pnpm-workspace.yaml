@@ -25,6 +25,11 @@ catalogMode: strict
 catalog:
   "@changesets/changelog-github": ^1.0.1
   "@changesets/cli": ^3.0.3
+  # Compiles AND executes every JSDoc `@example` (`vp run -r docgen`): parses
+  # `src/` with the TypeScript 5.5 compiler bundled in its own bin,
+  # type-checks the examples with the `tsc` on PATH (the native one below) and
+  # runs them under `tsx`, hence that entry. See `peerDependencyRules`.
+  "@effect/docgen": ^0.5.2
   "@effect/language-service": ^0.87.3
   # Effect Language Service as a native (TypeScript-Go) binary — the TS7 side
   # of the 6/7 split. `effect-tsgo patch` overwrites the native `tsc` binary
@@ -51,6 +56,8 @@ catalog:
   effect: 4.0.0
   effect-solutions: ^0.5.3
   fallow: 3.31.0
+  # The runtime `@effect/docgen` executes examples under.
+  tsx: ^4.23.13
   # TypeScript 6/7 side-by-side: TS7 (the native Go compiler) ships no JS API
   # until 7.1, so JS-API consumers (@effect/language-service) stay on TS6 while
   # native `tsc` type-checks AND emits this library's `dist/`. The alias keeps
@@ -93,10 +100,10 @@ overrides:
   # ships an rc.118 build (website#2015).
   "@mpsuesser/oxlint-plugin-effect>effect": "4.0.0-beta.100"
   # Security floors for dev-only transitive tooling, so `pnpm audit
-  # --audit-level high` passes (#41). Every parent's range already admits the
-  # fixed release, so no catalog bump reaches them; the floor stops a lockfile
-  # re-resolution from landing back on a vulnerable copy. `^`, not `>=`, keeps
-  # each inside the major its parents ask for.
+  # --audit-level high` passes (pulpit#41). Every parent's range already
+  # admits the fixed release, so no catalog bump reaches them; the floor stops
+  # a lockfile re-resolution from landing back on a vulnerable copy. `^`, not
+  # `>=`, keeps each inside the major its parents ask for.
   # - shell-quote GHSA-pqg4-j6r4-53mv (critical), fixed in 1.11.0, via
   #   @changesets/cli > launch-editor (`^1.8.4`). Remove once launch-editor's
   #   own range floors at `^1.11.0`.
@@ -117,6 +124,12 @@ peerDependencyRules:
   allowedVersions:
     vite: "*"
     vitest: "*"
+    # @effect/docgen 0.5.2 declares `typescript ^5.2.2` but never loads it:
+    # its bin bundles TypeScript 5.5.2 for parsing and shells out to the `tsc`
+    # on PATH for the examples, so admitting the TS6 alias only silences the
+    # peer warning. `vp run -r docgen` is the proof, in CI on every push
+    # (pulpit#8, the setup effect-jsonapi#175 settled for the template).
+    "@effect/docgen>typescript": "6"
 
 # Supply-chain delay (owner's policy, gardeneria #1149): hold newly published
 # versions for 1 day (unit: MINUTES) before pnpm will install them.

@@ -16,7 +16,7 @@ Hooks are managed by Vite+; the editable [.vite-hooks/pre-commit](.vite-hooks/pr
 
 ## CI expectations
 
-[ci.yml](.github/workflows/ci.yml) runs steps 1–5 of the gates in [AGENTS.md → Verification](AGENTS.md#verification) in one job. [release.yml](.github/workflows/release.yml) runs changesets/action on `trunk`: it opens the version PR while unreleased changesets exist and publishes the package once it merges, via npm trusted publishing (see [PUBLISHING.md](PUBLISHING.md)).
+[ci.yml](.github/workflows/ci.yml) runs steps 1–6 of the gates in [AGENTS.md → Verification](AGENTS.md#verification) in one job. [release.yml](.github/workflows/release.yml) runs changesets/action on `trunk`: it opens the version PR while unreleased changesets exist and publishes the package once it merges, via npm trusted publishing (see [PUBLISHING.md](PUBLISHING.md)).
 
 ## Pre-PR checklist
 
@@ -35,5 +35,6 @@ vp run --filter ./packages/pulpit check    # the package's type check alone
 vp run -r test:unit                        # unit tests
 vp test run tests/some.test.ts             # single file (from inside the package)
 vp run -r build                            # emit dist/
+vp run -r docgen                           # build, then type-check and run every JSDoc @example
 vp run fallow:audit                        # change-set review (not a CI gate)
 ```

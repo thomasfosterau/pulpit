@@ -53,5 +53,8 @@ jobs:
         run: vp run -r test:unit
       - name: Build
         run: vp run -r build
+      # Type-checks AND runs every JSDoc @example, and generates the API docs.
+      - name: Verify documentation examples (docgen)
+        run: vp run -r docgen
       - name: Audit
         run: pnpm audit --audit-level high

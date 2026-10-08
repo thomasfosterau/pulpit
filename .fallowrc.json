@@ -12,14 +12,16 @@
     "tests/dist-consumer/src/*.ts",
     "**/vite.config.ts"
   ],
-  "ignorePatterns": ["**/dist/**", "**/coverage/**"],
+  "ignorePatterns": ["**/dist/**", "**/coverage/**", "packages/pulpit/docs/**"],
   "ignoreDependencies": [
     "@types/node",
     "effect-solutions",
+    "@effect/docgen",
     "@effect/tsgo",
     "@effect/language-service",
     "@typescript/native",
     "typescript",
+    "tsx",
     "vite",
     "vitest",
     "vite-plus",
