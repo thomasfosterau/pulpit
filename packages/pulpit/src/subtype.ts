@@ -620,19 +620,41 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
       Option.liftPredicate(row[owned.visibilityColumn], isVisibility),
       (): Visibility => "private",
     ),
+    // Anything but an explicit `false` (a `NULL`, a value outside the type) is
+    // a draft, as `ownedListFilter`'s `draft = false` arms read it: fail closed
+    // (SEC-AUTH-ENUM-001).
     draft: Option.match(owned.draftColumn, {
       onNone: () => false,
-      onSome: (column) => row[column] === true,
+      onSome: (column) => row[column] !== false,
     }),
   });
 
-  /** The row's own visibility, by access kind; the soft-delete axis is checked by the caller. */
-  const rowVisible = (viewer: Viewer, row: Row): Effect.Effect<boolean, never, R> =>
-    access.kind === "owned"
+  /**
+   * The row's own visibility, by access kind; the soft-delete axis is checked
+   * by the caller. It fails closed exactly where the list filter does, so
+   * `get` / `getMany` never serve a row `list` hides (SEC-AUTH-ENUM-001): an
+   * owned leaf whose view lacks a declared column shows no row, as
+   * `ownedListFilter` lists none; a reference row shows only when the view
+   * has no `visibility` column, the viewer holds the view-private rung, or
+   * its visibility is exactly `public`, as `referencePrivacyFilter` lists.
+   */
+  const rowVisible = (viewer: Viewer, row: Row): Effect.Effect<boolean, never, R> => {
+    if (access.kind === "reference") {
+      return Effect.succeed(
+        !leaves.columns.has("visibility") ||
+          Option.exists(viewer, policy.canViewPrivate) ||
+          row["visibility"] === "public",
+      );
+    }
+    const declared = [
+      access.ownerColumn,
+      access.visibilityColumn,
+      ...Option.toArray(access.draftColumn),
+    ];
+    return declared.every((column) => leaves.columns.has(column))
       ? canViewOwned(viewer, policy, followers, ownedFacts(access, row))
-      : Effect.succeed(
-          row["visibility"] !== "private" || Option.exists(viewer, policy.canViewPrivate),
-        );
+      : Effect.succeed(false);
+  };
 
   const visible = (viewer: Viewer, row: Row): Effect.Effect<boolean, never, R> =>
     row.action === "delete" && !Option.exists(viewer, policy.canViewDeleted)

@@ -15,17 +15,25 @@
  *   matrix (a private target refuses a stranger as `NotFound`, accepts its
  *   owner and a moderator; a public one accepts a stranger), and the
  *   handlers' cache write-through (website's `versionRestoreCommand`).
+ * - The factory's reads never disagree (`SEC-AUTH-ENUM-001`): `get` and
+ *   `getMany` serve exactly the rows `list` does, for every row state ×
+ *   viewer, out-of-enum visibility and a `null` or absent draft included
+ *   (pulpit#73).
  *
  * @module tests/subtype
  */
 
 import { describe, expect, it } from "vite-plus/test";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
+import * as HashSet from "effect/HashSet";
 import * as MutableHashMap from "effect/MutableHashMap";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
+import * as Record from "effect/Record";
+import * as Result from "effect/Result";
 import type { Visibility } from "../src/content.ts";
 import { always, and, eq, evaluate, ne, never } from "../src/filter.ts";
 import {
@@ -40,12 +48,13 @@ import {
   requireWriter,
   softDeleteFilter,
   subtypeHandlers,
+  type AccessPolicy,
   type LeafAccess,
   type LeafRow,
   type Viewer,
   type ViewerAccount,
 } from "../src/subtype.ts";
-import type { Precondition } from "../src/version-chain.ts";
+import type { ColumnValue, Precondition } from "../src/version-chain.ts";
 import { makeInMemoryChainStore } from "./in-memory-chain.ts";
 import {
   admin,
@@ -572,6 +581,307 @@ describe("defineSubtype — a reference leaf", () => {
     expect(leaves.owners.size).toBe(0);
     viewer = anonymous;
     expect(await tagOf(ops.get(id))).toEqual(Option.none());
+  });
+});
+
+// ── get ≡ list, end to end, over every row state ─────────────────────
+
+/** A column the seeded state omits, so the row carries no such key (`ColumnValue` has no `undefined`). */
+const ABSENT = Symbol("absent");
+type Seeded = ColumnValue | typeof ABSENT;
+
+/** One seeded node: its creating account (and so its owner), its state, and whether it is tombstoned. */
+interface Seed {
+  readonly owner: ViewerAccount;
+  readonly state: { readonly [column: string]: Seeded };
+  readonly deleted: boolean;
+}
+
+/** What one viewer's three reads answer for one seeded row. */
+interface RowReads {
+  readonly row: string;
+  readonly listed: boolean;
+  /** `get`'s error tag; none when the row reads. */
+  readonly got: Option.Option<string>;
+  readonly many: boolean;
+}
+
+/** A seeded column for a test name: a string quoted, so `"false"` never reads as `false`. */
+const showColumn = (seed: Seed, column: string): string =>
+  Option.match(Record.get(seed.state, column), {
+    onNone: () => "absent",
+    onSome: (value) =>
+      value === ABSENT ? "absent" : Predicate.isString(value) ? `"${value}"` : String(value),
+  });
+
+const labelOf = (seed: Seed): string =>
+  `visibility ${showColumn(seed, "visibility")}, draft ${showColumn(seed, "draft")}, owner ${seed.owner.id}${seed.deleted ? ", deleted" : ""}`;
+
+/** A leaf over the in-memory seams, seeded through the factory's own `create` and `delete`. */
+const seededLeaf = (
+  access: LeafAccess,
+  columns: ReadonlyArray<string>,
+  policy: AccessPolicy,
+  seeds: ReadonlyArray<Seed>,
+) => {
+  const chain = makeInMemoryChainStore();
+  const leaves = makeInMemoryLeafStore(chain, columns);
+  let viewer: Viewer = anonymous;
+  const ops = defineSubtype({
+    type: "leaves",
+    access,
+    chain,
+    leaves,
+    viewer: Effect.sync(() => viewer),
+    policy,
+    followers: follows,
+    toResource: (row: LeafRow) => ({ id: row.id }),
+  });
+  const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+    Effect.suspend(() => {
+      viewer = who;
+      return effect;
+    });
+  const seeding = Effect.forEach(
+    seeds,
+    (seed) =>
+      actAs(
+        as(seed.owner),
+        ops.create({
+          id: Option.none(),
+          state: Record.filterMap(seed.state, (value) =>
+            value === ABSENT ? Result.failVoid : Result.succeed(value),
+          ),
+        }),
+      ).pipe(
+        Effect.tap(({ id }) =>
+          seed.deleted ? actAs(as(seed.owner), ops.delete(id)) : Effect.void,
+        ),
+        Effect.map(({ id }) => id),
+      ),
+    // One at a time: `actAs` swaps the one viewer the leaf reads.
+    { concurrency: 1 },
+  );
+  /** Every seeded row as one viewer's reads answer it; `list` asks for tombstones, which `get` shows the rung. */
+  const reads = (who: Viewer, ids: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const page = yield* actAs(
+        who,
+        ops.list({ limit: 1000, offset: 0, includeDeleted: true, where: always }),
+      );
+      const listed = HashSet.fromIterable(page.rows.map((row) => row.id));
+      const many = yield* actAs(who, ops.getMany(ids));
+      return yield* Effect.forEach(
+        Arr.zip(seeds, ids),
+        ([seed, id]) =>
+          actAs(who, ops.get(id)).pipe(
+            Effect.match({
+              onFailure: (error) => Option.some(error._tag),
+              onSuccess: () => Option.none<string>(),
+            }),
+            Effect.map((got): RowReads => ({
+              row: labelOf(seed),
+              listed: HashSet.has(listed, id),
+              got,
+              many: HashMap.has(many, id),
+            })),
+          ),
+        { concurrency: 1 },
+      );
+    });
+  return run(Effect.map(seeding, (ids) => ({ reads: (who: Viewer) => run(reads(who, ids)) })));
+};
+
+/** Every read agrees with `list`: a listed row reads, and an unlisted one is `NodeNotFound`. */
+const expectAgreement = (reads: ReadonlyArray<RowReads>) =>
+  expect(reads).toEqual(
+    reads.map((read) => ({
+      ...read,
+      got: read.listed ? Option.none() : Option.some("NodeNotFound"),
+      many: read.listed,
+    })),
+  );
+
+/** Each row as `[listed, read by get]`. */
+const shownTo = async (leaf: Awaited<ReturnType<typeof seededLeaf>>, who: Viewer) =>
+  (await leaf.reads(who)).map((read) => [read.listed, Option.isNone(read.got)] as const);
+
+/** The labels of the rows `list` showed. */
+const listedRows = (reads: ReadonlyArray<RowReads>) =>
+  reads.filter((read) => read.listed).map((read) => read.row);
+
+const matrixViewers: ReadonlyArray<readonly [string, Viewer]> = [
+  ["anonymous", anonymous],
+  ["the owner", as(member)],
+  ["a follower", as(follower)],
+  ["a stranger", as(otherMember)],
+  ["a contributor", as(contributor)],
+  ["a moderator", as(moderator)],
+  ["an admin", as(admin)],
+];
+const matrixPolicies: ReadonlyArray<readonly [string, AccessPolicy]> = [
+  ["gardeneria", gardeneriaPolicy],
+  ["website", websitePolicy],
+];
+/** The enum, a value outside it, `null`, and no key at all. */
+const visibilities: ReadonlyArray<Seeded> = [
+  "public",
+  "followers",
+  "private",
+  "friends",
+  null,
+  ABSENT,
+];
+/** The two booleans, `null`, a stringly `"false"`, and no key at all. */
+const drafts: ReadonlyArray<Seeded> = [false, true, null, "false", ABSENT];
+
+/** Every variant × policy × viewer, as `it.each` rows. */
+const matrix = <Variant extends object>(variants: ReadonlyArray<Variant>) =>
+  Arr.flatMap(variants, (variant) =>
+    Arr.flatMap(matrixPolicies, ([policyName, policy]) =>
+      Arr.map(matrixViewers, ([viewerName, viewer]) => ({
+        ...variant,
+        policyName,
+        policy,
+        viewerName,
+        viewer,
+      })),
+    ),
+  );
+
+describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH-ENUM-001)", () => {
+  const hidden = [false, false] as const;
+  const shown = [true, true] as const;
+
+  it("a reference row at `followers` or out of the enum is public to neither read", async () => {
+    const leaf = await seededLeaf({ kind: "reference" }, ["visibility"], gardeneriaPolicy, [
+      { owner: contributor, state: { visibility: "followers" }, deleted: false },
+      { owner: contributor, state: { visibility: "friends" }, deleted: false },
+    ]);
+    const strangers = [anonymous, as(member), as(follower), as(contributor)];
+    expect(await Promise.all(strangers.map((who) => shownTo(leaf, who)))).toEqual(
+      strangers.map(() => [hidden, hidden]),
+    );
+    expect(await shownTo(leaf, as(moderator))).toEqual([shown, shown]);
+  });
+
+  it("an owned row whose draft is `null` or absent is a draft to both reads", async () => {
+    const leaf = await seededLeaf(
+      ownedAccess({ draft: true }),
+      ["visibility", "draft"],
+      gardeneriaPolicy,
+      [
+        { owner: member, state: { visibility: "public", draft: null }, deleted: false },
+        { owner: member, state: { visibility: "public" }, deleted: false },
+      ],
+    );
+    const strangers = [anonymous, as(follower), as(otherMember), as(contributor)];
+    expect(await Promise.all(strangers.map((who) => shownTo(leaf, who)))).toEqual(
+      strangers.map(() => [hidden, hidden]),
+    );
+    const privileged = [as(member), as(moderator)];
+    expect(await Promise.all(privileged.map((who) => shownTo(leaf, who)))).toEqual(
+      privileged.map(() => [shown, shown]),
+    );
+  });
+
+  describe("an owned leaf: visibility × draft × owner × tombstone, for every viewer", () => {
+    const seeds: ReadonlyArray<Seed> = Arr.flatMap(visibilities, (visibility) =>
+      Arr.flatMap(drafts, (draft) =>
+        Arr.flatMap([member, otherMember], (owner) =>
+          Arr.map([false, true], (deleted) => ({
+            owner,
+            state: { title: "t", visibility, draft },
+            deleted,
+          })),
+        ),
+      ),
+    );
+
+    it("is not vacuous: the anonymous read only the live, public, explicitly published rows", async () => {
+      const leaf = await seededLeaf(
+        ownedAccess({ draft: true }),
+        ["title", "visibility", "draft"],
+        gardeneriaPolicy,
+        seeds,
+      );
+      const open = seeds
+        .filter(
+          (seed) =>
+            seed.state["visibility"] === "public" && seed.state["draft"] === false && !seed.deleted,
+        )
+        .map(labelOf);
+      expect(open).toHaveLength(2);
+      expect(listedRows(await leaf.reads(anonymous))).toEqual(open);
+      expect(listedRows(await leaf.reads(as(moderator)))).toEqual(seeds.map(labelOf));
+    });
+
+    it.each(
+      matrix([
+        {
+          variant: "with a draft column",
+          access: ownedAccess({ draft: true }),
+          columns: ["title", "visibility", "draft"],
+        },
+        {
+          variant: "without a draft column",
+          access: ownedAccess(),
+          columns: ["title", "visibility", "draft"],
+        },
+        // The declaration names a column the view lacks: the list fails closed, so must the row.
+        {
+          variant: "declaring a draft column the view lacks",
+          access: ownedAccess({ draft: true }),
+          columns: ["title", "visibility"],
+        },
+        {
+          variant: "over a view without its visibility column",
+          access: ownedAccess(),
+          columns: ["title"],
+        },
+      ]),
+    )(
+      "$variant, $policyName policy, for $viewerName",
+      async ({ access, columns, policy, viewer }) => {
+        const leaf = await seededLeaf(access, columns, policy, seeds);
+        expectAgreement(await leaf.reads(viewer));
+      },
+    );
+  });
+
+  describe("a reference leaf: visibility × tombstone, for every viewer", () => {
+    const seeds: ReadonlyArray<Seed> = Arr.flatMap(visibilities, (visibility) =>
+      Arr.map([false, true], (deleted) => ({
+        owner: admin,
+        state: { name: "n", visibility },
+        deleted,
+      })),
+    );
+
+    it("is not vacuous: the anonymous read only the live, exactly public row", async () => {
+      const leaf = await seededLeaf(
+        { kind: "reference" },
+        ["name", "visibility"],
+        gardeneriaPolicy,
+        seeds,
+      );
+      const open = seeds
+        .filter((seed) => seed.state["visibility"] === "public" && !seed.deleted)
+        .map(labelOf);
+      expect(open).toHaveLength(1);
+      expect(listedRows(await leaf.reads(anonymous))).toEqual(open);
+      expect(listedRows(await leaf.reads(as(moderator)))).toEqual(seeds.map(labelOf));
+    });
+
+    it.each(
+      matrix([
+        { variant: "with a visibility column", columns: ["name", "visibility"] },
+        { variant: "over a view without a visibility column", columns: ["name"] },
+      ]),
+    )("$variant, $policyName policy, for $viewerName", async ({ columns, policy, viewer }) => {
+      const leaf = await seededLeaf({ kind: "reference" }, columns, policy, seeds);
+      expectAgreement(await leaf.reads(viewer));
+    });
   });
 });
 
