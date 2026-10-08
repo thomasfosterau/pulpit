@@ -230,7 +230,8 @@ export type LeafAccess =
 
 /** The owned-leaf access declaration with the conventional factory-built column names. */
 export const ownedAccess = (
-  options: { readonly draft?: boolean } = {},
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option`
+  options: { readonly draft?: boolean | undefined } = {},
 ): Extract<LeafAccess, { kind: "owned" }> => ({
   kind: "owned",
   ownerColumn: "ownerId",

@@ -82,3 +82,49 @@ export type ContentBranch = typeof ContentBranch.Type;
 export const discriminated: "comments" = ContentBranch.Type.type;
 // @ts-expect-error -- a garden is not in the content branch
 export const notInBranch: "gardens" = ContentBranch.Type.type;
+
+// ── An explicit `undefined` is accepted, and reads as absent ──
+//
+// The workspace compiles with `exactOptionalPropertyTypes`, so these pin that
+// every optional `RegistryEntry` member is declared `?: T | undefined`: an
+// application can forward its own possibly-undefined value without branching.
+
+// oxlint-disable-next-line effect/prefer-option-over-null -- the assertion is exactly that a possibly-undefined flag forwards into the entry
+export const forwarded = (flag: true | undefined): RegistryEntry => ({
+  key: "comments",
+  parent: root,
+  resource: CommentResource,
+  id: CommentId,
+  pageable: flag,
+  agent: flag,
+  owned: flag,
+  referenceData: flag,
+  searchable: flag,
+});
+export const marker: RegistryEntry = {
+  key: "node",
+  parent: root,
+  resource: undefined,
+  id: undefined,
+};
+// @ts-expect-error -- a flag is literally `true` or absent, never `false`
+export const falseFlag: RegistryEntry = { key: "node", parent: root, pageable: false };
+
+const EXPLICIT = [
+  { key: "node", parent: root, resource: undefined, id: undefined, owned: undefined },
+  {
+    key: "gardens",
+    parent: parent("node"),
+    resource: GardenResource,
+    id: GardenId,
+    owned: true,
+    pageable: undefined,
+  },
+] as const satisfies readonly RegistryEntry[];
+
+// `PickResources` selects only a literal `true`: an explicit `undefined` is unflagged.
+export const explicitOwned = flaggedMembers(EXPLICIT, "owned");
+export const explicitOwnedIsTuple: Equals<typeof explicitOwned, readonly [typeof GardenResource]> =
+  true;
+export const explicitPageable = flaggedMembers(EXPLICIT, "pageable");
+export const explicitPageableIsEmpty: Equals<typeof explicitPageable, readonly []> = true;

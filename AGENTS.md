@@ -15,7 +15,7 @@ The kernel's own invariants, terms and import boundary, including the seams-befo
 
 ## Conventions
 
-- **Optional fields are `?: T | undefined`, never bare `?: T`.** The workspace compiles with `exactOptionalPropertyTypes`, under which a bare `?:` rejects a caller forwarding its own `undefined`. Some existing options types still use the bare form; pulpit#22 tracks converting them.
+- **Optional fields are `?: T | undefined`, never bare `?: T`.** The workspace compiles with `exactOptionalPropertyTypes`, under which a bare `?:` rejects a caller forwarding its own `undefined`.
 - **Relative imports carry their `.ts` extension** (`rewriteRelativeImportExtensions` in `tsconfig.base.json`).
 - **Tests import from `vite-plus/test`**, never `vitest`. `tests/<module>.test.ts` mirrors the module it covers; `tests/*.types.ts` holds compile-time assertions, type-checked by `vp run check` and never executed.
 - **Every export has a TSDoc summary** that says what it is for, before any tag; an operation's doc names its error channel and any invariant ID it honours.

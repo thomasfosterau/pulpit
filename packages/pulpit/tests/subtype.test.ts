@@ -83,7 +83,12 @@ describe("canViewOwned (the owned-material read predicate)", () => {
   const view = (
     visibility: Visibility,
     viewer: Viewer,
-    options: { readonly draft?: boolean; readonly followers?: typeof follows } = {},
+    /* oxlint-disable effect/prefer-option-over-null -- the workspace's optional-field convention (AGENTS.md → Conventions), as in the options types under test */
+    options: {
+      readonly draft?: boolean | undefined;
+      readonly followers?: typeof follows | undefined;
+    } = {},
+    /* oxlint-enable effect/prefer-option-over-null */
   ) =>
     run(
       canViewOwned(viewer, gardeneriaPolicy, options.followers ?? follows, {
@@ -206,6 +211,11 @@ describe("ownedListFilter ≡ canViewOwned", () => {
       });
     }
   }
+
+  it("reads an explicitly undefined draft option as no draft column", () => {
+    expect(ownedAccess({ draft: undefined })).toEqual(ownedAccess());
+    expect(ownedAccess({ draft: undefined }).draftColumn).toEqual(Option.none());
+  });
 
   it("fails closed when the declaration names a column the view lacks", () => {
     const filter = ownedListFilter(
