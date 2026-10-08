@@ -1,0 +1,1122 @@
+/**
+ * The edge operations factory against the in-memory seams.
+ *
+ * - Ported from gardeneria's edge families (`defineEdgeOpsE` and the
+ *   integration tests of its callers): `anatomy-chemistry.test.ts` (the
+ *   corpus-write gate, the get / delete round trip, idempotent re-assertion,
+ *   reading an assertion from either end), `blogs-pages-albums.test.ts` (the
+ *   moderator `writeGate`, a collision on a unique key that does not cover the
+ *   end resolving to the stored row) and `disorders.test.ts` (the owned-child
+ *   edge: its gate inherited from the owned end, a stranger refused as
+ *   `NotFound`, read and list hidden alike, several edges at one node, a hard
+ *   delete that leaves the node alone).
+ * - pulpit's policy on top: the endpoint-visibility matrix (`EDGE-001`: the
+ *   list filter never disagrees with the per-endpoint predicate, for every
+ *   endpoint state × viewer, and `list` ≡ `get` end to end over two ends),
+ *   the endpoint lifecycle (a tombstoned end hides its edges until the node
+ *   is restored) and the declared cardinality limits.
+ *
+ * @module tests/edges
+ */
+
+import { describe, expect, it } from "vite-plus/test";
+import * as Arr from "effect/Array";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as HashSet from "effect/HashSet";
+import * as Option from "effect/Option";
+import * as Order from "effect/Order";
+import * as Predicate from "effect/Predicate";
+import * as Record from "effect/Record";
+import {
+  canViewEndpoint,
+  defineEdgeOps,
+  EdgeDeclarationError,
+  endpointColumn,
+  endpointFilter,
+  rungGate,
+  type EdgeDefinition,
+  type EdgeEnd,
+  type EdgeRow,
+  type EdgeValues,
+  type EdgeWriteGate,
+} from "../src/edges.ts";
+import { always, eq, evaluate, type FilterRow } from "../src/filter.ts";
+import {
+  defineSubtype,
+  MAX_PAGE_LIMIT,
+  nobodyFollows,
+  ownedAccess,
+  requireWriter,
+  type FollowerSeam,
+  type LeafRow,
+  type Viewer,
+  type ViewerAccount,
+} from "../src/subtype.ts";
+import type { ColumnValue, VersionAction } from "../src/version-chain.ts";
+import { makeInMemoryChainStore } from "./in-memory-chain.ts";
+import {
+  makeInMemoryEdgeStore,
+  makeInMemoryNodes,
+  type Following,
+  type InMemoryEdgeStore,
+  type InMemoryNodes,
+} from "./in-memory-edges.ts";
+import {
+  admin,
+  contributor,
+  follower,
+  gardeneriaPolicy,
+  makeInMemoryLeafStore,
+  member,
+  moderator,
+  NOW,
+  otherMember,
+} from "./in-memory-leaves.ts";
+
+// oxlint-disable-next-line effect/effect-run-in-body -- the test harness is the runtime boundary the rule asks for
+const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
+const errorOf = async <A, E>(effect: Effect.Effect<A, E>): Promise<Option.Option<E>> =>
+  Exit.findErrorOption(await Effect.runPromiseExit(effect));
+const tagOf = async <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
+  Option.map(await errorOf(effect), (error) => error._tag);
+
+const as = (account: ViewerAccount): Viewer => Option.some(account);
+const anonymous: Viewer = Option.none();
+
+/** `follower` follows `member`; nobody else follows anybody. */
+const follows: FollowerSeam<Following, never> = {
+  isFollower: (followerId, ownerId) =>
+    Effect.succeed(followerId === follower.id && ownerId === member.id),
+  following: (followerId) =>
+    followerId === follower.id ? HashSet.make(member.id) : HashSet.empty(),
+};
+
+const viewers: ReadonlyArray<readonly [string, Viewer]> = [
+  ["anonymous", anonymous],
+  ["the owner", as(member)],
+  ["a follower", as(follower)],
+  ["a stranger", as(otherMember)],
+  ["a contributor", as(contributor)],
+  ["a moderator", as(moderator)],
+];
+
+/** A node's current-version row. */
+const node = (
+  id: string,
+  columns: { readonly [column: string]: ColumnValue },
+  action: VersionAction = "create",
+): LeafRow => ({ ...columns, id, action });
+
+/** An end over a reference leaf. */
+const referenceEnd = (column: string, nodes: InMemoryNodes): EdgeEnd<never, never> => ({
+  column,
+  type: "subjects",
+  access: { kind: "reference" },
+  nodes,
+});
+
+/** An end over an owned leaf with the draft axis. */
+const ownedEnd = (column: string, nodes: InMemoryNodes): EdgeEnd<never, never> => ({
+  column,
+  type: "entries",
+  access: ownedAccess({ draft: true }),
+  nodes,
+});
+
+type Definition = EdgeDefinition<EdgeValues, EdgeRow, EdgeRow, Following, never, never>;
+
+/**
+ * The in-memory store, recording what the operations ask of it: each list's
+ * page window, and each cardinality count's `column:nodeId` (the node a SQL
+ * store locks), in call order.
+ */
+const recorded = (store: InMemoryEdgeStore) => {
+  let windows: ReadonlyArray<{ readonly limit: number; readonly offset: number }> = [];
+  let counted: ReadonlyArray<string> = [];
+  const edges: InMemoryEdgeStore = {
+    ...store,
+    list: (query) =>
+      Effect.suspend(() => {
+        windows = [...windows, { limit: query.limit, offset: query.offset }];
+        return store.list(query);
+      }),
+    countAt: (column, nodeId) =>
+      Effect.suspend(() => {
+        counted = [...counted, `${column}:${nodeId}`];
+        return store.countAt(column, nodeId);
+      }),
+  };
+  return { edges, seen: { windows: () => windows, counted: () => counted } };
+};
+
+/** One edge family over the in-memory store; the create input is the edge's column values. */
+const family = (
+  declaration: Pick<Definition, "ends" | "onConflict" | "writeGate">,
+  uniqueKey: ReadonlyArray<string> = [],
+) => {
+  const { edges, seen } = recorded(makeInMemoryEdgeStore({ ends: declaration.ends, uniqueKey }));
+  let viewer: Viewer = anonymous;
+  const ops = defineEdgeOps({
+    ...declaration,
+    type: "links",
+    edges,
+    viewer: Effect.sync(() => viewer),
+    policy: gardeneriaPolicy,
+    followers: follows,
+    values: (input: EdgeValues) => input,
+    toResource: (row: EdgeRow) => row,
+  });
+  const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+    Effect.suspend(() => {
+      viewer = who;
+      return effect;
+    });
+  const listed = async (who: Viewer, where: Parameters<typeof ops.list>[0]["where"] = always) => {
+    const page = await run(actAs(who, ops.list({ limit: 1000, offset: 0, where })));
+    return { ids: page.rows.map((row) => row.id), total: page.total };
+  };
+  return { edges, seen, ops, actAs, listed };
+};
+
+/** Two reference leaves, `s1` / `s2` and `p1` / `p2` / `p3`, all public. */
+const twoReferenceLeaves = () => {
+  const subjects = makeInMemoryNodes(["visibility"]);
+  const parts = makeInMemoryNodes(["visibility"]);
+  subjects.put(node("s1", { visibility: "public" }));
+  subjects.put(node("s2", { visibility: "public" }));
+  parts.put(node("p1", { visibility: "public" }));
+  parts.put(node("p2", { visibility: "public" }));
+  parts.put(node("p3", { visibility: "public" }));
+  return { subjects, parts };
+};
+
+// ── Ported: an edge between two reference leaves ──────────────────────
+
+describe("ported: an edge joining two reference leaves (gardeneria's anatomy / chemistry)", () => {
+  const corpus = (declaration: Pick<Definition, "onConflict"> = {}, uniqueKey: string[] = []) => {
+    const { subjects, parts } = twoReferenceLeaves();
+    const links = family(
+      {
+        ...declaration,
+        ends: {
+          subject: referenceEnd("subjectId", subjects),
+          part: referenceEnd("partId", parts),
+        },
+      },
+      uniqueKey,
+    );
+    return { subjects, parts, ...links };
+  };
+
+  it("refuses an anonymous and a plain user's assertion, and admits a contributor's", async () => {
+    const { ops, actAs } = corpus();
+    const input = { subjectId: "s1", partId: "p1" };
+    expect(await tagOf(actAs(anonymous, ops.create(input)))).toEqual(Option.some("Unauthorized"));
+    expect(await tagOf(actAs(as(member), ops.create(input)))).toEqual(Option.some("Forbidden"));
+    const created = await run(actAs(as(contributor), ops.create(input)));
+    expect(created.created).toBe(true);
+  });
+
+  it("round-trips the id through get and delete, and the delete is hard", async () => {
+    const { edges, subjects, ops, actAs } = corpus();
+    const { id } = await run(
+      actAs(as(contributor), ops.create({ subjectId: "s1", partId: "p1", note: "mature" })),
+    );
+    const read = await run(actAs(anonymous, ops.get(id)));
+    expect(read).toMatchObject({ id, subjectId: "s1", partId: "p1", note: "mature" });
+
+    expect(await run(actAs(as(contributor), ops.delete(id)))).toEqual({ id });
+    expect(await tagOf(actAs(anonymous, ops.get(id)))).toEqual(Option.some("EdgeNotFound"));
+    // No tombstone: the row is gone, and the node it joined is untouched.
+    expect(edges.rows()).toEqual([]);
+    expect(Option.isSome(await run(subjects.get("s1")))).toBe(true);
+    expect(await tagOf(actAs(as(contributor), ops.delete(id)))).toEqual(
+      Option.some("EdgeNotFound"),
+    );
+  });
+
+  it("makes a re-assertion idempotent rather than a failure", async () => {
+    const { ops, actAs, listed } = corpus({ onConflict: "ignore" }, ["subjectId", "partId"]);
+    const input = { subjectId: "s1", partId: "p1" };
+    const first = await run(actAs(as(contributor), ops.create(input)));
+    const second = await run(actAs(as(contributor), ops.create(input)));
+    expect(second).toEqual({ id: first.id, created: false });
+    expect(await listed(anonymous, eq("subjectId", "s1"))).toEqual({ ids: [first.id], total: 1 });
+  });
+
+  it("refuses a re-assertion below the gate with the gate's answer, never the stored edge", async () => {
+    const { ops, actAs } = corpus({ onConflict: "ignore" }, ["subjectId", "partId"]);
+    const input = { subjectId: "s1", partId: "p1" };
+    await run(actAs(as(contributor), ops.create(input)));
+    // The collision resolves only past the gate, so it never hands an id to a
+    // caller who may not write (and an "ignore" re-assertion is still a write).
+    expect(await tagOf(actAs(anonymous, ops.create(input)))).toEqual(Option.some("Unauthorized"));
+    expect(await tagOf(actAs(as(member), ops.create(input)))).toEqual(Option.some("Forbidden"));
+  });
+
+  it("refuses a duplicate when the family resolves no conflict", async () => {
+    const { edges, ops, actAs } = corpus({}, ["subjectId", "partId"]);
+    const input = { subjectId: "s1", partId: "p1" };
+    await run(actAs(as(contributor), ops.create(input)));
+    expect(await tagOf(actAs(as(contributor), ops.create(input)))).toEqual(
+      Option.some("EdgeConflict"),
+    );
+    expect(edges.rows()).toHaveLength(1);
+  });
+
+  it("reads an assertion from either end", async () => {
+    const { ops, actAs, listed } = corpus();
+    const { id } = await run(actAs(as(contributor), ops.create({ subjectId: "s1", partId: "p1" })));
+    await run(actAs(as(contributor), ops.create({ subjectId: "s2", partId: "p2" })));
+    expect((await listed(anonymous, eq("subjectId", "s1"))).ids).toEqual([id]);
+    expect((await listed(anonymous, eq("partId", "p1"))).ids).toEqual([id]);
+  });
+
+  it("lists in creation order with the unpaged total, the page clamped to the cap", async () => {
+    const { ops, actAs, seen } = corpus();
+    const pairs = [
+      ["s1", "p1"],
+      ["s1", "p2"],
+      ["s2", "p1"],
+      ["s2", "p3"],
+    ] as const;
+    const ids = await run(
+      actAs(
+        as(contributor),
+        Effect.forEach(pairs, ([subjectId, partId]) => ops.create({ subjectId, partId }), {
+          concurrency: 1,
+        }),
+      ),
+    );
+    const page = await run(actAs(anonymous, ops.list({ limit: 2, offset: 1, where: always })));
+    expect(page.rows.map((row) => row.id)).toEqual([ids[1]?.id, ids[2]?.id]);
+    expect(page.total).toBe(4);
+    const huge = await run(actAs(anonymous, ops.list({ limit: 1e9, offset: -5, where: always })));
+    expect(huge.rows.map((row) => row.id)).toEqual(ids.map((written) => written.id));
+    await run(actAs(anonymous, ops.list({ limit: 0, offset: 1.5, where: always })));
+    // The store is asked for at most the cap, whatever the request says
+    // (SEC-INPUT-003): four rows alone can't tell a clamped limit from none.
+    expect(seen.windows()).toEqual([
+      { limit: 2, offset: 1 },
+      { limit: MAX_PAGE_LIMIT, offset: 0 },
+      { limit: 1, offset: 1 },
+    ]);
+  });
+
+  it("reports a total of 0 for a page past the end, as the store's window column does", async () => {
+    const { ops, actAs } = corpus();
+    await run(actAs(as(contributor), ops.create({ subjectId: "s1", partId: "p1" })));
+    expect(await run(actAs(anonymous, ops.list({ limit: 10, offset: 5, where: always })))).toEqual({
+      rows: [],
+      total: 0,
+    });
+  });
+});
+
+// ── Ported: CMS rows on the moderator rung ────────────────────────────
+
+describe("ported: CMS rows on the moderator rung (gardeneria's page collections and slugs)", () => {
+  const moderatorGate = rungGate((policy) => policy.canModerate);
+
+  it("a family with no ends is a plain bounded row family, written at the gate's rung", async () => {
+    const { ops, actAs, listed } = family({ ends: {}, writeGate: moderatorGate });
+    const input = { name: "Guides" };
+    expect(await tagOf(actAs(anonymous, ops.create(input)))).toEqual(Option.some("Unauthorized"));
+    expect(await tagOf(actAs(as(contributor), ops.create(input)))).toEqual(
+      Option.some("Forbidden"),
+    );
+    const { id } = await run(actAs(as(moderator), ops.create(input)));
+    expect(await run(actAs(anonymous, ops.get(id)))).toMatchObject({ name: "Guides" });
+    expect(await listed(anonymous)).toEqual({ ids: [id], total: 1 });
+    expect(await tagOf(actAs(as(contributor), ops.delete(id)))).toEqual(Option.some("Forbidden"));
+  });
+
+  const slugs = () => {
+    const pages = makeInMemoryNodes([]);
+    pages.put(node("page-1", {}));
+    pages.put(node("page-2", {}));
+    const links = family(
+      {
+        ends: {
+          page: { column: "pageId", type: "pages", access: { kind: "reference" }, nodes: pages },
+        },
+        writeGate: moderatorGate,
+        onConflict: "ignore",
+      },
+      // The unique variant does not cover the page: a path is claimed once.
+      ["path", "collectionId"],
+    );
+    return { pages, ...links };
+  };
+
+  it("resolves a second alias on the same path to the stored row, NULLs equal", async () => {
+    const { edges, ops, actAs } = slugs();
+    const first = await run(
+      actAs(as(moderator), ops.create({ pageId: "page-1", path: "shared-alias" })),
+    );
+    const again = await run(
+      actAs(as(moderator), ops.create({ pageId: "page-2", path: "shared-alias" })),
+    );
+    expect(again).toEqual({ id: first.id, created: false });
+    expect(edges.rows()).toHaveLength(1);
+    expect(edges.rows()[0]?.["pageId"]).toBe("page-1");
+  });
+
+  it("never resolves a collision to an edge the viewer cannot read", async () => {
+    const { pages, ops, actAs } = slugs();
+    await run(actAs(as(moderator), ops.create({ pageId: "page-1", path: "retired" })));
+    // The page the stored alias points at is tombstoned: its alias is hidden
+    // from everyone, so the collision must not hand back its id.
+    pages.put(node("page-1", {}, "delete"));
+    expect(
+      await errorOf(actAs(as(moderator), ops.create({ pageId: "page-2", path: "retired" }))),
+    ).toEqual(Option.some(expect.objectContaining({ _tag: "EdgeConflict", type: "links" })));
+  });
+});
+
+// ── Ported: an owned-child edge ───────────────────────────────────────
+
+describe("ported: an owned-child edge whose gate is its owned end's (gardeneria's disorders)", () => {
+  const observationsAndDisorders = () => {
+    const observations = makeInMemoryNodes(["ownerId", "visibility"]);
+    const disorders = makeInMemoryNodes([]);
+    observations.put(node("o-public", { ownerId: member.id, visibility: "public" }));
+    observations.put(node("o-private", { ownerId: member.id, visibility: "private" }));
+    disorders.put(node("mildew", {}));
+    disorders.put(node("chlorosis", {}));
+    /** The observation's owner, or moderator+ (gardeneria's `requireObservationWriterE`). */
+    const observationWriter: EdgeWriteGate<never, never> = ({ viewer, policy, edge }) => {
+      const id = String(edge["observationId"]);
+      return requireWriter(
+        ownedAccess(),
+        viewer,
+        policy,
+        { type: "observations", id },
+        Effect.map(
+          observations.get(id),
+          Option.flatMap((row) => Option.liftPredicate(row["ownerId"], Predicate.isString)),
+        ),
+      );
+    };
+    const links = family(
+      {
+        ends: {
+          observation: {
+            column: "observationId",
+            type: "observations",
+            access: ownedAccess(),
+            nodes: observations,
+          },
+          disorder: {
+            column: "disorderId",
+            type: "disorders",
+            access: { kind: "reference" },
+            nodes: disorders,
+          },
+        },
+        writeGate: observationWriter,
+        onConflict: "ignore",
+      },
+      ["observationId", "disorderId"],
+    );
+    return { disorders, ...links };
+  };
+
+  it("lets the observation's owner record a disorder they did not author", async () => {
+    const { ops, actAs } = observationsAndDisorders();
+    const { id } = await run(
+      actAs(
+        as(member),
+        ops.create({ observationId: "o-public", disorderId: "mildew", severity: "high" }),
+      ),
+    );
+    expect(await run(actAs(as(member), ops.get(id)))).toMatchObject({ severity: "high" });
+  });
+
+  it("refuses a stranger's write with NotFound, never Forbidden", async () => {
+    const { ops, actAs } = observationsAndDisorders();
+    // The contributor rung is not enough here, and a 403 would confirm the
+    // private observation exists (SEC-AUTH-ENUM-001).
+    expect(
+      await errorOf(
+        actAs(as(contributor), ops.create({ observationId: "o-private", disorderId: "mildew" })),
+      ),
+    ).toEqual(
+      Option.some(
+        expect.objectContaining({ _tag: "NodeNotFound", type: "observations", id: "o-private" }),
+      ),
+    );
+  });
+
+  it("refuses a stranger's retraction of a link they can see", async () => {
+    const { ops, actAs } = observationsAndDisorders();
+    const { id } = await run(
+      actAs(as(member), ops.create({ observationId: "o-public", disorderId: "mildew" })),
+    );
+    expect(await run(actAs(as(otherMember), ops.get(id)))).toMatchObject({ id });
+    expect(await tagOf(actAs(as(otherMember), ops.delete(id)))).toEqual(Option.some("Forbidden"));
+    expect(await tagOf(actAs(as(moderator), ops.delete(id)))).toEqual(Option.none());
+  });
+
+  it("hides a private observation's links from a stranger's read and list alike", async () => {
+    const { ops, actAs, listed } = observationsAndDisorders();
+    const { id } = await run(
+      actAs(as(member), ops.create({ observationId: "o-private", disorderId: "mildew" })),
+    );
+    expect(await tagOf(actAs(as(otherMember), ops.get(id)))).toEqual(Option.some("EdgeNotFound"));
+    // Scoped by the disorder — the corpus-facing question — and still nothing, total included.
+    expect(await listed(as(otherMember), eq("disorderId", "mildew"))).toEqual({
+      ids: [],
+      total: 0,
+    });
+    expect(await listed(as(member), eq("disorderId", "mildew"))).toEqual({ ids: [id], total: 1 });
+  });
+
+  it("makes re-asserting the same pair idempotent, never overwriting the qualifier", async () => {
+    const { ops, actAs, listed } = observationsAndDisorders();
+    const pair = { observationId: "o-public", disorderId: "mildew" };
+    const first = await run(actAs(as(member), ops.create({ ...pair, severity: "low" })));
+    const second = await run(actAs(as(member), ops.create({ ...pair, severity: "high" })));
+    expect(second).toEqual({ id: first.id, created: false });
+    expect(await run(actAs(as(member), ops.get(first.id)))).toMatchObject({ severity: "low" });
+    expect((await listed(as(member), eq("observationId", "o-public"))).total).toBe(1);
+  });
+
+  it("records several disorders against one observation", async () => {
+    const { ops, actAs, listed } = observationsAndDisorders();
+    await run(actAs(as(member), ops.create({ observationId: "o-public", disorderId: "mildew" })));
+    await run(
+      actAs(as(member), ops.create({ observationId: "o-public", disorderId: "chlorosis" })),
+    );
+    expect((await listed(as(otherMember), eq("observationId", "o-public"))).total).toBe(2);
+  });
+
+  it("retracts a link as a hard delete, leaving the disorder alone", async () => {
+    const { disorders, edges, ops, actAs } = observationsAndDisorders();
+    const { id } = await run(
+      actAs(as(member), ops.create({ observationId: "o-public", disorderId: "mildew" })),
+    );
+    await run(actAs(as(member), ops.delete(id)));
+    expect(await tagOf(actAs(as(member), ops.get(id)))).toEqual(Option.some("EdgeNotFound"));
+    expect(edges.rows()).toEqual([]);
+    expect(Option.isSome(await run(disorders.get("mildew")))).toBe(true);
+  });
+});
+
+// ── EDGE-001: endpoint visibility ─────────────────────────────────────
+
+/** The joined row a store's list filters: the edge, plus the node's columns under the end's alias. */
+const joinedRow = (alias: string, column: string, row: LeafRow): FilterRow => ({
+  id: "edge",
+  createdAt: NOW,
+  [column]: row.id,
+  ...Record.mapKeys(row, (key): string => endpointColumn(alias, key)),
+});
+
+const evaluationContext = {
+  now: NOW,
+  contains: (set: Following, value: ColumnValue) =>
+    Predicate.isString(value) && HashSet.has(set, value),
+};
+
+/** For one end and one viewer: each row's [id, listed, readable] — the two readings side by side. */
+const readings = (end: EdgeEnd<never, never>, viewer: Viewer, rows: ReadonlyArray<LeafRow>) =>
+  run(
+    Effect.forEach(
+      rows,
+      (row) =>
+        Effect.map(
+          canViewEndpoint(end, viewer, gardeneriaPolicy, follows, Option.some(row)),
+          (readable) => ({
+            id: row.id,
+            listed: evaluate(
+              endpointFilter({ end }, viewer, gardeneriaPolicy, follows),
+              joinedRow("end", end.column, row),
+              evaluationContext,
+            ),
+            readable,
+          }),
+        ),
+      { concurrency: 1 },
+    ),
+  );
+
+const actions: ReadonlyArray<VersionAction> = ["create", "update", "delete"];
+
+describe("EDGE-001: the endpoint filter never disagrees with the endpoint predicate", () => {
+  const ownedRows = Arr.flatMap(actions, (action) =>
+    Arr.flatMap(["public", "followers", "private", "unknown", null], (visibility) =>
+      Arr.flatMap([false, true, null], (draft) =>
+        Arr.map([member.id, otherMember.id, null], (ownerId) =>
+          node(
+            `${action}-${String(visibility)}-${String(draft)}-${String(ownerId)}`,
+            { ownerId, visibility, draft },
+            action,
+          ),
+        ),
+      ),
+    ),
+  );
+  const ownedNodes = makeInMemoryNodes(["ownerId", "visibility", "draft"]);
+
+  it.each(viewers)("an owned end, for %s", async (_name, viewer) => {
+    const seen = await readings(ownedEnd("entryId", ownedNodes), viewer, ownedRows);
+    expect(seen.map(({ id, listed }) => [id, listed])).toEqual(
+      seen.map(({ id, readable }) => [id, readable]),
+    );
+    // Not vacuous: some rows are readable and some are not, for every viewer.
+    expect(seen.some((reading) => reading.readable)).toBe(true);
+    expect(seen.some((reading) => !reading.readable)).toBe(true);
+  });
+
+  const referenceRows = Arr.flatMap(actions, (action) =>
+    Arr.map(["public", "followers", "private", "unknown", null], (visibility) =>
+      node(`${action}-${String(visibility)}`, { visibility }, action),
+    ),
+  );
+
+  it.each(viewers)(
+    "a reference end, with and without a visibility column, for %s",
+    async (_name, viewer) => {
+      const withAxis = await readings(
+        referenceEnd("subjectId", makeInMemoryNodes(["visibility"])),
+        viewer,
+        referenceRows,
+      );
+      const withoutAxis = await readings(
+        referenceEnd("subjectId", makeInMemoryNodes([])),
+        viewer,
+        referenceRows,
+      );
+      expect(
+        [withAxis, withoutAxis].map((seen) => seen.map(({ id, listed }) => [id, listed])),
+      ).toEqual(
+        [withAxis, withoutAxis].map((seen) => seen.map(({ id, readable }) => [id, readable])),
+      );
+      // A view with no visibility axis hides only the tombstones.
+      expect(withoutAxis.filter((reading) => reading.readable)).toHaveLength(
+        referenceRows.filter((row) => row.action !== "delete").length,
+      );
+    },
+  );
+
+  it("an owned declaration naming a column the view lacks hides every edge, from the rung too", async () => {
+    const seen = await readings(
+      ownedEnd("entryId", makeInMemoryNodes(["ownerId", "visibility"])),
+      as(admin),
+      ownedRows,
+    );
+    expect(seen.every(({ listed, readable }) => !listed && !readable)).toBe(true);
+  });
+
+  it("a tombstoned node is unreadable to every viewer, the view-deleted rung included", async () => {
+    const tombstones = ownedRows.filter((row) => row.action === "delete");
+    const seen = await readings(ownedEnd("entryId", ownedNodes), as(admin), tombstones);
+    expect(seen.every(({ listed, readable }) => !listed && !readable)).toBe(true);
+    expect(
+      await run(
+        canViewEndpoint(
+          ownedEnd("entryId", ownedNodes),
+          as(admin),
+          gardeneriaPolicy,
+          follows,
+          Option.none(),
+        ),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("EDGE-001: an edge is readable only if every end is", () => {
+  /**
+   * A reference leaf (public, private, tombstoned) and an owned leaf (one
+   * node per visibility state, a draft, a tombstone, another owner's private
+   * row), with one edge seeded between every pair, bypassing `create`.
+   */
+  const everyPair = async () => {
+    const subjects = makeInMemoryNodes(["visibility"]);
+    subjects.put(node("s-public", { visibility: "public" }));
+    subjects.put(node("s-private", { visibility: "private" }));
+    subjects.put(node("s-gone", { visibility: "public" }, "delete"));
+    const entries = makeInMemoryNodes(["ownerId", "visibility", "draft"]);
+    const owned = (visibility: string, draft = false, ownerId = member.id) => ({
+      ownerId,
+      visibility,
+      draft,
+    });
+    entries.put(node("e-public", owned("public")));
+    entries.put(node("e-followers", owned("followers")));
+    entries.put(node("e-private", owned("private")));
+    entries.put(node("e-draft", owned("public", true)));
+    entries.put(node("e-gone", owned("public"), "delete"));
+    entries.put(node("e-other", owned("private", false, otherMember.id)));
+    const ends = {
+      subject: referenceEnd("subjectId", subjects),
+      entry: ownedEnd("entryId", entries),
+    };
+    const links = family({ ends });
+    const subjectIds = ["s-public", "s-private", "s-gone"];
+    const entryIds = ["e-public", "e-followers", "e-private", "e-draft", "e-gone", "e-other"];
+    await run(
+      Effect.forEach(
+        Arr.flatMap(subjectIds, (subjectId) =>
+          Arr.map(entryIds, (entryId) => ({ subjectId, entryId })),
+        ),
+        (values) => links.edges.insert(values),
+        { concurrency: 1 },
+      ),
+    );
+    /** The pair an edge joins, as `subject/entry`. */
+    const pairOf = (id: string) => {
+      const row = links.edges.rows().find((candidate) => candidate.id === id);
+      return `${String(row?.["subjectId"])}/${String(row?.["entryId"])}`;
+    };
+    return { ends, subjects, entries, pairOf, ...links };
+  };
+
+  it.each(viewers)(
+    "list, get and the predicate agree on every pair, for %s",
+    async (_name, viewer) => {
+      const { ends, subjects, entries, edges, ops, actAs, listed } = await everyPair();
+      const readable = await run(
+        Effect.filter(
+          edges.rows(),
+          (row) =>
+            Effect.map(
+              Effect.all(
+                [
+                  Effect.flatMap(subjects.get(String(row["subjectId"])), (found) =>
+                    canViewEndpoint(ends.subject, viewer, gardeneriaPolicy, follows, found),
+                  ),
+                  Effect.flatMap(entries.get(String(row["entryId"])), (found) =>
+                    canViewEndpoint(ends.entry, viewer, gardeneriaPolicy, follows, found),
+                  ),
+                ],
+                { concurrency: 1 },
+              ),
+              ([subject, entry]) => subject && entry,
+            ),
+          { concurrency: 1 },
+        ),
+      );
+      const got = await run(
+        Effect.filter(
+          edges.rows(),
+          (row) => Effect.map(Effect.exit(actAs(viewer, ops.get(row.id))), Exit.isSuccess),
+          { concurrency: 1 },
+        ),
+      );
+      const page = await listed(viewer);
+      expect(page.ids).toEqual(readable.map((row) => row.id));
+      expect(got.map((row) => row.id)).toEqual(page.ids);
+      expect(page.total).toBe(page.ids.length);
+    },
+  );
+
+  it("states the matrix outright for the anonymous, a follower and the rung", async () => {
+    const { pairOf, listed } = await everyPair();
+    const pairs = async (viewer: Viewer) =>
+      Arr.sort((await listed(viewer)).ids.map(pairOf), Order.String);
+    expect(await pairs(anonymous)).toEqual(["s-public/e-public"]);
+    expect(await pairs(as(follower))).toEqual(["s-public/e-followers", "s-public/e-public"]);
+    expect(await pairs(as(member))).toEqual([
+      "s-public/e-draft",
+      "s-public/e-followers",
+      "s-public/e-private",
+      "s-public/e-public",
+    ]);
+    // The rung sees private nodes on both ends, and still no tombstone.
+    expect(await pairs(as(moderator))).toEqual(
+      Arr.flatMap(["s-private", "s-public"], (subject) =>
+        Arr.map(
+          ["e-draft", "e-followers", "e-other", "e-private", "e-public"],
+          (entry) => `${subject}/${entry}`,
+        ),
+      ),
+    );
+  });
+
+  it("a related list omits the edges whose other end is hidden (SEC-AUTH-ENUM-001)", async () => {
+    const { pairOf, listed } = await everyPair();
+    const related = async (viewer: Viewer, subjectId: string) => {
+      const page = await listed(viewer, eq("subjectId", subjectId));
+      return { pairs: Arr.sort(page.ids.map(pairOf), Order.String), total: page.total };
+    };
+    // `e-other` is the stranger's own here, so a contributor asks: a stranger to every entry.
+    expect(await related(as(contributor), "s-public")).toEqual({
+      pairs: ["s-public/e-public"],
+      total: 1,
+    });
+    expect(await related(as(follower), "s-public")).toEqual({
+      pairs: ["s-public/e-followers", "s-public/e-public"],
+      total: 2,
+    });
+    // A hidden node's related list is indistinguishable from an empty one.
+    expect(await related(as(contributor), "s-private")).toEqual({ pairs: [], total: 0 });
+  });
+
+  it("a family filter may name an end's node column", async () => {
+    const { pairOf, listed } = await everyPair();
+    const page = await listed(as(member), eq(endpointColumn("entry", "visibility"), "followers"));
+    expect(page.ids.map(pairOf)).toEqual(["s-public/e-followers"]);
+  });
+
+  it("a create naming a hidden node is NodeNotFound, before the gate can answer 403", async () => {
+    const { ops, actAs } = await everyPair();
+    const create = (viewer: Viewer, subjectId: string, entryId: string) =>
+      errorOf(actAs(viewer, ops.create({ subjectId, entryId })));
+    // A member is below the corpus rung, so a readable pair is Forbidden …
+    expect(await create(as(member), "s-public", "e-public")).toEqual(
+      Option.some(expect.objectContaining({ _tag: "Forbidden" })),
+    );
+    // … and a hidden or tombstoned node is NotFound, naming that node.
+    expect(await create(as(member), "s-private", "e-public")).toEqual(
+      Option.some(
+        expect.objectContaining({ _tag: "NodeNotFound", type: "subjects", id: "s-private" }),
+      ),
+    );
+    expect(await create(as(contributor), "s-public", "e-gone")).toEqual(
+      Option.some(expect.objectContaining({ _tag: "NodeNotFound", type: "entries", id: "e-gone" })),
+    );
+    expect(await create(anonymous, "s-public", "e-other")).toEqual(
+      Option.some(expect.objectContaining({ _tag: "NodeNotFound", type: "entries" })),
+    );
+    expect(await create(as(contributor), "s-public", "missing")).toEqual(
+      Option.some(
+        expect.objectContaining({ _tag: "NodeNotFound", type: "entries", id: "missing" }),
+      ),
+    );
+    // An end the values leave out names no node.
+    expect(await errorOf(actAs(as(contributor), ops.create({ subjectId: "s-public" })))).toEqual(
+      Option.some(expect.objectContaining({ _tag: "NodeNotFound", type: "entries" })),
+    );
+  });
+
+  it("a delete of an edge with a hidden end is EdgeNotFound, even for a writer", async () => {
+    const { edges, ops, actAs, pairOf } = await everyPair();
+    const hidden = edges.rows().find((row) => pairOf(row.id) === "s-public/e-other");
+    expect(await tagOf(actAs(as(contributor), ops.delete(String(hidden?.id))))).toEqual(
+      Option.some("EdgeNotFound"),
+    );
+    expect(edges.rows()).toHaveLength(18);
+  });
+});
+
+describe("EDGE-001: a tombstoned end hides its edges, and a restore brings them back", () => {
+  it("over the subtype factory's own stores", async () => {
+    // oxlint-disable-next-line effect/avoid-native-object-helpers -- the in-memory leaf store's follower set is the native `ReadonlySet` its seam type names
+    const noFollowers = nobodyFollows<ReadonlySet<string>>(new Set());
+    let viewer: Viewer = anonymous;
+    const currentViewer = Effect.sync(() => viewer);
+    const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+      Effect.suspend(() => {
+        viewer = who;
+        return effect;
+      });
+    const subjectChain = makeInMemoryChainStore();
+    const subjectLeaves = makeInMemoryLeafStore(subjectChain, ["visibility"]);
+    const subjectOps = defineSubtype({
+      type: "subjects",
+      access: { kind: "reference" },
+      chain: subjectChain,
+      leaves: subjectLeaves,
+      viewer: currentViewer,
+      policy: gardeneriaPolicy,
+      followers: noFollowers,
+      toResource: (row: LeafRow) => row,
+    });
+    const entryChain = makeInMemoryChainStore();
+    const entryLeaves = makeInMemoryLeafStore(entryChain, ["visibility", "draft"]);
+    const entryOps = defineSubtype({
+      type: "entries",
+      access: ownedAccess({ draft: true }),
+      chain: entryChain,
+      leaves: entryLeaves,
+      viewer: currentViewer,
+      policy: gardeneriaPolicy,
+      followers: noFollowers,
+      toResource: (row: LeafRow) => row,
+    });
+    const ends = {
+      subject: {
+        column: "subjectId",
+        type: "subjects",
+        access: subjectOps.access,
+        nodes: subjectLeaves,
+      },
+      entry: { column: "entryId", type: "entries", access: entryOps.access, nodes: entryLeaves },
+    };
+    const edges = makeInMemoryEdgeStore({ ends, uniqueKey: [] });
+    const ops = defineEdgeOps({
+      type: "links",
+      ends,
+      edges,
+      viewer: currentViewer,
+      policy: gardeneriaPolicy,
+      followers: follows,
+      values: (input: EdgeValues) => input,
+      toResource: (row: EdgeRow) => row,
+    });
+    const visibleTo = async (who: Viewer) =>
+      (await run(actAs(who, ops.list({ limit: 10, offset: 0, where: always })))).rows.map(
+        (row) => row.id,
+      );
+
+    const subject = await run(
+      actAs(
+        as(contributor),
+        subjectOps.create({ id: Option.none(), state: { visibility: "public" } }),
+      ),
+    );
+    const entry = await run(
+      actAs(
+        as(member),
+        entryOps.create({ id: Option.none(), state: { visibility: "public", draft: false } }),
+      ),
+    );
+    const { id } = await run(
+      actAs(as(contributor), ops.create({ subjectId: subject.id, entryId: entry.id })),
+    );
+    expect(await visibleTo(anonymous)).toEqual([id]);
+
+    await run(actAs(as(member), entryOps.delete(entry.id)));
+    // Hidden from everyone — the rung that may read the tombstone itself included.
+    const everyone = [anonymous, as(member), as(moderator), as(admin)];
+    expect(await Promise.all(everyone.map(visibleTo))).toEqual(everyone.map(() => []));
+    const reads = await Promise.all(everyone.map((who) => tagOf(actAs(who, ops.get(id)))));
+    expect(reads).toEqual(everyone.map(() => Option.some("EdgeNotFound")));
+    expect(await tagOf(actAs(as(contributor), ops.delete(id)))).toEqual(
+      Option.some("EdgeNotFound"),
+    );
+    expect(
+      await tagOf(actAs(as(contributor), ops.create({ subjectId: subject.id, entryId: entry.id }))),
+    ).toEqual(Option.some("NodeNotFound"));
+    // Hidden, not deleted.
+    expect(edges.rows().map((row) => row.id)).toEqual([id]);
+
+    await run(actAs(as(member), entryOps.restore({ id: entry.id, patch: {} })));
+    expect(await visibleTo(anonymous)).toEqual([id]);
+    expect(await run(actAs(anonymous, ops.get(id)))).toMatchObject({ id, entryId: entry.id });
+  });
+});
+
+// ── Cardinality ───────────────────────────────────────────────────────
+
+describe("cardinality: an end's maxEdges is declared and enforced", () => {
+  const bounded = (
+    limits: {
+      /* oxlint-disable effect/prefer-option-over-null -- the optional-field convention (AGENTS.md → Conventions), forwarded as-is to `maxEdges` */
+      readonly subject?: number | undefined;
+      readonly part?: number | undefined;
+      /* oxlint-enable effect/prefer-option-over-null */
+    },
+    declaration: Pick<Definition, "onConflict"> = {},
+  ) => {
+    const { subjects, parts } = twoReferenceLeaves();
+    return {
+      parts,
+      ...family(
+        {
+          ...declaration,
+          ends: {
+            subject: { ...referenceEnd("subjectId", subjects), maxEdges: limits.subject },
+            part: { ...referenceEnd("partId", parts), maxEdges: limits.part },
+          },
+        },
+        ["subjectId", "partId"],
+      ),
+    };
+  };
+  const link = (links: ReturnType<typeof bounded>, subjectId: string, partId: string) =>
+    links.actAs(as(contributor), links.ops.create({ subjectId, partId }));
+
+  it("refuses a create past one node's limit, writing nothing, and bounds each node apart", async () => {
+    const links = bounded({ subject: 2 });
+    await run(link(links, "s1", "p1"));
+    await run(link(links, "s1", "p2"));
+    expect(await errorOf(link(links, "s1", "p3"))).toEqual(
+      Option.some(
+        expect.objectContaining({
+          _tag: "EdgeCardinalityExceeded",
+          type: "links",
+          end: "subject",
+          nodeId: "s1",
+          max: 2,
+        }),
+      ),
+    );
+    expect(links.edges.rows()).toHaveLength(2);
+    // The limit is per node: another subject still has room.
+    expect(await tagOf(link(links, "s2", "p3"))).toEqual(Option.none());
+  });
+
+  it("bounds each end on its own (EmDash's per-parent and per-child limits)", async () => {
+    const links = bounded({ subject: 3, part: 1 });
+    await run(link(links, "s1", "p1"));
+    expect(await errorOf(link(links, "s2", "p1"))).toEqual(
+      Option.some(expect.objectContaining({ end: "part", nodeId: "p1", max: 1 })),
+    );
+    expect(await tagOf(link(links, "s1", "p2"))).toEqual(Option.none());
+  });
+
+  it("an absent or explicitly undefined limit is no limit", async () => {
+    const links = bounded({ subject: undefined });
+    await run(link(links, "s1", "p1"));
+    await run(link(links, "s1", "p2"));
+    await run(link(links, "s1", "p3"));
+    expect(links.edges.rows()).toHaveLength(3);
+  });
+
+  it("a re-assertion at a full end stays idempotent", async () => {
+    const links = bounded({ subject: 1 }, { onConflict: "ignore" });
+    const first = await run(link(links, "s1", "p1"));
+    expect(await run(link(links, "s1", "p1"))).toEqual({ id: first.id, created: false });
+    expect(await tagOf(link(links, "s1", "p2"))).toEqual(Option.some("EdgeCardinalityExceeded"));
+  });
+
+  it("a delete frees the slot", async () => {
+    const links = bounded({ subject: 1 });
+    const { id } = await run(link(links, "s1", "p1"));
+    await run(links.actAs(as(contributor), links.ops.delete(id)));
+    expect(await tagOf(link(links, "s1", "p2"))).toEqual(Option.none());
+  });
+
+  it("every stored edge counts, a hidden one included, so a restore cannot overshoot", async () => {
+    const links = bounded({ subject: 1 });
+    await run(link(links, "s1", "p1"));
+    links.parts.put(node("p1", { visibility: "public" }, "delete"));
+    expect(await tagOf(link(links, "s1", "p2"))).toEqual(Option.some("EdgeCardinalityExceeded"));
+  });
+
+  it("known limitation (pulpit#77): a tombstoned partner holds its slot until it is restored", async () => {
+    const links = bounded({ subject: 1 });
+    const { id } = await run(link(links, "s1", "p1"));
+    links.parts.put(node("p1", { visibility: "public" }, "delete"));
+    // The edge is hidden from everyone, so nobody can delete it …
+    const writers = [as(contributor), as(moderator), as(admin)];
+    expect(
+      await Promise.all(writers.map((who) => tagOf(links.actAs(who, links.ops.delete(id))))),
+    ).toEqual(writers.map(() => Option.some("EdgeNotFound")));
+    // … it still holds s1's only slot …
+    expect(await errorOf(link(links, "s1", "p2"))).toEqual(
+      Option.some(
+        expect.objectContaining({
+          _tag: "EdgeCardinalityExceeded",
+          end: "subject",
+          nodeId: "s1",
+          max: 1,
+        }),
+      ),
+    );
+    // … and no list shows it, not even the rung's.
+    expect(await links.listed(as(admin), eq("subjectId", "s1"))).toEqual({ ids: [], total: 0 });
+    // Only restoring the partner frees the slot: then the edge can be deleted.
+    links.parts.put(node("p1", { visibility: "public" }, "update"));
+    await run(links.actAs(as(contributor), links.ops.delete(id)));
+    expect(await tagOf(link(links, "s1", "p2"))).toEqual(Option.none());
+  });
+
+  it("counts a self-referential family's bounded ends in ascending node id, the order a store locks them", async () => {
+    const nodes = makeInMemoryNodes(["visibility"]);
+    nodes.put(node("n1", { visibility: "public" }));
+    nodes.put(node("n2", { visibility: "public" }));
+    const { ops, actAs, seen } = family({
+      ends: {
+        from: { ...referenceEnd("fromId", nodes), maxEdges: 2 },
+        to: { ...referenceEnd("toId", nodes), maxEdges: 2 },
+      },
+    });
+    // The pair both ways: declaration order would lock n2 then n1 for the
+    // first and n1 then n2 for the second, and two such creates in parallel
+    // would deadlock.
+    await run(actAs(as(contributor), ops.create({ fromId: "n2", toId: "n1" })));
+    await run(actAs(as(contributor), ops.create({ fromId: "n1", toId: "n2" })));
+    expect(seen.counted()).toEqual(["toId:n1", "fromId:n2", "fromId:n1", "toId:n2"]);
+  });
+});
+
+describe("a family declaration is checked when it is declared", () => {
+  const withLimit = (maxEdges: number) => () =>
+    family({
+      ends: { subject: { ...referenceEnd("subjectId", makeInMemoryNodes([])), maxEdges } },
+    });
+
+  it.each([Number.NaN, 1.5, 0, -1, Number.POSITIVE_INFINITY, 2 ** 53])(
+    "throws EdgeDeclarationError for maxEdges %s, rather than failing open or refusing every create",
+    (maxEdges) => {
+      expect(withLimit(maxEdges)).toThrow(EdgeDeclarationError);
+      expect(withLimit(maxEdges)).toThrow(
+        /'subject' declares maxEdges .*not a positive safe integer/,
+      );
+    },
+  );
+
+  it("accepts a positive safe integer", () => {
+    expect(withLimit(1)).not.toThrow();
+    expect(withLimit(Number.MAX_SAFE_INTEGER)).not.toThrow();
+  });
+
+  it("throws EdgeDeclarationError for an end alias containing a '.'", () => {
+    const nodes = makeInMemoryNodes([]);
+    expect(() => family({ ends: { "note.term": referenceEnd("termId", nodes) } })).toThrow(
+      EdgeDeclarationError,
+    );
+    expect(() => family({ ends: { "note.term": referenceEnd("termId", nodes) } })).toThrow(
+      /alias 'note.term' contains a '.'/,
+    );
+  });
+});
+
+describe("a create racing another writer for the unique key", () => {
+  const racing = (onConflict: "fail" | "ignore") => {
+    const { subjects, parts } = twoReferenceLeaves();
+    return family(
+      {
+        ends: { subject: referenceEnd("subjectId", subjects), part: referenceEnd("partId", parts) },
+        onConflict,
+      },
+      ["subjectId", "partId"],
+    );
+  };
+
+  it("resolves to the winner's edge under `ignore`", async () => {
+    const { edges, ops, actAs } = racing("ignore");
+    edges.raceNextInsert({ subjectId: "s1", partId: "p1" });
+    const written = await run(
+      actAs(as(contributor), ops.create({ subjectId: "s1", partId: "p1" })),
+    );
+    expect(written).toEqual({ id: edges.rows()[0]?.id, created: false });
+    expect(edges.rows()).toHaveLength(1);
+  });
+
+  it("fails EdgeConflict under `fail`", async () => {
+    const { edges, ops, actAs } = racing("fail");
+    edges.raceNextInsert({ subjectId: "s1", partId: "p1" });
+    expect(
+      await tagOf(actAs(as(contributor), ops.create({ subjectId: "s1", partId: "p1" }))),
+    ).toEqual(Option.some("EdgeConflict"));
+  });
+
+  it("never resolves a race to a winner the viewer cannot read", async () => {
+    // The key leaves the page out, so the winner can join another page: one
+    // tombstoned since, whose edge is hidden from everyone.
+    const pages = makeInMemoryNodes([]);
+    pages.put(node("page-1", {}, "delete"));
+    pages.put(node("page-2", {}));
+    const { edges, ops, actAs } = family(
+      {
+        ends: {
+          page: { column: "pageId", type: "pages", access: { kind: "reference" }, nodes: pages },
+        },
+        onConflict: "ignore",
+      },
+      ["path"],
+    );
+    edges.raceNextInsert({ pageId: "page-1", path: "retired" });
+    expect(
+      await errorOf(actAs(as(contributor), ops.create({ pageId: "page-2", path: "retired" }))),
+    ).toEqual(Option.some(expect.objectContaining({ _tag: "EdgeConflict", type: "links" })));
+    expect(edges.rows().map((row) => row["pageId"])).toEqual(["page-1"]);
+  });
+});

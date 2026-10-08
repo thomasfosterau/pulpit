@@ -40,7 +40,8 @@
     "./filter": "./src/filter.ts",
     "./subtype": "./src/subtype.ts",
     "./publication": "./src/publication.ts",
-    "./documents": "./src/documents.ts"
+    "./documents": "./src/documents.ts",
+    "./edges": "./src/edges.ts"
   },
   "publishConfig": {
     "exports": {
@@ -75,6 +76,10 @@
       "./documents": {
         "types": "./dist/documents.d.ts",
         "default": "./dist/documents.js"
+      },
+      "./edges": {
+        "types": "./dist/edges.d.ts",
+        "default": "./dist/edges.js"
       }
     },
     "access": "public"

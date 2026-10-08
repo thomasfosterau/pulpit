@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Resource } from "@thomasfosterau/effect-jsonapi";
-import { Content, Documents, Registry } from "@thomasfosterau/pulpit";
+import { Content, Documents, Edges, Registry } from "@thomasfosterau/pulpit";
 import {
   ContentResource,
   contentVisibilityResourceFields,
@@ -47,6 +47,20 @@ import {
 } from "@thomasfosterau/pulpit/subtype";
 import { isPubliclyServeable, serveablePolicy } from "@thomasfosterau/pulpit/publication";
 import { DocumentHash, documentRef, type DocumentStore } from "@thomasfosterau/pulpit/documents";
+import {
+  defineEdgeOps,
+  endpointColumn,
+  rungGate,
+  type EdgeCardinalityExceeded,
+  type EdgeConflict,
+  type EdgeDeclarationError,
+  type EdgeNotFound,
+  type EdgeRow,
+  type EdgeStore,
+  type EdgeWrite,
+  type EdgeWriteGate,
+} from "@thomasfosterau/pulpit/edges";
+import type { Forbidden, Unauthorized } from "@thomasfosterau/pulpit/subtype";
 
 /** A compile-time assertion: `T` must be exactly `true`. */
 type Assert<T extends true> = T;
@@ -265,3 +279,90 @@ export type _NoteUpdate = Assert<
   >
 >;
 /* oxlint-enable effect/prefer-option-over-null */
+
+// ── edges ────────────────────────────────────────────────────────────────
+
+declare const edgeStore: EdgeStore<EdgeRow, Subquery, StoreFailure, Transaction>;
+interface CreateLink {
+  readonly postId: string;
+  readonly termId: string;
+}
+interface LinkDoc {
+  readonly id: string;
+}
+export const links = defineEdgeOps({
+  type: "links",
+  ends: {
+    post: { column: "postId", type: "posts", access: ownedAccess(), nodes: leaves, maxEdges: 5 },
+    term: { column: "termId", type: "terms", access: { kind: "reference" }, nodes: leaves },
+  },
+  edges: edgeStore,
+  viewer: Effect.succeed(Option.none()),
+  policy: {
+    canViewPrivate: () => false,
+    canViewDeleted: () => false,
+    canModerate: () => false,
+    canWriteCorpus: () => false,
+  },
+  followers: {
+    isFollower: () => Effect.succeed(false),
+    following: (): Subquery => ({ _tag: "Subquery" }),
+  },
+  values: (input: CreateLink) => ({ postId: input.postId, termId: input.termId }),
+  toResource: (row): LinkDoc => ({ id: row.id }),
+  onConflict: "ignore",
+  writeGate: rungGate((policy) => policy.canModerate),
+});
+// Each operation's error channel, spelled out: a tag that degraded to `any`,
+// or one that dropped out, fails the assertion.
+export type _EdgeCreate = Assert<
+  Equals<
+    ReturnType<typeof links.create>,
+    Effect.Effect<
+      EdgeWrite,
+      | Unauthorized
+      | Forbidden
+      | NodeNotFound
+      | EdgeConflict
+      | EdgeCardinalityExceeded
+      | StoreFailure,
+      Transaction
+    >
+  >
+>;
+export type _EdgeGet = Assert<
+  Equals<
+    ReturnType<typeof links.get>,
+    Effect.Effect<LinkDoc, EdgeNotFound | StoreFailure, Transaction>
+  >
+>;
+export type _EdgeDelete = Assert<
+  Equals<
+    ReturnType<typeof links.delete>,
+    Effect.Effect<
+      { readonly id: string },
+      Unauthorized | Forbidden | NodeNotFound | EdgeNotFound | StoreFailure,
+      Transaction
+    >
+  >
+>;
+export type _EdgeCreateInput = Assert<Equals<Parameters<typeof links.create>, [input: CreateLink]>>;
+export type _EdgeWrite = Assert<
+  Equals<EdgeWrite, { readonly id: string; readonly created: boolean }>
+>;
+export type _EdgeNotFoundTag = Assert<Equals<EdgeNotFound["_tag"], "EdgeNotFound">>;
+export type _CardinalityTag = Assert<
+  Equals<EdgeCardinalityExceeded["_tag"], "EdgeCardinalityExceeded">
+>;
+export type _CardinalityMax = Assert<Equals<EdgeCardinalityExceeded["max"], number>>;
+export type _CardinalityEnd = Assert<Equals<EdgeCardinalityExceeded["end"], string>>;
+export type _ConflictTag = Assert<Equals<EdgeConflict["_tag"], "EdgeConflict">>;
+export type _DeclarationTag = Assert<Equals<EdgeDeclarationError["_tag"], "EdgeDeclarationError">>;
+export type _EdgeGate = Assert<
+  Equals<
+    ReturnType<EdgeWriteGate<StoreFailure, Transaction>>,
+    Effect.Effect<unknown, Unauthorized | Forbidden | NodeNotFound | StoreFailure, Transaction>
+  >
+>;
+export type _EndpointColumn = Assert<Equals<ReturnType<typeof endpointColumn>, string>>;
+export type _EdgesBarrel = Assert<Equals<typeof Edges.defineEdgeOps, typeof defineEdgeOps>>;

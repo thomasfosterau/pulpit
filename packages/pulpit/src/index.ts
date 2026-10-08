@@ -49,3 +49,10 @@ export * as Publication from "./publication.ts";
  * row carries the reference in.
  */
 export * as Documents from "./documents.ts";
+
+/**
+ * The edge operations factory: a relation between nodes as its own family
+ * (`defineEdgeOps` over an `EdgeStore` seam), readable only when every end
+ * is, with declared cardinality limits.
+ */
+export * as Edges from "./edges.ts";
