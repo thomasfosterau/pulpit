@@ -14,8 +14,9 @@
  * ## Access kinds
  *
  * - `reference` — corpus material. Create / update / delete / restore gate on
- *   the corpus-write rung; reads are public apart from the soft-delete axis
- *   and a Content leaf's `private` axis.
+ *   the corpus-write rung; when the view has a `visibility` column, reads
+ *   show only `public` rows below the view-private rung, apart from the
+ *   soft-delete axis.
  * - `owned` — a member's own row. Create gates on any signed-in account and
  *   stamps the owner; every other write loads the owner and gates on
  *   owner-or-moderator (a missing owner is `NotFound`, never an open gate);
@@ -32,7 +33,8 @@
  *   existing owned row the caller doesn't own (pulpit#24).
  * - Soft-deleted rows are visible only to the view-deleted rung, and a list
  *   includes them only when the caller also asked (`includeDeleted`).
- * - A declaration naming columns the view lacks fails closed — nothing lists.
+ * - A declaration naming columns the view lacks fails closed — nothing lists,
+ *   and `get` / `getMany` show nothing.
  * - The follower seam, when a runtime does not provide one, answers "nobody
  *   follows anybody" — a `followers` row is then its owner's and the rung's
  *   alone. Fail closed.
@@ -286,6 +288,19 @@ export const ownedAccess = (
 });
 
 /**
+ * Whether the view carries every column an owned leaf declares (owner,
+ * visibility and, when declared, draft). A leaf whose view lacks one reads
+ * no row, by `get` / `getMany` or `list`: fail closed (SEC-AUTH-ENUM-001).
+ */
+const declaresColumns = (
+  access: Extract<LeafAccess, { kind: "owned" }>,
+  viewColumns: ReadonlySet<string>,
+): boolean =>
+  [access.ownerColumn, access.visibilityColumn, ...Option.toArray(access.draftColumn)].every(
+    (column) => viewColumns.has(column),
+  );
+
+/**
  * The owned-leaf LIST filter — {@link ReadScope} rendered over the leaf's
  * declared view columns. When the leaf carries a draft column, every
  * non-owner arm additionally requires `draft = false`; the owner's own arm
@@ -299,12 +314,7 @@ export const ownedListFilter = <Following>(
   viewColumns: ReadonlySet<string>,
   scope: ReadScope<Following>,
 ): ListFilter<Following> => {
-  const declared = [
-    access.ownerColumn,
-    access.visibilityColumn,
-    ...Option.toArray(access.draftColumn),
-  ];
-  if (!declared.every((column) => viewColumns.has(column))) return never;
+  if (!declaresColumns(access, viewColumns)) return never;
   const published = (filter: ListFilter<Following>): ListFilter<Following> =>
     Option.match(access.draftColumn, {
       onNone: () => filter,
@@ -448,7 +458,7 @@ export const MAX_PAGE_LIMIT = 1000;
  * @since 0.1.0
  */
 export interface LeafStore<Row extends LeafRow, Following, E, R> {
-  /** The view's column names; an owned declaration naming a column outside this set lists nothing. */
+  /** The view's column names; an owned declaration naming a column outside this set reads nothing (`get`, `getMany` or `list`). */
   readonly columns: ReadonlySet<string>;
   /** One row of the current-version view by id, or none. Applies no visibility policy. */
   readonly get: (id: string) => Effect.Effect<Option.Option<Row>, E, R>;
@@ -629,6 +639,10 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     }),
   });
 
+  // The view's column set is fixed at bind time, so the owned leaf's
+  // declared-column check is answered once, not per row.
+  const ownedColumnsDeclared = access.kind === "owned" && declaresColumns(access, leaves.columns);
+
   /**
    * The row's own visibility, by access kind; the soft-delete axis is checked
    * by the caller. It fails closed exactly where the list filter does, so
@@ -646,12 +660,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
           row["visibility"] === "public",
       );
     }
-    const declared = [
-      access.ownerColumn,
-      access.visibilityColumn,
-      ...Option.toArray(access.draftColumn),
-    ];
-    return declared.every((column) => leaves.columns.has(column))
+    return ownedColumnsDeclared
       ? canViewOwned(viewer, policy, followers, ownedFacts(access, row))
       : Effect.succeed(false);
   };

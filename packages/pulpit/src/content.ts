@@ -125,7 +125,8 @@ export const tombstoneResourceFields = {
  * The attribute spread every **reference-data** leaf carries: the two
  * timestamps and the tombstone. Reference data has no visibility axis of its
  * own — the corpus is publicly readable; a Content-branch reference leaf reads
- * `private` off the branch row like every other Content subtype.
+ * `visibility` off the branch row like every other Content subtype, and shows
+ * only a `public` row below the view-private rung.
  *
  * @since 0.1.0
  */

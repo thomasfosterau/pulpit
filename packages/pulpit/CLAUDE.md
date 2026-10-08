@@ -35,4 +35,4 @@ The IDs below are defined in the root [SECURITY.md → Invariant IDs](../../SECU
 - **Registry** — an application's ordered list of `RegistryEntry` (marker levels without a resource, leaves with one). The kernel owns the flag vocabulary and `validateRegistry`; the tree is the application's.
 - **Store** — a seam implementation that persists and applies no policy (`VersionChainStore`, `LeafStore`, `DocumentStore`, `EdgeStore`). Policy is the kernel's; persistence is the store's.
 - **List filter** — a read predicate as data (`ListFilter`), rendered to SQL by a store and evaluated in memory by the fakes.
-- **Access kind** — `reference` (corpus material written at the corpus-write rung, publicly readable) or `owned` (a member's own row, `owner_id` + `visibility`, gated per viewer). Mirrors the registry's `referenceData` ⊕ `owned` flags.
+- **Access kind** — `reference` (corpus material written at the corpus-write rung, readable below the view-private rung only where the view has no `visibility` column or the row's is `public`) or `owned` (a member's own row, `owner_id` + `visibility`, gated per viewer). Mirrors the registry's `referenceData` ⊕ `owned` flags.

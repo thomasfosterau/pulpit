@@ -828,7 +828,19 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
           access: ownedAccess(),
           columns: ["title", "visibility", "draft"],
         },
-        // The declaration names a column the view lacks: the list fails closed, so must the row.
+      ]),
+    )(
+      "$variant, $policyName policy, for $viewerName",
+      async ({ access, columns, policy, viewer }) => {
+        const leaf = await seededLeaf(access, columns, policy, seeds);
+        expectAgreement(await leaf.reads(viewer));
+      },
+    );
+
+    // The declaration names a column the view lacks: the list fails closed, so
+    // must the row — no read shows anything, whoever asks.
+    it.each(
+      matrix([
         {
           variant: "declaring a draft column the view lacks",
           access: ownedAccess({ draft: true }),
@@ -839,12 +851,21 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
           access: ownedAccess(),
           columns: ["title"],
         },
+        {
+          variant: "declaring an owner column the view lacks",
+          access: { ...ownedAccess({ draft: true }), ownerColumn: "authorId" },
+          columns: ["title", "visibility", "draft"],
+        },
       ]),
     )(
-      "$variant, $policyName policy, for $viewerName",
+      "$variant reads nothing, $policyName policy, for $viewerName",
       async ({ access, columns, policy, viewer }) => {
         const leaf = await seededLeaf(access, columns, policy, seeds);
-        expectAgreement(await leaf.reads(viewer));
+        const reads = await leaf.reads(viewer);
+        expectAgreement(reads);
+        expect(reads.filter((read) => read.listed || read.many || Option.isNone(read.got))).toEqual(
+          [],
+        );
       },
     );
   });
