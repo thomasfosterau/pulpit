@@ -75,11 +75,13 @@
     "access": "public"
   },
   "devDependencies": {
+    "@effect/docgen": "catalog:",
     "@effect/language-service": "catalog:",
     "@thomasfosterau/effect-jsonapi": "catalog:",
     "@types/node": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "tsx": "catalog:"
   },
   "peerDependencies": {
     "@thomasfosterau/effect-jsonapi": "catalog:peers",
