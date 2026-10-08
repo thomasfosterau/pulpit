@@ -80,6 +80,7 @@ import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import { Visibility } from "./content.ts";
 import { and, eq, or, type ListFilter } from "./filter.ts";
+import { declaresColumns } from "./internal/owned-columns.ts";
 import {
   canViewOwned,
   Forbidden,
@@ -278,12 +279,6 @@ const qualify = <Following>(alias: string, filter: ListFilter<Following>): ListF
   );
 
 type OwnedAccess = Extract<LeafAccess, { kind: "owned" }>;
-
-/** Whether the endpoint view has every column the owned declaration names (`ownedListFilter`'s fail-closed check). */
-const declaresColumns = (access: OwnedAccess, columns: ReadonlySet<string>): boolean =>
-  [access.ownerColumn, access.visibilityColumn, ...Option.toArray(access.draftColumn)].every(
-    (column) => columns.has(column),
-  );
 
 /**
  * The facts `canViewOwned` reads, off an endpoint row. A visibility outside
