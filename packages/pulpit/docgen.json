@@ -1,6 +1,6 @@
 {
   "$schema": "../../node_modules/@effect/docgen/schema.json",
-  "exclude": ["src/index.ts"],
+  "exclude": ["src/index.ts", "src/internal/**"],
   "parseCompilerOptions": {
     "module": "preserve",
     "moduleResolution": "bundler",

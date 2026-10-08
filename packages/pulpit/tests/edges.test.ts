@@ -601,14 +601,23 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
     },
   );
 
-  it("an owned declaration naming a column the view lacks hides every edge, from the rung too", async () => {
-    const seen = await readings(
-      ownedEnd("entryId", makeInMemoryNodes(["ownerId", "visibility"])),
-      as(admin),
-      ownedRows,
-    );
-    expect(seen.every(({ listed, readable }) => !listed && !readable)).toBe(true);
-  });
+  // One case per declared column, so dropping any leg of the shared
+  // declared-column check (owner, visibility, draft) fails here (pulpit#79).
+  it.each([
+    ["an owner", ["visibility", "draft"]],
+    ["a visibility", ["ownerId", "draft"]],
+    ["a draft", ["ownerId", "visibility"]],
+  ] as const)(
+    "an owned declaration naming %s column the view lacks hides every edge, from the rung too",
+    async (_missing, viewColumns) => {
+      const seen = await readings(
+        ownedEnd("entryId", makeInMemoryNodes(viewColumns)),
+        as(admin),
+        ownedRows,
+      );
+      expect(seen.every(({ listed, readable }) => !listed && !readable)).toBe(true);
+    },
+  );
 
   it("a tombstoned node is unreadable to every viewer, the view-deleted rung included", async () => {
     const tombstones = ownedRows.filter((row) => row.action === "delete");

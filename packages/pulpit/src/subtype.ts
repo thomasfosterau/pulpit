@@ -71,6 +71,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Visibility } from "./content.ts";
 import { always, and, eq, isIn, ne, never, or, type ListFilter } from "./filter.ts";
+import { declaresColumns } from "./internal/owned-columns.ts";
 import {
   defineVersionChain,
   NodeNotFound,
@@ -286,19 +287,6 @@ export const ownedAccess = (
   visibilityColumn: "visibility",
   draftColumn: options.draft === true ? Option.some("draft") : Option.none(),
 });
-
-/**
- * Whether the view carries every column an owned leaf declares (owner,
- * visibility and, when declared, draft). A leaf whose view lacks one reads
- * no row, by `get` / `getMany` or `list`: fail closed (SEC-AUTH-ENUM-001).
- */
-const declaresColumns = (
-  access: Extract<LeafAccess, { kind: "owned" }>,
-  viewColumns: ReadonlySet<string>,
-): boolean =>
-  [access.ownerColumn, access.visibilityColumn, ...Option.toArray(access.draftColumn)].every(
-    (column) => viewColumns.has(column),
-  );
 
 /**
  * The owned-leaf LIST filter — {@link ReadScope} rendered over the leaf's
