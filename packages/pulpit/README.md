@@ -203,7 +203,7 @@ The publication axis (stamped AND arrived), the moderation state, and the KV cac
 
 ## Seams
 
-The kernel is written against explicit interfaces, because the packages that will fill them haven't published yet. Each seam below states the shape its real implementation must have; the issue numbers in parentheses are for maintainers and aren't needed to follow the contract.
+The kernel is written against explicit interfaces, so that it doesn't depend on the packages that fill them before they publish. Each seam below states the shape its real implementation must have, and which package (if any) is expected to fill it; the issue numbers in parentheses are for maintainers and aren't needed to follow the contract.
 
 ### `VersionChainStore<E, R>`: the version-chain persistence
 
@@ -224,21 +224,21 @@ The rendering contract is the table under [`./filter`](#filter). `Following` is 
 
 ### The viewer, the role axes and the follower seam
 
-Expected to come from effect-auth once it publishes (pulpit#5). Until then the application supplies:
+Expected to come from effect-auth once it publishes (pulpit#5). Its default branch already has them, unpublished (release PR effect-auth#177): `OwnedAccess` (`canView`, `readScope`, the fail-closed `IsFollower` service, `serveableAxes`), `Guard` (`requireRoleAtLeast`, `requireOwnerOrRole`, `Unauthorized`, `Forbidden`), `Ladder` and `Cacheability.publiclyServeable`, plus `ownedListFilter` in `@thomasfosterau/effect-auth-drizzle`. Until it publishes, the application supplies:
 
 - `Viewer = Option<{ id, role }>`: the request's signed-in account, or none for an anonymous request (effect-auth's session context).
-- `AccessPolicy`: four predicates over a signed-in account (`canViewPrivate`, `canViewDeleted`, `canModerate`, `canWriteCorpus`). Each compares the account's role against an application-named rung on its role ladder (effect-auth's role-ladder factory, `hasRoleAtLeast`). Each must fail closed on an unknown role.
-- `FollowerSeam<Following, R>`: `isFollower(followerId, ownerId)` answers one row's question, and `following(followerId)` returns the list filter's `in` set. `nobodyFollows(nobody)` is the fail-closed default when a runtime provides none.
-- `ReadScope` and `canViewOwned` (effect-auth's owned read scope) live here until effect-auth publishes its own; then pulpit consumes its read scope and keeps only the rendering into `ListFilter`.
-- `Unauthorized` / `Forbidden` (effect-auth's gate errors) are defined here until effect-auth publishes them.
+- `AccessPolicy`: four predicates over a signed-in account (`canViewPrivate`, `canViewDeleted`, `canModerate`, `canWriteCorpus`). Each compares the account's role against an application-named rung on its role ladder (effect-auth's `Ladder.make`, checked through `Guard`'s `hasRoleAtLeast` / `requireRoleAtLeast`). Each must fail closed on an unknown role.
+- `FollowerSeam<Following, R>`: `isFollower(followerId, ownerId)` answers one row's question, and `following(followerId)` returns the list filter's `in` set (effect-auth's `IsFollower`). `nobodyFollows(nobody)` is the fail-closed default when a runtime provides none (effect-auth's `isFollowerNever`).
+- `ReadScope` and `canViewOwned` (effect-auth's `OwnedAccess.readScope` and `OwnedAccess.canView`) live here until effect-auth publishes its own; then pulpit consumes its read scope and keeps only the rendering into `ListFilter`.
+- `Unauthorized` / `Forbidden` (effect-auth's `Guard` errors) are defined here until effect-auth publishes them.
 
 ### `SubtypeHandlers`: the handler record
 
-The record a JSON:API server's resource handlers are expected to accept (effect-jsonapi's server skeleton, once it ships; pulpit#5). One entry per endpoint (`list`, `get`, `create`, `update`, `delete`) returns the resource the document assembler wraps, plus `restoreVersion`, which has no JSON:API endpoint and is called directly. Each write runs inside the config's `transact` (always-open: a nested call opens a savepoint), re-reads the row outside it, and writes it through the cache. When the server skeleton ships, `subtypeHandlers` maps onto its real handler signatures (the request context, the query decode, the document assembly), and its error catalogue replaces the tags here.
+The record a JSON:API server's resource handlers are expected to accept. effect-jsonapi's server skeleton has shipped as its `ResourceHandlers` namespace (`make`, `readOnly`, `related`; exported since 0.15.0, and pulpit's peer is `>=0.16.0`), but `subtypeHandlers` isn't wired to it yet (pulpit#5). One entry per endpoint (`list`, `get`, `create`, `update`, `delete`) returns the resource the document assembler wraps, plus `restoreVersion`, which has no JSON:API endpoint and is called directly. Each write runs inside the config's `transact` (always-open: a nested call opens a savepoint), re-reads the row outside it, and writes it through the cache. When it is wired, `subtypeHandlers` maps onto `ResourceHandlers`' real handler signatures (the request context, the query decode, the document assembly), and its error catalogue replaces the tags here.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 
-Expected to be a KV read-through resource cache (effect-web's, once it publishes; pulpit#5, pulpit#6). The cache's write side is `set(id, resource)` / `delete(id)`, both never failing (the cache swallows a KV fault). Its security policy is `serveablePolicy({ owned, publishGated })` from `./publication`, passed as the cache's `serveable` option; the cache applies it on both its read and write paths and evicts on a non-serveable write.
+Filled by the application: a KV read-through resource cache it owns (pulpit#5, pulpit#6). No library is expected to provide one; effect-web dropped its Cloudflare package, and with it the planned cache (effect-web#33). The cache's write side is `set(id, resource)` / `delete(id)`, both never failing (the cache swallows a KV fault). Its security policy is `serveablePolicy({ owned, publishGated })` from `./publication`, passed as the cache's `serveable` option; the cache applies it on both its read and write paths and evicts on a non-serveable write.
 
 ## License
 
