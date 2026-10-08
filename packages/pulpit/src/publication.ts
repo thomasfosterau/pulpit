@@ -173,8 +173,10 @@ export const isPubliclyServeable = (
 };
 
 /**
- * The `serveable` hook effect-web#4's `makeResourceCache` takes, bound to a
- * family's posture: `(resource) => boolean`.
+ * The `serveable` hook the application's resource cache takes, bound to a
+ * family's posture: `(resource) => boolean`. The cache, which the application
+ * owns (no library is expected to provide one; effect-web#33), applies it on
+ * both its read and write paths and evicts on a non-serveable write.
  *
  * @since 0.1.0
  */
