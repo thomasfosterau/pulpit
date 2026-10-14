@@ -463,6 +463,74 @@ describe("defineSubtype — an owned leaf", () => {
     expect(restored.version).toBe(2n);
     expect(chain.rows()[2]!.actorId).toEqual(Option.some(moderator.id));
   });
+
+  it("the write and history gates confirm existence: a stranger gets Forbidden on every hidden row, the anonymous Unauthorized (pulpit#24)", async () => {
+    const { ops, actAs, post } = ownedPosts();
+    const draft = await run(
+      actAs(
+        as(member),
+        ops.create({
+          id: Option.none(),
+          state: { title: "A draft", visibility: "public", draft: true },
+        }),
+      ),
+    );
+    const tombstone = await post("public");
+    await run(actAs(as(member), ops.delete(tombstone)));
+    const hidden = [await post("private"), await post("followers"), draft.id, tombstone];
+    const gated = (
+      id: string,
+    ): ReadonlyArray<Effect.Effect<unknown, { readonly _tag: string }>> => [
+      ops.update({ id, patch: { title: "x" } }),
+      ops.restore({ id, patch: {} }),
+      ops.delete(id),
+      ops.getVersion(id, 0n),
+      ops.restoreVersion(id, 0n),
+    ];
+    /** The failure tag `who` gets from `effect`, as an Effect so the probes run in sequence. */
+    const tag = <A, E extends { readonly _tag: string }>(
+      who: Viewer,
+      effect: Effect.Effect<A, E>,
+    ) =>
+      Effect.map(Effect.exit(actAs(who, effect)), (exit) =>
+        Exit.isFailure(exit)
+          ? Option.map(Exit.findErrorOption(exit), (error) => error._tag)
+          : Option.none(),
+      );
+    // The reads hide each row from the stranger (SEC-AUTH-ENUM-001) …
+    expect(
+      await run(
+        Effect.forEach(hidden, (id) => tag(as(otherMember), ops.get(id)), { concurrency: 1 }),
+      ),
+    ).toEqual(Arr.map(hidden, () => Option.some("NodeNotFound")));
+    // … but the write and history gates disclose that it exists, while the
+    // anonymous get the same answer as for a missing id.
+    const cases = Arr.flatMap([...hidden, "missing"], (id) =>
+      Arr.map(gated(id), (op) => [id, op] as const),
+    );
+    const observed = await run(
+      Effect.forEach(
+        cases,
+        ([id, op]) =>
+          Effect.map(
+            Effect.all(
+              { stranger: tag(as(otherMember), op), anonymous: tag(anonymous, op) },
+              { concurrency: 1 },
+            ),
+            (answers) => ({ id, ...answers }),
+          ),
+        // One probe at a time: `actAs` sets a shared viewer.
+        { concurrency: 1 },
+      ),
+    );
+    expect(observed).toEqual(
+      Arr.map(cases, ([id]) => ({
+        id,
+        stranger: Option.some(id === "missing" ? "NodeNotFound" : "Forbidden"),
+        anonymous: Option.some("Unauthorized"),
+      })),
+    );
+  });
 });
 
 describe("defineSubtype — the expected-version precondition", () => {
