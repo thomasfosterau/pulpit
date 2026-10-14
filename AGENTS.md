@@ -85,7 +85,9 @@ Consult effect-solutions before writing Effect code (`vp exec effect-solutions l
 
 ## Fallow local gate
 
-Before any `git commit` or `git push`, run `fallow audit --format json --quiet --explain --gate-marker agent`. If the verdict is `fail`, fix the reported findings before retrying. Treat JSON runtime errors like `{ "error": true, ... }` as non-blocking. Audit defaults to `gate=new-only`: only findings introduced by the current changeset affect the verdict.
+This block and the task map below are hand-maintained: do not regenerate them with `fallow setup-hooks` or `fallow agent install`. They carry no `<!-- fallow:… -->` markers, so fallow 3.31.0 appends a second, marked block instead of replacing this one, and that block's commands omit `--base`. `fallow agent install` also rewrites `.claude/hooks/fallow-gate.sh` without `--base origin/trunk` and appends `@AGENTS.md` to `CLAUDE.md`, which is a symlink to this file, so AGENTS.md would import itself.
+
+Before any `git commit` or `git push`, run `fallow audit --format json --quiet --explain --gate-marker agent --base origin/trunk`. The PreToolUse hook `.claude/hooks/fallow-gate.sh` runs this same audit on every `git commit` / `git push` and blocks the command on a `fail` verdict, so running it first just surfaces the findings sooner. If the verdict is `fail`, fix the reported findings before retrying. Treat JSON runtime errors like `{ "error": true, ... }` as non-blocking. Audit defaults to `gate=new-only`: only findings introduced by the current changeset affect the verdict.
 
 ## Fallow task map
 
@@ -93,6 +95,6 @@ Before any `git commit` or `git push`, run `fallow audit --format json --quiet -
 | --- | --- |
 | delete an "unused" export or file | `fallow dead-code --trace <file>:<export>` |
 | delete an "unused" dependency | `fallow dead-code --trace-dependency <name>` |
-| commit or open a PR | `fallow audit --base <ref>` |
+| commit or open a PR | `fallow audit --base origin/trunk` |
 | check which architecture rules apply to a file before changing it | `fallow guard <files>` |
 | understand a finding | `fallow explain <issue-type>` |
