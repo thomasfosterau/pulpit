@@ -234,6 +234,7 @@ const checkEntry = (
  *
  * @example
  * ```ts
+ * import { throws } from "node:assert";
  * import { Resource } from "@thomasfosterau/effect-jsonapi";
  * import { Registry } from "@thomasfosterau/pulpit";
  * import * as Option from "effect/Option";
@@ -257,14 +258,14 @@ const checkEntry = (
  * Registry.validateRegistry(REGISTRY);
  *
  * // A parent that names no declared entry is thrown at load, not returned.
- * assert.throws(
+ * throws(
  *   () =>
  *     Registry.validateRegistry([...REGISTRY, { key: "pages", parent: Registry.parent("blog") }]),
  *   Registry.RegistryDeclarationError,
  * );
  *
  * // So is an application's own check: here, every leaf must be pageable.
- * assert.throws(
+ * throws(
  *   () =>
  *     Registry.validateRegistry(REGISTRY, [
  *       (entry) =>
