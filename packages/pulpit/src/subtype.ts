@@ -71,7 +71,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { Visibility } from "./content.ts";
 import { always, and, eq, isIn, ne, never, or, type ListFilter } from "./filter.ts";
-import { declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
+import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
 import {
   defineVersionChain,
   NodeNotFound,
@@ -234,6 +234,13 @@ export interface OwnedFacts {
  * the rung — a `public` draft is exactly as hidden as a `private` one. Never
  * fails; callers turn `false` into {@link NodeNotFound}.
  *
+ * `defineSubtype`'s `get` / `getMany` and `./edges`' `canViewEndpoint`
+ * apply the same predicate to the row they read. There, an owner column
+ * holding no string (a `NULL`, an absent key) reads as no owner: no viewer
+ * is its owner and the follower seam is never asked, so the row shows only
+ * when `public` and not a draft, or to the rung, as {@link ownedListFilter}
+ * lists it (`SEC-AUTH-ENUM-001`).
+ *
  * @since 0.1.0
  */
 export const canViewOwned = <R>(
@@ -241,17 +248,8 @@ export const canViewOwned = <R>(
   policy: AccessPolicy,
   followers: FollowerSeam<unknown, R>,
   row: OwnedFacts,
-): Effect.Effect<boolean, never, R> => {
-  if (!row.draft && row.visibility === "public") return Effect.succeed(true);
-  if (Option.isNone(viewer)) return Effect.succeed(false);
-  const account = viewer.value;
-  if (account.id === row.ownerId) return Effect.succeed(true);
-  if (policy.canViewPrivate(account)) return Effect.succeed(true);
-  // Not the owner, not privileged: a draft is hidden whatever its visibility.
-  if (row.draft) return Effect.succeed(false);
-  if (row.visibility === "private") return Effect.succeed(false);
-  return followers.isFollower(account.id, row.ownerId);
-};
+): Effect.Effect<boolean, never, R> =>
+  canViewOwnedRow(viewer, policy, followers, { ...row, ownerId: Option.some(row.ownerId) });
 
 // ── Leaf access and the list filters ──────────────────────────────────
 
@@ -630,7 +628,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
       );
     }
     return ownedColumnsDeclared
-      ? canViewOwned(viewer, policy, followers, ownedFacts(access, row))
+      ? canViewOwnedRow(viewer, policy, followers, ownedFacts(access, row))
       : Effect.succeed(false);
   };
 
