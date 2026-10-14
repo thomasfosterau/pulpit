@@ -170,7 +170,7 @@ A SQL renderer must honour this contract:
 | --- | --- |
 | `always` | no predicate (`undefined` to Drizzle's `.where`) |
 | `never` | a predicate no row satisfies |
-| `eq` / `ne` | `col = $v` / `col <> $v` |
+| `eq` / `ne` | `col = $v` / `col <> $v`: a `NULL` column satisfies neither, so `evaluate` drops a row whose column is `null` or absent from both |
 | `in` | `col IN (<following subquery>)`: a subquery, never a materialised array |
 | `published` | `(col IS NOT NULL AND col <= now())`: the database's clock, one per query |
 | `notPublished` | `(col IS NULL OR col > now())`, parenthesised so it cannot bind to a surrounding `AND` |

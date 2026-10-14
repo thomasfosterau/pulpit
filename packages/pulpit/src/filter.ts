@@ -22,7 +22,7 @@
  * | --- | --- |
  * | `always` | no predicate (`undefined` to Drizzle's `.where`) |
  * | `never` | a predicate no row satisfies (the apps: `id = '00000000-…'`) |
- * | `eq` / `ne` | `col = $v` / `col <> $v` |
+ * | `eq` / `ne` | `col = $v` / `col <> $v` — a `NULL` column satisfies neither |
  * | `in` | `col IN (<following subquery>)` — a subquery, never a materialised array (#1107) |
  * | `published` | `(col IS NOT NULL AND col <= now())` — the database's clock, one per query |
  * | `notPublished` | `(col IS NULL OR col > now())` — parenthesised, so it cannot bind to a surrounding `AND` |
@@ -91,7 +91,8 @@ export const never = { kind: "never" } as const;
 export const eq = (column: string, value: Scalar) => ({ kind: "eq", column, value }) as const;
 
 /**
- * `column <> value`.
+ * `column <> value`. A `NULL` or absent column satisfies it no more than it
+ * satisfies {@link eq}: SQL's `NULL <> $v` is `NULL`, not true.
  *
  * @since 0.1.0
  */
@@ -186,8 +187,10 @@ const instantOf = (value: ColumnValue): number =>
 
 /**
  * Run a filter against one row — the in-memory reading of the rendering
- * contract above. A column the row lacks matches no `eq`, satisfies every
- * `ne`, and is unpublished.
+ * contract above. A column that is `null` or that the row lacks matches no
+ * `eq`, satisfies no `ne`, and is unpublished: SQL reads `NULL = $v` and
+ * `NULL <> $v` as `NULL`, which a `WHERE` drops, so `ne` is not the
+ * complement of `eq` over a nullable column.
  *
  * @since 0.1.0
  */
@@ -202,7 +205,10 @@ export const evaluate = <Following>(
       always: () => true,
       never: () => false,
       eq: (node) => row[node.column] === node.value,
-      ne: (node) => row[node.column] !== node.value,
+      ne: (node) => {
+        const value = row[node.column] ?? null;
+        return value !== null && value !== node.value;
+      },
       in: (node) => context.contains(node.set, row[node.column] ?? null),
       published: (node) => arrived(node.column),
       notPublished: (node) => !arrived(node.column),
