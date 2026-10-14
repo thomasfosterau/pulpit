@@ -1002,6 +1002,7 @@ describe("defineSubtype — an owner column holding no string is no owner (pulpi
         asked.push(ownerId);
         return strings.includes(followerId) && strings.includes(ownerId);
       }),
+    // oxlint-disable-next-line effect/avoid-native-object-helpers -- the in-memory leaf store's follower set is the native `ReadonlySet` its `Following` type names
     following: (followerId) => new Set(strings.includes(followerId) ? strings : []),
   };
 
