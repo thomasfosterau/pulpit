@@ -48,7 +48,7 @@ catalog:
   # node_modules/@effect/tsgo/dist/effect-tsgo.cjs before bumping any of the
   # three.
   "@effect/tsgo": 0.47.2
-  "@mpsuesser/oxlint-plugin-effect": ^0.5.0
+  "@mpsuesser/oxlint-plugin-effect": ^0.6.0
   # The JSON:API model layer the `./content` and `./registry` subpaths build on.
   "@thomasfosterau/effect-jsonapi": ^0.16.3
   "@types/node": ^26.6.4
@@ -93,12 +93,6 @@ overrides:
   # `effect` MUST be a singleton (see the header): force every resolution to
   # the catalog version so a hoisting reshuffle cannot introduce a second copy.
   effect: "catalog:"
-  # `@mpsuesser/oxlint-plugin-effect` 0.5.0 is built on effect 4.0.0-beta.100
-  # and calls `Schema.isIncludes` (renamed `isIncluding` in rc.118), so the
-  # catalog `effect` override above makes `vite.config.ts` fail to load. Keep
-  # the plugin on its own private beta.100 copy. Remove this once the plugin
-  # ships an rc.118 build (website#2015).
-  "@mpsuesser/oxlint-plugin-effect>effect": "4.0.0-beta.100"
   # Security floors for dev-only transitive tooling, so `pnpm audit
   # --audit-level high` passes (pulpit#41). Every parent's range already
   # admits the fixed release, so no catalog bump reaches them; the floor stops
