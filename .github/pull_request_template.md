@@ -8,7 +8,7 @@ Run the gates in [AGENTS.md → Verification](https://github.com/thomasfosterau/
 
 ## Changeset
 
-- [ ] A changeset under `.changeset/` for every change to the published package's behaviour (or: none needed, because …)
+- [ ] A changeset under `.changeset/` for every change to a published package's behaviour (or: none needed, because …)
 
 ## Notes
 
