@@ -45,7 +45,26 @@ import {
   type EdgeValues,
   type EdgeWriteGate,
 } from "../src/edges.ts";
-import { always, eq, evaluate, type FilterRow } from "../src/filter.ts";
+import {
+  always,
+  and,
+  anyOf,
+  eq,
+  evaluate,
+  type FilterRow,
+  gt,
+  gte,
+  isIn,
+  type ListFilter,
+  lt,
+  lte,
+  ne,
+  noneOf,
+  notPublished,
+  or,
+  published,
+} from "../src/filter.ts";
+import { renameColumns } from "../src/internal/filter-columns.ts";
 import {
   defineSubtype,
   MAX_PAGE_LIMIT,
@@ -1823,5 +1842,58 @@ describe("a create racing another writer for the unique key", () => {
     expect(await run(actAs(as(moderator), ops.get(winner?.id ?? "")))).toMatchObject({
       pageId: "page-1",
     });
+  });
+});
+
+describe("qualifying a filter with an end's alias renames every node's column", () => {
+  /** `./edges`' `qualify`: what `endpointFilter` applies to each end's leaf filter. */
+  const qualify = (alias: string, filter: ListFilter<Following>) =>
+    renameColumns(filter, (column) => endpointColumn(alias, column));
+
+  /** Every column a filter names, depth first. */
+  const columnsOf = (filter: ListFilter<Following>): ReadonlyArray<string> =>
+    filter.kind === "and" || filter.kind === "or"
+      ? Arr.flatMap(filter.filters, columnsOf)
+      : "column" in filter
+        ? [filter.column]
+        : [];
+
+  const everyKind = and<Following>(
+    eq("a", 1),
+    ne("b", 1),
+    isIn("c", HashSet.make("x")),
+    or<Following>(gt("d", 1), gte("e", 1), lt("f", 1), lte("g", 1)),
+    anyOf("h", ["x"]),
+    noneOf("i", ["x"]),
+    published("j"),
+    notPublished("k"),
+  );
+
+  it("renames the column of every node kind, the comparison and set arms included", () => {
+    const columns = columnsOf(everyKind);
+    expect(columns).toEqual(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"]);
+    expect(columnsOf(qualify("end", everyKind))).toEqual(
+      Arr.map(columns, (column) => endpointColumn("end", column)),
+    );
+  });
+
+  it("an anyOf / noneOf / comparison reads the aliased column of the joined row, not the bare one", () => {
+    const filters: ReadonlyArray<ListFilter<Following>> = [
+      anyOf("slug", ["a"]),
+      noneOf("slug", ["b"]),
+      gte("rank", 2),
+      lt("rank", 3),
+    ];
+    const joined: FilterRow = {
+      [endpointColumn("end", "slug")]: "a",
+      [endpointColumn("end", "rank")]: 2,
+    };
+    const bare: FilterRow = { slug: "a", rank: 2 };
+    expect(
+      Arr.map(filters, (filter) => [
+        evaluate(qualify("end", filter), joined, evaluationContext),
+        evaluate(qualify("end", filter), bare, evaluationContext),
+      ]),
+    ).toEqual(Arr.map(filters, () => [true, false]));
   });
 });

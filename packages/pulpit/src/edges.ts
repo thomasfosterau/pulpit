@@ -79,13 +79,13 @@
 
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
-import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import { always, and, eq, or, type ListFilter } from "./filter.ts";
+import { renameColumns } from "./internal/filter-columns.ts";
 import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
 import { canViewReferenceRow, referenceListFilter } from "./internal/reference-columns.ts";
 import {
@@ -253,64 +253,7 @@ export const endpointColumn = (alias: string, column: string): string => `${alia
 
 /** Every column of `filter` rewritten to name the node at end `alias`. */
 const qualify = <Following>(alias: string, filter: ListFilter<Following>): ListFilter<Following> =>
-  Match.value(filter).pipe(
-    Match.discriminatorsExhaustive("kind")({
-      always: (node): ListFilter<Following> => node,
-      never: (node): ListFilter<Following> => node,
-      eq: (node): ListFilter<Following> => ({
-        ...node,
-        column: endpointColumn(alias, node.column),
-      }),
-      ne: (node): ListFilter<Following> => ({
-        ...node,
-        column: endpointColumn(alias, node.column),
-      }),
-      in: (node): ListFilter<Following> => ({
-        ...node,
-        column: endpointColumn(alias, node.column),
-      }),
-      gt: (node): ListFilter<Following> => ({
-        ...node,
-        column: endpointColumn(alias, node.column),
-      }),
-      gte: (node): ListFilter<Following> => ({
-        ...node,
-        column: endpointColumn(alias, node.column),
-      }),
-      lt: (node): ListFilter<Following> => ({
-        ...node,
-        column: endpointColumn(alias, node.column),
-      }),
-      lte: (node): ListFilter<Following> => ({
-        ...node,
-        column: endpointColumn(alias, node.column),
-      }),
-      anyOf: (node): ListFilter<Following> => ({
-        ...node,
-        column: endpointColumn(alias, node.column),
-      }),
-      noneOf: (node): ListFilter<Following> => ({
-        ...node,
-        column: endpointColumn(alias, node.column),
-      }),
-      published: (node): ListFilter<Following> => ({
-        ...node,
-        column: endpointColumn(alias, node.column),
-      }),
-      notPublished: (node): ListFilter<Following> => ({
-        ...node,
-        column: endpointColumn(alias, node.column),
-      }),
-      and: (node): ListFilter<Following> => ({
-        kind: "and",
-        filters: node.filters.map((part) => qualify(alias, part)),
-      }),
-      or: (node): ListFilter<Following> => ({
-        kind: "or",
-        filters: node.filters.map((part) => qualify(alias, part)),
-      }),
-    }),
-  );
+  renameColumns(filter, (column) => endpointColumn(alias, column));
 
 /** A live node: its head is a `create` or an `update`, never a tombstone. */
 const isLive = (row: LeafRow): boolean => row.action === "create" || row.action === "update";

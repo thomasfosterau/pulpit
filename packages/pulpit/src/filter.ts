@@ -24,16 +24,34 @@
  * | `never` | a predicate no row satisfies (the apps: `id = '00000000-…'`) |
  * | `eq` / `ne` | `col = $v` / `col <> $v` — a `NULL` column satisfies neither |
  * | `in` | `col IN (<following subquery>)` — a subquery, never a materialised array (#1107); a `NULL` column satisfies none |
- * | `gt` / `gte` / `lt` / `lte` | `col > $v` / `col >= $v` / `col < $v` / `col <= $v` — a string compared with `COLLATE "C"` (code-point order), a `Date` as a timestamp; a `NULL` column, or one of another type than `$v`, satisfies none |
- * | `anyOf` | `col = ANY($values)` — a `NULL` column satisfies none; empty is `never` |
- * | `noneOf` | `col <> ALL($values)` — a `NULL` column satisfies none; empty is `always` (`<> ALL` over no values is true) |
+ * | `gt` / `gte` / `lt` / `lte` | `col > $v` / `col >= $v` / `col < $v` / `col <= $v` — a string compared with `COLLATE "C"` (code-point order), a `Date` as a timestamp, a number numerically (`±Infinity` included); a `NULL` column satisfies none |
+ * | `anyOf` | `col = ANY($values)` — a `NULL` column satisfies none; empty is `never`; never a `NULL` element |
+ * | `noneOf` | `col <> ALL($values)` — a `NULL` column satisfies none; empty is `always` (`<> ALL` over no values is true); never a `NULL` element (`<> ALL('{1,NULL}')` is `NULL` for every row outside the set) |
  * | `published` | `(col IS NOT NULL AND col <= now())` — the database's clock, one per query |
  * | `notPublished` | `(col IS NULL OR col > now())` — parenthesised, so it cannot bind to a surrounding `AND` |
  * | `and` / `or` | `AND` / `OR` over the parts |
  *
- * An `anyOf` / `noneOf` node carrying more than {@link MAX_SET_VALUES} values
- * is `never`, in the renderer as in {@link evaluate} (`SEC-INPUT-003`); the
- * constructors already fold it so.
+ * An `anyOf` / `noneOf` node carrying more than {@link MAX_SET_VALUES} values,
+ * duplicates counted, is `never`, in the renderer as in {@link evaluate}
+ * (`SEC-INPUT-003`); the constructors already fold it so.
+ *
+ * Outside the contract, where SQL and {@link evaluate} cannot be made to
+ * agree, `evaluate` fails closed:
+ *
+ * - **A column of another type than the comparand** (or than any of a
+ *   literal set's values) is a caller or schema error. SQL may coerce the
+ *   parameter (an `integer` column against `'1'`) or raise (against
+ *   `'abc'`); `evaluate` reads every such row as satisfying no `eq`, `ne`,
+ *   comparison, `anyOf` or `noneOf`.
+ * - **`NaN`** (and an invalid `Date`). PostgreSQL's `float8` / `numeric` hold
+ *   `NaN` equal to itself and above every number, an order JavaScript's
+ *   `NaN` does not have. The constructors fold a `NaN` comparand, or a set
+ *   holding one, to `never`; `evaluate` reads a `NaN` comparand or column as
+ *   satisfying no `eq`, `ne`, comparison, `anyOf` or `noneOf`; and a renderer
+ *   must never bind `NaN`, rendering a hand-built node carrying one as `never`.
+ * - **Sub-millisecond instants.** A PostgreSQL timestamp keeps microseconds,
+ *   a JavaScript `Date` milliseconds, so two instants within one millisecond
+ *   can compare unequal in SQL and equal in `evaluate`.
  *
  * @copyright Thomas Foster
  * @module pulpit/filter
@@ -120,19 +138,31 @@ export const always = { kind: "always" } as const;
 export const never = { kind: "never" } as const;
 
 /**
- * `column = value`.
+ * A `NaN`, or an invalid `Date`: a value with no place in the order SQL and
+ * {@link evaluate} share (see the module's "Outside the contract").
+ */
+const isUnordered = (value: ColumnValue): boolean =>
+  (Predicate.isNumber(value) && Number.isNaN(value)) ||
+  (Predicate.isDate(value) && Number.isNaN(value.getTime()));
+
+/**
+ * `column = value`. A `NaN` value is {@link never}: PostgreSQL's `NaN = NaN`
+ * is true where JavaScript's is not, so it fails closed.
  *
  * @since 0.1.0
  */
-export const eq = (column: string, value: Scalar) => ({ kind: "eq", column, value }) as const;
+export const eq = (column: string, value: Scalar) =>
+  isUnordered(value) ? never : ({ kind: "eq", column, value } as const);
 
 /**
  * `column <> value`. A `NULL` or absent column satisfies it no more than it
- * satisfies {@link eq}: SQL's `NULL <> $v` is `NULL`, not true.
+ * satisfies {@link eq}: SQL's `NULL <> $v` is `NULL`, not true. A `NaN`
+ * value is {@link never}, failing closed.
  *
  * @since 0.1.0
  */
-export const ne = (column: string, value: Scalar) => ({ kind: "ne", column, value }) as const;
+export const ne = (column: string, value: Scalar) =>
+  isUnordered(value) ? never : ({ kind: "ne", column, value } as const);
 
 /**
  * `column IN (following)`. A `NULL` or absent column satisfies none, whatever
@@ -145,48 +175,60 @@ export const isIn = <Following>(column: string, set: Following) =>
 
 /**
  * `column > value`. A `NULL` or absent column satisfies it no more than SQL's
- * `NULL > $v` (which is `NULL`), and neither does a column holding another
- * type than `value`. See {@link Comparable} for the orders.
+ * `NULL > $v` (which is `NULL`); `evaluate` reads a column holding another
+ * type than `value` as satisfying none, too. A `NaN` or invalid-`Date` value
+ * is {@link never}. See {@link Comparable} for the orders.
  *
  * @since 0.1.0
  */
-export const gt = (column: string, value: Comparable) => ({ kind: "gt", column, value }) as const;
+export const gt = (column: string, value: Comparable) =>
+  isUnordered(value) ? never : ({ kind: "gt", column, value } as const);
 
 /**
- * `column >= value`; equality satisfies it. A `NULL` or absent column, or one
- * holding another type than `value`, satisfies none (SQL's `NULL >= $v` is `NULL`).
+ * `column >= value`; equality satisfies it, `Infinity` against `Infinity`
+ * included. A `NULL` or absent column satisfies none (SQL's `NULL >= $v` is
+ * `NULL`); `evaluate` reads a column holding another type than `value` as
+ * satisfying none, too. A `NaN` or invalid-`Date` value is {@link never}.
  *
  * @since 0.1.0
  */
-export const gte = (column: string, value: Comparable) => ({ kind: "gte", column, value }) as const;
+export const gte = (column: string, value: Comparable) =>
+  isUnordered(value) ? never : ({ kind: "gte", column, value } as const);
 
 /**
- * `column < value`. A `NULL` or absent column, or one holding another type
- * than `value`, satisfies none (SQL's `NULL < $v` is `NULL`).
+ * `column < value`. A `NULL` or absent column satisfies none (SQL's
+ * `NULL < $v` is `NULL`); `evaluate` reads a column holding another type than
+ * `value` as satisfying none, too. A `NaN` or invalid-`Date` value is
+ * {@link never}.
  *
  * @since 0.1.0
  */
-export const lt = (column: string, value: Comparable) => ({ kind: "lt", column, value }) as const;
+export const lt = (column: string, value: Comparable) =>
+  isUnordered(value) ? never : ({ kind: "lt", column, value } as const);
 
 /**
- * `column <= value`; equality satisfies it. A `NULL` or absent column, or one
- * holding another type than `value`, satisfies none (SQL's `NULL <= $v` is `NULL`).
+ * `column <= value`; equality satisfies it, `-Infinity` against `-Infinity`
+ * included. A `NULL` or absent column satisfies none (SQL's `NULL <= $v` is
+ * `NULL`); `evaluate` reads a column holding another type than `value` as
+ * satisfying none, too. A `NaN` or invalid-`Date` value is {@link never}.
  *
  * @since 0.1.0
  */
-export const lte = (column: string, value: Comparable) => ({ kind: "lte", column, value }) as const;
+export const lte = (column: string, value: Comparable) =>
+  isUnordered(value) ? never : ({ kind: "lte", column, value } as const);
 
 /**
  * `column = ANY(values)`: the column equals one of a literal set, each tested
  * as {@link eq} tests its value. A `NULL` or absent column is in no set. No
- * values is {@link never}, and more than {@link MAX_SET_VALUES} is `never`
- * too (`SEC-INPUT-003`), so {@link and} / {@link or} fold both. This is a
- * literal set; a follower subquery is {@link isIn}'s.
+ * values is {@link never}, and so are more than {@link MAX_SET_VALUES}
+ * (duplicates counted, `SEC-INPUT-003`) and a set holding a `NaN`, so
+ * {@link and} / {@link or} fold each. This is a literal set; a follower
+ * subquery is {@link isIn}'s.
  *
  * @since 0.1.0
  */
 export const anyOf = (column: string, values: ReadonlyArray<Scalar>) =>
-  Array.isReadonlyArrayEmpty(values) || values.length > MAX_SET_VALUES
+  Array.isReadonlyArrayEmpty(values) || values.length > MAX_SET_VALUES || values.some(isUnordered)
     ? never
     : ({ kind: "anyOf", column, values: [...values] } as const);
 
@@ -194,15 +236,16 @@ export const anyOf = (column: string, values: ReadonlyArray<Scalar>) =>
  * `column <> ALL(values)`: the column equals none of a literal set, each
  * tested as {@link ne} tests its value. A `NULL` or absent column satisfies it
  * no more than it satisfies `ne` (SQL's `NULL <> ALL(…)` is `NULL`). No values
- * is {@link always}; more than {@link MAX_SET_VALUES} is {@link never}, failing
- * closed rather than excluding only some (`SEC-INPUT-003`).
+ * is {@link always}; more than {@link MAX_SET_VALUES} (duplicates counted) is
+ * {@link never}, failing closed rather than excluding only some
+ * (`SEC-INPUT-003`), and so is a set holding a `NaN`.
  *
  * @since 0.1.0
  */
 export const noneOf = (column: string, values: ReadonlyArray<Scalar>) =>
   Array.isReadonlyArrayEmpty(values)
     ? always
-    : values.length > MAX_SET_VALUES
+    : values.length > MAX_SET_VALUES || values.some(isUnordered)
       ? never
       : ({ kind: "noneOf", column, values: [...values] } as const);
 
@@ -295,19 +338,45 @@ const byCodePoint: Order.Order<string> = Order.mapInput(Order.Array(Order.Number
 );
 
 /**
+ * Numbers by `<` / `>`, never by subtraction: `Infinity - Infinity` is `NaN`,
+ * which would read `Infinity >= Infinity` as false. Either side `NaN` (or an
+ * invalid `Date`'s instant) is `NaN`, which every relational test reads as false.
+ */
+const byNumber = (column: number, value: number): number =>
+  Number.isNaN(column) || Number.isNaN(value) ? Number.NaN : Order.Number(column, value);
+
+/**
  * Compare a column with a {@link Comparable}: negative, zero or positive, or
- * `NaN` when the column is `NULL`, absent or of another type, which every
- * relational test then reads as false, as SQL's `NULL` is.
+ * `NaN` when the column is `NULL`, absent, of another type or unordered
+ * (`NaN`, an invalid `Date`), which every relational test then reads as
+ * false, as SQL's `NULL` is.
  */
 const compareTo = (column: ColumnValue, value: Comparable): number => {
   if (Predicate.isDate(value)) {
-    return Predicate.isDate(column) ? column.getTime() - value.getTime() : Number.NaN;
+    return Predicate.isDate(column) ? byNumber(column.getTime(), value.getTime()) : Number.NaN;
   }
   if (Predicate.isString(value)) {
     return Predicate.isString(column) ? byCodePoint(column, value) : Number.NaN;
   }
-  return Predicate.isNumber(column) ? column - value : Number.NaN;
+  return Predicate.isNumber(column) ? byNumber(column, value) : Number.NaN;
 };
+
+/**
+ * `column <> value` as SQL reads it where the two readings agree: a `NULL`
+ * column differs from nothing (`NULL <> $v` is `NULL`), and outside the
+ * contract — a column of another type than `value`, or a `NaN` on either
+ * side — it fails closed rather than answer true.
+ */
+const differs = (column: ColumnValue, value: Scalar): boolean =>
+  sameKind(column, value) && !isUnordered(column) && !isUnordered(value) && column !== value;
+
+/** Whether `column` holds the same kind of {@link Scalar} as `value`. */
+const sameKind = (column: ColumnValue, value: Scalar): boolean =>
+  Predicate.isString(value)
+    ? Predicate.isString(column)
+    : Predicate.isNumber(value)
+      ? Predicate.isNumber(column)
+      : Predicate.isBoolean(column);
 
 /** Read a timestamp column the way the publication axis does: a `Date`, or nothing. */
 const instantOf = (value: ColumnValue): number =>
@@ -321,9 +390,11 @@ const instantOf = (value: ColumnValue): number =>
  * `NULL > $v` and `NULL <> ALL(…)` as `NULL`, which a `WHERE` drops, so `ne`
  * is not the complement of `eq`, nor `noneOf` of `anyOf`, over a nullable
  * column. Such a row fails an `in` without `context.contains` being asked, so
- * the answer never depends on the seam (pulpit#94). A comparison against a
- * column of another type is false, and a set past {@link MAX_SET_VALUES} is
- * `never`.
+ * the answer never depends on the seam (pulpit#94). A set past
+ * {@link MAX_SET_VALUES} is `never`. Outside the contract it fails closed: a
+ * column of another type than the comparand (or than any of a set's values),
+ * and a `NaN` (or invalid `Date`) comparand, set element or column, satisfy
+ * no `eq`, `ne`, comparison, `anyOf` or non-empty `noneOf`.
  *
  * @since 0.1.0
  */
@@ -337,11 +408,9 @@ export const evaluate = <Following>(
     Match.discriminatorsExhaustive("kind")({
       always: () => true,
       never: () => false,
+      // `NaN === NaN` is false, so a `NaN` on either side already matches nothing.
       eq: (node) => row[node.column] === node.value,
-      ne: (node) => {
-        const value = row[node.column] ?? null;
-        return value !== null && value !== node.value;
-      },
+      ne: (node) => differs(row[node.column] ?? null, node.value),
       in: (node) => {
         const value = row[node.column] ?? null;
         return value !== null && context.contains(node.set, value);
@@ -352,13 +421,14 @@ export const evaluate = <Following>(
       lte: (node) => compareTo(row[node.column] ?? null, node.value) <= 0,
       anyOf: (node) =>
         node.values.length <= MAX_SET_VALUES &&
+        !node.values.some(isUnordered) &&
         node.values.some((value) => row[node.column] === value),
       noneOf: (node) => {
         if (node.values.length > MAX_SET_VALUES) return false;
         // `<> ALL` over no values is true, even for NULL; the constructor folds that to `always`.
         if (Array.isReadonlyArrayEmpty(node.values)) return true;
         const value = row[node.column] ?? null;
-        return value !== null && node.values.every((excluded) => value !== excluded);
+        return node.values.every((excluded) => differs(value, excluded));
       },
       published: (node) => arrived(node.column),
       notPublished: (node) => !arrived(node.column),

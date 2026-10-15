@@ -162,7 +162,7 @@ The kernel's read predicates as data: a store renders a `ListFilter` to SQL, and
 | `always`, `never` | No predicate; a predicate no row satisfies (fail closed). |
 | `eq`, `ne`, `isIn` | `col = v`, `col <> v`, `col IN (following)`. |
 | `gt`, `gte`, `lt`, `lte`, `Comparable` | `col > v`, `col >= v`, `col < v`, `col <= v`, over a `Comparable` (`string`, `number` or `Date`). |
-| `anyOf`, `noneOf`, `MAX_SET_VALUES` | `col = ANY(values)`, `col <> ALL(values)` over a literal set of `Scalar`s; an empty `anyOf` is `never`, an empty `noneOf` is `always`, and a set of more than `MAX_SET_VALUES` (1000) values is `never` (`SEC-INPUT-003`). |
+| `anyOf`, `noneOf`, `MAX_SET_VALUES` | `col = ANY(values)`, `col <> ALL(values)` over a literal set of `Scalar`s; an empty `anyOf` is `never`, an empty `noneOf` is `always`, and a set of more than `MAX_SET_VALUES` (1000) values, duplicates counted, is `never` (`SEC-INPUT-003`). |
 | `published`, `notPublished` | Stamped and arrived; its exact complement (unstamped, or stamped in the future). |
 | `and`, `or` | Combinators that drop identity parts, short-circuit on the absorbing part, and return a single part bare. |
 | `evaluate(filter, row, context)` | The in-memory reading, against `context.now` and `context.contains`. |
@@ -175,14 +175,20 @@ A SQL renderer must honour this contract:
 | `never` | a predicate no row satisfies |
 | `eq` / `ne` | `col = $v` / `col <> $v`: a `NULL` column satisfies neither, so `evaluate` drops a row whose column is `null` or absent from both |
 | `in` | `col IN (<following subquery>)`: a subquery, never a materialised array. A `NULL` column satisfies none, so `evaluate` drops a row whose column is `null` or absent without asking `context.contains` |
-| `gt` / `gte` / `lt` / `lte` | `col > $v` / `col >= $v` / `col < $v` / `col <= $v`. A string compares with `COLLATE "C"` (code-point order; `evaluate` does not use JavaScript's UTF-16 `<`), a `Date` as a timestamp, a number numerically. A `NULL` column satisfies none, and neither does a column of another type than `$v`: `evaluate` drops both |
-| `anyOf` | `col = ANY($values)`: a bound array, each value tested as `eq` tests it. A `NULL` column satisfies none |
-| `noneOf` | `col <> ALL($values)`, each value tested as `ne` tests it. A `NULL` column satisfies none (`NULL <> ALL(…)` is `NULL`), so `noneOf` is not the complement of `anyOf` over a nullable column. Over no values it is true for every row, `NULL` included, which the constructor folds to `always` |
+| `gt` / `gte` / `lt` / `lte` | `col > $v` / `col >= $v` / `col < $v` / `col <= $v`. A string compares with `COLLATE "C"` (code-point order; `evaluate` does not use JavaScript's UTF-16 `<`), a `Date` as a timestamp, a number numerically, `Infinity` and `-Infinity` each equal to itself. A `NULL` column satisfies none |
+| `anyOf` | `col = ANY($values)`: a bound array, each value tested as `eq` tests it. A `NULL` column satisfies none. The array never holds a `NULL` element |
+| `noneOf` | `col <> ALL($values)`, each value tested as `ne` tests it. A `NULL` column satisfies none (`NULL <> ALL(…)` is `NULL`), so `noneOf` is not the complement of `anyOf` over a nullable column. Over no values it is true for every row, `NULL` included, which the constructor folds to `always`. The array never holds a `NULL` element: `2 <> ALL('{1,NULL}')` is `NULL`, so one would drop every row |
 | `published` | `(col IS NOT NULL AND col <= now())`: the database's clock, one per query |
 | `notPublished` | `(col IS NULL OR col > now())`, parenthesised so it cannot bind to a surrounding `AND` |
 | `and` / `or` | `AND` / `OR` over the parts |
 
-An `anyOf` / `noneOf` node with more than `MAX_SET_VALUES` values renders as `never`, and `evaluate` reads it so. The constructors already return `never` for one, so only a hand-built node reaches a renderer that way. A cap that dropped some of a `noneOf`'s values would widen the result, so the arm fails closed instead.
+An `anyOf` / `noneOf` node with more than `MAX_SET_VALUES` values (duplicates counted) renders as `never`, and `evaluate` reads it so. The constructors already return `never` for one, so only a hand-built node reaches a renderer that way. A cap that dropped some of a `noneOf`'s values would widen the result, so the arm fails closed instead.
+
+Some inputs are outside the contract: SQL and `evaluate` can't be made to agree on them, so `evaluate` fails closed.
+
+- **A column of another type than the comparand**, or than any of a literal set's values, is a caller or schema error. PostgreSQL may coerce the parameter (an `integer` column against `'1'`) or raise (against `'abc'`). `evaluate` reads such a row as satisfying no `eq`, `ne`, comparison, `anyOf` or `noneOf`.
+- **`NaN`, and an invalid `Date`.** PostgreSQL's `float8` and `numeric` hold `NaN` equal to itself and greater than every number; JavaScript's `NaN` has no such order. Every constructor returns `never` for a `NaN` or invalid-`Date` comparand, and `anyOf` / `noneOf` return `never` for a set holding a `NaN`. `evaluate` reads a `NaN` comparand, set element or column as satisfying no `eq`, `ne`, comparison, `anyOf` or `noneOf`. A renderer must never bind `NaN`: it renders a hand-built node carrying one as `never`.
+- **Sub-millisecond instants.** A PostgreSQL timestamp keeps microseconds and a JavaScript `Date` milliseconds, so two instants within one millisecond of each other can compare unequal in SQL and equal in `evaluate`.
 
 ## `./subtype`
 
