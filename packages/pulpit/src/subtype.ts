@@ -435,8 +435,9 @@ export const requireCreator = (
  * rung; owned material → the row's owner or the moderate rung. A missing
  * owner on an owned leaf is {@link NodeNotFound}, never an open gate.
  *
- * On an owned leaf it never reads the row's visibility: a signed-in caller
- * who isn't the owner gets {@link Forbidden} for any row with an owner record,
+ * On an owned leaf it never reads the row's visibility, draft or delete state:
+ * a signed-in caller who is neither the owner nor at the moderate rung gets
+ * {@link Forbidden} for any row with an owner record,
  * hidden or not, so the gate deliberately confirms existence (pulpit#24, an
  * exception to `SEC-AUTH-ENUM-001`; SECURITY.md → "Existence disclosure by the
  * write gates"). An anonymous caller gets `Unauthorized` for every id.
