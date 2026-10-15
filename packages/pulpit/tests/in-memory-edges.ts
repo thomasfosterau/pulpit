@@ -155,8 +155,10 @@ export const makeInMemoryEdgeStore = (options: {
         const page = rows.slice(offset, offset + limit);
         return { rows: page, total: Arr.isReadonlyArrayNonEmpty(page) ? rows.length : 0 };
       }),
-    countAt: (column, nodeId) =>
-      Effect.sync(() => stored.filter((row) => row[column] === nodeId).length),
+    // The count over the list's joins, as the SQL store's `count(*)` reads
+    // them: the edges at the node that satisfy `where`.
+    countAt: ({ column, nodeId, where }) =>
+      Effect.map(matching(where), (rows) => rows.filter((row) => row[column] === nodeId).length),
     existing: (values) => Effect.sync(() => Option.map(collides(values), (row) => row.id)),
     insert: (values) =>
       Effect.sync(() => {
