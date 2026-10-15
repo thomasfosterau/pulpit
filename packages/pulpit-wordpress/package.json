@@ -34,13 +34,23 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./ids": "./src/ids.ts",
+    "./testing": "./src/testing.ts"
   },
   "publishConfig": {
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      },
+      "./ids": {
+        "types": "./dist/ids.d.ts",
+        "default": "./dist/ids.js"
+      },
+      "./testing": {
+        "types": "./dist/testing.d.ts",
+        "default": "./dist/testing.js"
       }
     },
     "access": "public"
