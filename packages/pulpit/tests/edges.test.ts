@@ -396,17 +396,21 @@ describe("ported: CMS rows on the moderator rung (gardeneria's page collections 
     expect(edges.rows()[0]?.["pageId"]).toBe("page-1");
   });
 
-  it("resolves a collision only to an edge the viewer can read: a retired page's alias, for the view-deleted rung", async () => {
+  it("resolves a collision only to a readable edge whose every end is live: not a retired page's alias, even for the view-deleted rung", async () => {
     const { pages, ops, actAs } = slugs(splitPolicy);
     const retired = await run(
       actAs(as(moderator), ops.create({ pageId: "page-1", path: "retired" })),
     );
     // The page the stored alias points at is tombstoned. The view-deleted
-    // rung reads its alias (pulpit#93), so the collision resolves to it.
+    // rung reads its alias (pulpit#93) but can't link to a tombstone, so the
+    // collision doesn't resolve to it (owner decision on pulpit#93).
     pages.put(node("page-1", { visibility: "public" }, "delete"));
+    expect(await run(actAs(as(moderator), ops.get(retired.id)))).toMatchObject({
+      pageId: "page-1",
+    });
     expect(
-      await run(actAs(as(moderator), ops.create({ pageId: "page-2", path: "retired" }))),
-    ).toEqual({ id: retired.id, created: false });
+      await errorOf(actAs(as(moderator), ops.create({ pageId: "page-2", path: "retired" }))),
+    ).toEqual(Option.some(expect.objectContaining({ _tag: "EdgeConflict", type: "links" })));
   });
 
   it("never resolves a collision to an edge the viewer cannot read", async () => {
@@ -1533,5 +1537,32 @@ describe("a create racing another writer for the unique key", () => {
       await errorOf(actAs(as(contributor), ops.create({ pageId: "page-2", path: "retired" }))),
     ).toEqual(Option.some(expect.objectContaining({ _tag: "EdgeConflict", type: "links" })));
     expect(edges.rows().map((row) => row["pageId"])).toEqual(["page-1"]);
+  });
+
+  it("never resolves a race to a winner with a tombstoned end, even for the view-deleted rung", async () => {
+    // The view-deleted rung reads the winner, whose page is tombstoned, but
+    // can't link to it, so the race answers as an unresolved collision.
+    const pages = makeInMemoryNodes(["visibility"]);
+    pages.put(node("page-1", { visibility: "public" }, "delete"));
+    pages.put(node("page-2", { visibility: "public" }));
+    const { edges, ops, actAs } = family(
+      {
+        ends: {
+          page: { column: "pageId", type: "pages", access: { kind: "reference" }, nodes: pages },
+        },
+        onConflict: "ignore",
+      },
+      ["path"],
+      splitPolicy,
+    );
+    edges.raceNextInsert({ pageId: "page-1", path: "retired" });
+    expect(
+      await errorOf(actAs(as(moderator), ops.create({ pageId: "page-2", path: "retired" }))),
+    ).toEqual(Option.some(expect.objectContaining({ _tag: "EdgeConflict", type: "links" })));
+    const [winner] = edges.rows();
+    expect(winner?.["pageId"]).toBe("page-1");
+    expect(await run(actAs(as(moderator), ops.get(winner?.id ?? "")))).toMatchObject({
+      pageId: "page-1",
+    });
   });
 });

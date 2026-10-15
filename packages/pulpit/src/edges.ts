@@ -55,10 +55,11 @@
  *   {@link EdgeEnd.maxEdges}). A re-assertion of a stored edge resolves
  *   before the count, so it stays idempotent at a full node.
  * - **A write discloses no hidden edge's state.** A create runs in the
- *   order ends → write gate → unique-key collision → cardinality count. A
- *   collision the conflict policy does not resolve is the same
- *   {@link EdgeConflict} whether the stored edge is readable or hidden, and
- *   the count reads only readable edges (README → `./edges` → What a write
+ *   order ends → write gate → unique-key collision → cardinality count.
+ *   Under `"fail"` a collision with a hidden edge answers exactly as one
+ *   with a readable edge; under `"ignore"` only a readable, live edge
+ *   resolves, and any other collision is {@link EdgeConflict}. The count
+ *   reads only readable edges (README → `./edges` → What a write
  *   discloses).
  * - **Every list is bounded** (`SEC-INPUT-003`): a page is capped at
  *   `MAX_PAGE_LIMIT`.
@@ -119,11 +120,12 @@ export class EdgeNotFound extends Schema.TaggedError<EdgeNotFound>()("EdgeNotFou
 /**
  * A create collided with a stored edge on the family's unique key, and the
  * family's conflict policy does not resolve it: `onConflict: "fail"`, or the
- * edge it collided with is one the viewer may not read. The wire's 409. It
- * carries only the family's type, so a collision with a hidden edge is the
- * same answer as one with a readable edge (`SEC-AUTH-ENUM-001`, pulpit#93):
- * it says the key is taken, never by which edge or whether the caller may
- * read it.
+ * edge it collided with is one the viewer may not read or has a tombstoned
+ * end. The wire's 409. It carries only the family's type, so under `"fail"`
+ * a collision with a hidden edge is the same answer as one with a readable
+ * edge (`SEC-AUTH-ENUM-001`, pulpit#93); under `"ignore"` only a readable,
+ * live edge resolves, and any other collision is this error. It says the
+ * key is taken, never by which edge.
  *
  * @since 0.1.0
  */
@@ -521,7 +523,8 @@ export interface EdgeDefinition<Create, Row extends EdgeRow, Resource, Following
   /**
    * A create colliding with a stored edge on the unique key: `"fail"`
    * ({@link EdgeConflict}, the default) or `"ignore"` (re-assertion is a
-   * no-op returning the stored edge's id, when the viewer may read it).
+   * no-op returning the stored edge's id, when the viewer may read it and
+   * its every end is live; otherwise {@link EdgeConflict}).
    */
   // oxlint-disable-next-line effect/prefer-option-over-null -- the optional-field convention (AGENTS.md → Conventions); absent is the default `"fail"`
   readonly onConflict?: "fail" | "ignore" | undefined;
@@ -579,12 +582,13 @@ export interface EdgeOps<Create, Resource, E, R> {
    * `NodeNotFound`); `EdgeConflict` on a unique-key collision the conflict
    * policy does not resolve; `EdgeCardinalityExceeded` when an end's node
    * already holds its `maxEdges` edges that the caller can read with every
-   * end live. Neither of the last two tells a hidden edge from a readable
-   * one (`SEC-AUTH-ENUM-001`, pulpit#93): a collision with either is the
-   * same `EdgeConflict`, and the count reads no hidden edge
-   * ({@link EdgeEnd.maxEdges}). A collision with a hidden edge still says
-   * the key is taken, which only a family whose unique key leaves an end
-   * out can make about a hidden edge (README → `./edges`).
+   * end live. Under `"fail"` a collision with a hidden edge answers exactly
+   * as one with a readable edge; under `"ignore"` only a readable, live edge
+   * resolves (to `{ created: false, id }`), and any other collision is
+   * `EdgeConflict` (`SEC-AUTH-ENUM-001`, pulpit#93). The count reads no
+   * hidden edge ({@link EdgeEnd.maxEdges}). An `EdgeConflict` still says the
+   * key is taken, which only a family whose unique key leaves an end out
+   * can say about a hidden edge (README → `./edges`).
    */
   readonly create: (
     input: Create,
@@ -672,30 +676,45 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
       : Effect.succeed(Option.none<LeafRow>());
   };
 
-  /** `EDGE-001` for one stored edge: every end's node is readable. */
-  const edgeVisible = (viewer: Viewer, row: Row) =>
-    Effect.map(
-      Effect.forEach(endEntries, ([, end]) => readableNode(end, viewer, row), {
-        concurrency: 1,
-      }),
-      Arr.every(Option.isSome),
-    );
+  /**
+   * The node `edge` names at `end`, if the viewer may read it and it is
+   * live: what a create's ends must name, and the per-edge form of the
+   * cardinality count's filter (`endpointFilter` and `liveEndsFilter`).
+   */
+  const liveNode = (end: EdgeEnd<E, R>, viewer: Viewer, edge: EdgeValues) =>
+    Effect.map(readableNode(end, viewer, edge), Option.filter(isLive));
 
-  /** The stored edge, if the viewer may read it. */
-  const visibleEdge = (viewer: Viewer, id: string) =>
-    Effect.flatMap(edges.get(id), (row) =>
-      Option.isNone(row)
-        ? Effect.succeed(row)
-        : Effect.map(edgeVisible(viewer, row.value), (visible) =>
-            visible ? row : Option.none<Row>(),
-          ),
-    );
+  /** The stored edge, if `node` finds every end's node for the viewer. */
+  const storedEdge =
+    (node: typeof readableNode) =>
+    (viewer: Viewer, id: string): Effect.Effect<Option.Option<Row>, E, R> =>
+      Effect.flatMap(edges.get(id), (row) =>
+        Option.isNone(row)
+          ? Effect.succeed(row)
+          : Effect.map(
+              Effect.forEach(endEntries, ([, end]) => node(end, viewer, row.value), {
+                concurrency: 1,
+              }),
+              (found) => (Arr.every(found, Option.isSome) ? row : Option.none<Row>()),
+            ),
+      );
 
-  /** A unique-key collision, settled by the conflict policy: only ever a readable edge's id. */
+  /** The stored edge, if the viewer may read it (`EDGE-001`: every end's node is readable). */
+  const visibleEdge = storedEdge(readableNode);
+
+  /** The stored edge, if the cardinality count would admit it: readable, every end live. */
+  const countedEdge = storedEdge(liveNode);
+
+  /**
+   * A unique-key collision, settled by the conflict policy: only ever the id
+   * of an edge the count would admit, readable with every end live (owner
+   * decision on pulpit#93). The view-deleted rung reads an edge to a
+   * tombstone but can't link to one, so it can't resolve to one either.
+   */
   const resolveCollision = (viewer: Viewer, id: string) =>
     Effect.gen(function* () {
       if (onConflict === "fail") return yield* new EdgeConflict({ type });
-      if (Option.isNone(yield* visibleEdge(viewer, id))) return yield* new EdgeConflict({ type });
+      if (Option.isNone(yield* countedEdge(viewer, id))) return yield* new EdgeConflict({ type });
       return { id, created: false };
     });
 
@@ -744,8 +763,8 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     const nodes = yield* Effect.forEach(
       endEntries,
       ([alias, end]) =>
-        Effect.flatMap(readableNode(end, viewer, values), (node) =>
-          Option.match(Option.filter(node, isLive), {
+        Effect.flatMap(liveNode(end, viewer, values), (node) =>
+          Option.match(node, {
             onNone: () =>
               Effect.fail(new NodeNotFound({ type: end.type, id: String(values[end.column]) })),
             onSome: (row) => Effect.succeed({ alias, end, nodeId: row.id }),
