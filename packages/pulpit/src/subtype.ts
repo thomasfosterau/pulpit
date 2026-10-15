@@ -34,7 +34,9 @@
  *   {@link NodeNotFound} or omits it, never {@link Forbidden}
  *   (`SEC-AUTH-ENUM-001`): a 403 would confirm the row exists. The write and
  *   history gate ({@link requireWriter}) does answer `Forbidden` for an
- *   existing owned row the caller doesn't own (pulpit#24). On a reference
+ *   existing owned row the caller doesn't own, whatever its visibility, so
+ *   it deliberately confirms existence to a signed-in caller (pulpit#24;
+ *   SECURITY.md → "Existence disclosure by the write gates"). On a reference
  *   leaf, a corpus writer's write or history read to a row `get` hides from
  *   them fails `NodeNotFound`, as `get` does, before the chain is reached
  *   (pulpit#101, `PUB-009`).
@@ -432,6 +434,13 @@ export const requireCreator = (
  * The gate for a write to an EXISTING row: reference data → the corpus-write
  * rung; owned material → the row's owner or the moderate rung. A missing
  * owner on an owned leaf is {@link NodeNotFound}, never an open gate.
+ *
+ * On an owned leaf it never reads the row's visibility, draft or delete state:
+ * a signed-in caller who is neither the owner nor at the moderate rung gets
+ * {@link Forbidden} for any row with an owner record,
+ * hidden or not, so the gate deliberately confirms existence (pulpit#24, an
+ * exception to `SEC-AUTH-ENUM-001`; SECURITY.md → "Existence disclosure by the
+ * write gates"). An anonymous caller gets `Unauthorized` for every id.
  *
  * On a reference leaf this is the rung check alone: it reads no row, so it
  * answers `Unauthorized` / `Forbidden` alike for every id. `defineSubtype`

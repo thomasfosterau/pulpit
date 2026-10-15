@@ -380,7 +380,9 @@ describe("the write gates", () => {
     expect(await gate(as(member))).toEqual(Option.none());
     expect(await gate(as(moderator))).toEqual(Option.none());
     expect(await gate(as(admin))).toEqual(Option.none());
-    // Another member below the rung: Forbidden, not NotFound — a write gate may confirm a row the viewer can already see.
+    // Another member below the rung: Forbidden, not NotFound. The gate never reads visibility, so it
+    // deliberately confirms any owned row with an owner record, hidden or not (pulpit#24; SECURITY.md →
+    // "Existence disclosure by the write gates").
     expect(await gate(as(otherMember))).toEqual(Option.some("Forbidden"));
     expect(await gate(as(contributor))).toEqual(Option.some("Forbidden"));
     expect(await gate(anonymous)).toEqual(Option.some("Unauthorized"));
