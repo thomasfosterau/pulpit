@@ -18,7 +18,8 @@
  * - The factory's reads never disagree (`SEC-AUTH-ENUM-001`): `get` and
  *   `getMany` serve exactly the rows `list` does, for every row state ×
  *   viewer, out-of-enum visibility and a `null` or absent draft included
- *   (pulpit#73).
+ *   (pulpit#73), and an owner column holding no string read as no owner
+ *   (pulpit#85).
  *
  * @module tests/subtype
  */
@@ -49,6 +50,7 @@ import {
   softDeleteFilter,
   subtypeHandlers,
   type AccessPolicy,
+  type FollowerSeam,
   type LeafAccess,
   type LeafRow,
   type Viewer,
@@ -657,11 +659,18 @@ describe("defineSubtype — a reference leaf", () => {
 
 type Seeded = ColumnValue | typeof ABSENT;
 
-/** One seeded node: its creating account (and so its owner), its state, and whether it is tombstoned. */
+/**
+ * One seeded node: its creating account (and so its owner), its state, and
+ * whether it is tombstoned. An `unstamped` node loses the factory's owner
+ * stamp after it is seeded, so its owner column is whatever its state
+ * carries under `ownerId` (no key when absent).
+ */
 interface Seed {
   readonly owner: ViewerAccount;
   readonly state: { readonly [column: string]: Seeded };
   readonly deleted: boolean;
+  // oxlint-disable-next-line effect/prefer-option-over-null -- the workspace's optional-field convention (AGENTS.md → Conventions)
+  readonly unstamped?: boolean | undefined;
 }
 
 /** What one viewer's three reads answer for one seeded row. */
@@ -682,7 +691,7 @@ const showColumn = (seed: Seed, column: string): string =>
   });
 
 const labelOf = (seed: Seed): string =>
-  `visibility ${showColumn(seed, "visibility")}, draft ${showColumn(seed, "draft")}, owner ${seed.owner.id}${seed.deleted ? ", deleted" : ""}`;
+  `visibility ${showColumn(seed, "visibility")}, draft ${showColumn(seed, "draft")}, owner ${seed.unstamped === true ? showColumn(seed, "ownerId") : seed.owner.id}${seed.deleted ? ", deleted" : ""}`;
 
 /** A leaf over the in-memory seams, seeded through the factory's own `create` and `delete`. */
 const seededLeaf = (
@@ -690,6 +699,7 @@ const seededLeaf = (
   columns: ReadonlyArray<string>,
   policy: AccessPolicy,
   seeds: ReadonlyArray<Seed>,
+  followers: FollowerSeam<Following, never> = follows,
 ) => {
   const chain = makeInMemoryChainStore();
   const leaves = makeInMemoryLeafStore(chain, columns);
@@ -701,7 +711,7 @@ const seededLeaf = (
     leaves,
     viewer: Effect.sync(() => viewer),
     policy,
-    followers: follows,
+    followers,
     toResource: (row: LeafRow) => ({ id: row.id }),
   });
   const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
@@ -723,6 +733,11 @@ const seededLeaf = (
       ).pipe(
         Effect.tap(({ id }) =>
           seed.deleted ? actAs(as(seed.owner), ops.delete(id)) : Effect.void,
+        ),
+        Effect.tap(({ id }) =>
+          Effect.sync(() => {
+            if (seed.unstamped === true) leaves.owners.delete(id);
+          }),
         ),
         Effect.map(({ id }) => id),
       ),
@@ -970,6 +985,118 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
       const leaf = await seededLeaf({ kind: "reference" }, columns, policy, seeds);
       expectAgreement(await leaf.reads(viewer));
     });
+  });
+});
+
+describe("defineSubtype — an owner column holding no string is no owner (pulpit#85)", () => {
+  /** Accounts whose ids are what `String` makes of a `NULL`, an absent key and `42`. */
+  const nullId: ViewerAccount = { id: "null", role: "user" };
+  const undefinedId: ViewerAccount = { id: "undefined", role: "user" };
+  const fortyTwo: ViewerAccount = { id: "42", role: "user" };
+  /** A seam under which each of them follows all of those ids, recording what it is asked. */
+  const strings = [nullId.id, undefinedId.id, fortyTwo.id];
+  const asked: Array<string> = [];
+  const fans: FollowerSeam<Following, never> = {
+    isFollower: (followerId, ownerId) =>
+      Effect.sync(() => {
+        asked.push(ownerId);
+        return strings.includes(followerId) && strings.includes(ownerId);
+      }),
+    // oxlint-disable-next-line effect/avoid-native-object-helpers -- the in-memory leaf store's follower set is the native `ReadonlySet` its `Following` type names
+    following: (followerId) => new Set(strings.includes(followerId) ? strings : []),
+  };
+
+  const owners: ReadonlyArray<Seeded> = [null, ABSENT, 42];
+  const seeds: ReadonlyArray<Seed> = Arr.flatMap(owners, (ownerId) =>
+    Arr.flatMap(["public", "followers", "private"] as const, (visibility) =>
+      Arr.map([false, true], (draft) => ({
+        owner: member,
+        state: { title: "t", visibility, draft, ownerId },
+        deleted: false,
+        unstamped: true,
+      })),
+    ),
+  );
+  /** The one row each viewer may see: public, published, whoever owns it. */
+  const open = seeds
+    .filter((seed) => seed.state["visibility"] === "public" && seed.state["draft"] === false)
+    .map(labelOf);
+
+  const viewers: ReadonlyArray<readonly [string, Viewer]> = [
+    ["anonymous", anonymous],
+    ['an account whose id is "null"', as(nullId)],
+    ['an account whose id is "undefined"', as(undefinedId)],
+    ['an account whose id is "42"', as(fortyTwo)],
+    ["a member", as(member)],
+  ];
+
+  it.each(
+    Arr.flatMap(matrixPolicies, ([policyName, policy]) =>
+      Arr.map(viewers, ([viewerName, viewer]) => ({ policyName, policy, viewerName, viewer })),
+    ),
+  )(
+    "matches no viewer and asks no follower, $policyName policy, for $viewerName",
+    async ({ policy, viewer }) => {
+      asked.length = 0;
+      const leaf = await seededLeaf(
+        ownedAccess({ draft: true }),
+        ["title", "visibility", "draft"],
+        policy,
+        seeds,
+        fans,
+      );
+      const reads = await leaf.reads(viewer);
+      expectAgreement(reads);
+      expect(listedRows(reads)).toEqual(open);
+      expect(asked).toEqual([]);
+    },
+  );
+
+  it("still shows every row to the view-private rung", async () => {
+    const leaf = await seededLeaf(
+      ownedAccess({ draft: true }),
+      ["title", "visibility", "draft"],
+      gardeneriaPolicy,
+      seeds,
+      fans,
+    );
+    const reads = await leaf.reads(as(moderator));
+    expectAgreement(reads);
+    expect(listedRows(reads)).toEqual(seeds.map(labelOf));
+  });
+
+  it('is not vacuous: an owner column holding the string "null" is that account\'s', async () => {
+    asked.length = 0;
+    const leaf = await seededLeaf(
+      ownedAccess({ draft: true }),
+      ["title", "visibility", "draft"],
+      gardeneriaPolicy,
+      [
+        {
+          owner: member,
+          state: { title: "t", visibility: "private", draft: true, ownerId: "null" },
+          deleted: false,
+          unstamped: true,
+        },
+        {
+          owner: member,
+          state: { title: "t", visibility: "followers", draft: false, ownerId: "null" },
+          deleted: false,
+          unstamped: true,
+        },
+      ],
+      fans,
+    );
+    expect(await shownTo(leaf, as(nullId))).toEqual([
+      [true, true],
+      [true, true],
+    ]);
+    // `"42"` follows `"null"`: the seam is asked, and its answer is the read's.
+    expect(await shownTo(leaf, as(fortyTwo))).toEqual([
+      [false, false],
+      [true, true],
+    ]);
+    expect(asked).toContain("null");
   });
 });
 

@@ -79,9 +79,8 @@ import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import { and, eq, or, type ListFilter } from "./filter.ts";
-import { declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
+import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
 import {
-  canViewOwned,
   Forbidden,
   MAX_PAGE_LIMIT,
   ownedListFilter,
@@ -283,8 +282,10 @@ const isLive = (row: LeafRow): boolean => row.action === "create" || row.action 
  * included), and its leaf's access admits the viewer. A reference node is
  * readable when its view has no `visibility` column, the viewer holds the
  * view-private rung, or it is `public`; an owned node through
- * `canViewOwned`. An owned declaration naming a column the view lacks reads
- * nothing. Never fails.
+ * `canViewOwned`'s predicate, where an owner column holding no string reads
+ * as no owner, matching no viewer and never asked of the follower seam. An
+ * owned declaration naming a column the view lacks reads nothing. Never
+ * fails.
  *
  * @since 0.1.0
  */
@@ -306,7 +307,7 @@ export const canViewEndpoint = <E, R>(
     );
   }
   if (!declaresColumns(access, columns)) return Effect.succeed(false);
-  return canViewOwned(viewer, policy, followers, ownedFacts(access, node.value));
+  return canViewOwnedRow(viewer, policy, followers, ownedFacts(access, node.value));
 };
 
 /**

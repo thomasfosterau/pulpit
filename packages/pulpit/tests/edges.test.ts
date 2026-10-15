@@ -522,17 +522,22 @@ const evaluationContext = {
 };
 
 /** For one end and one viewer: each row's [id, listed, readable] — the two readings side by side. */
-const readings = (end: EdgeEnd<never, never>, viewer: Viewer, rows: ReadonlyArray<LeafRow>) =>
+const readings = (
+  end: EdgeEnd<never, never>,
+  viewer: Viewer,
+  rows: ReadonlyArray<LeafRow>,
+  followers: FollowerSeam<Following, never> = follows,
+) =>
   run(
     Effect.forEach(
       rows,
       (row) =>
         Effect.map(
-          canViewEndpoint(end, viewer, gardeneriaPolicy, follows, Option.some(row)),
+          canViewEndpoint(end, viewer, gardeneriaPolicy, followers, Option.some(row)),
           (readable) => ({
             id: row.id,
             listed: evaluate(
-              endpointFilter({ end }, viewer, gardeneriaPolicy, follows),
+              endpointFilter({ end }, viewer, gardeneriaPolicy, followers),
               joinedRow("end", end.column, row),
               evaluationContext,
             ),
@@ -626,6 +631,79 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
       expect(seen.every(({ listed, readable }) => !listed && !readable)).toBe(true);
     },
   );
+
+  describe("an owner column holding no string is no owner (pulpit#85)", () => {
+    /** Accounts whose ids are what `String` makes of a `NULL`, an absent key and `42`. */
+    const strings = ["null", "undefined", "42"];
+    const accounts = strings.map((id): ViewerAccount => ({ id, role: "user" }));
+    /** A seam under which each of them follows all of those ids, recording what it is asked. */
+    const asked: Array<string> = [];
+    const fans: FollowerSeam<Following, never> = {
+      isFollower: (followerId, ownerId) =>
+        Effect.sync(() => {
+          asked.push(ownerId);
+          return strings.includes(followerId) && strings.includes(ownerId);
+        }),
+      following: (followerId) =>
+        strings.includes(followerId) ? HashSet.fromIterable(strings) : HashSet.empty(),
+    };
+    const unowned = Arr.flatMap([null, ABSENT, 42] as const, (ownerId) =>
+      Arr.flatMap(["public", "followers", "private"], (visibility) =>
+        Arr.map([false, true], (draft) =>
+          node(
+            `${String(visibility)}-${String(draft)}-${ownerId === ABSENT ? "absent" : String(ownerId)}`,
+            ownerId === ABSENT ? { visibility, draft } : { ownerId, visibility, draft },
+          ),
+        ),
+      ),
+    );
+    const open = unowned
+      .filter((row) => row["visibility"] === "public" && row["draft"] === false)
+      .map((row) => row.id);
+
+    it.each([
+      ...accounts.map(
+        (account) => [`an account whose id is "${account.id}"`, as(account)] as const,
+      ),
+      ...viewers.filter(([, viewer]) => !Option.exists(viewer, gardeneriaPolicy.canViewPrivate)),
+    ])("matches no viewer and asks no follower, for %s", async (_name, viewer) => {
+      asked.length = 0;
+      const seen = await readings(ownedEnd("entryId", ownedNodes), viewer, unowned, fans);
+      expect(seen.map(({ id, listed }) => [id, listed])).toEqual(
+        seen.map(({ id, readable }) => [id, readable]),
+      );
+      expect(seen.filter((reading) => reading.readable).map((reading) => reading.id)).toEqual(open);
+      expect(asked).toEqual([]);
+    });
+
+    it("still shows every live row to the view-private rung", async () => {
+      const seen = await readings(ownedEnd("entryId", ownedNodes), as(moderator), unowned, fans);
+      expect(seen.every(({ listed, readable }) => listed && readable)).toBe(true);
+    });
+
+    it('is not vacuous: an owner column holding the string "null" is that account\'s', async () => {
+      asked.length = 0;
+      const owned = [
+        node("private-draft", { ownerId: "null", visibility: "private", draft: true }),
+        node("followers", { ownerId: "null", visibility: "followers", draft: false }),
+      ];
+      const end = ownedEnd("entryId", ownedNodes);
+      const shown = async (id: string) =>
+        (await readings(end, as({ id, role: "user" }), owned, fans)).map(({ listed, readable }) => [
+          listed,
+          readable,
+        ]);
+      expect(await shown("null")).toEqual([
+        [true, true],
+        [true, true],
+      ]);
+      expect(await shown("undefined")).toEqual([
+        [false, false],
+        [true, true],
+      ]);
+      expect(asked).toContain("null");
+    });
+  });
 
   it("a tombstoned node is unreadable to every viewer, the view-deleted rung included", async () => {
     const tombstones = ownedRows.filter((row) => row.action === "delete");
