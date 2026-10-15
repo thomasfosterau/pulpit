@@ -67,6 +67,7 @@ import {
   type ViewerAccount,
 } from "../src/subtype.ts";
 import type { ColumnValue, Precondition } from "../src/version-chain.ts";
+import { isPubliclyServeable } from "../src/publication.ts";
 import { ABSENT } from "./fixtures.ts";
 import { makeInMemoryChainStore } from "./in-memory-chain.ts";
 import {
@@ -1778,5 +1779,107 @@ describe("subtypeHandlers — the handlers seam", () => {
     await run(actAs(as(member), handlers.delete(id)));
     expect(cached.has(id)).toBe(false);
     expect(log).toEqual(["transact", "transact", "transact"]);
+  });
+});
+
+describe("subtypeHandlers — a write that hides the row from its own writer evicts the cached resource (pulpit#107)", () => {
+  /**
+   * A reference leaf with a `visibility` column, cached, written by a
+   * corpus writer below the view-private rung: once a write leaves the row
+   * `private`, that writer's re-read fails `NodeNotFound`, and the cache
+   * must not go on serving the superseded public resource
+   * (`CACHE-AUTH-005`).
+   */
+  const cachedReference = async () => {
+    const chain = makeInMemoryChainStore();
+    const leaves = makeInMemoryLeafStore(chain, ["name", "visibility"]);
+    let viewer: Viewer = as(admin);
+    const ops = defineSubtype({
+      type: "taxa",
+      access: { kind: "reference" },
+      chain,
+      leaves,
+      viewer: Effect.sync(() => viewer),
+      policy: gardeneriaPolicy,
+      followers: nobody,
+      toResource: (row: LeafRow) => ({ id: row.id, attributes: { visibility: row["visibility"] } }),
+    });
+    const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+      Effect.suspend(() => {
+        viewer = who;
+        return effect;
+      });
+    const cached = MutableHashMap.empty<string, unknown>();
+    const handlers = subtypeHandlers(ops, {
+      transact: (effect) => effect,
+      cache: Option.some({
+        // The cache's serveability policy: a non-serveable resource evicts.
+        set: (key, resource) =>
+          Effect.sync(() =>
+            isPubliclyServeable(resource)
+              ? void MutableHashMap.set(cached, key, resource)
+              : void MutableHashMap.remove(cached, key),
+          ),
+        delete: (key) => Effect.sync(() => void MutableHashMap.remove(cached, key)),
+      }),
+    });
+    return { chain, handlers, actAs, cached };
+  };
+
+  it("update: a corpus writer flipping a public row private", async () => {
+    const { chain, handlers, actAs, cached } = await cachedReference();
+    const { id } = await run(
+      actAs(
+        as(contributor),
+        handlers.create({ id: Option.none(), state: { name: "Quercus", visibility: "public" } }),
+      ),
+    );
+    expect(MutableHashMap.has(cached, id)).toBe(true);
+    // The response for a committed write the writer can no longer read is
+    // unchanged here (an open question on pulpit#107).
+    expect(
+      await tagOf(
+        actAs(as(contributor), handlers.update({ id, patch: { visibility: "private" } })),
+      ),
+    ).toEqual(Option.some("NodeNotFound"));
+    expect(chain.rows()).toHaveLength(2);
+    expect(MutableHashMap.has(cached, id)).toBe(false);
+  });
+
+  it("restoreVersion: a corpus writer restoring a private version", async () => {
+    const { chain, handlers, actAs, cached } = await cachedReference();
+    const { id } = await run(
+      actAs(
+        as(admin),
+        handlers.create({ id: Option.none(), state: { name: "Quercus", visibility: "private" } }),
+      ),
+    );
+    expect(MutableHashMap.has(cached, id)).toBe(false);
+    await run(actAs(as(admin), handlers.update({ id, patch: { visibility: "public" } })));
+    expect(MutableHashMap.has(cached, id)).toBe(true);
+    expect(
+      await tagOf(actAs(as(contributor), handlers.restoreVersion({ id, version: 0n }))),
+    ).toEqual(Option.some("NodeNotFound"));
+    expect(chain.rows()).toHaveLength(3);
+    expect(MutableHashMap.has(cached, id)).toBe(false);
+  });
+
+  it("a re-read the writer can still make writes the resource through as before", async () => {
+    const { handlers, actAs, cached } = await cachedReference();
+    const { id } = await run(
+      actAs(
+        as(moderator),
+        handlers.create({ id: Option.none(), state: { name: "Quercus", visibility: "public" } }),
+      ),
+    );
+    const hidden = await run(
+      actAs(as(moderator), handlers.update({ id, patch: { visibility: "private" } })),
+    );
+    expect(hidden).toMatchObject({ id, attributes: { visibility: "private" } });
+    expect(MutableHashMap.has(cached, id)).toBe(false);
+    const shown = await run(
+      actAs(as(moderator), handlers.update({ id, patch: { visibility: "public" } })),
+    );
+    expect(MutableHashMap.get(cached, id)).toEqual(Option.some(shown));
   });
 });

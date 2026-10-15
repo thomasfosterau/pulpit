@@ -860,7 +860,11 @@ export interface ResourceCacheSeam<Resource, R> {
  * the cache; that write-through is why these exist rather than each route
  * calling the operation directly: the cache serves
  * anonymous reads, and a write that skipped it would leave them on the
- * superseded content until the TTL expired. The chain write runs inside
+ * superseded content until the TTL expired. The re-read runs as the writer,
+ * so a write that hides the row from its own writer fails it
+ * (`NodeNotFound`) after the write committed; the handler then evicts the
+ * entry before failing, so the cache never keeps the superseded resource
+ * (`CACHE-AUTH-005`, pulpit#107). The chain write runs inside
  * `transact` (the handler seam's boundary, website #1883); the re-read
  * stays outside it.
  *
@@ -917,11 +921,19 @@ export const subtypeHandlers = <Resource, E, R>(
   ops: SubtypeOps<Resource, E, R>,
   config: SubtypeHandlersConfig<Resource, R>,
 ): SubtypeHandlers<Resource, E, R> => {
+  // The re-read runs as the writer, after the write committed. When it
+  // fails (the write hid the row from its own writer: a corpus writer below
+  // the view-private rung making a reference row `private`), the entry is
+  // evicted: the cache must never go on serving the superseded resource,
+  // whatever the writer may read now (`CACHE-AUTH-005`, pulpit#107).
   const writeThrough = (id: string) =>
-    Effect.gen(function* () {
-      const resource = yield* ops.get(id);
-      if (Option.isSome(config.cache)) yield* config.cache.value.set(id, resource);
-      return resource;
+    Option.match(config.cache, {
+      onNone: () => ops.get(id),
+      onSome: (cache) =>
+        ops.get(id).pipe(
+          Effect.onError(() => cache.delete(id)),
+          Effect.tap((resource) => cache.set(id, resource)),
+        ),
     });
 
   return {
