@@ -57,6 +57,8 @@ import {
   type ListOrder,
   type ListRequest,
   type Page,
+  type SubtypeDeclarationError,
+  type SubtypeDefinition,
 } from "@thomasfosterau/pulpit/subtype";
 import { isPubliclyServeable, serveablePolicy } from "@thomasfosterau/pulpit/publication";
 import { DocumentHash, documentRef, type DocumentStore } from "@thomasfosterau/pulpit/documents";
@@ -295,7 +297,17 @@ export type _ListOrder = Assert<
 export type _ListRequestOrder = Assert<
   Equals<ListRequest["orderBy"], ReadonlyArray<ListOrder> | undefined>
 >;
+// The leaf's optional sortable allow-list (pulpit#112), and its declaration error.
+export type _SubtypeSortable = Assert<
+  Equals<
+    SubtypeDefinition<LeafRow, unknown, never, never, never>["sortable"],
+    ReadonlyArray<string> | undefined
+  >
+>;
 /* oxlint-enable effect/prefer-option-over-null */
+export type _SubtypeDeclarationError = Assert<
+  Equals<SubtypeDeclarationError["_tag"], "SubtypeDeclarationError">
+>;
 export type _LeafStoreOrder = Assert<
   Equals<Parameters<(typeof leaves)["list"]>[0]["orderBy"], ReadonlyArray<ListOrder>>
 >;

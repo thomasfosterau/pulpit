@@ -68,6 +68,7 @@ import {
   requireCreator,
   requireWriter,
   softDeleteFilter,
+  SubtypeDeclarationError,
   subtypeHandlers,
   type AccessPolicy,
   type FollowerSeam,
@@ -75,6 +76,7 @@ import {
   type LeafRow,
   type ListOrder,
   type ListRequest,
+  type SubtypeDefinition,
   type Viewer,
   type ViewerAccount,
 } from "../src/subtype.ts";
@@ -977,10 +979,14 @@ describe("defineSubtype — list ordering (pulpit#112)", () => {
   /**
    * A reference leaf with a `visibility` column (`public` unless a seed
    * says otherwise), seeded straight through the chain with caller-chosen
-   * ids so the `id` tiebreak is checkable, and a log of every query the
-   * store receives.
+   * ids so the `id` tiebreak is checkable, a log of every query the store
+   * receives and a count of the viewer's reads. `sortable` is the leaf's
+   * allow-list, forwarded as given (`undefined` included).
    */
-  const ranked = async (seeds: ReadonlyArray<Seed>) => {
+  const ranked = async (
+    seeds: ReadonlyArray<Seed>,
+    leaf: Pick<SubtypeDefinition<LeafRow, LeafRow, never, never, never>, "sortable"> = {},
+  ) => {
     const chain = makeInMemoryChainStore();
     const store = makeInMemoryLeafStore(chain, {
       columns: ["title", "rank", "publishedAt", "visibility"],
@@ -988,7 +994,9 @@ describe("defineSubtype — list ordering (pulpit#112)", () => {
     });
     const queries: Array<Parameters<typeof store.list>[0]> = [];
     let viewer: Viewer = anonymous;
+    let viewerReads = 0;
     const ops = defineSubtype({
+      ...leaf,
       type: "taxa",
       access: { kind: "reference" },
       chain,
@@ -1000,7 +1008,10 @@ describe("defineSubtype — list ordering (pulpit#112)", () => {
             return store.list(query);
           }),
       },
-      viewer: Effect.sync(() => viewer),
+      viewer: Effect.sync(() => {
+        viewerReads += 1;
+        return viewer;
+      }),
       policy: gardeneriaPolicy,
       followers: nobody,
       toResource: (row: LeafRow) => row,
@@ -1039,7 +1050,7 @@ describe("defineSubtype — list ordering (pulpit#112)", () => {
           listed.rows.map((row) => row.id),
         ),
       );
-    return { page, ids, queries };
+    return { page, ids, queries, viewerReads: () => viewerReads };
   };
 
   it("keeps the default order, id ascending, when the order is absent or empty", async () => {
@@ -1188,6 +1199,139 @@ describe("defineSubtype — list ordering (pulpit#112)", () => {
     const extra = { ...desc("rank"), raw: "DESC NULLS FIRST" };
     await ids([extra, asc("title"), asc("rank"), desc("title")]);
     expect(queries.map((query) => query.orderBy)).toEqual([[desc("rank"), asc("title")]]);
+  });
+
+  it("compares bigints by value, past a double's precision", async () => {
+    const big = 2n ** 64n;
+    const { ids } = await ranked([
+      seed("a", { rank: big + 1n }),
+      seed("b", { rank: big }),
+      seed("c", { rank: null }),
+      seed("d", { rank: 0n }),
+      seed("e", { rank: -1n }),
+    ]);
+    // As doubles, 2^64 and 2^64 + 1 tie, and `id` would put `a` first.
+    expect(await ids([asc("rank")])).toEqual(["e", "d", "b", "a", "c"]);
+    expect(await ids([desc("rank")])).toEqual(["a", "b", "d", "e", "c"]);
+  });
+
+  it('closes the order with id by code point, as uuid or a COLLATE "C" text id sorts', async () => {
+    const { ids } = await ranked([
+      seed("\u{1F600}", { title: "same" }),
+      seed("�", { title: "same" }),
+      seed("z", { title: "same" }),
+    ]);
+    // UTF-16's `<` would put U+1F600 (a surrogate pair from U+D83D) before U+FFFD.
+    const expected = ["z", "�", "\u{1F600}"];
+    expect(await ids([])).toEqual(expected);
+    expect(await ids([asc("title")])).toEqual(expected);
+  });
+
+  it("checks the order before the viewer is read", async () => {
+    const { page, queries, viewerReads } = await ranked([seed("a", { rank: 1 })]);
+    const refused = await run(Effect.flip(page({ orderBy: [asc("secret")] })));
+    expect(refused).toEqual(new InvalidListOrder({ type: "taxa", column: "secret" }));
+    expect(viewerReads()).toBe(0);
+    expect(queries).toEqual([]);
+    await run(page({ orderBy: [asc("rank")] }));
+    expect(viewerReads()).toBe(1);
+  });
+
+  it("refuses an order not shaped as one with InvalidListOrder, never a defect", async () => {
+    const { page, queries, viewerReads } = await ranked([seed("a", { title: "Oak" })]);
+    /** A request whose `orderBy` is `value`, as an unchecked caller might send it. */
+    const unchecked = (value: Schema.Json) => {
+      const order: Pick<ListRequest, "orderBy"> = { orderBy: [] };
+      Reflect.set(order, "orderBy", value);
+      return order;
+    };
+    const refused = await run(
+      Effect.forEach(
+        [
+          [{ column: 42, direction: "asc" }],
+          [null],
+          ["title"],
+          "title",
+          { column: "title", direction: "asc" },
+          42,
+        ],
+        (orderBy) => Effect.flip(page(unchecked(orderBy))),
+        { concurrency: 1 },
+      ),
+    );
+    expect(refused).toEqual([
+      new InvalidListOrder({ type: "taxa", column: "" }),
+      new InvalidListOrder({ type: "taxa", column: "" }),
+      new InvalidListOrder({ type: "taxa", column: "" }),
+      new InvalidListOrder({ type: "taxa", column: "" }),
+      // An object where an array belongs: the caller's own column, still refused.
+      new InvalidListOrder({ type: "taxa", column: "title" }),
+      new InvalidListOrder({ type: "taxa", column: "" }),
+    ]);
+    expect(queries).toEqual([]);
+    expect(viewerReads()).toBe(0);
+  });
+
+  it("sorts only by a declared sortable allow-list, refusing a declared column outside it", async () => {
+    const seeds = [
+      seed("a", { title: "Oak", rank: 2 }),
+      seed("b", { title: "Ash", rank: 1 }),
+      seed("c", { title: "Elm", rank: 3 }),
+    ];
+    const { ids, page, queries, viewerReads } = await ranked(seeds, {
+      sortable: ["title", "id"],
+    });
+    expect(await ids([asc("title")])).toEqual(["b", "c", "a"]);
+    expect(await ids([desc("id")])).toEqual(["c", "b", "a"]);
+    const refused = await run(
+      Effect.forEach(
+        [[asc("rank")], [asc("title"), desc("visibility")], [asc("secret")]],
+        (orderBy) => Effect.flip(page({ orderBy })),
+        { concurrency: 1 },
+      ),
+    );
+    expect(refused).toEqual([
+      new InvalidListOrder({ type: "taxa", column: "rank" }),
+      new InvalidListOrder({ type: "taxa", column: "visibility" }),
+      new InvalidListOrder({ type: "taxa", column: "secret" }),
+    ]);
+    // Only the two admitted orders reached the viewer and the store.
+    expect(viewerReads()).toBe(2);
+    expect(queries.map((query) => query.orderBy)).toEqual([[asc("title")], [desc("id")]]);
+  });
+
+  it("throws SubtypeDeclarationError when a sortable entry is not a column of the view", async () => {
+    await expect(ranked([], { sortable: ["title", "secret"] })).rejects.toThrow(
+      SubtypeDeclarationError,
+    );
+    await expect(ranked([], { sortable: ["title", "secret"] })).rejects.toThrow(
+      "taxa: sortable names 'secret', which is not a column of the view",
+    );
+    // An empty list is a valid declaration: nothing but the default order.
+    const { page } = await ranked([seed("a", {})], { sortable: [] });
+    expect(await run(Effect.flip(page({ orderBy: [asc("id")] })))).toEqual(
+      new InvalidListOrder({ type: "taxa", column: "id" }),
+    );
+    expect((await run(page({}))).rows.map((row) => row.id)).toEqual(["a"]);
+  });
+
+  it("without a sortable list (omitted or undefined), every declared view column sorts", async () => {
+    const columns = ["id", "action", "ownerId", "title", "rank", "publishedAt", "visibility"];
+    const listed = await Promise.all(
+      Arr.map([{}, { sortable: undefined }], async (leaf) => {
+        const { page, queries } = await ranked([seed("a", { rank: 1 })], leaf);
+        await run(
+          Effect.forEach(columns, (column) => page({ orderBy: [desc(column)] }), {
+            concurrency: 1,
+          }),
+        );
+        return queries.map((query) => query.orderBy);
+      }),
+    );
+    expect(listed).toEqual([
+      Arr.map(columns, (column) => [desc(column)]),
+      Arr.map(columns, (column) => [desc(column)]),
+    ]);
   });
 
   it("never changes membership or the total: the privacy, soft-delete and where filters apply as before (SEC-AUTH-ENUM-001)", async () => {
