@@ -1156,8 +1156,26 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     { label: "tombstoned private", state: { name: "n", visibility: "private" }, deleted: true },
   ];
 
-  const operations = ["update", "restore", "delete", "getVersion", "restoreVersion"] as const;
+  /**
+   * Every gated operation. The history reads run twice: at version `0n`,
+   * which every seeded row has, and at {@link ABSENT_VERSION}, which none
+   * has, so a chain lookup that ran before the gate would answer a hidden
+   * row `VersionNotFound` where a missing id answers `NodeNotFound`.
+   */
+  const operations = [
+    "update",
+    "restore",
+    "delete",
+    "getVersion",
+    "restoreVersion",
+    "getVersion absent",
+    "restoreVersion absent",
+  ] as const;
   type Operation = (typeof operations)[number];
+  /** A version no seeded row reaches. */
+  const ABSENT_VERSION = 99n;
+  const absentVersion = (operation: Operation) =>
+    operation === "getVersion absent" || operation === "restoreVersion absent";
 
   /** A fresh reference leaf seeded (by an admin) with every row, plus a missing id. */
   const referenceLeaf = (policy: AccessPolicy, columns: ReadonlyArray<string>) => {
@@ -1209,6 +1227,8 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
       Match.when("delete", () => leaf.ops.delete(id)),
       Match.when("getVersion", () => leaf.ops.getVersion(id, 0n)),
       Match.when("restoreVersion", () => leaf.ops.restoreVersion(id, 0n)),
+      Match.when("getVersion absent", () => leaf.ops.getVersion(id, ABSENT_VERSION)),
+      Match.when("restoreVersion absent", () => leaf.ops.restoreVersion(id, ABSENT_VERSION)),
       Match.exhaustive,
     );
 
@@ -1221,7 +1241,9 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
   /**
    * What `get` implies for `operation` on a row: the gate's answer for a
    * caller below the rung, `get`'s `NodeNotFound` for a row it hides, and
-   * otherwise the chain's own answer (only `update` refuses a tombstone).
+   * otherwise the chain's own answer (only `update` refuses a tombstone,
+   * and a history read at an absent version is `VersionNotFound` only for a
+   * row `get` serves).
    */
   const implied = (
     viewer: Viewer,
@@ -1235,6 +1257,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
       onSome: (account) => {
         if (!policy.canWriteCorpus(account)) return Option.some("Forbidden");
         if (Option.isSome(got)) return got;
+        if (absentVersion(operation)) return Option.some("VersionNotFound");
         return operation === "update" && tombstoned ? Option.some("NodeNotFound") : Option.none();
       },
     });
@@ -1324,7 +1347,11 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
         Arr.flatMap(operations, (operation) =>
           Arr.map([...seeds.map((seed) => seed.label), "missing"], (label) => [
             `${operation} ${label}`,
-            hiddenFromContributor.includes(label) ? Option.some("NodeNotFound") : Option.none(),
+            hiddenFromContributor.includes(label)
+              ? Option.some("NodeNotFound")
+              : absentVersion(operation)
+                ? Option.some("VersionNotFound")
+                : Option.none(),
           ]),
         ),
       ),
@@ -1348,6 +1375,16 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     expect(moderatorAnswers["getVersion tombstoned private"]).toEqual(Option.none());
     expect(moderatorAnswers["restoreVersion private"]).toEqual(Option.none());
     expect(moderatorAnswers["getVersion missing"]).toEqual(Option.some("NodeNotFound"));
+    // An absent version is no oracle: hidden and missing rows answer alike.
+    expect(curatorAnswers["getVersion absent tombstoned public"]).toEqual(
+      Option.some("NodeNotFound"),
+    );
+    expect(curatorAnswers["restoreVersion absent private"]).toEqual(Option.some("VersionNotFound"));
+    expect(archivistAnswers["restoreVersion absent private"]).toEqual(Option.some("NodeNotFound"));
+    expect(archivistAnswers["getVersion absent missing"]).toEqual(Option.some("NodeNotFound"));
+    expect(moderatorAnswers["getVersion absent tombstoned private"]).toEqual(
+      Option.some("VersionNotFound"),
+    );
   });
 });
 
