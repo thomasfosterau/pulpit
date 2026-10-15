@@ -42,10 +42,11 @@ WordPress clients expect positive integer ids (the core route pattern is `(?P<id
 
 Both answer per input, in input order, duplicates included:
 
-- `encode(nodeIds)` answers each node id's wire id. In integer mode it reads the codec once for the whole batch, deduplicated, and fails `UnencodableNodeId` (`unmapped` or `invalid-integer`) if the codec has no positive safe integer for a node, which is an application defect: the adapter encodes only nodes the read gate has let through.
-- `decode(wireIds)` answers the node id each wire id names, or `Option.none()`. In integer mode a wire id that isn't a positive safe integer (`0`, a negative, a fraction, an exponent, a non-numeric string, one above `Number.MAX_SAFE_INTEGER`) is none without reaching the codec; a string must be decimal digits, and leading zeros read as decimal, as WordPress's `absint` reads them (`007` is 7). An integer the codec doesn't know is none too. `decode` fails only with the codec's own error, never on a malformed input.
+- `encode(nodeIds)` answers each node id's wire id. In integer mode it reads the codec once for the whole batch, deduplicated, and fails `UnencodableNodeId` if the codec has no integer for a node (`unmapped`), answers one that isn't a positive safe integer (`invalid-integer`), or answers one integer for two distinct node ids in the batch (`duplicate-integer`), each an application defect: the adapter encodes only nodes the read gate has let through.
+- `decode(wireIds)` answers the node id each wire id names, or `Option.none()`. In integer mode a wire id that isn't a positive safe integer (`0`, a negative, a fraction, an exponent, a non-numeric string, one above `Number.MAX_SAFE_INTEGER`) is none without reaching the codec; a string must be decimal digits, and leading zeros read as decimal, as WordPress's `absint` reads them (`007` is 7). An integer the codec doesn't know is none too. `decode` fails only with the codec's own error (its error type is the codec's `E` alone), never on a malformed input; a throwing `isNodeId` is a defect of the effect, never a synchronous throw.
+- **A `decode` batch is capped at the kernel's `MAX_SET_VALUES`** (1000, duplicates counted; `SEC-INPUT-003`), the cap on the `= ANY($values)` set the decoded ids feed. Past it, every wire id decodes to none and the codec isn't read, failing closed as the kernel's `anyOf` does. That is closed for an `include` list or a path id, but not for `exclude`, where excluding nothing is open: the adapter caps `include`, `exclude` and every other id list itself, before `decode` (pulpit#86).
 
-**Unknown, malformed and hidden ids answer alike (`SEC-AUTH-ENUM-001`).** Every none is answered exactly as a hidden or missing row is (`404 rest_post_invalid_id`), never as a `400` or a `500`, and a decoded id still goes through the kernel's read gate. Integer ids are guessable where UUIDs aren't, so this is what keeps them from confirming that a hidden node exists.
+**Unknown, malformed and hidden ids answer alike (`SEC-AUTH-ENUM-001`).** Every none is answered exactly as a hidden or missing row is (`404 rest_post_invalid_id`), never as a `400` or a `500`, and a decoded id still goes through the kernel's read gate. Integer ids are guessable where UUIDs aren't, so this is what keeps them from confirming that a hidden node exists. The answer is the same; the timing is not: a malformed id skips the codec, an unknown one costs one codec read, and a hidden one a codec read and a store read. That is the same timing residue the kernel accepts between a missing and a hidden row.
 
 ```ts
 import { deepStrictEqual } from "node:assert";
@@ -85,14 +86,14 @@ Filled by the application; pulpit never mints or stores the integer, and no libr
 interface IdCodec<E, R> {
   readonly encode: (
     nodeIds: ReadonlyArray<string>,
-  ) => Effect.Effect<ReadonlyMap<string, number>, E, R>;
+  ) => Effect.Effect<HashMap.HashMap<string, number>, E, R>;
   readonly decode: (
     integers: ReadonlyArray<number>,
-  ) => Effect.Effect<ReadonlyMap<number, string>, E, R>;
+  ) => Effect.Effect<HashMap.HashMap<number, string>, E, R>;
 }
 ```
 
-- **Suggested storage (the application's concern).** A `bigserial` column beside the node identity table (`core.node.wp_id bigserial UNIQUE`, or a table of its own keyed by node id), so each node gets an integer once, at insert. `encode` is one `id = ANY($nodeIds)` read and `decode` one `wp_id = ANY($integers)` read, each returning the rows found as a map keyed by its input. A `bigint` above `Number.MAX_SAFE_INTEGER` can't be served; `encode` fails `UnencodableNodeId` for it.
+- **Suggested storage (the application's concern).** A `bigserial` column beside the node identity table (`core.node.wp_id bigserial UNIQUE`, or a table of its own keyed by node id), so each node gets an integer once, at insert. `encode` is one `id = ANY($nodeIds)` read and `decode` one `wp_id = ANY($integers)` read, each returning the rows found as a `HashMap` keyed by its input. A driver that reads `int8` / `bigint` as a string (node-postgres and postgres.js do by default) must convert it with `Number` before keying the `decode` map, and in the `encode` map's values: a `HashMap` keyed by `"42"` has no entry for `42`, so every id silently decodes to none and every request 404s. A `bigint` above `Number.MAX_SAFE_INTEGER` can't be served; `encode` fails `UnencodableNodeId` for it.
 - **Method contract.** Each method is one read for the whole batch. An id the codec doesn't know is absent from the map, never a failure; `E` is the codec's own failure (its query error) and `R` its requirements. It applies no policy: the adapter encodes only nodes the read gate has let through, and passes every decoded id through the gate. `integerIds` hands it only non-empty, deduplicated batches, and `decode` only positive safe integers.
 - **Stability.** A node's integer never changes and is never reused, and it is unique across every node type the adapter serves (WordPress clients cache by id, and `/posts/{id}` and `/pages/{id}` share one id space).
 - **What it discloses.** A sequence reveals creation order and roughly how many nodes exist, to anyone holding two readable ids. An application for which that matters can fill the codec from a non-sequential integer instead, or serve `stringIds`.

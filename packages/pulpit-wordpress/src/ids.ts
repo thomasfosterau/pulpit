@@ -11,7 +11,12 @@
  * one `decode` every wire id in an `include` / `exclude` list or a `{id}`
  * path segment, so the codec is read once per call, never once per id
  * (`PERF-DB-001`). Each answers per input, in input order, duplicates
- * included.
+ * included. A `decode` batch is bounded by the kernel's `MAX_SET_VALUES`
+ * (1000, duplicates counted), the cap on the `= ANY($values)` set the decoded
+ * ids feed (`SEC-INPUT-003`): past it, every wire id decodes to
+ * `Option.none()` and the codec isn't read, failing closed as the kernel's
+ * `anyOf` does past the cap. A caller turning wire ids into an exclusion
+ * must cap the list itself first, since excluding none is not closed there.
  *
  * A wire id that names no node decodes to `Option.none()`, whether the codec
  * doesn't know it or it is no WordPress id at all (`0`, `-1`, `1.5`, `abc`, an
@@ -50,6 +55,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Str from "effect/String";
+import { MAX_SET_VALUES } from "@thomasfosterau/pulpit/filter";
 
 // ── The seam ──────────────────────────────────────────────────────────
 
@@ -96,8 +102,10 @@ export type WireId = number | string;
 /**
  * The failure of {@link integerIds}' `encode` when the application's codec
  * breaks its contract for a node the adapter is about to serve: it has no
- * integer for the node (`unmapped`), or answers one that isn't a positive safe
- * integer (`invalid-integer`). The node is already readable, so this is an
+ * integer for the node (`unmapped`), answers one that isn't a positive safe
+ * integer (`invalid-integer`), or answers one integer for two distinct node
+ * ids in one batch (`duplicate-integer`, naming the later of the two), which
+ * would have two nodes share a WordPress id. The node is already readable, so this is an
  * application defect, never a hidden row; the adapter answers it as a server
  * error.
  *
@@ -107,36 +115,56 @@ export class UnencodableNodeId extends Schema.TaggedError<UnencodableNodeId>()(
   "UnencodableNodeId",
   {
     nodeId: Schema.String,
-    reason: Schema.Literals(["unmapped", "invalid-integer"]),
+    reason: Schema.Literals(["unmapped", "invalid-integer", "duplicate-integer"]),
   },
 ) {}
 
 /**
- * The id mode the adapter reads and writes ids through, built by
- * {@link integerIds} or {@link stringIds}. `W` is the wire id it emits
- * (`number` or `string`), `E` its failure and `R` its requirements.
+ * The name of the id mode whose wire id is `W`: `integer` for `number`,
+ * `string` for `string`.
  *
  * @since 0.1.0
  */
-export interface WireIds<W extends WireId, E, R> {
-  /** Which mode this is: `integer` over a codec, or `string` passthrough. */
-  readonly mode: "integer" | "string";
+export type WireIdMode<W extends WireId> = W extends number ? "integer" : "string";
+
+/**
+ * The id mode the adapter reads and writes ids through, built by
+ * {@link integerIds} or {@link stringIds}. `W` is the wire id it emits
+ * (`number` or `string`), `EncodeError` and `DecodeError` the failures of
+ * `encode` and `decode`, and `R` their requirements.
+ *
+ * @since 0.1.0
+ */
+export interface WireIds<W extends WireId, EncodeError, DecodeError, R> {
+  /**
+   * Which mode this is, tied to `W`: `integer` over a codec, or `string`
+   * passthrough.
+   */
+  readonly mode: WireIdMode<W>;
   /**
    * The wire id of each node id, in input order, duplicates included: one
-   * codec read for the whole batch (none for an empty one). Fails with `E`
-   * (the codec's failure) or, in integer mode, {@link UnencodableNodeId}.
+   * codec read for the whole batch (none for an empty one). Fails with
+   * `EncodeError`: in integer mode the codec's failure or
+   * {@link UnencodableNodeId}.
    */
-  readonly encode: (nodeIds: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<W>, E, R>;
+  readonly encode: (
+    nodeIds: ReadonlyArray<string>,
+  ) => Effect.Effect<ReadonlyArray<W>, EncodeError, R>;
   /**
    * The node id each wire id names, in input order, duplicates included, or
    * `Option.none()` for one that names no node (`SEC-AUTH-ENUM-001`): one
-   * codec read for the whole batch, and none when no input is a valid id.
-   * Fails only with the codec's `E`, never on a malformed input.
+   * codec read for the whole batch, and none when no input is a valid id or
+   * the batch is past `MAX_SET_VALUES` (`SEC-INPUT-003`). Fails only with
+   * `DecodeError` (in integer mode, the codec's failure), never on a
+   * malformed input.
    */
   readonly decode: (
     wireIds: ReadonlyArray<WireId>,
-  ) => Effect.Effect<ReadonlyArray<Option.Option<string>>, E, R>;
+  ) => Effect.Effect<ReadonlyArray<Option.Option<string>>, DecodeError, R>;
 }
+
+/** Whether a decode batch is past the kernel's literal-set cap. */
+const isPastCap = (wireIds: ReadonlyArray<WireId>): boolean => wireIds.length > MAX_SET_VALUES;
 
 // ── Integer ids ───────────────────────────────────────────────────────
 
@@ -163,16 +191,40 @@ const toWordPressInteger = (wireId: WireId): Option.Option<number> => {
 };
 
 /**
+ * The first of `nodeIds` (distinct) whose integer in `found` an earlier node
+ * id already holds, or none: two nodes must never share a WordPress id.
+ */
+const firstSharedInteger = (
+  nodeIds: ReadonlyArray<string>,
+  found: HashMap.HashMap<string, number>,
+): Option.Option<string> => {
+  const holders = Arr.reduce(nodeIds, HashMap.empty<number, string>(), (held, nodeId) =>
+    Option.match(HashMap.get(found, nodeId), {
+      onNone: () => held,
+      onSome: (integer) => (HashMap.has(held, integer) ? held : HashMap.set(held, integer, nodeId)),
+    }),
+  );
+  return Arr.findFirst(nodeIds, (nodeId) =>
+    Option.exists(HashMap.get(found, nodeId), (integer) =>
+      Option.exists(HashMap.get(holders, integer), (holder) => holder !== nodeId),
+    ),
+  );
+};
+
+/**
  * Integer ids over the application's {@link IdCodec}: the adapter's default
  * mode. `encode` answers each node id's integer, failing with
- * {@link UnencodableNodeId} if the codec has none or answers a value that
- * isn't a positive safe integer. `decode` answers `Option.none()` for a wire
+ * {@link UnencodableNodeId} if the codec has none, answers a value that isn't
+ * a positive safe integer, or answers one integer for two distinct node ids.
+ * `decode` answers `Option.none()` for a wire
  * id that isn't a positive safe integer (`0`, a negative, a fraction, a
  * non-numeric string, one above `Number.MAX_SAFE_INTEGER`) without consulting
  * the codec, and for an integer the codec doesn't know: both answer as a
  * hidden row does (`SEC-AUTH-ENUM-001`), never as a bad request or a server
  * error. Each method reads the codec at most once per call, with the batch
- * deduplicated (`PERF-DB-001`).
+ * deduplicated (`PERF-DB-001`); a `decode` batch past `MAX_SET_VALUES`
+ * decodes to none throughout without reading it (`SEC-INPUT-003`). `decode`
+ * fails only with the codec's `E`.
  *
  * @example
  * ```ts
@@ -207,11 +259,14 @@ const toWordPressInteger = (wireId: WireId): Option.Option<number> => {
  */
 export const integerIds = <E, R>(
   codec: IdCodec<E, R>,
-): WireIds<number, E | UnencodableNodeId, R> => ({
+): WireIds<number, E | UnencodableNodeId, E, R> => ({
   mode: "integer",
   encode: (nodeIds) =>
-    Arr.isReadonlyArrayNonEmpty(nodeIds)
-      ? Effect.flatMap(codec.encode(Arr.dedupe(nodeIds)), (found) =>
+    Effect.suspend(() => {
+      const unique = Arr.dedupe(nodeIds);
+      if (!Arr.isReadonlyArrayNonEmpty(unique)) return Effect.succeed([]);
+      return Effect.flatMap(codec.encode(unique), (found) =>
+        Effect.flatMap(
           Effect.forEach(
             nodeIds,
             (nodeId) =>
@@ -225,18 +280,27 @@ export const integerIds = <E, R>(
             // Each step is a pure lookup in the one map already read.
             { concurrency: 1 },
           ),
-        )
-      : Effect.succeed([]),
-  decode: (wireIds) => {
-    const integers = wireIds.map(toWordPressInteger);
-    const wanted = Arr.dedupe(Arr.getSomes(integers));
-    if (!Arr.isReadonlyArrayNonEmpty(wanted)) {
-      return Effect.succeed(integers.map(() => Option.none()));
-    }
-    return Effect.map(codec.decode(wanted), (found) =>
-      integers.map(Option.flatMap((integer) => HashMap.get(found, integer))),
-    );
-  },
+          (encoded) =>
+            Option.match(firstSharedInteger(unique, found), {
+              onNone: () => Effect.succeed(encoded),
+              onSome: (nodeId) =>
+                Effect.fail(new UnencodableNodeId({ nodeId, reason: "duplicate-integer" })),
+            }),
+        ),
+      );
+    }),
+  decode: (wireIds) =>
+    Effect.suspend(() => {
+      if (isPastCap(wireIds)) return Effect.succeed(wireIds.map(() => Option.none<string>()));
+      const integers = wireIds.map(toWordPressInteger);
+      const wanted = Arr.dedupe(Arr.getSomes(integers));
+      if (!Arr.isReadonlyArrayNonEmpty(wanted)) {
+        return Effect.succeed(integers.map(() => Option.none<string>()));
+      }
+      return Effect.map(codec.decode(wanted), (found) =>
+        integers.map(Option.flatMap((integer) => HashMap.get(found, integer))),
+      );
+    }),
 });
 
 // ── String ids ────────────────────────────────────────────────────────
@@ -261,9 +325,11 @@ export interface StringIdsOptions {
  * The opt-in string-id mode, for clients that tolerate string ids: node ids
  * pass through unchanged in both directions and no codec is read. `decode`
  * answers `Option.some` of each string `isNodeId` accepts, and
- * `Option.none()` for a number or a rejected string; whether the node exists
+ * `Option.none()` for a number or a rejected string, and none throughout for
+ * a batch past `MAX_SET_VALUES` (`SEC-INPUT-003`); whether the node exists
  * and is readable is the read gate's to answer, as for any id
- * (`SEC-AUTH-ENUM-001`). It never fails.
+ * (`SEC-AUTH-ENUM-001`). It never fails; an `isNodeId` that throws is a
+ * defect of the returned effect, never a synchronous throw.
  *
  * @example
  * ```ts
@@ -286,16 +352,18 @@ export interface StringIdsOptions {
 export const stringIds = (
   // oxlint-disable-next-line effect/prefer-option-over-null -- the optional-parameter form of the `?: T | undefined` convention (AGENTS.md → Conventions); absent is every default
   options?: StringIdsOptions | undefined,
-): WireIds<string, never, never> => {
+): WireIds<string, never, never, never> => {
   const isNodeId = options?.isNodeId ?? Str.isNonEmpty;
   return {
     mode: "string",
     encode: (nodeIds) => Effect.succeed(Arr.copy(nodeIds)),
     decode: (wireIds) =>
-      Effect.succeed(
-        wireIds.map((wireId) =>
-          Predicate.isString(wireId) && isNodeId(wireId) ? Option.some(wireId) : Option.none(),
-        ),
+      Effect.sync(() =>
+        isPastCap(wireIds)
+          ? wireIds.map(() => Option.none<string>())
+          : wireIds.map((wireId) =>
+              Predicate.isString(wireId) && isNodeId(wireId) ? Option.some(wireId) : Option.none(),
+            ),
       ),
   };
 };

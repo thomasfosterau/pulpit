@@ -8,15 +8,21 @@
  */
 
 import { describe, expect, it } from "vite-plus/test";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { MAX_SET_VALUES } from "@thomasfosterau/pulpit/filter";
 import { integerIds, stringIds, UnencodableNodeId, type IdCodec } from "../src/ids.ts";
 import { makeInMemoryIdCodec } from "../src/testing.ts";
 
 // oxlint-disable-next-line effect/effect-run-in-body -- the test harness is the runtime boundary the rule asks for
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runSync(effect);
+
+/** What a hostile input or a broken callback throws. */
+class Boom {}
 
 class CodecDown extends Schema.TaggedError<CodecDown>()("CodecDown", {}) {}
 
@@ -35,6 +41,21 @@ const constantCodec = (integer: number): IdCodec<never, never> => ({
 
 const some = Option.some;
 const none = Option.none();
+
+/** Whether an effect dies (a defect), rather than failing or throwing. */
+const dies = <A, E>(effect: Effect.Effect<A, E>): boolean => {
+  // oxlint-disable-next-line effect/effect-run-in-body -- the test harness is the runtime boundary the rule asks for
+  const exit = Effect.runSyncExit(effect);
+  return Exit.isFailure(exit) && Cause.hasDies(exit.cause);
+};
+
+/** A wire-id batch whose every read throws, as a hostile input might. */
+const throwingBatch = (): ReadonlyArray<string> =>
+  new Proxy<Array<string>>(["1"], {
+    get: () => {
+      throw new Boom();
+    },
+  });
 
 describe("integerIds: encode", () => {
   it("answers each node id's integer in input order, duplicates included, from one read", () => {
@@ -74,6 +95,20 @@ describe("integerIds: encode", () => {
 
   it("passes the codec's own failure through", () => {
     expect(run(Effect.flip(integerIds(failingCodec).encode(["a"])))).toEqual(new CodecDown());
+  });
+
+  it("fails duplicate-integer when the codec answers one integer for two node ids", () => {
+    const error = run(Effect.flip(integerIds(constantCodec(5)).encode(["a", "a", "b"])));
+    expect(error).toEqual(new UnencodableNodeId({ nodeId: "b", reason: "duplicate-integer" }));
+  });
+
+  it("encodes one node id repeated as its one integer, never a duplicate", () => {
+    expect(run(integerIds(constantCodec(5)).encode(["a", "a"]))).toEqual([5, 5]);
+  });
+
+  it("dies, never throws, on a batch that throws", () => {
+    const encoded = integerIds(makeInMemoryIdCodec(["a"])).encode(throwingBatch());
+    expect(dies(encoded)).toBe(true);
   });
 });
 
@@ -139,6 +174,25 @@ describe("integerIds: decode", () => {
     expect(codec.decodeCalls()).toEqual([]);
   });
 
+  it(`reads a batch of MAX_SET_VALUES (${MAX_SET_VALUES}) ids, duplicates counted`, () => {
+    const codec = makeInMemoryIdCodec(["a"]);
+    const wireIds = Array.from({ length: MAX_SET_VALUES }, () => "1");
+    expect(run(integerIds(codec).decode(wireIds))).toEqual(wireIds.map(() => some("a")));
+    expect(codec.decodeCalls()).toEqual([[1]]);
+  });
+
+  it("answers none throughout past MAX_SET_VALUES, without reading the codec", () => {
+    // Duplicates count, as the kernel's anyOf counts them: one id, repeated.
+    const wireIds = Array.from({ length: MAX_SET_VALUES + 1 }, () => "1");
+    const decoded = run(integerIds(failingCodec).decode(wireIds));
+    expect(decoded).toEqual(wireIds.map(() => none));
+  });
+
+  it("dies, never throws, on a batch that throws", () => {
+    const decoded = integerIds(makeInMemoryIdCodec(["a"])).decode(throwingBatch());
+    expect(dies(decoded)).toBe(true);
+  });
+
   it("passes the codec's own failure through once a valid id reaches it", () => {
     expect(run(Effect.flip(integerIds(failingCodec).decode(["1"])))).toEqual(new CodecDown());
   });
@@ -171,6 +225,26 @@ describe("stringIds", () => {
     const ids = stringIds({ isNodeId: (wireId) => uuid.test(wireId) });
     const valid = "3f0c4e5a-0000-4000-8000-000000000000";
     expect(run(ids.decode([valid, "1", "not-a-uuid"]))).toEqual([some(valid), none, none]);
+  });
+
+  it("answers none throughout past MAX_SET_VALUES", () => {
+    const ids = stringIds();
+    const atCap = Array.from({ length: MAX_SET_VALUES }, () => "a");
+    expect(run(ids.decode(atCap))).toEqual(atCap.map(some));
+    expect(run(ids.decode([...atCap, "a"]))).toEqual([...atCap, "a"].map(() => none));
+  });
+
+  it("makes an isNodeId that throws a defect, never a synchronous throw", () => {
+    const ids = stringIds({
+      isNodeId: () => {
+        throw new Boom();
+      },
+    });
+    let decoded: Effect.Effect<ReadonlyArray<Option.Option<string>>> = Effect.succeed([]);
+    expect(() => {
+      decoded = ids.decode(["a"]);
+    }).not.toThrow();
+    expect(dies(decoded)).toBe(true);
   });
 
   it("takes an explicit undefined as the default", () => {

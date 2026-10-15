@@ -18,6 +18,7 @@ import {
   type IdCodec,
   type StringIdsOptions,
   type WireId,
+  type WireIdMode,
   type WireIds,
 } from "@thomasfosterau/pulpit-wordpress/ids";
 import {
@@ -66,7 +67,7 @@ export type _CodecDecode = Assert<
 
 type Integers = ReturnType<typeof integerIds<CodecError, CodecDb>>;
 export type _IntegerIds = Assert<
-  Equals<Integers, WireIds<number, CodecError | UnencodableNodeId, CodecDb>>
+  Equals<Integers, WireIds<number, CodecError | UnencodableNodeId, CodecError, CodecDb>>
 >;
 export type _WireIdsEncode = Assert<
   Equals<
@@ -81,20 +82,23 @@ export type _WireIdsDecode = Assert<
     Integers["decode"],
     (
       wireIds: ReadonlyArray<WireId>,
-    ) => Effect.Effect<
-      ReadonlyArray<Option.Option<string>>,
-      CodecError | UnencodableNodeId,
-      CodecDb
-    >
+    ) => Effect.Effect<ReadonlyArray<Option.Option<string>>, CodecError, CodecDb>
   >
 >;
-export type _WireIdsMode = Assert<Equals<Integers["mode"], "integer" | "string">>;
+export type _WireIdsMode = Assert<Equals<Integers["mode"], "integer">>;
+export type _StringIdsMode = Assert<Equals<ReturnType<typeof stringIds>["mode"], "string">>;
+export type _WireIdMode = Assert<
+  Equals<
+    [WireIdMode<number>, WireIdMode<string>, WireIdMode<WireId>],
+    ["integer", "string", "integer" | "string"]
+  >
+>;
 
 /* oxlint-disable effect/prefer-option-over-null -- the assertion must spell the emitted option exactly, and the workspace's optional fields are `?: T | undefined` (AGENTS.md → Conventions) */
 export type _StringIds = Assert<
   Equals<
     typeof stringIds,
-    (options?: StringIdsOptions | undefined) => WireIds<string, never, never>
+    (options?: StringIdsOptions | undefined) => WireIds<string, never, never, never>
   >
 >;
 export type _StringIdsOptions = Assert<
@@ -106,7 +110,10 @@ export type _UnencodableTag = Assert<Equals<UnencodableNodeId["_tag"], "Unencoda
 export type _UnencodableFields = Assert<
   Equals<
     Pick<UnencodableNodeId, "nodeId" | "reason">,
-    { readonly nodeId: string; readonly reason: "unmapped" | "invalid-integer" }
+    {
+      readonly nodeId: string;
+      readonly reason: "unmapped" | "invalid-integer" | "duplicate-integer";
+    }
   >
 >;
 
