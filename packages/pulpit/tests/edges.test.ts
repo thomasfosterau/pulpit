@@ -16,8 +16,9 @@
  *   the endpoint lifecycle (a tombstoned end hides its edges until the node
  *   is restored, except from the view-deleted rung, pulpit#93), the declared
  *   cardinality limits (counting only readable edges with live ends,
- *   pulpit#77 / pulpit#93) and what a create discloses (nothing about a
- *   hidden edge, pulpit#93).
+ *   pulpit#77 / pulpit#93), what a create discloses (nothing about a
+ *   hidden edge, pulpit#93), and a reference end's followers arm agreeing
+ *   with the endpoint leaf's own `get` (pulpit#92).
  *
  * @module tests/edges
  */
@@ -71,6 +72,7 @@ import {
   admin,
   contributor,
   follower,
+  followersOf,
   gardeneriaPolicy,
   makeInMemoryLeafStore,
   member,
@@ -695,6 +697,206 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
       );
     },
   );
+
+  describe("a reference end whose leaf declares a followers column (pulpit#92)", () => {
+    /** The seam's questions, recorded: a non-string column value must never reach it. */
+    const asked: Array<string> = [];
+    const recording: FollowerSeam<Following, never> = {
+      isFollower: (followerId, ownerId) =>
+        Effect.sync(() => {
+          asked.push(ownerId);
+          return followerId === follower.id && ownerId === member.id;
+        }),
+      following: follows.following,
+    };
+    const curators: ReadonlyArray<ColumnValue | typeof ABSENT> = [
+      member.id,
+      otherMember.id,
+      null,
+      ABSENT,
+      42,
+      // What `String` makes of a `NULL`: a string, so it is an account id like any other.
+      "null",
+    ];
+    const curatedRows = Arr.flatMap(actions, (action) =>
+      Arr.flatMap(["public", "followers", "private", "unknown", null], (visibility) =>
+        Arr.map(curators, (curatorId) =>
+          node(
+            `${action}-${String(visibility)}-${curatorId === ABSENT ? "absent" : Predicate.isString(curatorId) ? `"${curatorId}"` : String(curatorId)}`,
+            curatorId === ABSENT ? { visibility } : { visibility, curatorId },
+            action,
+          ),
+        ),
+      ),
+    );
+    const curatedEnd = (
+      columns: ReadonlyArray<string>,
+      // oxlint-disable-next-line effect/prefer-option-over-null -- the declaration's own optional field (AGENTS.md → Conventions)
+      followersOfColumn?: string | undefined,
+    ): EdgeEnd<never, never> => ({
+      column: "termId",
+      type: "terms",
+      access: { kind: "reference", followersOfColumn },
+      nodes: makeInMemoryNodes(columns),
+    });
+    const variants = [
+      ["declaring a column the view carries", ["visibility", "curatorId"], "curatorId"],
+      ["declaring a column the view lacks", ["visibility"], "curatorId"],
+      ["declaring none", ["visibility", "curatorId"], undefined],
+      ["over a view without a visibility column", ["curatorId"], "curatorId"],
+    ] as const;
+
+    it.each(
+      Arr.flatMap(variants, ([variant, columns, column]) =>
+        Arr.map(viewersByPolicy, ([name, viewer, policy]) => ({
+          variant,
+          columns,
+          column,
+          name,
+          viewer,
+          policy,
+        })),
+      ),
+    )("$variant, for $name", async ({ columns, column, viewer, policy }) => {
+      asked.length = 0;
+      const seen = await readings(
+        curatedEnd(columns, column),
+        viewer,
+        curatedRows,
+        recording,
+        policy,
+      );
+      expect(seen.map(({ id, listed }) => [id, listed])).toEqual(
+        seen.map(({ id, readable }) => [id, readable]),
+      );
+      // The seam is asked only about a string, and only for a `followers` row.
+      expect(asked.filter((ownerId) => !Predicate.isString(ownerId))).toEqual([]);
+    });
+
+    it("is not vacuous: a follower reads the followed account's followers rows, and nobody else below the rung does", async () => {
+      const end = curatedEnd(["visibility", "curatorId"], "curatorId");
+      const live = curatedRows.filter((row) => row.action !== "delete");
+      const shown = async (viewer: Viewer) =>
+        (await readings(end, viewer, live, recording)).filter((reading) => reading.readable);
+      const publicIds = live.filter((row) => row["visibility"] === "public").map((row) => row.id);
+      expect((await shown(as(follower))).map(({ id }) => id)).toEqual(
+        live
+          .filter(
+            (row) =>
+              row["visibility"] === "public" ||
+              (row["visibility"] === "followers" && row["curatorId"] === member.id),
+          )
+          .map((row) => row.id),
+      );
+      // The account the column names gets no owner arm.
+      const strangers = [anonymous, as(member), as(otherMember), as(contributor)];
+      expect(
+        await Promise.all(
+          strangers.map(async (viewer) => (await shown(viewer)).map(({ id }) => id)),
+        ),
+      ).toEqual(strangers.map(() => publicIds));
+      expect(await shown(as(moderator))).toHaveLength(live.length);
+      asked.length = 0;
+      await readings(end, as(follower), live, recording);
+      // Once per live `followers` row with a string curator (a `create` and an `update` head each).
+      expect(Arr.dedupe(asked).toSorted()).toEqual([member.id, otherMember.id, "null"].toSorted());
+    });
+
+    it("a declared column the view lacks opens no followers row, fail closed", async () => {
+      const seen = await readings(
+        curatedEnd(["visibility"], "curatorId"),
+        as(follower),
+        curatedRows,
+      );
+      expect(seen.filter(({ listed, readable }) => listed || readable).map(({ id }) => id)).toEqual(
+        curatedRows
+          .filter((row) => row.action !== "delete" && row["visibility"] === "public")
+          .map((row) => row.id),
+      );
+    });
+
+    it("reads as the endpoint leaf's own get does, over the subtype factory's stores", async () => {
+      // oxlint-disable-next-line effect/avoid-native-object-helpers -- `followersOf` takes the native `ReadonlyMap` table the in-memory leaf store's seam is built from
+      const seam = followersOf(new Map([[follower.id, [member.id]]]));
+      let viewer: Viewer = anonymous;
+      const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+        Effect.suspend(() => {
+          viewer = who;
+          return effect;
+        });
+      const chain = makeInMemoryChainStore();
+      const leaves = makeInMemoryLeafStore(chain, ["visibility", "curatorId"]);
+      const terms = defineSubtype({
+        type: "terms",
+        access: { kind: "reference", followersOfColumn: "curatorId" },
+        chain,
+        leaves,
+        viewer: Effect.sync(() => viewer),
+        policy: gardeneriaPolicy,
+        followers: seam,
+        toResource: (row: LeafRow) => row,
+      });
+      const end: EdgeEnd<never, never> = {
+        column: "termId",
+        type: "terms",
+        access: terms.access,
+        nodes: leaves,
+      };
+      const ids = await run(
+        Effect.forEach(
+          Arr.flatMap(["public", "followers", "private"], (visibility) =>
+            Arr.map([member.id, otherMember.id, null], (curatorId) => ({ visibility, curatorId })),
+          ),
+          (state) =>
+            Effect.map(
+              actAs(as(admin), terms.create({ id: Option.none(), state })),
+              ({ id }) => id,
+            ),
+          { concurrency: 1 },
+        ),
+      );
+      /** Each node as the viewer's `get` answers it: whether it reads. */
+      const readBy = (who: Viewer) =>
+        Effect.forEach(
+          ids,
+          (id) => Effect.map(Effect.exit(actAs(who, terms.get(id))), Exit.isSuccess),
+          { concurrency: 1 },
+        );
+      /** Each node as the endpoint predicate answers it. */
+      const endpointBy = (who: Viewer) =>
+        Effect.forEach(
+          ids,
+          (id) =>
+            Effect.flatMap(leaves.get(id), (row) =>
+              canViewEndpoint(end, who, gardeneriaPolicy, seam, row),
+            ),
+          { concurrency: 1 },
+        );
+      const everyone = [...viewers, ["an admin", as(admin)] as const];
+      const answers = await run(
+        Effect.forEach(
+          everyone,
+          ([name, who]) =>
+            Effect.map(
+              Effect.all([readBy(who), endpointBy(who)], { concurrency: 1 }),
+              ([byGet, byEndpoint]) => ({
+                name,
+                byGet,
+                byEndpoint,
+              }),
+            ),
+          { concurrency: 1 },
+        ),
+      );
+      expect(answers.map(({ name, byEndpoint }) => ({ name, answers: byEndpoint }))).toEqual(
+        answers.map(({ name, byGet }) => ({ name, answers: byGet })),
+      );
+      // Not vacuous: the follower reads one followers row the stranger does not.
+      const followerReads = await run(readBy(as(follower)));
+      const strangerReads = await run(readBy(as(otherMember)));
+      expect(followerReads.filter(Boolean).length - strangerReads.filter(Boolean).length).toBe(1);
+    });
+  });
 
   // One case per declared column, so dropping any leg of the shared
   // declared-column check (owner, visibility, draft) fails here (pulpit#79).

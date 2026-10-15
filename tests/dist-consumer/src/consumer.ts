@@ -49,6 +49,8 @@ import { and, eq, type ListFilter } from "@thomasfosterau/pulpit/filter";
 import {
   defineSubtype,
   ownedAccess,
+  referencePrivacyFilter,
+  type LeafAccess,
   type LeafRow,
   type LeafStore,
 } from "@thomasfosterau/pulpit/subtype";
@@ -269,6 +271,30 @@ export type _Get = Assert<
     Effect.Effect<PostDoc, NodeNotFound | StoreFailure, Transaction>
   >
 >;
+
+// A reference leaf's followers column (pulpit#92): an optional field, so
+// the bare declaration still compiles, and the list arm takes it as an
+// optional `Option`.
+export const curatedTerms: LeafAccess = { kind: "reference", followersOfColumn: "curatorId" };
+export const bareTerms: LeafAccess = { kind: "reference" };
+export const curatedFilter = referencePrivacyFilter(
+  Option.none(),
+  {
+    canViewPrivate: () => false,
+    canViewDeleted: () => false,
+    canModerate: () => false,
+    canWriteCorpus: () => false,
+  },
+  leaves.columns,
+  Option.some({
+    access: { kind: "reference", followersOfColumn: "curatorId" },
+    followers: {
+      isFollower: () => Effect.succeed(false),
+      following: (): Subquery => ({ _tag: "Subquery" }),
+    },
+  }),
+);
+export type _CuratedFilter = Assert<Equals<typeof curatedFilter, ListFilter<Subquery>>>;
 
 // ── publication ──────────────────────────────────────────────────────────
 

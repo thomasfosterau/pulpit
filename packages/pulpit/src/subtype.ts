@@ -16,8 +16,10 @@
  * - `reference` — corpus material. Create / update / delete / restore gate on
  *   the corpus-write rung; when the view has a `visibility` column, reads
  *   show only `public` rows below the view-private rung, apart from the
- *   soft-delete axis. A write or history read to an existing row also needs
- *   the row to be one `get` would serve the caller (pulpit#101).
+ *   soft-delete axis, and the `followers` rows whose declared
+ *   `followersOfColumn` names an account the viewer follows (pulpit#92). A
+ *   write or history read to an existing row also needs the row to be one
+ *   `get` would serve the caller (pulpit#101).
  * - `owned` — a member's own row. Create gates on any signed-in account and
  *   stamps the owner; every other write loads the owner and gates on
  *   owner-or-moderator (a missing owner is `NotFound`, never an open gate);
@@ -76,6 +78,7 @@ import * as Schema from "effect/Schema";
 import type { Visibility } from "./content.ts";
 import { always, and, eq, isIn, ne, never, or, type ListFilter } from "./filter.ts";
 import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
+import { canViewReferenceRow, referenceListFilter } from "./internal/reference-columns.ts";
 import {
   defineVersionChain,
   NodeNotFound,
@@ -260,12 +263,30 @@ export const canViewOwned = <R>(
 /**
  * The gate selector, mirroring the registry's `referenceData` ⊕ `owned`
  * flags: an `owned` leaf names the VIEW columns its read paths consult, and
- * `draftColumn` only when the leaf actually writes the flag.
+ * `draftColumn` only when the leaf actually writes the flag. A `reference`
+ * leaf names `followersOfColumn` only when its rows may be `followers`-visible
+ * (pulpit#92).
  *
  * @since 0.1.0
  */
 export type LeafAccess =
-  | { readonly kind: "reference" }
+  | {
+      readonly kind: "reference";
+      /**
+       * The view column that plays the owner's part for a `followers` row:
+       * it holds the id of the account whose followers may read the row
+       * (`PUB-009`). The column is the application's, and holds whatever id
+       * its follower seam takes; no id brand is implied. Only the followers
+       * check reads it: the account it names gets no owner rights (a
+       * `private` row stays the view-private rung's alone), and a value that
+       * is not a string names nobody. Absent, or naming a column the view
+       * lacks, a `followers` row is hidden below the view-private rung.
+       *
+       * @since 0.1.0
+       */
+      // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so the existing `{ kind: "reference" }` declarations keep compiling and a caller can forward its own `undefined`; the omitted key is the absence, read as such by every reader
+      readonly followersOfColumn?: string | undefined;
+    }
   | {
       readonly kind: "owned";
       readonly ownerColumn: string;
@@ -343,7 +364,14 @@ export const softDeleteFilter = <Following>(
 /**
  * The reference-leaf privacy arm (`PUB-009`): `visibility = 'public'` unless
  * the viewer holds the view-private rung, or the view has no visibility
- * column (an Entity leaf rides no such axis). Nothing to opt into.
+ * column (an Entity leaf rides no such axis). Given a followers arm (the
+ * leaf's `access`, declaring `followersOfColumn` over a view that carries
+ * it, and the follower seam), a signed-in viewer also lists the `followers`
+ * rows whose column names an account they follow (pulpit#92):
+ * `visibility = 'followers' AND <followersOfColumn> IN (<following>)`.
+ * Without one (the default, `Option.none()`), a `followers` row is the
+ * view-private rung's alone. `defineSubtype`'s `get` / `getMany` read
+ * the same facts, so they never serve a row this hides.
  *
  * @since 0.1.0
  */
@@ -351,10 +379,20 @@ export const referencePrivacyFilter = <Following>(
   viewer: Viewer,
   policy: AccessPolicy,
   viewColumns: ReadonlySet<string>,
+  followersArm: Option.Option<{
+    readonly access: Extract<LeafAccess, { kind: "reference" }>;
+    readonly followers: FollowerSeam<Following, unknown>;
+  }> = Option.none(),
 ): ListFilter<Following> =>
-  !viewColumns.has("visibility") || Option.exists(viewer, policy.canViewPrivate)
-    ? always
-    : eq("visibility", "public");
+  Option.match(followersArm, {
+    onNone: () => referenceListFilter<Following>({}, viewColumns, publicOrAll(viewer, policy)),
+    onSome: (arm) =>
+      referenceListFilter(arm.access, viewColumns, readScopeFor(viewer, policy, arm.followers)),
+  });
+
+/** A read scope without the follower set: a member reads as the anonymous do. */
+const publicOrAll = <Following>(viewer: Viewer, policy: AccessPolicy): ReadScope<Following> =>
+  Option.exists(viewer, policy.canViewPrivate) ? { kind: "all" } : { kind: "public" };
 
 // ── The write gates ───────────────────────────────────────────────────
 
@@ -636,16 +674,15 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
    * `get` / `getMany` never serve a row `list` hides (SEC-AUTH-ENUM-001): an
    * owned leaf whose view lacks a declared column shows no row, as
    * `ownedListFilter` lists none; a reference row shows only when the view
-   * has no `visibility` column, the viewer holds the view-private rung, or
-   * its visibility is exactly `public`, as `referencePrivacyFilter` lists.
+   * has no `visibility` column, the viewer holds the view-private rung, its
+   * visibility is exactly `public`, or it is exactly `followers` and the
+   * viewer follows the account its declared `followersOfColumn` names, as
+   * `referencePrivacyFilter` lists (pulpit#92). The reference arm is one
+   * shared predicate with `./edges`' `canViewEndpoint`.
    */
   const rowVisible = (viewer: Viewer, row: Row): Effect.Effect<boolean, never, R> => {
     if (access.kind === "reference") {
-      return Effect.succeed(
-        !leaves.columns.has("visibility") ||
-          Option.exists(viewer, policy.canViewPrivate) ||
-          row["visibility"] === "public",
-      );
+      return canViewReferenceRow(access, leaves.columns, viewer, policy, followers, row);
     }
     return ownedColumnsDeclared
       ? canViewOwnedRow(viewer, policy, followers, ownedFacts(access, row))
@@ -733,7 +770,12 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     const privacy =
       access.kind === "owned"
         ? ownedListFilter(access, leaves.columns, readScopeFor(viewer, policy, followers))
-        : referencePrivacyFilter<Following>(viewer, policy, leaves.columns);
+        : referencePrivacyFilter(
+            viewer,
+            policy,
+            leaves.columns,
+            Option.some({ access, followers }),
+          );
     const where = and<Following>(
       softDeleteFilter(viewer, policy, request.includeDeleted),
       privacy,

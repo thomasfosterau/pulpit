@@ -23,6 +23,11 @@
  * - A reference leaf's write and history operations answer every row ×
  *   caller × operation as that caller's `get` implies, and a refused one
  *   writes nothing (pulpit#101).
+ * - A reference leaf's `followers` rows, read through its declared
+ *   `followersOfColumn` (pulpit#92): the list arm's shape, and `get` /
+ *   `getMany` / `list` and the write and history gates agreeing for every
+ *   visibility × curator × tombstone × viewer, a non-string curator never
+ *   reaching the follower seam.
  *
  * @module tests/subtype
  */
@@ -40,7 +45,7 @@ import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import type { Visibility } from "../src/content.ts";
-import { always, and, eq, evaluate, ne, never } from "../src/filter.ts";
+import { always, and, eq, evaluate, isIn, ne, never, or } from "../src/filter.ts";
 import {
   canViewOwned,
   defineSubtype,
@@ -281,6 +286,63 @@ describe("the reference list predicates", () => {
 
   it("a view with no visibility column rides no privacy axis", () => {
     expect(filters(anonymous, false, new Set(["id", "action"]))).toEqual(ne("action", "delete"));
+  });
+
+  describe("the followers arm (pulpit#92)", () => {
+    /** A view's column set, with the `id` and `action` every view carries. */
+    const viewOf = (...columns: ReadonlyArray<string>): ReadonlySet<string> =>
+      // oxlint-disable-next-line effect/avoid-native-object-helpers -- a view's column set is the native `ReadonlySet` `LeafStore.columns` names
+      new Set(["id", "action", ...columns]);
+    const curated = viewOf("visibility", "curatorId");
+    const declared: Extract<LeafAccess, { kind: "reference" }> = {
+      kind: "reference",
+      followersOfColumn: "curatorId",
+    };
+    const privacy = (
+      viewer: Viewer,
+      columns: ReadonlySet<string> = curated,
+      access: Option.Option<Extract<LeafAccess, { kind: "reference" }>> = Option.some(declared),
+    ) =>
+      referencePrivacyFilter(
+        viewer,
+        websitePolicy,
+        columns,
+        Option.map(access, (leaf) => ({ access: leaf, followers: follows })),
+      );
+
+    it("a signed-in viewer also lists the followers rows whose column names an account they follow", () => {
+      expect(privacy(as(follower))).toEqual(
+        or(
+          eq("visibility", "public"),
+          and(eq("visibility", "followers"), isIn("curatorId", follows.following(follower.id))),
+        ),
+      );
+    });
+
+    it("the anonymous list only public rows, and the rung everything", () => {
+      expect(privacy(anonymous)).toEqual(eq("visibility", "public"));
+      expect(privacy(as(admin))).toEqual(always);
+    });
+
+    it("no arm without a declared column the view carries, or without the seam", () => {
+      expect(privacy(as(follower), viewOf("visibility"))).toEqual(eq("visibility", "public"));
+      expect(privacy(as(follower), curated, Option.some({ kind: "reference" }))).toEqual(
+        eq("visibility", "public"),
+      );
+      expect(
+        privacy(
+          as(follower),
+          curated,
+          Option.some({ kind: "reference", followersOfColumn: undefined }),
+        ),
+      ).toEqual(eq("visibility", "public"));
+      // No follower seam: a member lists as the anonymous do.
+      expect(privacy(as(follower), curated, Option.none())).toEqual(eq("visibility", "public"));
+    });
+
+    it("a view with no visibility column still rides no privacy axis", () => {
+      expect(privacy(anonymous, viewOf("curatorId"))).toEqual(always);
+    });
   });
 });
 
@@ -695,7 +757,7 @@ const showColumn = (seed: Seed, column: string): string =>
   });
 
 const labelOf = (seed: Seed): string =>
-  `visibility ${showColumn(seed, "visibility")}, draft ${showColumn(seed, "draft")}, owner ${seed.unstamped === true ? showColumn(seed, "ownerId") : seed.owner.id}${seed.deleted ? ", deleted" : ""}`;
+  `visibility ${showColumn(seed, "visibility")}, draft ${showColumn(seed, "draft")}, owner ${seed.unstamped === true ? showColumn(seed, "ownerId") : seed.owner.id}${Record.has(seed.state, "curatorId") ? `, curator ${showColumn(seed, "curatorId")}` : ""}${seed.deleted ? ", deleted" : ""}`;
 
 /** A leaf over the in-memory seams, seeded through the factory's own `create` and `delete`. */
 const seededLeaf = (
@@ -990,6 +1052,110 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
       expectAgreement(await leaf.reads(viewer));
     });
   });
+
+  describe("a reference leaf with a followers column: visibility × curator × tombstone, for every viewer (pulpit#92)", () => {
+    const curated: Extract<LeafAccess, { kind: "reference" }> = {
+      kind: "reference",
+      followersOfColumn: "curatorId",
+    };
+    /** `member` is followed by `follower`; the rest name nobody anyone follows, or no account at all. */
+    const curators: ReadonlyArray<Seeded> = [member.id, otherMember.id, null, ABSENT, 42];
+    const seeds: ReadonlyArray<Seed> = Arr.flatMap(visibilities, (visibility) =>
+      Arr.flatMap(curators, (curatorId) =>
+        Arr.map([false, true], (deleted) => ({
+          owner: admin,
+          state: { name: "n", visibility, curatorId },
+          deleted,
+        })),
+      ),
+    );
+    const live = seeds.filter((seed) => !seed.deleted);
+    const publicRows = live.filter((seed) => seed.state["visibility"] === "public").map(labelOf);
+
+    it("is not vacuous: a follower reads the followed account's live followers rows, and nobody else below the rung does", async () => {
+      const leaf = await seededLeaf(
+        curated,
+        ["name", "visibility", "curatorId"],
+        gardeneriaPolicy,
+        seeds,
+      );
+      expect(listedRows(await leaf.reads(as(follower)))).toEqual(
+        live
+          .filter(
+            (seed) =>
+              seed.state["visibility"] === "public" ||
+              (seed.state["visibility"] === "followers" && seed.state["curatorId"] === member.id),
+          )
+          .map(labelOf),
+      );
+      // The account the column names has no owner arm: it reads what a stranger reads.
+      const strangers = [anonymous, as(member), as(otherMember), as(contributor)];
+      expect(
+        await Promise.all(strangers.map(async (viewer) => listedRows(await leaf.reads(viewer)))),
+      ).toEqual(strangers.map(() => publicRows));
+      expect(listedRows(await leaf.reads(as(moderator)))).toEqual(seeds.map(labelOf));
+    });
+
+    it("a declared column the view lacks opens no followers row, fail closed", async () => {
+      const leaf = await seededLeaf(curated, ["name", "visibility"], gardeneriaPolicy, seeds);
+      const reads = await leaf.reads(as(follower));
+      expectAgreement(reads);
+      expect(listedRows(reads)).toEqual(publicRows);
+    });
+
+    it("asks the follower seam only about a string", async () => {
+      const asked: Array<unknown> = [];
+      const recording: FollowerSeam<Following, never> = {
+        isFollower: (followerId, ownerId) =>
+          Effect.sync(() => {
+            asked.push(ownerId);
+            return followerId === follower.id && ownerId === member.id;
+          }),
+        following: follows.following,
+      };
+      const leaf = await seededLeaf(
+        curated,
+        ["name", "visibility", "curatorId"],
+        gardeneriaPolicy,
+        seeds,
+        recording,
+      );
+      expectAgreement(await leaf.reads(as(follower)));
+      expect(asked.length).toBeGreaterThan(0);
+      expect(asked.filter((ownerId) => !Predicate.isString(ownerId))).toEqual([]);
+    });
+
+    it.each(
+      matrix([
+        {
+          variant: "declaring a column the view carries",
+          access: curated,
+          columns: ["name", "visibility", "curatorId"],
+        },
+        {
+          variant: "declaring a column the view lacks",
+          access: curated,
+          columns: ["name", "visibility"],
+        },
+        {
+          variant: "declaring none",
+          access: { kind: "reference" } as const,
+          columns: ["name", "visibility", "curatorId"],
+        },
+        {
+          variant: "over a view without a visibility column",
+          access: curated,
+          columns: ["name", "curatorId"],
+        },
+      ]),
+    )(
+      "$variant, $policyName policy, for $viewerName",
+      async ({ access, columns, policy, viewer }) => {
+        const leaf = await seededLeaf(access, columns, policy, seeds);
+        expectAgreement(await leaf.reads(viewer));
+      },
+    );
+  });
 });
 
 describe("defineSubtype — an owner column holding no string is no owner (pulpit#85)", () => {
@@ -1145,6 +1311,26 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     { label: "public", state: { name: "n", visibility: "public" }, deleted: false },
     { label: "private", state: { name: "n", visibility: "private" }, deleted: false },
     { label: "followers", state: { name: "n", visibility: "followers" }, deleted: false },
+    {
+      label: "followers of the member",
+      state: { name: "n", visibility: "followers", curatorId: member.id },
+      deleted: false,
+    },
+    {
+      label: "followers of another",
+      state: { name: "n", visibility: "followers", curatorId: otherMember.id },
+      deleted: false,
+    },
+    {
+      label: "private, curated by the member",
+      state: { name: "n", visibility: "private", curatorId: member.id },
+      deleted: false,
+    },
+    {
+      label: "tombstoned followers of the member",
+      state: { name: "n", visibility: "followers", curatorId: member.id },
+      deleted: true,
+    },
     { label: "out of the enum", state: { name: "n", visibility: "friends" }, deleted: false },
     { label: "null visibility", state: { name: "n", visibility: null }, deleted: false },
     {
@@ -1177,19 +1363,32 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
   const absentVersion = (operation: Operation) =>
     operation === "getVersion absent" || operation === "restoreVersion absent";
 
+  /** A leaf declaring the followers column the `curatorId` seeds fill (pulpit#92). */
+  const curated: Extract<LeafAccess, { kind: "reference" }> = {
+    kind: "reference",
+    followersOfColumn: "curatorId",
+  };
+  /** The corpus writer without a view rung follows `member`: the followers arm is its only way in. */
+  // oxlint-disable-next-line effect/avoid-native-object-helpers -- `followersOf` takes the native `ReadonlyMap` table the other seams in this file pass
+  const corpusFollowers = followersOf(new Map([[contributor.id, [member.id]]]));
+
   /** A fresh reference leaf seeded (by an admin) with every row, plus a missing id. */
-  const referenceLeaf = (policy: AccessPolicy, columns: ReadonlyArray<string>) => {
+  const referenceLeaf = (
+    policy: AccessPolicy,
+    columns: ReadonlyArray<string>,
+    access: Extract<LeafAccess, { kind: "reference" }>,
+  ) => {
     const chain = makeInMemoryChainStore();
     const leaves = makeInMemoryLeafStore(chain, columns);
     let viewer: Viewer = anonymous;
     const ops = defineSubtype({
       type: "terms",
-      access: { kind: "reference" },
+      access,
       chain,
       leaves,
       viewer: Effect.sync(() => viewer),
       policy,
-      followers: nobody,
+      followers: corpusFollowers,
       toResource: (row: LeafRow) => ({ id: row.id, name: row["name"] }),
     });
     const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
@@ -1263,7 +1462,12 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     });
 
   /** Every row × operation as one viewer gets it: `get`'s answer, the operation's, and whether the chain grew. */
-  const probe = (policy: AccessPolicy, columns: ReadonlyArray<string>, viewer: Viewer) =>
+  const probe = (
+    policy: AccessPolicy,
+    columns: ReadonlyArray<string>,
+    viewer: Viewer,
+    access: Extract<LeafAccess, { kind: "reference" }> = { kind: "reference" },
+  ) =>
     Effect.forEach(
       Arr.flatMap(operations, (operation) =>
         Arr.map([...seeds.map((seed) => seed.label), "missing"], (label) => ({
@@ -1274,7 +1478,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
       ({ operation, label }) =>
         Effect.gen(function* () {
           // A fresh leaf per probe: a write that lands changes the row.
-          const leaf = yield* referenceLeaf(policy, columns);
+          const leaf = yield* referenceLeaf(policy, columns, access);
           const id = yield* Option.match(
             Arr.findFirst(leaf.ids, ([seeded]) => seeded === label),
             {
@@ -1298,17 +1502,30 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
       { concurrency: 1 },
     );
 
-  const columnVariants: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
-    ["with a visibility column", ["name", "visibility", "draft"]],
-    ["over a view without a visibility column", ["name", "draft"]],
+  const columnVariants: ReadonlyArray<
+    readonly [string, ReadonlyArray<string>, Extract<LeafAccess, { kind: "reference" }>]
+  > = [
+    [
+      "with a visibility column",
+      ["name", "visibility", "draft", "curatorId"],
+      { kind: "reference" },
+    ],
+    [
+      "over a view without a visibility column",
+      ["name", "draft", "curatorId"],
+      { kind: "reference" },
+    ],
+    ["declaring a followers column", ["name", "visibility", "draft", "curatorId"], curated],
+    ["declaring a followers column the view lacks", ["name", "visibility", "draft"], curated],
   ];
 
   it.each(
-    Arr.flatMap(columnVariants, ([variant, columns]) =>
+    Arr.flatMap(columnVariants, ([variant, columns, access]) =>
       Arr.flatMap(policies, ([policyName, policy]) =>
         Arr.map(viewers, ([viewerName, viewer]) => ({
           variant,
           columns,
+          access,
           policyName,
           policy,
           viewerName,
@@ -1316,14 +1533,17 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
         })),
       ),
     ),
-  )("$variant, $policyName policy, for $viewerName", async ({ columns, policy, viewer }) => {
-    const results = await run(probe(policy, columns, viewer));
-    expect(results.map(({ operation, label, answer }) => ({ operation, label, answer }))).toEqual(
-      results.map(({ operation, label, implied }) => ({ operation, label, answer: implied })),
-    );
-    // A refused operation writes nothing.
-    expect(results.filter((result) => Option.isSome(result.answer) && result.wrote)).toEqual([]);
-  });
+  )(
+    "$variant, $policyName policy, for $viewerName",
+    async ({ columns, access, policy, viewer }) => {
+      const results = await run(probe(policy, columns, viewer, access));
+      expect(results.map(({ operation, label, answer }) => ({ operation, label, answer }))).toEqual(
+        results.map(({ operation, label, implied }) => ({ operation, label, answer: implied })),
+      );
+      // A refused operation writes nothing.
+      expect(results.filter((result) => Option.isSome(result.answer) && result.wrote)).toEqual([]);
+    },
+  );
 
   it("is not vacuous: a corpus writer without the view rungs reaches no hidden row, and the rungs restore access", async () => {
     const answers = async (who: ViewerAccount) =>
@@ -1335,6 +1555,10 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     const hiddenFromContributor = [
       "private",
       "followers",
+      "followers of the member",
+      "followers of another",
+      "private, curated by the member",
+      "tombstoned followers of the member",
       "out of the enum",
       "null visibility",
       "tombstoned public",
@@ -1385,6 +1609,40 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     expect(moderatorAnswers["getVersion absent tombstoned private"]).toEqual(
       Option.some("VersionNotFound"),
     );
+  });
+
+  it("is not vacuous: a declared followers column opens its followers rows to a following corpus writer, and nothing else (pulpit#92)", async () => {
+    const answers = async (who: ViewerAccount) =>
+      Record.fromEntries(
+        (
+          await run(
+            probe(splitPolicy, ["name", "visibility", "draft", "curatorId"], as(who), curated),
+          )
+        ).map((result) => [`${result.operation} ${result.label}`, result.answer] as const),
+      );
+    const contributorAnswers = await answers(contributor);
+    const rowsByAnswer = [
+      ["followers of the member", Option.none()],
+      ["followers of another", Option.some("NodeNotFound")],
+      ["followers", Option.some("NodeNotFound")],
+      ["private, curated by the member", Option.some("NodeNotFound")],
+      ["tombstoned followers of the member", Option.some("NodeNotFound")],
+    ] as const;
+    const gated = ["update", "restore", "delete", "getVersion", "restoreVersion"] as const;
+    const pairs = Arr.flatMap(gated, (operation) =>
+      Arr.map(rowsByAnswer, ([label, answer]) => [`${operation} ${label}`, answer] as const),
+    );
+    expect(pairs.map(([key]) => [key, contributorAnswers[key]])).toEqual(pairs);
+    // The account the column names, below the corpus rung, still meets the rung first.
+    const memberAnswers = await answers(member);
+    expect(memberAnswers["update followers of the member"]).toEqual(Option.some("Forbidden"));
+    // The same writer without the declaration is shut out, as before pulpit#92.
+    const undeclared = Record.fromEntries(
+      (
+        await run(probe(splitPolicy, ["name", "visibility", "draft", "curatorId"], as(contributor)))
+      ).map((result) => [`${result.operation} ${result.label}`, result.answer] as const),
+    );
+    expect(undeclared["update followers of the member"]).toEqual(Option.some("NodeNotFound"));
   });
 });
 

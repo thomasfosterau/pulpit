@@ -25,8 +25,8 @@
  *
  * - **An edge is readable only if the viewer can read every end**
  *   (`EDGE-001`). Each end's node is checked against its own leaf's access
- *   declaration, as that leaf's list filter reads it (pulpit#73 tracks
- *   where the subtype's own `get` still reads it more loosely). `get` answers a
+ *   declaration, as that leaf's own `get` and list filter read it (a
+ *   reference leaf's followers arm included, pulpit#92). `get` answers a
  *   hidden edge as {@link EdgeNotFound} and `list` omits it, never `Forbidden`
  *   (`SEC-AUTH-ENUM-001`); a related list (the edges at one node) is a `list`
  *   filtered on that end, so it omits every edge whose other end is hidden.
@@ -87,12 +87,12 @@ import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import { always, and, eq, or, type ListFilter } from "./filter.ts";
 import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
+import { canViewReferenceRow, referenceListFilter } from "./internal/reference-columns.ts";
 import {
   Forbidden,
   MAX_PAGE_LIMIT,
   ownedListFilter,
   readScopeFor,
-  referencePrivacyFilter,
   Unauthorized,
   type AccessPolicy,
   type FollowerSeam,
@@ -301,7 +301,9 @@ const liveFilter = <Following>(): ListFilter<Following> =>
  * as the leaf's own `get` reads it, pulpit#93), and its leaf's access admits
  * the viewer, a tombstone's included. A reference node is
  * readable when its view has no `visibility` column, the viewer holds the
- * view-private rung, or it is `public`; an owned node through
+ * view-private rung, it is `public`, or it is `followers` and the viewer
+ * follows the account its leaf's declared `followersOfColumn` names (the
+ * predicate `defineSubtype`'s `get` runs, pulpit#92); an owned node through
  * `canViewOwned`'s predicate, where an owner column holding no string reads
  * as no owner, matching no viewer and never asked of the follower seam. An
  * owned declaration naming a column the view lacks reads nothing. Never
@@ -323,11 +325,7 @@ export const canViewEndpoint = <E, R>(
   const { access } = end;
   const { columns } = end.nodes;
   if (access.kind === "reference") {
-    return Effect.succeed(
-      !columns.has("visibility") ||
-        Option.exists(viewer, policy.canViewPrivate) ||
-        node.value["visibility"] === "public",
-    );
+    return canViewReferenceRow(access, columns, viewer, policy, followers, node.value);
   }
   if (!declaresColumns(access, columns)) return Effect.succeed(false);
   return canViewOwnedRow(viewer, policy, followers, ownedFacts(access, node.value));
@@ -338,7 +336,8 @@ export const canViewEndpoint = <E, R>(
  * holds the view-deleted rung) and readable by the viewer, over the columns
  * {@link endpointColumn} names. The same facts as {@link canViewEndpoint},
  * rendered as a `ListFilter` — the owned arm is `ownedListFilter`, the
- * reference arm `referencePrivacyFilter` — so the two never disagree. A
+ * reference arm `referencePrivacyFilter`'s, followers arm included
+ * (pulpit#92) — so the two never disagree. A
  * family with no ends gets `always`.
  *
  * @since 0.1.0
@@ -359,7 +358,7 @@ export const endpointFilter = <Following, E, R>(
           lifecycle,
           end.access.kind === "owned"
             ? ownedListFilter(end.access, end.nodes.columns, scope)
-            : referencePrivacyFilter<Following>(viewer, policy, end.nodes.columns),
+            : referenceListFilter(end.access, end.nodes.columns, scope),
         ),
       ),
     ),
