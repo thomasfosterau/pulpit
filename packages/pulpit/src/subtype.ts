@@ -77,6 +77,7 @@ import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type { Visibility } from "./content.ts";
 import { always, and, eq, isIn, ne, never, or, type ListFilter } from "./filter.ts";
@@ -872,10 +873,18 @@ export interface ResourceCacheSeam<Resource, R> {
  * superseded content until the TTL expired. The re-read runs as the writer,
  * so a write that hides the row from its own writer fails it
  * (`NodeNotFound`) after the write committed; the handler then evicts the
- * entry before failing, so the cache never keeps the superseded resource
- * (`CACHE-AUTH-005`, pulpit#107). The chain write runs inside
- * `transact` (the handler seam's boundary, website #1883); the re-read
- * stays outside it.
+ * entry before failing with the re-read's own error, as it does for any
+ * re-read failure (a store error, a defect, an interrupt), so the cache
+ * never keeps the superseded resource (`CACHE-AUTH-005`, pulpit#107). The
+ * chain write runs inside `transact` (the handler seam's boundary, website
+ * #1883); the re-read stays outside it. An interrupt can't separate a
+ * committed write from its write-through or eviction: a failure of the
+ * boundary after the operation itself succeeded (an interrupt included)
+ * evicts too, since the write may have committed, while a write the gate
+ * or the precondition refuses never touches the cache, even when a
+ * `transact` that retries internally rolled back an earlier attempt that
+ * wrote: only the last attempt counts. That holds for `delete`'s eviction
+ * as well.
  *
  * `update`, `delete` and `restoreVersion` take the operations' optional
  * expected version ({@link Precondition}); the HTTP layer maps a request's
@@ -922,7 +931,10 @@ export interface SubtypeHandlersConfig<Resource, R> {
  * Wrap a leaf's operations as its handler record. An owned leaf may still
  * be cached — `CACHE-AUTH-005` is enforced by the cache's serveability
  * policy (`./publication`'s `isPubliclyServeable` with `owned: true`), which
- * only ever holds its public rows.
+ * only ever holds its public rows, and by the handlers' own eviction when a
+ * committed write can't be re-read or written through (see
+ * {@link SubtypeHandlers}). Each write fails with its operation's error, or
+ * with the re-read's.
  *
  * @since 0.1.0
  */
@@ -930,39 +942,74 @@ export const subtypeHandlers = <Resource, E, R>(
   ops: SubtypeOps<Resource, E, R>,
   config: SubtypeHandlersConfig<Resource, R>,
 ): SubtypeHandlers<Resource, E, R> => {
+  const evict = (id: string) =>
+    Option.match(config.cache, { onNone: () => Effect.void, onSome: (cache) => cache.delete(id) });
+
+  // A write runs under `uninterruptibleMask`: the chain write (inside
+  // `transact`) and the re-read stay interruptible through `restore`, but
+  // the step between them, and the cache step after, cannot be skipped by
+  // an interrupt, so a committed write always reaches its write-through or
+  // eviction (`CACHE-AUTH-005`). Once the operation itself has succeeded
+  // (its gate passed and the chain write ran), any later failure of the
+  // boundary, an interrupt included, evicts: the write may have committed.
+  // A request the gate refused never evicts, so a forbidden request can't
+  // bust the cache. The flag is cleared at the start of each attempt, so a
+  // `transact` that retries internally, rolling back an attempt that wrote,
+  // evicts only when its last attempt wrote.
+  const committed = <A extends ChainWrite, E2>(
+    restore: <AX, EX, RX>(effect: Effect.Effect<AX, EX, RX>) => Effect.Effect<AX, EX, RX>,
+    operation: Effect.Effect<A, E2, R>,
+  ) =>
+    Effect.flatMap(Ref.make(Option.none<string>()), (wrote) =>
+      restore(
+        config.transact(
+          Effect.andThen(
+            Ref.set(wrote, Option.none()),
+            Effect.tap(operation, ({ id }) => Ref.set(wrote, Option.some(id))),
+          ),
+        ),
+      ).pipe(
+        Effect.onError(() =>
+          Effect.flatMap(
+            Ref.get(wrote),
+            Option.match({ onNone: () => Effect.void, onSome: evict }),
+          ),
+        ),
+      ),
+    );
+
   // The re-read runs as the writer, after the write committed. When it
   // fails (the write hid the row from its own writer: a corpus writer below
-  // the view-private rung making a reference row `private`), the entry is
-  // evicted: the cache must never go on serving the superseded resource,
-  // whatever the writer may read now (`CACHE-AUTH-005`, pulpit#107).
-  const writeThrough = (id: string) =>
-    Option.match(config.cache, {
-      onNone: () => ops.get(id),
-      onSome: (cache) =>
-        ops.get(id).pipe(
-          Effect.onError(() => cache.delete(id)),
-          Effect.tap((resource) => cache.set(id, resource)),
-        ),
-    });
+  // the view-private rung making a reference row `private`; a store error;
+  // an interrupt), the entry is evicted: the cache must never go on serving
+  // the superseded resource, whatever the writer may read now
+  // (`CACHE-AUTH-005`, pulpit#107).
+  const write = <E2>(operation: Effect.Effect<ChainWrite, E2, R>) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.flatMap(committed(restore, operation), ({ id }) =>
+        Option.match(config.cache, {
+          onNone: () => restore(ops.get(id)),
+          onSome: (cache) =>
+            restore(ops.get(id)).pipe(
+              Effect.onError(() => cache.delete(id)),
+              Effect.tap((resource) => cache.set(id, resource)),
+            ),
+        }),
+      ),
+    );
 
   return {
     list: ops.list,
     get: ops.get,
-    create: (input) =>
-      Effect.flatMap(config.transact(ops.create(input)), ({ id }) => writeThrough(id)),
-    update: (input) =>
-      Effect.flatMap(config.transact(ops.update(input)), ({ id }) => writeThrough(id)),
+    create: (input) => write(ops.create(input)),
+    update: (input) => write(ops.update(input)),
     delete: (id, precondition) =>
-      Effect.gen(function* () {
-        yield* config.transact(ops.delete(id, precondition));
-        if (Option.isSome(config.cache)) yield* config.cache.value.delete(id);
-      }),
+      Effect.uninterruptibleMask((restore) =>
+        Effect.andThen(committed(restore, ops.delete(id, precondition)), evict(id)),
+      ),
     restoreVersion: (input) =>
-      Effect.flatMap(
-        config.transact(
-          ops.restoreVersion(input.id, input.version, { expectedVersion: input.expectedVersion }),
-        ),
-        ({ id }) => writeThrough(id),
+      write(
+        ops.restoreVersion(input.id, input.version, { expectedVersion: input.expectedVersion }),
       ),
   };
 };
