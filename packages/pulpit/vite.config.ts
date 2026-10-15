@@ -88,8 +88,9 @@ export default defineConfig({
       // it is a CI step of its own, so a broken example fails visibly on its
       // own line. Behind `build`, the edge the setup recorded on pulpit#8
       // asks for, so one `vp run -r docgen` also proves the package still
-      // emits; docgen itself rewrites an example's `@thomasfosterau/pulpit`
-      // import to `src/`, never `dist/`.
+      // emits; an example's `@thomasfosterau/pulpit` import still resolves to
+      // `src/`, never `dist/`: docgen rewrites no imports, and the name
+      // resolves through this package's own `exports`, which point at `src/`.
       docgen: {
         command: "docgen",
         dependsOn: ["build"],
