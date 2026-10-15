@@ -39,7 +39,19 @@
     "@changesets/cli",
     "@changesets/changelog-github",
     "@vitest/coverage-istanbul",
-    "fallow"
+    "fallow",
+    // The two workspace packages, for tests/dist-consumer (pulpit#134). That
+    // package resolves them only through its tsconfig `paths` mapping to the
+    // emitted `dist/*.d.ts`, so until `dist/` is built fallow reports them as
+    // unlisted. Declaring them `workspace:*` there would add a `node_modules`
+    // link, and tsc falls back to it (and on to `src/`) when a subpath is
+    // missing from `dist/`, so the check would pass on an incomplete build.
+    // `overrides` and inline suppressions don't apply to this rule, so the
+    // ignore is global. Elsewhere it hides nothing the type gate misses: an
+    // undeclared import of either package has no `node_modules` link (pnpm
+    // hoists no workspace package to the root), so tsc fails with TS2307.
+    "@thomasfosterau/pulpit",
+    "@thomasfosterau/pulpit-wordpress"
   ],
   "rulePacks": ["fallow-rules.json"],
   "rules": {
