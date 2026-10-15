@@ -7,9 +7,10 @@
  * and the follower seam is never asked about it (pulpit#94). The comparison
  * arms (`gt` / `gte` / `lt` / `lte`) and the literal sets (`anyOf` /
  * `noneOf`) follow the same rule (pulpit#113): `NULL > $v`, `NULL = ANY(…)`
- * and `NULL <> ALL(…)` are all `NULL`. A comparison against a column of
- * another type is false, strings order by code point (SQL's `"C"`
- * collation), and an empty `<> ALL` is true even for `NULL`.
+ * and `NULL <> ALL(…)` are all `NULL`. Strings order by code point (SQL's
+ * `"C"` collation), `±Infinity` equals itself, and an empty `<> ALL` is true
+ * even for `NULL`. Outside the contract (a column of another type than the
+ * comparand, `NaN`, an invalid `Date`) `evaluate` fails closed.
  *
  * @module tests/filter
  */
@@ -85,6 +86,27 @@ describe("evaluate — eq / ne against SQL's three-valued reading", () => {
     expect(run(filter, { action: null })).toBe(false);
     expect(run(filter, {})).toBe(false);
     expect(run(filter, { action: "update" })).toBe(true);
+  });
+
+  it("NaN is outside the contract and fails closed: a NaN value is never, a NaN column satisfies neither", () => {
+    // PostgreSQL's `'NaN' = 'NaN'` is true and `'NaN' <> 'NaN'` false, which JavaScript's NaN cannot mirror.
+    expect([eq("c", Number.NaN), ne("c", Number.NaN)]).toEqual([never, never]);
+    const handEq: ListFilter<Following> = { kind: "eq", column: "c", value: Number.NaN };
+    const handNe: ListFilter<Following> = { kind: "ne", column: "c", value: Number.NaN };
+    expect(
+      Array.map([handEq, handNe], (filter) => [
+        run(filter, { c: Number.NaN }),
+        run(filter, { c: 1 }),
+      ]),
+    ).toEqual([
+      [false, false],
+      [false, false],
+    ]);
+    expect([run(eq("c", 1), { c: Number.NaN }), run(ne("c", 1), { c: Number.NaN })]).toEqual([
+      false,
+      false,
+    ]);
+    expect([run(eq("c", 1), { c: 1 }), run(ne("c", 1), { c: 2 })]).toEqual([true, true]);
   });
 });
 
@@ -235,15 +257,45 @@ describe("evaluate — gt / gte / lt / lte against SQL's comparison", () => {
     );
   });
 
-  it("an invalid Date or NaN satisfies none, on either side", () => {
+  it("±Infinity equals itself: gte / lte hold at Infinity / -Infinity, as in SQL", () => {
+    const [inf, negInf] = [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
+    expect(answers(inf, inf)).toEqual([false, true, false, true]);
+    expect(answers(negInf, negInf)).toEqual([false, true, false, true]);
+    expect(answers(inf, Number.MAX_VALUE)).toEqual([true, true, false, false]);
+    expect(answers(negInf, -Number.MAX_VALUE)).toEqual([false, false, true, true]);
+    expect(answers(inf, negInf)).toEqual([true, true, false, false]);
+    expect(answers(1, inf)).toEqual([false, false, true, true]);
+  });
+
+  it("a NaN or invalid-Date comparand is never, and a NaN or invalid-Date column satisfies none", () => {
     // oxlint-disable-next-line effect/use-clock-service -- an `Invalid Date` is the case under test, and DateTime refuses to make one
     const invalid = new Date(Number.NaN);
     expect(Number.isNaN(invalid.getTime())).toBe(true);
-    expect([answers(invalid, NOW), answers(NOW, invalid), answers(Number.NaN, 1)]).toEqual([
-      NONE,
-      NONE,
-      NONE,
-    ]);
+    // PostgreSQL orders NaN above every number; outside the contract, so the constructors fail closed.
+    expect(
+      Array.flatMap([Number.NaN, invalid], (value) =>
+        Array.map([gt, gte, lt, lte], (op) => op("c", value)),
+      ),
+    ).toEqual(Array.makeBy(8, () => never));
+    const handBuilt = (value: Comparable): ReadonlyArray<ListFilter<Following>> =>
+      Array.map(["gt", "gte", "lt", "lte"] as const, (kind) => ({ kind, column: "c", value }));
+    expect(
+      Array.flatMap(
+        [
+          [Number.NaN, Number.NaN],
+          [1, Number.NaN],
+          [Number.NaN, Number.POSITIVE_INFINITY],
+          [invalid, NOW],
+          [NOW, invalid],
+        ] as const,
+        ([column, value]) => Array.map(handBuilt(value), (filter) => run(filter, { c: column })),
+      ),
+    ).toEqual(Array.makeBy(20, () => false));
+    expect([
+      answers(invalid, NOW),
+      answers(Number.NaN, 1),
+      answers(Number.NaN, Number.NaN),
+    ]).toEqual([NONE, NONE, NONE]);
   });
 
   it("over a non-null column of the comparand's type, gt and lte (and gte and lt) are complements", () => {
@@ -255,6 +307,10 @@ describe("evaluate — gt / gte / lt / lte against SQL's comparison", () => {
       ["b", "b"],
       [NOW, NOW],
       [LATER, NOW],
+      [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY],
+      [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY],
+      [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY],
+      [Number.NEGATIVE_INFINITY, 0],
     ];
     expect(
       Array.map(pairs, ([column, value]) => {
@@ -301,17 +357,24 @@ describe("evaluate — anyOf / noneOf against `= ANY(…)` / `<> ALL(…)`", () 
     ]);
   });
 
-  it("noneOf matches a non-null value outside the set; a NULL or absent column satisfies it no more than anyOf", () => {
-    expect(over(noneOf("c", ["a", "b", 1]))).toEqual([
+  it("noneOf matches a non-null value of the set's type outside it; a NULL or absent column satisfies it no more than anyOf", () => {
+    expect(over(noneOf("c", ["a", "b"]))).toEqual([
       false,
       false,
       true,
       false,
       true,
-      true,
+      false,
       false,
       false,
     ]);
+  });
+
+  it("a column of another type than the comparand satisfies no ne / noneOf: fail closed, where SQL coerces or raises", () => {
+    expect(over(ne("c", 1))).toEqual([false, false, false, false, false, false, false, false]);
+    expect(over(ne("c", "1"))).toEqual([true, true, true, false, false, false, false, false]);
+    // A mixed set is itself a type mismatch for every column.
+    expect(over(noneOf("c", ["a", 1]))).toEqual(Array.map(rows, () => false));
   });
 
   it("a one-value set reads as eq / ne over every row", () => {
@@ -355,6 +418,33 @@ describe("evaluate — anyOf / noneOf against `= ANY(…)` / `<> ALL(…)`", () 
     const handNone: ListFilter<Following> = { kind: "noneOf", column: "c", values: pastCap };
     expect(run(handAny, { c: "v0" })).toBe(false);
     expect(run(handNone, { c: "x" })).toBe(false);
+  });
+
+  it("MAX_SET_VALUES counts duplicates", () => {
+    const repeated = Array.makeBy(MAX_SET_VALUES + 1, () => "a");
+    expect([anyOf("c", repeated), noneOf("c", repeated)]).toEqual([never, never]);
+  });
+
+  it("a set holding NaN is never, and a NaN column satisfies neither arm", () => {
+    // PostgreSQL's `'NaN' <> ALL('{NaN}')` is false where JavaScript's `NaN !== NaN` is true: fail closed.
+    expect([anyOf("c", [1, Number.NaN]), noneOf("c", [1, Number.NaN])]).toEqual([never, never]);
+    const handAny: ListFilter<Following> = { kind: "anyOf", column: "c", values: [1, Number.NaN] };
+    const handNone: ListFilter<Following> = {
+      kind: "noneOf",
+      column: "c",
+      values: [1, Number.NaN],
+    };
+    const nanRows: ReadonlyArray<FilterRow> = [{ c: Number.NaN }, { c: 1 }, { c: 2 }];
+    expect(
+      Array.map([handAny, handNone], (filter) => Array.map(nanRows, (row) => run(filter, row))),
+    ).toEqual([
+      [false, false, false],
+      [false, false, false],
+    ]);
+    expect([
+      run(anyOf("c", [1]), { c: Number.NaN }),
+      run(noneOf("c", [1]), { c: Number.NaN }),
+    ]).toEqual([false, false]);
   });
 
   it("the node keeps its own copy of the values", () => {
