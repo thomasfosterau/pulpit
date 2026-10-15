@@ -16,14 +16,14 @@ Hooks are managed by Vite+; the editable [.vite-hooks/pre-commit](.vite-hooks/pr
 
 ## CI expectations
 
-[ci.yml](.github/workflows/ci.yml) runs steps 1–6 of the gates in [AGENTS.md → Verification](AGENTS.md#verification) in one job. [release.yml](.github/workflows/release.yml) runs changesets/action on `trunk`: it opens the version PR while unreleased changesets exist and publishes the package once it merges, via npm trusted publishing (see [PUBLISHING.md](PUBLISHING.md)).
+[ci.yml](.github/workflows/ci.yml) runs steps 1–6 of the gates in [AGENTS.md → Verification](AGENTS.md#verification) in one job. [release.yml](.github/workflows/release.yml) runs changesets/action on `trunk`: it opens the version PR while unreleased changesets exist and publishes each package with a new version once it merges, via npm trusted publishing (see [PUBLISHING.md](PUBLISHING.md)).
 
 ## Pre-PR checklist
 
 1. Run the gates in [AGENTS.md → Verification](AGENTS.md#verification), in order.
-2. A changeset (`pnpm changeset`) for every change to the published package's behaviour.
+2. A changeset (`pnpm changeset`) for every change to a published package's behaviour, naming each package it changes.
 3. `git fetch origin trunk && git rebase origin/trunk`
-4. Docs: `packages/pulpit/README.md` for any exported change or new seam; `packages/pulpit/CLAUDE.md` for a new term or invariant; `SECURITY.md` → Invariant IDs for a newly cited ID.
+4. Docs: the package's `README.md` (`packages/pulpit/` or `packages/pulpit-wordpress/`) for any exported change or new seam; its `CLAUDE.md` for a new term, invariant or boundary rule; `SECURITY.md` → Invariant IDs for a newly cited ID.
 
 ## Running individual checks
 
@@ -31,7 +31,7 @@ Hooks are managed by Vite+; the editable [.vite-hooks/pre-commit](.vite-hooks/pr
 vp lint                                    # lint (Oxlint)
 vp fmt                                     # format (Oxfmt)
 vp run check                               # the whole type gate (includes building dist/)
-vp run --filter ./packages/pulpit check    # the package's type check alone
+vp run --filter ./packages/pulpit check    # one package's type check alone (or ./packages/pulpit-wordpress)
 vp run -r test:unit                        # unit tests
 vp test run tests/some.test.ts             # single file (from inside the package)
 vp run -r build                            # emit dist/

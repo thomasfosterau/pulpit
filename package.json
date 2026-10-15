@@ -3,7 +3,7 @@
   "name": "pulpit-workspace",
   "version": "0.0.0",
   "private": true,
-  "description": "Workspace for @thomasfosterau/pulpit: the versioned-content (CMS) kernel extracted from the website and gardeneria applications, on Effect.",
+  "description": "Workspace for @thomasfosterau/pulpit, the versioned-content (CMS) kernel extracted from the website and gardeneria applications, on Effect, and @thomasfosterau/pulpit-wordpress, its WordPress-compatible read API.",
   "license": "MIT",
   "author": "Thomas Foster <me@thomasfoster.au>",
   "type": "module",

@@ -1,5 +1,9 @@
 {
   "$schema": "https://raw.githubusercontent.com/Effect-TS/language-service/refs/heads/main/schema.json",
   "files": [],
-  "references": [{ "path": "packages/pulpit" }, { "path": "tests/dist-consumer" }]
+  "references": [
+    { "path": "packages/pulpit" },
+    { "path": "packages/pulpit-wordpress" },
+    { "path": "tests/dist-consumer" }
+  ]
 }

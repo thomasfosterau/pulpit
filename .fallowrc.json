@@ -11,10 +11,18 @@
     "packages/pulpit/src/edges.ts",
     "packages/pulpit/tests/**/*.test.ts",
     "packages/pulpit/tests/**/*.types.ts",
+    "packages/pulpit-wordpress/src/index.ts",
+    "packages/pulpit-wordpress/tests/**/*.test.ts",
+    "packages/pulpit-wordpress/tests/**/*.types.ts",
     "tests/dist-consumer/src/*.ts",
     "**/vite.config.ts"
   ],
-  "ignorePatterns": ["**/dist/**", "**/coverage/**", "packages/pulpit/docs/**"],
+  "ignorePatterns": [
+    "**/dist/**",
+    "**/coverage/**",
+    "packages/pulpit/docs/**",
+    "packages/pulpit-wordpress/docs/**"
+  ],
   "ignoreDependencies": [
     "@types/node",
     "effect-solutions",
@@ -31,6 +39,14 @@
     "@changesets/changelog-github",
     "@vitest/coverage-istanbul",
     "fallow"
+  ],
+  "overrides": [
+    {
+      "files": ["tests/dist-consumer/src/**"],
+      "rules": {
+        "unlisted-dependencies": "off"
+      }
+    }
   ],
   "rules": {
     "unused-files": "error",
@@ -50,8 +66,16 @@
   "boundaries": {
     "zones": [
       {
+        "name": "pulpit-internal",
+        "patterns": ["packages/pulpit/src/internal/**", "packages/pulpit/tests/**"]
+      },
+      {
         "name": "pulpit",
         "patterns": ["packages/pulpit/**"]
+      },
+      {
+        "name": "pulpit-wordpress",
+        "patterns": ["packages/pulpit-wordpress/**"]
       },
       {
         "name": "dist-consumer",
@@ -60,12 +84,20 @@
     ],
     "rules": [
       {
+        "from": "pulpit-internal",
+        "allow": ["pulpit"]
+      },
+      {
         "from": "pulpit",
-        "allow": []
+        "allow": ["pulpit-internal"]
+      },
+      {
+        "from": "pulpit-wordpress",
+        "allow": ["pulpit"]
       },
       {
         "from": "dist-consumer",
-        "allow": ["pulpit"]
+        "allow": ["pulpit", "pulpit-wordpress"]
       }
     ]
   },

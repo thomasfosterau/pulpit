@@ -8,14 +8,16 @@
     // an emitted `.d.ts` resolves to the error type, i.e. `any`, and every
     // `Equals<…>` assertion in src/consumer.ts is false against `any`.
     "skipLibCheck": true,
-    // Resolve the package name to the EMITTED declarations rather than the
+    // Resolve each package name to the EMITTED declarations rather than the
     // workspace `exports` (which point at `src/` for the in-repo dev loop) —
-    // which is also why this package declares no dependency on it: the
+    // which is also why this package declares no dependency on either: the
     // mapping below is the whole resolution. Relative to this file;
     // TypeScript 7 removed `baseUrl`.
     "paths": {
       "@thomasfosterau/pulpit": ["../../packages/pulpit/dist/index.d.ts"],
-      "@thomasfosterau/pulpit/*": ["../../packages/pulpit/dist/*.d.ts"]
+      "@thomasfosterau/pulpit/*": ["../../packages/pulpit/dist/*.d.ts"],
+      "@thomasfosterau/pulpit-wordpress": ["../../packages/pulpit-wordpress/dist/index.d.ts"],
+      "@thomasfosterau/pulpit-wordpress/*": ["../../packages/pulpit-wordpress/dist/*.d.ts"]
     }
   },
   "include": ["src"]

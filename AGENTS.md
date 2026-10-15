@@ -2,7 +2,7 @@
 
 `CLAUDE.md` is a symlink to this file.
 
-`@thomasfosterau/pulpit` is the versioned-content (CMS) kernel extracted from two applications, `thomasfosterau/website` (the foundation) and `thomasfosterau/gardeneria` (the newer, multi-tenant copy), as scoped by the epic pulpit#1 and the decisions on website#2015. Those apps are its consumers. Its toolchain (pnpm + Vite+ (`vp`), a strict catalog, the TypeScript 6/7 split, the Effect oxlint preset, fallow) is copied from them via `thomasfosterau/effect-drizzle-ext` and `thomasfosterau/effect-jsonapi`, so the library builds against exactly what they run. It is a single-package workspace: `packages/pulpit` is the published package and `tests/dist-consumer` is a private declaration check.
+`@thomasfosterau/pulpit` is the versioned-content (CMS) kernel extracted from two applications, `thomasfosterau/website` (the foundation) and `thomasfosterau/gardeneria` (the newer, multi-tenant copy), as scoped by the epic pulpit#1 and the decisions on website#2015. Those apps are its consumers. Its toolchain (pnpm + Vite+ (`vp`), a strict catalog, the TypeScript 6/7 split, the Effect oxlint preset, fallow) is copied from them via `thomasfosterau/effect-drizzle-ext` and `thomasfosterau/effect-jsonapi`, so the library builds against exactly what they run. It is a two-package workspace: `packages/pulpit` is the published kernel, `packages/pulpit-wordpress` (`@thomasfosterau/pulpit-wordpress`) is its WordPress-compatible read API (pulpit#86; a scaffold, `"private": true` until the owner sets up its publishing), and `tests/dist-consumer` is a private declaration check of both. The adapter peers on the kernel and the kernel never imports the adapter.
 
 ## Common pitfalls
 
@@ -11,7 +11,7 @@
 - **No application vocabulary.** No app tree (the registry's _flags_ are generic; its entries are the app's), no id brands beyond what an app injects, no Hyperdrive, no migrations tooling.
 - **Every external version lives in `pnpm-workspace.yaml`** (`catalogMode: strict` rejects anything else in a `package.json`). After editing the catalog, run `pnpm install` and commit the regenerated `pnpm-lock.yaml`; a stale lockfile fails CI with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`.
 
-The kernel's own invariants, terms and import boundary, including the seams-before-dependencies rule, are in [`packages/pulpit/CLAUDE.md`](packages/pulpit/CLAUDE.md); they are not restated here.
+The kernel's own invariants, terms and import boundary, including the seams-before-dependencies rule, are in [`packages/pulpit/CLAUDE.md`](packages/pulpit/CLAUDE.md), and the adapter's boundary in [`packages/pulpit-wordpress/CLAUDE.md`](packages/pulpit-wordpress/CLAUDE.md); they are not restated here.
 
 ## Conventions
 
@@ -19,16 +19,16 @@ The kernel's own invariants, terms and import boundary, including the seams-befo
 - **Relative imports carry their `.ts` extension** (`rewriteRelativeImportExtensions` in `tsconfig.base.json`).
 - **Tests import from `vite-plus/test`**, never `vitest`. `tests/<module>.test.ts` mirrors the module it covers; `tests/*.types.ts` holds compile-time assertions, type-checked by `vp run check` and never executed.
 - **Every export has a TSDoc summary** that says what it is for, before any tag; an operation's doc names its error channel and any invariant ID it honours. Every export and every module header (`src/index.ts` aside) also carries `@since <version>`, the release it first ships in: `vp run -r docgen` fails on a missing one.
-- **`vp run -r docgen` executes your `@example`s.** `@effect/docgen` (4.x) compiles each JSDoc `@example` under `src/` with the native `tsc` (`examplesCompilerOptions`) and, because `packages/pulpit/docgen.json` sets `"runExamples": true` (4.x only type-checks without it), then runs it under `tsx`. So an example is a complete program: it imports everything it uses, the package itself by its name (`@thomasfosterau/pulpit`) exactly as a consumer would, uses no `declare const` (nothing to run), and must not throw. Docgen rewrites no imports: the examples are written under `packages/pulpit/docs/examples/`, inside the package, so the name resolves through the package's own `exports`, which point at `src/`. Docgen injects nothing either: an assertion is the cheapest way to show a result, and you import the function by name (`import { strictEqual } from "node:assert";`). Docgen parses `src/` with `ts-morph` (`parseCompilerOptions` in `docgen.json`). `src/index.ts` is excluded there, so keep its docs free of code samples.
+- **`vp run -r docgen` executes your `@example`s.** `@effect/docgen` (4.x) compiles each JSDoc `@example` under `src/` with the native `tsc` (`examplesCompilerOptions`) and, because each package's `docgen.json` sets `"runExamples": true` (4.x only type-checks without it), then runs it under `tsx`. So an example is a complete program: it imports everything it uses, the package itself by its name (`@thomasfosterau/pulpit`, or `@thomasfosterau/pulpit-wordpress`) exactly as a consumer would, uses no `declare const` (nothing to run), and must not throw. Docgen rewrites no imports: the examples are written under the package's `docs/examples/`, inside the package, so the name resolves through the package's own `exports`, which point at `src/`. Docgen injects nothing either: an assertion is the cheapest way to show a result, and you import the function by name (`import { strictEqual } from "node:assert";`). Docgen parses `src/` with `ts-morph` (`parseCompilerOptions` in `docgen.json`). `src/index.ts` is excluded there, so keep its docs free of code samples.
 - **Tagged errors are `Schema.TaggedError<Self>()(tag, fields)`** (see Effect below).
 
 ## Commands
 
 - `pnpm install` — dependencies, the Vite+ git hooks (pre-commit runs `vp staged`: format + lint on staged files) and, through `prepare`, the Effect-patched `tsc` / `oxlint`. There is no pre-push hook.
-- `vp check` — format + lint (Oxfmt + Oxlint). `vp run check` — the type gate: the package's `check` (which also type-checks `tests/**/*.types.ts`) plus the dist-consumer declaration check, which builds `dist/` and asserts the emitted types. They are different commands.
-- `vp run -r test:unit` — unit tests (pure code; no database).
-- `vp run -r build` — emit `dist/`.
-- `vp run -r docgen` — build, then type-check and execute every JSDoc `@example` and generate the API docs under `packages/pulpit/docs/` (gitignored).
+- `vp check` — format + lint (Oxfmt + Oxlint). `vp run check` — the type gate: each package's `check` (which also type-checks its `tests/**/*.types.ts`) plus the dist-consumer declaration check, which builds both packages' `dist/` and asserts the emitted types. They are different commands. The root `check` task in `vite.config.ts` lists each package's `check` by name, so a new package must be added there.
+- `vp run -r test:unit` — unit tests (pure code; no database), in every package.
+- `vp run -r build` — emit each package's `dist/`.
+- `vp run -r docgen` — build, then type-check and execute every JSDoc `@example` and generate the API docs under each package's `docs/` (gitignored).
 - `fallow audit --base origin/trunk` — the fallow gate over your change set.
 - `pnpm changeset` — add a changeset (see Branches and pull requests).
 
@@ -46,13 +46,13 @@ Before you report work as done, run the gates below in order and quote each comm
 6. `pnpm audit --audit-level high`
 7. `fallow audit --base origin/trunk`
 
-Steps 1–6 are what CI runs (`.github/workflows/ci.yml`); step 7 is the fallow gate the PreToolUse hook also runs on commit and push. For CI parity from a clean tree, first run `rm -rf node_modules packages/*/node_modules tests/*/node_modules && pnpm install --frozen-lockfile`: a warm tree hides a peer that a dependency requires but `packages/pulpit/package.json` does not declare (declare it under `peerDependencies` via `catalog:peers`).
+Steps 1–6 are what CI runs (`.github/workflows/ci.yml`); step 7 is the fallow gate the PreToolUse hook also runs on commit and push. For CI parity from a clean tree, first run `rm -rf node_modules packages/*/node_modules tests/*/node_modules && pnpm install --frozen-lockfile`: a warm tree hides a peer that a dependency requires but a package's `package.json` does not declare (declare it under `peerDependencies` via `catalog:peers`, or `workspace:^` for the kernel).
 
 ## Branches and pull requests
 
 - Branch off `trunk` (name it `issue-<n>-<slug>` for issue work); PR against `trunk`; squash-merge with a conventional-commit prefix (`feat:`, `fix:`, `docs:`, `chore:`). Rebase onto `origin/trunk` before opening or updating a PR; never merge `trunk` into your branch (GitHub's Update-branch button merges, so don't use it).
 - Agent work uses git worktrees under `.claude/worktrees/`, one per branch. Start every command that targets a worktree with an explicit `cd`, and confirm with `git log -1` before committing.
-- Every change to the published package's behaviour carries a changeset (`pnpm changeset`); docs-, CI- and tooling-only changes need none. Never publish or version by hand: the Release workflow opens the "Version Packages" PR and the owner merges it (see [PUBLISHING.md](PUBLISHING.md)).
+- Every change to a published package's behaviour carries a changeset (`pnpm changeset`); docs-, CI- and tooling-only changes need none. The packages version independently; a private package (`pulpit-wordpress`, for now) takes none. Never publish or version by hand: the Release workflow opens the "Version Packages" PR and the owner merges it (see [PUBLISHING.md](PUBLISHING.md)).
 - These are standing approvals, overriding any default "don't open a PR unless asked": **open a PR** against `trunk` once a commit is pushed; **watch it to merge or close**, investigating CI failures and review comments as they arrive and rebasing promptly when it goes conflicting; **keep the PR body current** as the implementation diverges from it.
 - GitHub writes go to `thomasfosterau/pulpit` only; pass `-R thomasfosterau/pulpit` whenever the cwd might be another checkout. Never write to the consuming applications' repositories, the library repositories beneath this one or any other repository without the owner's explicit approval for that action in the current session; if another repository needs something, say so in the PR body. Use the `gh` CLI for GitHub operations, even when GitHub MCP tools are available.
 
@@ -77,6 +77,7 @@ Consult effect-solutions before writing Effect code (`vp exec effect-solutions l
 - `README.md` — the landing page.
 - `packages/pulpit/README.md` — the API reference consumers read on npm, including the seams' expected shapes.
 - `packages/pulpit/CLAUDE.md` — the kernel's boundary, invariants and terms.
+- `packages/pulpit-wordpress/README.md` and `CLAUDE.md` — the same two for the WordPress adapter.
 - `CONTRIBUTING.md` — setup, hooks and CI for humans; the gate list is [Verification](#verification) above.
 - `PUBLISHING.md` — the release pipeline and one-time owner setup. `SECURITY.md` — reporting, supply-chain posture and the invariant-ID table.
 - Decisions go in issue comments. There is no `docs/` tree.

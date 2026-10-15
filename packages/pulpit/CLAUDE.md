@@ -1,10 +1,10 @@
 # packages/pulpit — `@thomasfosterau/pulpit`
 
-The versioned-content kernel: the only published package in this repo.
+The versioned-content kernel. The repo's other package, `packages/pulpit-wordpress`, builds on it; this package never imports that one.
 
 ## Boundary
 
-- Import only `effect` and `@thomasfosterau/effect-jsonapi`, both peers. Never import Drizzle, a framework or `node:*`: `./registry` and `./content` load in the browser, and the stores are the application's. Nothing from this workspace either (`.fallowrc.json` zone `pulpit`, no outbound rule).
+- Import only `effect` and `@thomasfosterau/effect-jsonapi`, both peers. Never import Drizzle, a framework or `node:*`: `./registry` and `./content` load in the browser, and the stores are the application's. Nothing from this workspace either: in `.fallowrc.json` the zone `pulpit` may import only `pulpit-internal`, its own `src/internal/` and `tests/` (split out so that `pulpit-wordpress` can reach the kernel only through its public modules), and never `pulpit-wordpress`.
 - **Seams before dependencies.** The kernel is written against explicit seam interfaces (the version-chain store, the read scope, the handlers config, the `serveable` hook) because the packages that will fill them were not published when it was written. As of 2026-10-08: effect-jsonapi's server skeleton (`ResourceHandlers`, `Assemble`, `ServerErrors`, `Negotiation`, `Registry`, `Group.flat`, `FlatQuery`) has shipped (exported since 0.15.0; pulpit's peer is `>=0.16.0`), so the handlers seam can be wired (pulpit#5); effect-auth's read scope is on its `trunk` but unpublished (release PR effect-auth#177); effect-drizzle-ext is unpublished; and the resource cache has no planned library (effect-web dropped its Cloudflare package on effect-web#33), so the application fills that seam. Never vendor code from an unpublished package to fill a seam: write against the interface, state its expected shape in [README.md → Seams](README.md#seams), keep the in-memory fakes under `tests/` as its reference semantics, and stop-and-report where a real dependency is needed. The real implementation is a follow-up once its package publishes.
 
 ## Invariants
