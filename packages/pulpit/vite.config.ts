@@ -5,10 +5,20 @@ import { defineConfig } from "vite-plus";
  * node_modules bookkeeping churn (pnpm rewrites `.modules.yaml` on every
  * install), with the lockfile back explicitly so a dependency upgrade still
  * invalidates a type-check or a test run.
+ *
+ * The bare `packages/pulpit` exclusion drops one auto-tracked entry: the
+ * listing of this directory, which `tsc` reads to expand the tsconfig
+ * `include` (pulpit#66). Without it, a gitignored directory appearing beside
+ * `src/` (vitest's `node_modules/.vite`, docgen's `docs/`) misses `check` and
+ * `build` once, and in CI misses `build` at both steps, since `test:unit`
+ * runs between them. A `!x/**` glob never matches the entry `x` itself, so
+ * it takes this exact path. The listings of `src/` and `tests/` are their own
+ * entries and stay tracked; a new file at the top level is outside `include`.
  */
 const cacheInputs = [
   { auto: true },
   "!node_modules/**",
+  { pattern: "!packages/pulpit", base: "workspace" as const },
   { pattern: "!node_modules/**", base: "workspace" as const },
   { pattern: "pnpm-lock.yaml", base: "workspace" as const },
 ];
