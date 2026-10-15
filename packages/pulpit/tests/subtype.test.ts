@@ -45,6 +45,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import type { Visibility } from "../src/content.ts";
 import { always, and, eq, evaluate, isIn, ne, never, or } from "../src/filter.ts";
 import {
@@ -1785,18 +1786,28 @@ describe("subtypeHandlers — the handlers seam", () => {
 });
 
 describe("subtypeHandlers — a write that hides the row from its own writer evicts the cached resource (pulpit#107)", () => {
+  /** A store failure the re-read can hit after the write committed. */
+  class StoreDown extends Schema.TaggedError<StoreDown>()("StoreDown", {}) {}
+
+  /** The faults {@link cachedReference} can inject into the next write. */
+  interface Faults {
+    interruptAfterWrite: boolean;
+    reRead: Option.Option<Effect.Effect<never, StoreDown>>;
+  }
+
   /**
    * A reference leaf with a `visibility` column, cached, written by a
    * corpus writer below the view-private rung: once a write leaves the row
    * `private`, that writer's re-read fails `NodeNotFound`, and the cache
    * must not go on serving the superseded public resource
-   * (`CACHE-AUTH-005`).
+   * (`CACHE-AUTH-005`). `faults` makes the boundary interrupt after the
+   * chain write, or the re-read fail, from the next write on.
    */
-  const cachedReference = async () => {
+  const cachedReference = () => {
     const chain = makeInMemoryChainStore();
     const leaves = makeInMemoryLeafStore(chain, ["name", "visibility"]);
     let viewer: Viewer = as(admin);
-    const ops = defineSubtype({
+    const base = defineSubtype({
       type: "taxa",
       access: { kind: "reference" },
       chain,
@@ -1806,6 +1817,11 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
       followers: nobody,
       toResource: (row: LeafRow) => ({ id: row.id, attributes: { visibility: row["visibility"] } }),
     });
+    const faults: Faults = { interruptAfterWrite: false, reRead: Option.none() };
+    const ops = {
+      ...base,
+      get: (id: string) => Option.getOrElse(faults.reRead, () => base.get(id)),
+    };
     const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
       Effect.suspend(() => {
         viewer = who;
@@ -1813,7 +1829,12 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
       });
     const cached = MutableHashMap.empty<string, unknown>();
     const handlers = subtypeHandlers(ops, {
-      transact: (effect) => effect,
+      // An interrupt landing after the chain write ran, before the boundary
+      // returned: the write may have committed.
+      transact: (effect) =>
+        Effect.suspend(() =>
+          faults.interruptAfterWrite ? Effect.tap(effect, () => Effect.interrupt) : effect,
+        ),
       cache: Option.some({
         // The cache's serveability policy: a non-serveable resource evicts.
         set: (key, resource) =>
@@ -1825,11 +1846,22 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
         delete: (key) => Effect.sync(() => void MutableHashMap.remove(cached, key)),
       }),
     });
-    return { chain, handlers, actAs, cached };
+    /** A public row the contributor created, cached by the write-through. */
+    const publicRow = async () => {
+      const { id } = await run(
+        actAs(
+          as(contributor),
+          handlers.create({ id: Option.none(), state: { name: "Quercus", visibility: "public" } }),
+        ),
+      );
+      expect(MutableHashMap.has(cached, id)).toBe(true);
+      return id;
+    };
+    return { chain, handlers, actAs, cached, faults, publicRow };
   };
 
   it("update: a corpus writer flipping a public row private", async () => {
-    const { chain, handlers, actAs, cached } = await cachedReference();
+    const { chain, handlers, actAs, cached } = cachedReference();
     const { id } = await run(
       actAs(
         as(contributor),
@@ -1837,8 +1869,9 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
       ),
     );
     expect(MutableHashMap.has(cached, id)).toBe(true);
-    // The response for a committed write the writer can no longer read is
-    // unchanged here (an open question on pulpit#107).
+    // The writer still gets the re-read's `NodeNotFound` for a committed
+    // write it can no longer read: the decided `{ id, version }` response
+    // waits on effect-jsonapi's handler contract (pulpit#107).
     expect(
       await tagOf(
         actAs(as(contributor), handlers.update({ id, patch: { visibility: "private" } })),
@@ -1849,7 +1882,7 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
   });
 
   it("restoreVersion: a corpus writer restoring a private version", async () => {
-    const { chain, handlers, actAs, cached } = await cachedReference();
+    const { chain, handlers, actAs, cached } = cachedReference();
     const { id } = await run(
       actAs(
         as(admin),
@@ -1867,7 +1900,7 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
   });
 
   it("a re-read the writer can still make writes the resource through as before", async () => {
-    const { handlers, actAs, cached } = await cachedReference();
+    const { handlers, actAs, cached } = cachedReference();
     const { id } = await run(
       actAs(
         as(moderator),
@@ -1883,5 +1916,62 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
       actAs(as(moderator), handlers.update({ id, patch: { visibility: "public" } })),
     );
     expect(MutableHashMap.get(cached, id)).toEqual(Option.some(shown));
+  });
+  it("an interrupt after the chain write still evicts, on update and on delete", async () => {
+    const { chain, handlers, actAs, cached, faults, publicRow } = cachedReference();
+    const updated = await publicRow();
+    const deleted = await publicRow();
+    faults.interruptAfterWrite = true;
+    const interrupted = async <A, E>(effect: Effect.Effect<A, E>) =>
+      Exit.hasInterrupts(await Effect.runPromiseExit(effect));
+    expect(
+      await interrupted(
+        actAs(as(contributor), handlers.update({ id: updated, patch: { name: "Quercus robur" } })),
+      ),
+    ).toBe(true);
+    expect(await interrupted(actAs(as(contributor), handlers.delete(deleted)))).toBe(true);
+    expect(chain.rows()).toHaveLength(4);
+    expect(MutableHashMap.has(cached, updated)).toBe(false);
+    expect(MutableHashMap.has(cached, deleted)).toBe(false);
+  });
+
+  it("a write the gate refuses never evicts, interrupt or not", async () => {
+    const { chain, handlers, actAs, cached, faults, publicRow } = cachedReference();
+    const id = await publicRow();
+    const refused = async (interruptAfterWrite: boolean) => {
+      faults.interruptAfterWrite = interruptAfterWrite;
+      expect(
+        await tagOf(actAs(anonymous, handlers.update({ id, patch: { name: "Vandal" } }))),
+      ).toEqual(Option.some("Unauthorized"));
+      expect(await tagOf(actAs(anonymous, handlers.delete(id)))).toEqual(
+        Option.some("Unauthorized"),
+      );
+    };
+    await refused(false);
+    await refused(true);
+    expect(chain.rows()).toHaveLength(1);
+    expect(MutableHashMap.has(cached, id)).toBe(true);
+  });
+
+  it("any re-read failure evicts, and the re-read's own failure propagates", async () => {
+    const { chain, handlers, actAs, cached, faults, publicRow } = cachedReference();
+    const failed = await publicRow();
+    faults.reRead = Option.some(Effect.fail(new StoreDown()));
+    expect(
+      await tagOf(
+        actAs(as(contributor), handlers.update({ id: failed, patch: { name: "Quercus robur" } })),
+      ),
+    ).toEqual(Option.some("StoreDown"));
+    expect(MutableHashMap.has(cached, failed)).toBe(false);
+
+    faults.reRead = Option.none();
+    const died = await publicRow();
+    faults.reRead = Option.some(Effect.die("store gone"));
+    const exit = await Effect.runPromiseExit(
+      actAs(as(contributor), handlers.restoreVersion({ id: died, version: 0n })),
+    );
+    expect(Exit.hasDies(exit)).toBe(true);
+    expect(MutableHashMap.has(cached, died)).toBe(false);
+    expect(chain.rows()).toHaveLength(4);
   });
 });
