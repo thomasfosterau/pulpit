@@ -16,7 +16,8 @@
  * - `reference` — corpus material. Create / update / delete / restore gate on
  *   the corpus-write rung; when the view has a `visibility` column, reads
  *   show only `public` rows below the view-private rung, apart from the
- *   soft-delete axis.
+ *   soft-delete axis. A write or history read to an existing row also needs
+ *   the row to be one `get` would serve the caller (pulpit#101).
  * - `owned` — a member's own row. Create gates on any signed-in account and
  *   stamps the owner; every other write loads the owner and gates on
  *   owner-or-moderator (a missing owner is `NotFound`, never an open gate);
@@ -30,7 +31,10 @@
  *   {@link NodeNotFound} or omits it, never {@link Forbidden}
  *   (`SEC-AUTH-ENUM-001`): a 403 would confirm the row exists. The write and
  *   history gate ({@link requireWriter}) does answer `Forbidden` for an
- *   existing owned row the caller doesn't own (pulpit#24).
+ *   existing owned row the caller doesn't own (pulpit#24). On a reference
+ *   leaf, a corpus writer's write or history read to a row `get` hides from
+ *   them fails `NodeNotFound`, as `get` does, before the chain is reached
+ *   (pulpit#101, `PUB-009`).
  * - Soft-deleted rows are visible only to the view-deleted rung, and a list
  *   includes them only when the caller also asked (`includeDeleted`).
  * - A declaration naming columns the view lacks fails closed — nothing lists,
@@ -385,6 +389,13 @@ export const requireCreator = (
  * rung; owned material → the row's owner or the moderate rung. A missing
  * owner on an owned leaf is {@link NodeNotFound}, never an open gate.
  *
+ * On a reference leaf this is the rung check alone: it reads no row, so it
+ * answers `Unauthorized` / `Forbidden` alike for every id. `defineSubtype`
+ * follows it with the read rung the row demands (pulpit#101): a row its `get`
+ * hides from the caller fails {@link NodeNotFound}, as `get` does
+ * (`PUB-009`, `SEC-AUTH-ENUM-001`). A caller using this gate directly on a
+ * reference row must apply that check too.
+ *
  * @since 0.1.0
  */
 export const requireWriter = <E, R>(
@@ -523,9 +534,10 @@ export interface SubtypeOps<Resource, E, R> {
    * Append a tri-state patch. Fails `Unauthorized` when anonymous,
    * `Forbidden` below the write rung (the corpus-write rung for reference
    * data, owner-or-moderator for an owned row), `NodeNotFound` when an
-   * owned row has no owner or the node is unknown or tombstoned, and
-   * `StaleVersion` when `input.expectedVersion` is not the head (checked
-   * after the gate, so only a writer learns the head).
+   * owned row has no owner, when a reference row is one `get` hides from the
+   * caller (`PUB-009`; pulpit#101), or when the node is unknown or
+   * tombstoned, and `StaleVersion` when `input.expectedVersion` is not the
+   * head (checked after the gate, so only a writer learns the head).
    */
   readonly update: (
     input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
@@ -533,7 +545,8 @@ export interface SubtypeOps<Resource, E, R> {
   /**
    * {@link SubtypeOps.update}, except a tombstone does not fail: the node
    * comes back live (`VERSION-CHAIN-006`). Fails as `update` does, apart from
-   * the tombstone.
+   * the tombstone. On a reference leaf only the view-deleted rung can see a
+   * tombstone, so only it can restore one; anyone else gets `NodeNotFound`.
    */
   readonly restore: (
     input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
@@ -542,8 +555,10 @@ export interface SubtypeOps<Resource, E, R> {
    * Tombstone the node (idempotent: an already tombstoned node reports
    * `alreadyDeleted: true` and writes nothing, whatever the precondition).
    * Fails `Unauthorized` when anonymous, `Forbidden` below the write rung,
-   * `NodeNotFound` when an owned row has no owner or the node is unknown,
-   * and `StaleVersion` when a live node's head is not
+   * `NodeNotFound` when an owned row has no owner, when a reference row
+   * (an already tombstoned one included) is one `get` hides from the caller
+   * (`PUB-009`; pulpit#101), or when the node is unknown, and
+   * `StaleVersion` when a live node's head is not
    * `precondition.expectedVersion`.
    */
   readonly delete: (
@@ -568,14 +583,21 @@ export interface SubtypeOps<Resource, E, R> {
    * limit is clamped to {@link MAX_PAGE_LIMIT}.
    */
   readonly list: (request: ListRequest) => Effect.Effect<Page<Resource>, E, R>;
-  /** Gated like a write: the history exposes every state, private and deleted included. */
+  /**
+   * Gated like a write (`READ-009`): the history exposes every state,
+   * private and deleted included. Fails as `update` does at the gate (on a
+   * reference leaf, `NodeNotFound` for a row `get` hides from the caller,
+   * pulpit#101), then `VersionNotFound` when the version has no row.
+   */
   readonly getVersion: (
     id: string,
     version: bigint,
   ) => Effect.Effect<VersionSnapshot, Gate | NodeNotFound | VersionNotFound | E, R>;
   /**
-   * Re-apply the state at `version` as a new version, gated like a write.
-   * Fails `VersionNotFound`, before writing anything, when that version
+   * Re-apply the state at `version` as a new version, gated like a write
+   * (on a reference leaf, `NodeNotFound` for a row `get` hides from the
+   * caller, pulpit#101). Fails `VersionNotFound`, before writing anything,
+   * when that version
    * cannot be fully reconstructed, and `StaleVersion` when the head is not
    * `precondition.expectedVersion`.
    */
@@ -603,8 +625,6 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   const { type, access, leaves, policy, followers, toResource } = definition;
   const chain = defineVersionChain(type, definition.chain);
   const actor = (account: ViewerAccount) => Option.some(account.id);
-  const writer = (viewer: Viewer, id: string) =>
-    requireWriter(access, viewer, policy, { type, id }, leaves.ownerOf(id));
 
   // The view's column set is fixed at bind time, so the owned leaf's
   // declared-column check is answered once, not per row.
@@ -636,6 +656,32 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     row.action === "delete" && !Option.exists(viewer, policy.canViewDeleted)
       ? Effect.succeed(false)
       : rowVisible(viewer, row);
+
+  /**
+   * The row `get` serves the viewer: a missing or hidden row is the same
+   * {@link NodeNotFound} (SEC-AUTH-ENUM-001). `get` and the reference write
+   * gate both read through it, so they can never disagree (pulpit#101).
+   */
+  const visibleRow = (viewer: Viewer, id: string): Effect.Effect<Row, NodeNotFound | E, R> =>
+    Effect.gen(function* () {
+      const row = yield* leaves.get(id);
+      if (Option.isSome(row) && (yield* visible(viewer, row.value))) return row.value;
+      return yield* new NodeNotFound({ type, id });
+    });
+
+  /**
+   * The gate for a write or history read to an existing row. On a reference
+   * leaf, the corpus-write rung and then the read rung the row demands: a
+   * corpus writer who can't `get` the row learns `NodeNotFound`, exactly as
+   * from `get`, before any content is read or written (pulpit#101,
+   * `PUB-009`). The rung check runs first and reads no row, so a caller below
+   * it gets `Unauthorized` / `Forbidden` for every id alike. An owned leaf's
+   * gate is unchanged (pulpit#24).
+   */
+  const writer = (viewer: Viewer, id: string) =>
+    Effect.tap(requireWriter(access, viewer, policy, { type, id }, leaves.ownerOf(id)), () =>
+      access.kind === "reference" ? Effect.asVoid(visibleRow(viewer, id)) : Effect.void,
+    );
 
   const create = Effect.fn(`${type}.create`)(function* (input: {
     readonly id: Option.Option<string>;
@@ -670,13 +716,8 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   });
 
   const get = Effect.fn(`${type}.get`)(function* (id: string) {
-    const viewer = yield* definition.viewer;
-    const row = yield* leaves.get(id);
     // Hidden and missing are the same answer (SEC-AUTH-ENUM-001).
-    if (Option.isNone(row) || !(yield* visible(viewer, row.value))) {
-      return yield* new NodeNotFound({ type, id });
-    }
-    return toResource(row.value);
+    return toResource(yield* visibleRow(yield* definition.viewer, id));
   });
 
   const getMany = Effect.fn(`${type}.getMany`)(function* (ids: ReadonlyArray<string>) {
