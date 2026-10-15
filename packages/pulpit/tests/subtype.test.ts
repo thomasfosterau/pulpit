@@ -76,22 +76,24 @@ import {
   type Precondition,
 } from "../src/version-chain.ts";
 import { isPubliclyServeable } from "../src/publication.ts";
-import { ABSENT } from "./fixtures.ts";
-import { makeInMemoryChainStore } from "./in-memory-chain.ts";
 import {
+  makeInMemoryChainStore,
+  makeInMemoryFollowers,
+  makeInMemoryLeafStore,
+  type InMemoryFollowing as Following,
+} from "../src/testing.ts";
+import {
+  ABSENT,
   admin,
   contributor,
   follower,
-  followersOf,
   gardeneriaPolicy,
-  makeInMemoryLeafStore,
   member,
   moderator,
   NOW,
   otherMember,
   websitePolicy,
-  type Following,
-} from "./in-memory-leaves.ts";
+} from "./fixtures.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 const tagOf = async <A, E extends { readonly _tag: string }>(
@@ -107,8 +109,8 @@ const as = (account: ViewerAccount): Viewer => Option.some(account);
 const anonymous: Viewer = Option.none();
 
 /** `follower` follows `member`; nobody else follows anybody. */
-const follows = followersOf(new Map([[follower.id, [member.id]]]));
-const nobody = nobodyFollows<Following>(new Set());
+const follows = makeInMemoryFollowers([[follower.id, [member.id]]]);
+const nobody = nobodyFollows<Following>(HashSet.empty());
 
 // ── The row predicate ─────────────────────────────────────────────────
 
@@ -160,7 +162,7 @@ describe("canViewOwned (the owned-material read predicate)", () => {
   it("private never consults the follower seam", async () => {
     const everyoneFollows = {
       isFollower: () => Effect.succeed(true),
-      following: () => new Set<string>(),
+      following: () => HashSet.empty<string>(),
     };
     expect(await view("private", as(otherMember), { followers: everyoneFollows })).toBe(false);
   });
@@ -180,7 +182,7 @@ describe("readScopeFor", () => {
     expect(readScopeFor(as(follower), gardeneriaPolicy, follows)).toEqual({
       kind: "member",
       userId: follower.id,
-      following: new Set([member.id]),
+      following: HashSet.make(member.id),
     });
     expect(readScopeFor(as(moderator), gardeneriaPolicy, follows)).toEqual({ kind: "all" });
     // The rung is the policy's: website's admin-only axis puts a moderator in `member`.
@@ -229,7 +231,8 @@ describe("ownedListFilter ≡ canViewOwned", () => {
         for (const row of rows) {
           const listed = evaluate(filter, row, {
             now: NOW,
-            contains: (set: Following, value) => Predicate.isString(value) && set.has(value),
+            contains: (set: Following, value) =>
+              Predicate.isString(value) && HashSet.has(set, value),
           });
           const seen = await run(
             canViewOwned(viewer, gardeneriaPolicy, follows, {
@@ -420,7 +423,10 @@ describe("the write gates", () => {
 
 const ownedPosts = () => {
   const chain = makeInMemoryChainStore();
-  const leaves = makeInMemoryLeafStore(chain, ["title", "visibility", "draft"]);
+  const leaves = makeInMemoryLeafStore(chain, {
+    columns: ["title", "visibility", "draft"],
+    now: NOW,
+  });
   let viewer: Viewer = anonymous;
   /** Every version the operations read, logged before it yields: a history read past a refusing gate shows here. */
   const snapshots: Array<readonly [string, bigint]> = [];
@@ -471,7 +477,7 @@ describe("defineSubtype — an owned leaf", () => {
   it("create stamps the creating account as owner, and records it as the actor", async () => {
     const { chain, leaves, post } = ownedPosts();
     const id = await post("public");
-    expect(leaves.owners.get(id)).toBe(member.id);
+    expect(HashMap.get(leaves.owners(), id)).toEqual(Option.some(member.id));
     expect(chain.rows()[0]!.actorId).toEqual(Option.some(member.id));
   });
 
@@ -679,7 +685,7 @@ describe("defineSubtype — an owned leaf", () => {
       const tombstone = await post("private");
       await run(actAs(as(member), ops.delete(tombstone)));
       const ownerless = await edited(await post("public"));
-      leaves.owners.delete(ownerless);
+      leaves.dropOwner(ownerless);
       const privateId = await edited(await post("private"));
       const rows: ReadonlyArray<readonly [string, string]> = [
         ["public", await edited(await post("public"))],
@@ -911,7 +917,7 @@ describe("defineSubtype — the expected-version precondition", () => {
 describe("defineSubtype — a reference leaf", () => {
   it("writes at the corpus rung; reads are public", async () => {
     const chain = makeInMemoryChainStore();
-    const leaves = makeInMemoryLeafStore(chain, ["name"]);
+    const leaves = makeInMemoryLeafStore(chain, { columns: ["name"], now: NOW });
     let viewer: Viewer = as(member);
     const ops = defineSubtype({
       type: "taxa",
@@ -928,7 +934,7 @@ describe("defineSubtype — a reference leaf", () => {
     );
     viewer = as(contributor);
     const { id } = await run(ops.create({ id: Option.none(), state: { name: "Quercus" } }));
-    expect(leaves.owners.size).toBe(0);
+    expect(HashMap.size(leaves.owners())).toBe(0);
     viewer = anonymous;
     expect(await tagOf(ops.get(id))).toEqual(Option.none());
   });
@@ -981,7 +987,7 @@ const seededLeaf = (
   followers: FollowerSeam<Following, never> = follows,
 ) => {
   const chain = makeInMemoryChainStore();
-  const leaves = makeInMemoryLeafStore(chain, columns);
+  const leaves = makeInMemoryLeafStore(chain, { columns, now: NOW });
   let viewer: Viewer = anonymous;
   const ops = defineSubtype({
     type: "leaves",
@@ -1015,7 +1021,7 @@ const seededLeaf = (
         ),
         Effect.tap(({ id }) =>
           Effect.sync(() => {
-            if (seed.unstamped === true) leaves.owners.delete(id);
+            if (seed.unstamped === true) leaves.dropOwner(id);
           }),
         ),
         Effect.map(({ id }) => id),
@@ -1424,8 +1430,7 @@ describe("defineSubtype — an owner column holding no string is no owner (pulpi
         asked.push(ownerId);
         return strings.includes(followerId) && strings.includes(ownerId);
       }),
-    // oxlint-disable-next-line effect/avoid-native-object-helpers -- the in-memory leaf store's follower set is the native `ReadonlySet` its `Following` type names
-    following: (followerId) => new Set(strings.includes(followerId) ? strings : []),
+    following: (followerId) => HashSet.fromIterable(strings.includes(followerId) ? strings : []),
   };
 
   const owners: ReadonlyArray<Seeded> = [null, ABSENT, 42];
@@ -1697,8 +1702,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     followersOfColumn: "curatorId",
   };
   /** The corpus writer without a view rung follows `member`: the followers arm is its only way in. */
-  // oxlint-disable-next-line effect/avoid-native-object-helpers -- `followersOf` takes the native `ReadonlyMap` table the other seams in this file pass
-  const corpusFollowers = followersOf(new Map([[contributor.id, [member.id]]]));
+  const corpusFollowers = makeInMemoryFollowers([[contributor.id, [member.id]]]);
 
   /** A fresh reference leaf seeded (by an admin) with every row, plus a missing id. */
   const referenceLeaf = (
@@ -1707,7 +1711,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     access: Extract<LeafAccess, { kind: "reference" }>,
   ) => {
     const chain = makeInMemoryChainStore();
-    const leaves = makeInMemoryLeafStore(chain, columns);
+    const leaves = makeInMemoryLeafStore(chain, { columns, now: NOW });
     let viewer: Viewer = anonymous;
     /** How many versions the operations have read: a history read past a refusing gate shows here. */
     let snapshotReads = 0;
@@ -2086,7 +2090,7 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
    */
   const cachedReference = () => {
     const chain = makeInMemoryChainStore();
-    const leaves = makeInMemoryLeafStore(chain, ["name", "visibility"]);
+    const leaves = makeInMemoryLeafStore(chain, { columns: ["name", "visibility"], now: NOW });
     let viewer: Viewer = as(admin);
     const base = defineSubtype({
       type: "taxa",

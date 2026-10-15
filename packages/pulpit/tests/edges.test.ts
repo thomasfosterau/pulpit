@@ -59,27 +59,27 @@ import {
   type ViewerAccount,
 } from "../src/subtype.ts";
 import type { ColumnValue, VersionAction } from "../src/version-chain.ts";
-import { ABSENT } from "./fixtures.ts";
-import { makeInMemoryChainStore } from "./in-memory-chain.ts";
 import {
+  makeInMemoryChainStore,
   makeInMemoryEdgeStore,
+  makeInMemoryFollowers,
+  makeInMemoryLeafStore,
   makeInMemoryNodes,
-  type Following,
   type InMemoryEdgeStore,
+  type InMemoryFollowing as Following,
   type InMemoryNodes,
-} from "./in-memory-edges.ts";
+} from "../src/testing.ts";
 import {
+  ABSENT,
   admin,
   contributor,
   follower,
-  followersOf,
   gardeneriaPolicy,
-  makeInMemoryLeafStore,
   member,
   moderator,
   NOW,
   otherMember,
-} from "./in-memory-leaves.ts";
+} from "./fixtures.ts";
 
 // oxlint-disable-next-line effect/effect-run-in-body -- the test harness is the runtime boundary the rule asks for
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
@@ -189,7 +189,9 @@ const family = (
   uniqueKey: ReadonlyArray<string> = [],
   policy: AccessPolicy = gardeneriaPolicy,
 ) => {
-  const { edges, seen } = recorded(makeInMemoryEdgeStore({ ends: declaration.ends, uniqueKey }));
+  const { edges, seen } = recorded(
+    makeInMemoryEdgeStore({ ends: declaration.ends, uniqueKey, now: NOW }),
+  );
   let viewer: Viewer = anonymous;
   const ops = defineEdgeOps({
     ...declaration,
@@ -832,8 +834,7 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
     });
 
     it("reads as the endpoint leaf's own get does, over the subtype factory's stores", async () => {
-      // oxlint-disable-next-line effect/avoid-native-object-helpers -- `followersOf` takes the native `ReadonlyMap` table the in-memory leaf store's seam is built from
-      const seam = followersOf(new Map([[follower.id, [member.id]]]));
+      const seam = makeInMemoryFollowers([[follower.id, [member.id]]]);
       let viewer: Viewer = anonymous;
       const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
         Effect.suspend(() => {
@@ -841,7 +842,10 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
           return effect;
         });
       const chain = makeInMemoryChainStore();
-      const leaves = makeInMemoryLeafStore(chain, ["visibility", "curatorId"]);
+      const leaves = makeInMemoryLeafStore(chain, {
+        columns: ["visibility", "curatorId"],
+        now: NOW,
+      });
       const terms = defineSubtype({
         type: "terms",
         access: { kind: "reference", followersOfColumn: "curatorId" },
@@ -1264,8 +1268,7 @@ describe("EDGE-001: an edge is readable only if every end is", () => {
 
 describe("EDGE-001: a tombstoned end hides its edges below the view-deleted rung, and a restore brings them back", () => {
   it("over the subtype factory's own stores", async () => {
-    // oxlint-disable-next-line effect/avoid-native-object-helpers -- the in-memory leaf store's follower set is the native `ReadonlySet` its seam type names
-    const noFollowers = nobodyFollows<ReadonlySet<string>>(new Set());
+    const noFollowers = nobodyFollows<Following>(HashSet.empty());
     let viewer: Viewer = anonymous;
     const currentViewer = Effect.sync(() => viewer);
     const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
@@ -1274,7 +1277,10 @@ describe("EDGE-001: a tombstoned end hides its edges below the view-deleted rung
         return effect;
       });
     const subjectChain = makeInMemoryChainStore();
-    const subjectLeaves = makeInMemoryLeafStore(subjectChain, ["visibility"]);
+    const subjectLeaves = makeInMemoryLeafStore(subjectChain, {
+      columns: ["visibility"],
+      now: NOW,
+    });
     const subjectOps = defineSubtype({
       type: "subjects",
       access: { kind: "reference" },
@@ -1286,7 +1292,10 @@ describe("EDGE-001: a tombstoned end hides its edges below the view-deleted rung
       toResource: (row: LeafRow) => row,
     });
     const entryChain = makeInMemoryChainStore();
-    const entryLeaves = makeInMemoryLeafStore(entryChain, ["visibility", "draft"]);
+    const entryLeaves = makeInMemoryLeafStore(entryChain, {
+      columns: ["visibility", "draft"],
+      now: NOW,
+    });
     const entryOps = defineSubtype({
       type: "entries",
       access: ownedAccess({ draft: true }),
@@ -1306,7 +1315,7 @@ describe("EDGE-001: a tombstoned end hides its edges below the view-deleted rung
       },
       entry: { column: "entryId", type: "entries", access: entryOps.access, nodes: entryLeaves },
     };
-    const edges = makeInMemoryEdgeStore({ ends, uniqueKey: [] });
+    const edges = makeInMemoryEdgeStore({ ends, uniqueKey: [], now: NOW });
     const ops = defineEdgeOps({
       type: "links",
       ends,

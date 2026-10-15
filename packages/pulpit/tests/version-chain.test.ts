@@ -25,7 +25,7 @@ import {
   type Precondition,
   type VersionChainOps,
 } from "../src/version-chain.ts";
-import { makeInMemoryChainStore } from "./in-memory-chain.ts";
+import { makeInMemoryChainStore } from "../src/testing.ts";
 
 const ACTOR = Option.some("u-author");
 const ID = "00000000-0000-4000-8000-00000000abcd";

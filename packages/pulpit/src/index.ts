@@ -4,7 +4,9 @@
  * Every module is exported as a namespace from the package root, following
  * the convention of `effect` and `@thomasfosterau/effect-jsonapi`; each is
  * also a subpath (`@thomasfosterau/pulpit/content`, …) for a consumer that
- * wants one module without the barrel.
+ * wants one module without the barrel. The in-memory fakes are the one
+ * exception: they are the subpath `@thomasfosterau/pulpit/testing` only, so
+ * that production code never pulls them in through the barrel.
  *
  * @copyright Thomas Foster
  * @module pulpit
