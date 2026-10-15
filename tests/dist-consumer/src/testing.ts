@@ -22,6 +22,7 @@ import {
   type FollowerSeam,
   type LeafRow,
   type LeafStore,
+  type ListOrder,
 } from "@thomasfosterau/pulpit/subtype";
 import {
   makeInMemoryChainStore,
@@ -84,6 +85,10 @@ export type _LeafSeam = Assert<
 /** The `Following` parameter exactly: `Satisfies` would pass `LeafStore<LeafRow, any, …>`. */
 export type _LeafFollowing = Assert<
   Equals<Parameters<InMemoryLeafStore["list"]>[0]["where"], ListFilter<InMemoryFollowing>>
+>;
+/** The order arrives checked, so the fake's `orderBy` is required (pulpit#112). */
+export type _LeafOrder = Assert<
+  Equals<Parameters<InMemoryLeafStore["list"]>[0]["orderBy"], ReadonlyArray<ListOrder>>
 >;
 export type _LeafDropOwner = Assert<Equals<InMemoryLeafStore["dropOwner"], (id: string) => void>>;
 export type _LeafOwners = Assert<

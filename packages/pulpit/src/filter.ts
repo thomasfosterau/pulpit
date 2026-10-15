@@ -62,6 +62,7 @@ import * as Array from "effect/Array";
 import * as Match from "effect/Match";
 import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
+import { byCodePoint } from "./internal/list-order.ts";
 import type { ColumnValue } from "./version-chain.ts";
 
 /**
@@ -327,15 +328,6 @@ export interface EvaluationContext<Following> {
    */
   readonly contains: (set: Following, value: ColumnValue) => boolean;
 }
-
-/**
- * Strings by code point, as SQL's `"C"` collation orders them over UTF-8.
- * JavaScript's `<` compares UTF-16 code units instead, which puts an astral
- * character (a surrogate pair, from U+D800) before U+E000–U+FFFF.
- */
-const byCodePoint: Order.Order<string> = Order.mapInput(Order.Array(Order.Number), (text: string) =>
-  Array.map(Array.fromIterable(text), (char) => char.codePointAt(0) ?? 0),
-);
 
 /**
  * Numbers by `<` / `>`, never by subtraction: `Infinity - Infinity` is `NaN`,

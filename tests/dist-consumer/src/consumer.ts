@@ -50,9 +50,15 @@ import {
   defineSubtype,
   ownedAccess,
   referencePrivacyFilter,
+  type InvalidListOrder,
   type LeafAccess,
   type LeafRow,
   type LeafStore,
+  type ListOrder,
+  type ListRequest,
+  type Page,
+  type SubtypeDeclarationError,
+  type SubtypeDefinition,
 } from "@thomasfosterau/pulpit/subtype";
 import { isPubliclyServeable, serveablePolicy } from "@thomasfosterau/pulpit/publication";
 import { DocumentHash, documentRef, type DocumentStore } from "@thomasfosterau/pulpit/documents";
@@ -282,6 +288,50 @@ export type _SubtypeCompare = Assert<
     >
   >
 >;
+// List ordering (pulpit#112): the request's optional order, the store's
+// checked one, and `list`'s typed refusal of an undeclared column.
+export type _ListOrder = Assert<
+  Equals<ListOrder, { readonly column: string; readonly direction: "asc" | "desc" }>
+>;
+/* oxlint-disable effect/prefer-option-over-null -- the assertion must spell the emitted optional field exactly, and the workspace's optional fields are `?: T | undefined` */
+export type _ListRequestOrder = Assert<
+  Equals<ListRequest["orderBy"], ReadonlyArray<ListOrder> | undefined>
+>;
+// The leaf's optional sortable allow-list (pulpit#112), and its declaration error.
+export type _SubtypeSortable = Assert<
+  Equals<
+    SubtypeDefinition<LeafRow, unknown, never, never, never>["sortable"],
+    ReadonlyArray<string> | undefined
+  >
+>;
+/* oxlint-enable effect/prefer-option-over-null */
+export type _SubtypeDeclarationError = Assert<
+  Equals<SubtypeDeclarationError["_tag"], "SubtypeDeclarationError">
+>;
+export type _LeafStoreOrder = Assert<
+  Equals<Parameters<(typeof leaves)["list"]>[0]["orderBy"], ReadonlyArray<ListOrder>>
+>;
+export type _SubtypeList = Assert<
+  Equals<
+    ReturnType<typeof posts.list>,
+    Effect.Effect<Page<PostDoc>, InvalidListOrder | StoreFailure, Transaction>
+  >
+>;
+export const ordered = posts.list({
+  limit: 10,
+  offset: 0,
+  includeDeleted: false,
+  where: eq("visibility", "public"),
+  orderBy: [{ column: "title", direction: "desc" }],
+});
+// A caller forwarding its own `undefined` (`exactOptionalPropertyTypes`).
+export const unordered = posts.list({
+  limit: 10,
+  offset: 0,
+  includeDeleted: false,
+  where: { kind: "always" },
+  orderBy: undefined,
+});
 export type _SubtypeCompareParameters = Assert<
   Equals<Parameters<typeof posts.compare>, [id: string, from: bigint, to: bigint]>
 >;

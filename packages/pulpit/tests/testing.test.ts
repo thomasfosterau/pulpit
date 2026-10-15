@@ -87,7 +87,7 @@ describe("makeInMemoryLeafStore", () => {
       runAt(
         millis,
         Effect.map(
-          leaves.list({ where: published("publishedAt"), limit: 10, offset: 0 }),
+          leaves.list({ where: published("publishedAt"), orderBy: [], limit: 10, offset: 0 }),
           (page) => page.total,
         ),
       );

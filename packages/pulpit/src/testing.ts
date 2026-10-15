@@ -67,6 +67,7 @@ import {
   type EndpointView,
 } from "./edges.ts";
 import { evaluate, type EvaluationContext, type FilterRow, type ListFilter } from "./filter.ts";
+import { rowOrder } from "./internal/list-order.ts";
 import type { FollowerSeam, LeafRow, LeafStore } from "./subtype.ts";
 import {
   VersionConflict,
@@ -239,17 +240,18 @@ export interface InMemoryLeafStoreOptions {
   readonly now?: Date | undefined;
 }
 
-/** Every list closes its order with `id`. */
-const byId = Order.mapInput(Order.String, (row: LeafRow) => row.id);
-
 /**
  * An in-memory {@link LeafStore}: the seam's contract (README → Seams →
  * `LeafStore`) as a current-version view over an {@link InMemoryChainStore}.
  * Each node's row is its head version's state with its head `action`, and
  * `ownerId` merged in from the owner stamps (the apps' `core.node_owner`
- * join); `list` evaluates its {@link ListFilter} in memory, orders by `id` and
- * returns the unpaged total. It applies no visibility policy, as a real view
- * applies none. In memory only; not for production.
+ * join); `list` evaluates its {@link ListFilter} in memory, orders by its
+ * `orderBy` keys then `id` ascending as the seam's contract renders it
+ * (`NULLS LAST` in both directions, a string by code point as `COLLATE "C"`
+ * sorts it, a `Date` by its instant), and returns the unpaged total. Like a
+ * SQL store, it takes `orderBy` as already checked against `columns`. It
+ * applies no visibility policy, as a real view applies none. In memory only;
+ * not for production.
  *
  * @since 0.1.0
  */
@@ -273,16 +275,19 @@ export const makeInMemoryLeafStore = (
           HashMap.set(heads, row.id, headOf(row)),
         ),
       ),
-      byId,
+      rowOrder([]),
     );
   return {
     // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is the native `ReadonlySet` `LeafStore.columns` names
     columns: new Set(["id", "action", "ownerId", ...options.columns]),
     get: (id) => Effect.sync(() => Arr.findFirst(view(), (row) => row.id === id)),
     getMany: (ids) => Effect.sync(() => view().filter((row) => ids.includes(row.id))),
-    list: ({ where, limit, offset }) =>
+    list: ({ where, orderBy, limit, offset }) =>
       Effect.map(instantOf(fixedNow), (now) => {
-        const matching = view().filter((row) => evaluate(where, row, contextAt(now)));
+        const matching = Arr.sort(
+          view().filter((row) => evaluate(where, row, contextAt(now))),
+          rowOrder(orderBy),
+        );
         return { rows: matching.slice(offset, offset + limit), total: matching.length };
       }),
     ownerOf: (id) => Effect.sync(() => HashMap.get(owners, id)),

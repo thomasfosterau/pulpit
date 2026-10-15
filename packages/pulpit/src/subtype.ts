@@ -40,6 +40,11 @@
  *   leaf, a corpus writer's write or history read to a row `get` hides from
  *   them fails `NodeNotFound`, as `get` does, before the chain is reached
  *   (pulpit#101, `PUB-009`).
+ * - A list's order ({@link ListOrder}) only places the rows its filters
+ *   chose: it never changes membership or the total, and a column that is
+ *   not sortable (outside the leaf's `sortable` allow-list or, without one,
+ *   the view's declared `columns`) fails {@link InvalidListOrder} before
+ *   anything is read, never reaching the store (pulpit#112).
  * - Soft-deleted rows are visible only to the view-deleted rung, and a list
  *   includes them only when the caller also asked (`includeDeleted`).
  * - A declaration naming columns the view lacks fails closed — nothing lists,
@@ -77,6 +82,7 @@ import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type { Visibility } from "./content.ts";
@@ -183,6 +189,40 @@ export class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthoriz
  * @since 0.1.0
  */
 export class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
+
+/**
+ * A list order the leaf does not sort by: a key whose column is not sortable
+ * (outside the leaf's `sortable` allow-list or, without one, outside the
+ * view's declared `LeafStore.columns`), a direction other than `asc` /
+ * `desc`, or input not shaped as an order at all (an `orderBy` that is not
+ * an array, a key that is not an object, a `column` that is not a string).
+ * The wire's 400. The order is checked before the viewer or anything else is
+ * read, so it says nothing about any row, but **it does say which columns
+ * are sortable**: without a `sortable` allow-list, that a name is (or is
+ * not) one of the view's columns. `column` is the caller's own key, never
+ * passed to the store, or `""` when the key carries no string column
+ * (pulpit#112).
+ *
+ * @since 0.1.0
+ */
+export class InvalidListOrder extends Schema.TaggedError<InvalidListOrder>()("InvalidListOrder", {
+  type: Schema.String,
+  column: Schema.String,
+}) {}
+
+/**
+ * A leaf declared against the rules: a `sortable` entry that is not one of
+ * its view's `LeafStore.columns`. Thrown by {@link defineSubtype} when the
+ * leaf is declared, never an Effect failure, like `./edges`'
+ * `EdgeDeclarationError`: a misspelt allow-list entry must stop its module
+ * loading rather than silently leave a column unsortable (pulpit#112).
+ *
+ * @since 0.1.0
+ */
+export class SubtypeDeclarationError extends Schema.TaggedError<SubtypeDeclarationError>()(
+  "SubtypeDeclarationError",
+  { message: Schema.String },
+) {}
 
 // ── Read scope and the row predicate ──────────────────────────────────
 
@@ -501,6 +541,38 @@ export interface Page<A> {
 export const MAX_PAGE_LIMIT = 1000;
 
 /**
+ * One key of a list's order: a column of the leaf's current-version view and
+ * its direction. A list sorts by its keys in turn with a `NULL` (or absent)
+ * column after every value in **both** directions (`NULLS LAST`, which
+ * PostgreSQL's `DESC` does not default to), then by `id` ascending, so the
+ * order is total and an offset page never skips or repeats a row. A string
+ * sorts by code point (SQL's `COLLATE "C"`), a number or `bigint` by value, a
+ * boolean `false` first and a `Date` by its instant; `id` closes in byte
+ * order too (pulpit#112).
+ *
+ * **Only scalar orderable columns.** A sort key's column must hold one
+ * scalar orderable type: text, numeric, boolean, timestamp or bigint. A
+ * `json` / `jsonb` or array column is outside the contract (PostgreSQL
+ * refuses to order `json` and orders `jsonb` by its own rules, which no
+ * fake reproduces), so neither an adapter nor a leaf's `sortable` list may
+ * offer one.
+ *
+ * **What an order discloses.** The column need not be one the resource
+ * exposes: without a `sortable` allow-list on the leaf
+ * ({@link SubtypeDefinition.sortable}), **every** declared view column is
+ * sortable, so a caller can rank the rows it may already see by a column the
+ * API never shows it, and an {@link InvalidListOrder} tells it which names
+ * are view columns. No hidden row, nor any total, is revealed.
+ *
+ * @since 0.1.0
+ */
+export interface ListOrder {
+  /** A sortable column of the view; any other fails the list with {@link InvalidListOrder}. */
+  readonly column: string;
+  readonly direction: "asc" | "desc";
+}
+
+/**
  * The read seam over a leaf's fail-closed current-version view, plus the
  * owner stamp. `columns` is the view's column set — what the owned filter
  * checks its declaration against.
@@ -514,9 +586,17 @@ export interface LeafStore<Row extends LeafRow, Following, E, R> {
   readonly get: (id: string) => Effect.Effect<Option.Option<Row>, E, R>;
   /** One `id = ANY($ids)` read, never `ids.length` sequential gets. */
   readonly getMany: (ids: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<Row>, E, R>;
-  /** The page under `where`, ordered totally (the view's `id` closes every order), with the unpaged total. */
+  /**
+   * The page under `where`, with the unpaged total, ordered totally by
+   * `orderBy` and then `id`: `ORDER BY <column> ASC|DESC NULLS LAST, …,
+   * id ASC`, every string key under `COLLATE "C"` (see {@link ListOrder}).
+   * `orderBy` arrives checked: each column is in `columns`, each direction
+   * `asc` or `desc`, no column twice; empty is `id` ascending alone. The
+   * order never changes which rows match `where`, nor `total`.
+   */
   readonly list: (query: {
     readonly where: ListFilter<Following>;
+    readonly orderBy: ReadonlyArray<ListOrder>;
     readonly limit: number;
     readonly offset: number;
   }) => Effect.Effect<Page<Row>, E, R>;
@@ -527,6 +607,75 @@ export interface LeafStore<Row extends LeafRow, Following, E, R> {
 }
 
 // ── The factory ───────────────────────────────────────────────────────
+
+/**
+ * A key's column when it is an object with a string `column`, else `""`.
+ * Typed as the request types it, but read as a caller may really send it.
+ */
+const columnOf = (key: ListOrder | ReadonlyArray<ListOrder>): string =>
+  Predicate.isObject(key) && Predicate.isString(key.column) ? key.column : "";
+
+/**
+ * A list request's order as the store receives it: an array whose every key
+ * is an object with a sortable string `column` and a direction `asc` or
+ * `desc`, or {@link InvalidListOrder} for the first key that isn't (or for an
+ * `orderBy` that is no array), so no unsortable name reaches SQL and no
+ * out-of-type input dies. A repeated column is dropped (its first key
+ * already ordered every tie it could), which bounds the keys by the view's
+ * columns; each key is rebuilt, so nothing but `column` and `direction`
+ * reaches the store.
+ */
+const checkedOrder = (
+  type: string,
+  isSortable: (column: string) => boolean,
+  keys: ReadonlyArray<ListOrder>,
+): Effect.Effect<ReadonlyArray<ListOrder>, InvalidListOrder> => {
+  // The request's types are not checked at runtime: a decoded query or an
+  // untyped caller can send any value here, so every guard reads it as such.
+  const isKey = (key: ListOrder): boolean =>
+    Predicate.isObject(key) &&
+    Predicate.isString(key.column) &&
+    isSortable(key.column) &&
+    (key.direction === "asc" || key.direction === "desc");
+  // A boolean, not a guard: narrowing a typed array to `Array<unknown>` would lose its keys' type.
+  const isList = (value: ReadonlyArray<ListOrder>): boolean => Array.isArray(value);
+  if (!isList(keys)) return Effect.fail(new InvalidListOrder({ type, column: columnOf(keys) }));
+  return Option.match(
+    Array.findFirst(keys, (key) => !isKey(key)),
+    {
+      onNone: () =>
+        Effect.succeed(
+          Array.map(
+            Array.dedupeWith(keys, (self, that) => self.column === that.column),
+            ({ column, direction }): ListOrder => ({ column, direction }),
+          ),
+        ),
+      onSome: (key) => Effect.fail(new InvalidListOrder({ type, column: columnOf(key) })),
+    },
+  );
+};
+
+/**
+ * The leaf's sortable-column test, its `sortable` allow-list checked against
+ * the view's columns once, when the leaf is declared: an entry outside them
+ * throws {@link SubtypeDeclarationError}. Without an allow-list, every
+ * declared view column is sortable.
+ */
+const sortableColumns = (
+  type: string,
+  columns: ReadonlySet<string>,
+  // oxlint-disable-next-line effect/prefer-option-over-null -- `SubtypeDefinition.sortable` as declared, an optional `?: T | undefined` field (AGENTS.md → Conventions)
+  sortable: ReadonlyArray<string> | undefined,
+): ((column: string) => boolean) => {
+  if (sortable === undefined) return (column) => columns.has(column);
+  const undeclared = Array.findFirst(sortable, (column) => !columns.has(column));
+  if (Option.isSome(undeclared)) {
+    throw new SubtypeDeclarationError({
+      message: `${type}: sortable names '${undeclared.value}', which is not a column of the view`,
+    });
+  }
+  return (column) => Array.contains(sortable, column);
+};
 
 /**
  * A leaf's declaration: its type and access, its seams, and its row → resource mapper.
@@ -550,6 +699,24 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
   readonly followers: FollowerSeam<Following, R>;
   /** Shape a view row into the resource (sync; links resolved by the caller's mapper). */
   readonly toResource: (row: Row) => Resource;
+  /**
+   * The columns a list may sort by ({@link ListRequest.orderBy}); each must
+   * be one of the view's `LeafStore.columns`, holding a scalar orderable
+   * type (text, numeric, boolean, timestamp or bigint, never `json` /
+   * `jsonb` or an array), or {@link defineSubtype} throws
+   * {@link SubtypeDeclarationError}. An order key on any other column fails
+   * {@link InvalidListOrder}.
+   *
+   * **Omitted, every declared view column is sortable**, the columns the
+   * resource never shows included. That default discloses two things to any
+   * caller: the ranking, among the rows it may already see, by any view
+   * column (a `rank` or a moderation score it can't read), and, through
+   * {@link InvalidListOrder}'s 400, which names are view columns. It never
+   * reveals a hidden row nor changes a total (`SEC-AUTH-ENUM-001`). Declare
+   * the list to sort only by what the resource exposes (pulpit#112).
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the every-declared-column default
+  readonly sortable?: ReadonlyArray<string> | undefined;
 }
 
 /**
@@ -563,6 +730,21 @@ export interface ListRequest {
   readonly includeDeleted: boolean;
   /** The family's own extra predicate (a `?filter[published]=`), or `always`. */
   readonly where: ListFilter<never>;
+  /**
+   * The order, its keys in turn, closed by `id` ascending with `NULL`s last
+   * in both directions (see {@link ListOrder}); absent or empty is `id`
+   * ascending alone. A column that is not sortable (outside the leaf's
+   * `sortable` allow-list or, **when the leaf declares none, any view column
+   * at all, the ones the resource never shows included**), a direction other
+   * than `asc` / `desc`, or input not shaped as an order (no array, a key
+   * that is no object, a `column` that is no string) fails the list with
+   * {@link InvalidListOrder}, before the viewer is read; a repeated column
+   * adds nothing and is dropped. The order discloses the visible rows'
+   * ranking by any sortable column, and the 400 which names are sortable;
+   * never a hidden row or a total (see {@link SubtypeDefinition.sortable}).
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the default order
+  readonly orderBy?: ReadonlyArray<ListOrder> | undefined;
 }
 
 type Gate = Unauthorized | Forbidden;
@@ -634,10 +816,16 @@ export interface SubtypeOps<Resource, E, R> {
     ids: ReadonlyArray<string>,
   ) => Effect.Effect<HashMap.HashMap<string, Resource>, E, R>;
   /**
-   * One page of the rows the viewer may see, with the unpaged total. The
-   * limit is clamped to {@link MAX_PAGE_LIMIT}.
+   * One page of the rows the viewer may see, with the unpaged total, in
+   * `request.orderBy` closed by `id` (`NULL`s last; see {@link ListOrder}).
+   * The limit is clamped to {@link MAX_PAGE_LIMIT}. Fails
+   * {@link InvalidListOrder}, before the viewer or the store is read, when
+   * an order key names a column that is not sortable (see
+   * {@link SubtypeDefinition.sortable}) or is not shaped as an order. The
+   * order never changes which rows are listed, nor the total
+   * (`SEC-AUTH-ENUM-001`).
    */
-  readonly list: (request: ListRequest) => Effect.Effect<Page<Resource>, E, R>;
+  readonly list: (request: ListRequest) => Effect.Effect<Page<Resource>, InvalidListOrder | E, R>;
   /**
    * Gated like a write (`READ-009`): the history exposes every state,
    * private and deleted included. Fails as `update` does at the gate (on a
@@ -690,6 +878,9 @@ export interface SubtypeOps<Resource, E, R> {
  * `${type}.<operation>`; the write operations run in the caller's
  * transaction (the boundary is the handler seam's, website #1883).
  *
+ * Throws {@link SubtypeDeclarationError}, when the leaf is declared, for a
+ * `sortable` entry that is not a column of the view.
+ *
  * @since 0.1.0
  */
 export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
@@ -702,6 +893,8 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   // The view's column set is fixed at bind time, so the owned leaf's
   // declared-column check is answered once, not per row.
   const ownedColumnsDeclared = access.kind === "owned" && declaresColumns(access, leaves.columns);
+  // Checked here, so a misspelt `sortable` entry throws when the leaf is declared.
+  const isSortable = sortableColumns(type, leaves.columns, definition.sortable);
 
   /**
    * The row's own visibility, by access kind; the soft-delete axis is checked
@@ -801,6 +994,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   });
 
   const list = Effect.fn(`${type}.list`)(function* (request: ListRequest) {
+    const orderBy = yield* checkedOrder(type, isSortable, request.orderBy ?? []);
     const viewer = yield* definition.viewer;
     const privacy =
       access.kind === "owned"
@@ -818,6 +1012,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     );
     const page = yield* leaves.list({
       where,
+      orderBy,
       limit: Math.max(1, Math.min(Math.trunc(request.limit), MAX_PAGE_LIMIT)),
       offset: Math.max(0, Math.trunc(request.offset)),
     });
