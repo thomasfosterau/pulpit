@@ -2,7 +2,9 @@
  * The in-memory reading of the list-filter rendering contract. `eq` and `ne`
  * are pinned against SQL's three-valued logic: a `NULL` or absent column
  * satisfies neither, because `NULL = $v` and `NULL <> $v` are both `NULL`
- * and a `WHERE` drops the row (pulpit#75).
+ * and a `WHERE` drops the row (pulpit#75). `in` is pinned the same way:
+ * `NULL IN (…)` is `NULL`, so a `NULL` or absent column satisfies no `in`
+ * and the follower seam is never asked about it (pulpit#94).
  *
  * @module tests/filter
  */
@@ -27,6 +29,7 @@ import {
   or,
   published,
 } from "../src/filter.ts";
+import type { ColumnValue } from "../src/version-chain.ts";
 
 type Following = HashSet.HashSet<string>;
 
@@ -68,6 +71,59 @@ describe("evaluate — eq / ne against SQL's three-valued reading", () => {
     expect(run(filter, { action: null })).toBe(false);
     expect(run(filter, {})).toBe(false);
     expect(run(filter, { action: "update" })).toBe(true);
+  });
+});
+
+describe("evaluate — in against SQL's `NULL IN (…)`", () => {
+  type SpySet = HashSet.HashSet<ColumnValue>;
+
+  /** A `contains` that would admit `null`, recording every value it is asked about. */
+  const spying = () => {
+    const asked: Array<ColumnValue> = [];
+    const spy: EvaluationContext<SpySet> = {
+      now: NOW,
+      contains: (set, value) => {
+        asked.push(value);
+        return HashSet.has(set, value);
+      },
+    };
+    const set: SpySet = HashSet.make<ReadonlyArray<ColumnValue>>(null, "a");
+    // The seam really would admit `null`, so only `evaluate` can be what drops it.
+    expect(HashSet.has(set, null)).toBe(true);
+    const runSpy = (filter: ListFilter<SpySet>, row: FilterRow) => evaluate(filter, row, spy);
+    return { asked, set, runSpy };
+  };
+
+  it("a NULL column satisfies no in, and contains is never asked", () => {
+    const { asked, set, runSpy } = spying();
+    expect(runSpy(isIn("owner", set), { owner: null })).toBe(false);
+    expect(asked).toEqual([]);
+  });
+
+  it("an absent column satisfies no in, and contains is never asked", () => {
+    const { asked, set, runSpy } = spying();
+    expect(runSpy(isIn("owner", set), { other: "a" })).toBe(false);
+    expect(asked).toEqual([]);
+  });
+
+  it("a non-null column still asks contains", () => {
+    const { asked, set, runSpy } = spying();
+    expect(runSpy(isIn("owner", set), { owner: "a" })).toBe(true);
+    expect(runSpy(isIn("owner", set), { owner: "b" })).toBe(false);
+    expect(asked).toEqual(["a", "b"]);
+  });
+
+  it("inside and / or, a NULL or absent column's in is false and contains is never asked", () => {
+    const { asked, set, runSpy } = spying();
+    const inOr = or<SpySet>(isIn("owner", set), eq("kind", "post"));
+    const inAnd = and<SpySet>(isIn("owner", set), eq("kind", "page"));
+    const rows: ReadonlyArray<FilterRow> = [{ owner: null, kind: "page" }, { kind: "page" }];
+    expect(Array.map(rows, (row) => [runSpy(inOr, row), runSpy(inAnd, row)])).toEqual([
+      [false, false],
+      [false, false],
+    ]);
+    expect(runSpy(inOr, { owner: null, kind: "post" })).toBe(true);
+    expect(asked).toEqual([]);
   });
 });
 
