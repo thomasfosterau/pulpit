@@ -41,7 +41,8 @@
     "./subtype": "./src/subtype.ts",
     "./publication": "./src/publication.ts",
     "./documents": "./src/documents.ts",
-    "./edges": "./src/edges.ts"
+    "./edges": "./src/edges.ts",
+    "./testing": "./src/testing.ts"
   },
   "publishConfig": {
     "exports": {
@@ -80,6 +81,10 @@
       "./edges": {
         "types": "./dist/edges.d.ts",
         "default": "./dist/edges.js"
+      },
+      "./testing": {
+        "types": "./dist/testing.d.ts",
+        "default": "./dist/testing.js"
       }
     },
     "access": "public"
