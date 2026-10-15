@@ -2,8 +2,9 @@ name: Release
 
 # Changesets release flow: on every push to `trunk`, changesets/action either
 # opens/updates the "Version Packages" PR (when unreleased changesets exist)
-# or, when that PR has merged and no changesets remain, publishes the package
-# to npm and tags the release. Copied in shape from the effect-jsonapi library;
+# or, when that PR has merged and no changesets remain, publishes each
+# non-private package under packages/ whose version is not yet on npm, and
+# tags each release. Copied in shape from the effect-jsonapi library;
 # see PUBLISHING.md for the one-time maintainer setup.
 
 on:
@@ -92,10 +93,13 @@ jobs:
       # pnpm 11 performs npm OIDC trusted publishing itself when the job holds
       # `id-token: write` and no token is configured (it no longer delegates
       # to the npm CLI, so npm is never upgraded here), and it (unlike
-      # `npm publish`) rewrites the `catalog:` / `catalog:peers` specifiers and
-      # applies `publishConfig.exports` in the published manifest — and then
-      # `changeset tag`. The action parses the "New tag:" output, pushes the
-      # tags and creates the GitHub releases.
+      # `npm publish`) rewrites the `catalog:` / `catalog:peers` / `workspace:`
+      # specifiers and applies `publishConfig.exports` in the published
+      # manifest — and then `changeset tag`, which creates one
+      # `<package>@<version>` tag per package version not yet tagged and
+      # reports each in the file the action names in `CHANGESETS_OUTPUT`; the
+      # action reads that file, pushes the tags and creates one GitHub release
+      # per tag (one or two per release, with two packages).
       #
       # Provenance: pnpm 11 takes settings like `provenance` only from
       # `pnpm_config_*` (an `NPM_CONFIG_PROVENANCE` would be ignored), and

@@ -3,15 +3,16 @@ import { defineConfig } from "vite-plus";
 export default defineConfig({
   run: {
     tasks: {
-      // Type-checks the emitted declarations; depends on the package's build
-      // so `vp run check` at the root always exercises fresh `dist/` output.
+      // Type-checks the emitted declarations of both published packages;
+      // depends on each package's build so `vp run check` at the root always
+      // exercises fresh `dist/` output.
       check: {
         command: "tsc -p tsconfig.json",
-        dependsOn: ["@thomasfosterau/pulpit#build"],
+        dependsOn: ["@thomasfosterau/pulpit#build", "@thomasfosterau/pulpit-wordpress#build"],
         input: [
           { auto: true },
           "!node_modules/**",
-          // `tsc` probes for `packages/pulpit/node_modules` while resolving
+          // `tsc` probes for `packages/*/node_modules` while resolving
           // the emitted declarations' imports; vitest creates it (`.vite`),
           // so without this exact-path exclusion the check missed once after
           // every `test:unit` (pulpit#66). Only the directory entry is
@@ -20,6 +21,7 @@ export default defineConfig({
           // the exclusion relies on the lockfile input below to catch a
           // dependency change.
           { pattern: "!packages/pulpit/node_modules", base: "workspace" as const },
+          { pattern: "!packages/pulpit-wordpress/node_modules", base: "workspace" as const },
           { pattern: "packages/*/dist/**", base: "workspace" as const },
           { pattern: "pnpm-lock.yaml", base: "workspace" as const },
         ],

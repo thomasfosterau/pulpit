@@ -1,0 +1,64 @@
+{
+  "name": "@thomasfosterau/pulpit-wordpress",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A WordPress-compatible (wp/v2), read-only REST API over the chains of @thomasfosterau/pulpit, so headless WordPress frontends can read from a pulpit application.",
+  "keywords": [
+    "cms",
+    "effect",
+    "headless-cms",
+    "headless-wordpress",
+    "rest-api",
+    "typescript",
+    "wordpress",
+    "wp-json"
+  ],
+  "homepage": "https://github.com/thomasfosterau/pulpit/tree/trunk/packages/pulpit-wordpress#readme",
+  "bugs": {
+    "url": "https://github.com/thomasfosterau/pulpit/issues"
+  },
+  "license": "MIT",
+  "author": "Thomas Foster <me@thomasfoster.au>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thomasfosterau/pulpit.git",
+    "directory": "packages/pulpit-wordpress"
+  },
+  "files": [
+    "dist",
+    "src",
+    "!src/**/*.test.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "access": "public"
+  },
+  "devDependencies": {
+    "@effect/docgen": "catalog:",
+    "@effect/language-service": "catalog:",
+    "@thomasfosterau/pulpit": "workspace:*",
+    "@types/node": "catalog:",
+    "@vitest/coverage-istanbul": "catalog:",
+    "effect": "catalog:",
+    "tsx": "catalog:"
+  },
+  "peerDependencies": {
+    "@thomasfosterau/pulpit": "workspace:^",
+    "effect": "catalog:peers"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -108,9 +108,10 @@ export default defineConfig({
       // before any Effect runtime exists — there is no `Config` provider to
       // read from and no `FileSystem` service to call, so `process.env` and
       // `node:*` are the only things that work there. The Effect preset's
-      // service rules have no satisfiable fix in these files.
+      // service rules have no satisfiable fix in these files (nor in
+      // `vite.package.ts`, the config the packages' `vite.config.ts` share).
       {
-        files: ["**/vite.config.ts", "**/vitest.config.ts"],
+        files: ["**/vite.config.ts", "**/vitest.config.ts", "vite.package.ts"],
         rules: {
           "effect/avoid-node-imports": "off",
           "effect/avoid-sync-fs": "off",
@@ -138,13 +139,19 @@ export default defineConfig({
   },
   run: {
     tasks: {
-      // The CI typecheck gate, as one task: the package's `check` (which also
+      // The CI typecheck gate, as one task: each package's `check` (which also
       // type-checks its type-level tests), plus the dist-consumer check that
-      // type-checks a consumer fixture against the EMITTED declarations (the
-      // declaration-emit hazard only shows up there). A pure graph node.
+      // type-checks consumer fixtures against the EMITTED declarations of both
+      // packages (the declaration-emit hazard only shows up there). A pure
+      // graph node: a new workspace package's `check` must be added here, or
+      // `vp run check` (and CI) never runs it.
       check: {
         command: "echo 'check: every type gate green'",
-        dependsOn: ["@thomasfosterau/pulpit#check", "@pulpit/dist-consumer#check"],
+        dependsOn: [
+          "@thomasfosterau/pulpit#check",
+          "@thomasfosterau/pulpit-wordpress#check",
+          "@pulpit/dist-consumer#check",
+        ],
         cache: false,
       },
     },

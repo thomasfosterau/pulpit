@@ -29,4 +29,4 @@ dist/
 .vite-hooks/_/
 
 # Generated API documentation (`vp run -r docgen`). Regenerated; never committed.
-packages/pulpit/docs/
+packages/*/docs/
