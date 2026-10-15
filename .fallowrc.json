@@ -40,14 +40,7 @@
     "@vitest/coverage-istanbul",
     "fallow"
   ],
-  "overrides": [
-    {
-      "files": ["tests/dist-consumer/src/**"],
-      "rules": {
-        "unlisted-dependencies": "off"
-      }
-    }
-  ],
+  "rulePacks": ["fallow-rules.json"],
   "rules": {
     "unused-files": "error",
     "unused-exports": "error",

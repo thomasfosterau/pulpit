@@ -95,7 +95,7 @@ jobs:
       # to the npm CLI, so npm is never upgraded here), and it (unlike
       # `npm publish`) rewrites the `catalog:` / `catalog:peers` / `workspace:`
       # specifiers and applies `publishConfig.exports` in the published
-      # manifest — and then `changeset tag`, which creates one
+      # manifest — and then `changeset git-tag`, which creates one
       # `<package>@<version>` tag per package version not yet tagged and
       # reports each in the file the action names in `CHANGESETS_OUTPUT`; the
       # action reads that file, pushes the tags and creates one GitHub release
