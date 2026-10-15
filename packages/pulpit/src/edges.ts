@@ -269,6 +269,30 @@ const qualify = <Following>(alias: string, filter: ListFilter<Following>): ListF
         ...node,
         column: endpointColumn(alias, node.column),
       }),
+      gt: (node): ListFilter<Following> => ({
+        ...node,
+        column: endpointColumn(alias, node.column),
+      }),
+      gte: (node): ListFilter<Following> => ({
+        ...node,
+        column: endpointColumn(alias, node.column),
+      }),
+      lt: (node): ListFilter<Following> => ({
+        ...node,
+        column: endpointColumn(alias, node.column),
+      }),
+      lte: (node): ListFilter<Following> => ({
+        ...node,
+        column: endpointColumn(alias, node.column),
+      }),
+      anyOf: (node): ListFilter<Following> => ({
+        ...node,
+        column: endpointColumn(alias, node.column),
+      }),
+      noneOf: (node): ListFilter<Following> => ({
+        ...node,
+        column: endpointColumn(alias, node.column),
+      }),
       published: (node): ListFilter<Following> => ({
         ...node,
         column: endpointColumn(alias, node.column),

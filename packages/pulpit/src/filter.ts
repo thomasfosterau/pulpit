@@ -24,9 +24,16 @@
  * | `never` | a predicate no row satisfies (the apps: `id = '00000000-…'`) |
  * | `eq` / `ne` | `col = $v` / `col <> $v` — a `NULL` column satisfies neither |
  * | `in` | `col IN (<following subquery>)` — a subquery, never a materialised array (#1107); a `NULL` column satisfies none |
+ * | `gt` / `gte` / `lt` / `lte` | `col > $v` / `col >= $v` / `col < $v` / `col <= $v` — a string compared with `COLLATE "C"` (code-point order), a `Date` as a timestamp; a `NULL` column, or one of another type than `$v`, satisfies none |
+ * | `anyOf` | `col = ANY($values)` — a `NULL` column satisfies none; empty is `never` |
+ * | `noneOf` | `col <> ALL($values)` — a `NULL` column satisfies none; empty is `always` (`<> ALL` over no values is true) |
  * | `published` | `(col IS NOT NULL AND col <= now())` — the database's clock, one per query |
  * | `notPublished` | `(col IS NULL OR col > now())` — parenthesised, so it cannot bind to a surrounding `AND` |
  * | `and` / `or` | `AND` / `OR` over the parts |
+ *
+ * An `anyOf` / `noneOf` node carrying more than {@link MAX_SET_VALUES} values
+ * is `never`, in the renderer as in {@link evaluate} (`SEC-INPUT-003`); the
+ * constructors already fold it so.
  *
  * @copyright Thomas Foster
  * @module pulpit/filter
@@ -35,6 +42,8 @@
 
 import * as Array from "effect/Array";
 import * as Match from "effect/Match";
+import * as Order from "effect/Order";
+import * as Predicate from "effect/Predicate";
 import type { ColumnValue } from "./version-chain.ts";
 
 /**
@@ -45,6 +54,27 @@ import type { ColumnValue } from "./version-chain.ts";
  * @since 0.1.0
  */
 export type Scalar = string | number | boolean;
+
+/**
+ * A value a `gt` / `gte` / `lt` / `lte` node compares against. A `string`
+ * orders by code point (SQL's `"C"` collation), a `number` numerically and a
+ * `Date` by its instant. Kept apart from {@link Scalar}, which `eq` / `ne`
+ * test by identity and so cannot hold a `Date`; a `boolean` has no order a
+ * filter needs.
+ *
+ * @since 0.1.0
+ */
+export type Comparable = string | number | Date;
+
+/**
+ * The most values an `anyOf` / `noneOf` node carries (`SEC-INPUT-003`): a
+ * literal set past it is `never`, so no request drives an unbounded
+ * `= ANY($values)` parameter. An application's own bound (WordPress caps
+ * `include` at 100) sits below it.
+ *
+ * @since 0.1.0
+ */
+export const MAX_SET_VALUES = 1000;
 
 /**
  * A row as {@link evaluate} reads it: the view's columns by name.
@@ -64,6 +94,12 @@ export type ListFilter<Following> =
   | { readonly kind: "eq"; readonly column: string; readonly value: Scalar }
   | { readonly kind: "ne"; readonly column: string; readonly value: Scalar }
   | { readonly kind: "in"; readonly column: string; readonly set: Following }
+  | { readonly kind: "gt"; readonly column: string; readonly value: Comparable }
+  | { readonly kind: "gte"; readonly column: string; readonly value: Comparable }
+  | { readonly kind: "lt"; readonly column: string; readonly value: Comparable }
+  | { readonly kind: "lte"; readonly column: string; readonly value: Comparable }
+  | { readonly kind: "anyOf"; readonly column: string; readonly values: ReadonlyArray<Scalar> }
+  | { readonly kind: "noneOf"; readonly column: string; readonly values: ReadonlyArray<Scalar> }
   | { readonly kind: "published"; readonly column: string }
   | { readonly kind: "notPublished"; readonly column: string }
   | { readonly kind: "and"; readonly filters: ReadonlyArray<ListFilter<Following>> }
@@ -106,6 +142,69 @@ export const ne = (column: string, value: Scalar) => ({ kind: "ne", column, valu
  */
 export const isIn = <Following>(column: string, set: Following) =>
   ({ kind: "in", column, set }) as const;
+
+/**
+ * `column > value`. A `NULL` or absent column satisfies it no more than SQL's
+ * `NULL > $v` (which is `NULL`), and neither does a column holding another
+ * type than `value`. See {@link Comparable} for the orders.
+ *
+ * @since 0.1.0
+ */
+export const gt = (column: string, value: Comparable) => ({ kind: "gt", column, value }) as const;
+
+/**
+ * `column >= value`; equality satisfies it. A `NULL` or absent column, or one
+ * holding another type than `value`, satisfies none (SQL's `NULL >= $v` is `NULL`).
+ *
+ * @since 0.1.0
+ */
+export const gte = (column: string, value: Comparable) => ({ kind: "gte", column, value }) as const;
+
+/**
+ * `column < value`. A `NULL` or absent column, or one holding another type
+ * than `value`, satisfies none (SQL's `NULL < $v` is `NULL`).
+ *
+ * @since 0.1.0
+ */
+export const lt = (column: string, value: Comparable) => ({ kind: "lt", column, value }) as const;
+
+/**
+ * `column <= value`; equality satisfies it. A `NULL` or absent column, or one
+ * holding another type than `value`, satisfies none (SQL's `NULL <= $v` is `NULL`).
+ *
+ * @since 0.1.0
+ */
+export const lte = (column: string, value: Comparable) => ({ kind: "lte", column, value }) as const;
+
+/**
+ * `column = ANY(values)`: the column equals one of a literal set, each tested
+ * as {@link eq} tests its value. A `NULL` or absent column is in no set. No
+ * values is {@link never}, and more than {@link MAX_SET_VALUES} is `never`
+ * too (`SEC-INPUT-003`), so {@link and} / {@link or} fold both. This is a
+ * literal set; a follower subquery is {@link isIn}'s.
+ *
+ * @since 0.1.0
+ */
+export const anyOf = (column: string, values: ReadonlyArray<Scalar>) =>
+  Array.isReadonlyArrayEmpty(values) || values.length > MAX_SET_VALUES
+    ? never
+    : ({ kind: "anyOf", column, values: [...values] } as const);
+
+/**
+ * `column <> ALL(values)`: the column equals none of a literal set, each
+ * tested as {@link ne} tests its value. A `NULL` or absent column satisfies it
+ * no more than it satisfies `ne` (SQL's `NULL <> ALL(…)` is `NULL`). No values
+ * is {@link always}; more than {@link MAX_SET_VALUES} is {@link never}, failing
+ * closed rather than excluding only some (`SEC-INPUT-003`).
+ *
+ * @since 0.1.0
+ */
+export const noneOf = (column: string, values: ReadonlyArray<Scalar>) =>
+  Array.isReadonlyArrayEmpty(values)
+    ? always
+    : values.length > MAX_SET_VALUES
+      ? never
+      : ({ kind: "noneOf", column, values: [...values] } as const);
 
 /**
  * Stamped, and the stamp has arrived.
@@ -186,6 +285,30 @@ export interface EvaluationContext<Following> {
   readonly contains: (set: Following, value: ColumnValue) => boolean;
 }
 
+/**
+ * Strings by code point, as SQL's `"C"` collation orders them over UTF-8.
+ * JavaScript's `<` compares UTF-16 code units instead, which puts an astral
+ * character (a surrogate pair, from U+D800) before U+E000–U+FFFF.
+ */
+const byCodePoint: Order.Order<string> = Order.mapInput(Order.Array(Order.Number), (text: string) =>
+  Array.map(Array.fromIterable(text), (char) => char.codePointAt(0) ?? 0),
+);
+
+/**
+ * Compare a column with a {@link Comparable}: negative, zero or positive, or
+ * `NaN` when the column is `NULL`, absent or of another type, which every
+ * relational test then reads as false, as SQL's `NULL` is.
+ */
+const compareTo = (column: ColumnValue, value: Comparable): number => {
+  if (Predicate.isDate(value)) {
+    return Predicate.isDate(column) ? column.getTime() - value.getTime() : Number.NaN;
+  }
+  if (Predicate.isString(value)) {
+    return Predicate.isString(column) ? byCodePoint(column, value) : Number.NaN;
+  }
+  return Predicate.isNumber(column) ? column - value : Number.NaN;
+};
+
 /** Read a timestamp column the way the publication axis does: a `Date`, or nothing. */
 const instantOf = (value: ColumnValue): number =>
   value instanceof Date ? value.getTime() : Number.NaN;
@@ -193,11 +316,14 @@ const instantOf = (value: ColumnValue): number =>
 /**
  * Run a filter against one row — the in-memory reading of the rendering
  * contract above. A column that is `null` or that the row lacks matches no
- * `eq`, satisfies no `ne` or `in`, and is unpublished: SQL reads `NULL = $v`,
- * `NULL <> $v` and `NULL IN (…)` as `NULL`, which a `WHERE` drops, so `ne` is
- * not the complement of `eq` over a nullable column. Such a row fails an `in`
- * without `context.contains` being asked, so the answer never depends on the
- * seam (pulpit#94).
+ * `eq`, satisfies no `ne`, `in`, comparison, `anyOf` or non-empty `noneOf`,
+ * and is unpublished: SQL reads `NULL = $v`, `NULL <> $v`, `NULL IN (…)`,
+ * `NULL > $v` and `NULL <> ALL(…)` as `NULL`, which a `WHERE` drops, so `ne`
+ * is not the complement of `eq`, nor `noneOf` of `anyOf`, over a nullable
+ * column. Such a row fails an `in` without `context.contains` being asked, so
+ * the answer never depends on the seam (pulpit#94). A comparison against a
+ * column of another type is false, and a set past {@link MAX_SET_VALUES} is
+ * `never`.
  *
  * @since 0.1.0
  */
@@ -219,6 +345,20 @@ export const evaluate = <Following>(
       in: (node) => {
         const value = row[node.column] ?? null;
         return value !== null && context.contains(node.set, value);
+      },
+      gt: (node) => compareTo(row[node.column] ?? null, node.value) > 0,
+      gte: (node) => compareTo(row[node.column] ?? null, node.value) >= 0,
+      lt: (node) => compareTo(row[node.column] ?? null, node.value) < 0,
+      lte: (node) => compareTo(row[node.column] ?? null, node.value) <= 0,
+      anyOf: (node) =>
+        node.values.length <= MAX_SET_VALUES &&
+        node.values.some((value) => row[node.column] === value),
+      noneOf: (node) => {
+        if (node.values.length > MAX_SET_VALUES) return false;
+        // `<> ALL` over no values is true, even for NULL; the constructor folds that to `always`.
+        if (Array.isReadonlyArrayEmpty(node.values)) return true;
+        const value = row[node.column] ?? null;
+        return value !== null && node.values.every((excluded) => value !== excluded);
       },
       published: (node) => arrived(node.column),
       notPublished: (node) => !arrived(node.column),

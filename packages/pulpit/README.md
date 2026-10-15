@@ -161,6 +161,8 @@ The kernel's read predicates as data: a store renders a `ListFilter` to SQL, and
 | `ListFilter<Following>` | The predicate tree. `Following` is whatever the follower seam hands the `in` node: a subquery for SQL, a set in memory. |
 | `always`, `never` | No predicate; a predicate no row satisfies (fail closed). |
 | `eq`, `ne`, `isIn` | `col = v`, `col <> v`, `col IN (following)`. |
+| `gt`, `gte`, `lt`, `lte`, `Comparable` | `col > v`, `col >= v`, `col < v`, `col <= v`, over a `Comparable` (`string`, `number` or `Date`). |
+| `anyOf`, `noneOf`, `MAX_SET_VALUES` | `col = ANY(values)`, `col <> ALL(values)` over a literal set of `Scalar`s; an empty `anyOf` is `never`, an empty `noneOf` is `always`, and a set of more than `MAX_SET_VALUES` (1000) values is `never` (`SEC-INPUT-003`). |
 | `published`, `notPublished` | Stamped and arrived; its exact complement (unstamped, or stamped in the future). |
 | `and`, `or` | Combinators that drop identity parts, short-circuit on the absorbing part, and return a single part bare. |
 | `evaluate(filter, row, context)` | The in-memory reading, against `context.now` and `context.contains`. |
@@ -173,9 +175,14 @@ A SQL renderer must honour this contract:
 | `never` | a predicate no row satisfies |
 | `eq` / `ne` | `col = $v` / `col <> $v`: a `NULL` column satisfies neither, so `evaluate` drops a row whose column is `null` or absent from both |
 | `in` | `col IN (<following subquery>)`: a subquery, never a materialised array. A `NULL` column satisfies none, so `evaluate` drops a row whose column is `null` or absent without asking `context.contains` |
+| `gt` / `gte` / `lt` / `lte` | `col > $v` / `col >= $v` / `col < $v` / `col <= $v`. A string compares with `COLLATE "C"` (code-point order; `evaluate` does not use JavaScript's UTF-16 `<`), a `Date` as a timestamp, a number numerically. A `NULL` column satisfies none, and neither does a column of another type than `$v`: `evaluate` drops both |
+| `anyOf` | `col = ANY($values)`: a bound array, each value tested as `eq` tests it. A `NULL` column satisfies none |
+| `noneOf` | `col <> ALL($values)`, each value tested as `ne` tests it. A `NULL` column satisfies none (`NULL <> ALL(…)` is `NULL`), so `noneOf` is not the complement of `anyOf` over a nullable column. Over no values it is true for every row, `NULL` included, which the constructor folds to `always` |
 | `published` | `(col IS NOT NULL AND col <= now())`: the database's clock, one per query |
 | `notPublished` | `(col IS NULL OR col > now())`, parenthesised so it cannot bind to a surrounding `AND` |
 | `and` / `or` | `AND` / `OR` over the parts |
+
+An `anyOf` / `noneOf` node with more than `MAX_SET_VALUES` values renders as `never`, and `evaluate` reads it so. The constructors already return `never` for one, so only a hand-built node reaches a renderer that way. A cap that dropped some of a `noneOf`'s values would widen the result, so the arm fails closed instead.
 
 ## `./subtype`
 
@@ -436,7 +443,7 @@ Expected to be a Drizzle store over the leaf's current-version view (pulpit#5). 
 
 ### `ListFilter<Following>` → SQL: the filter renderer
 
-The rendering contract is the table under [`./filter`](#filter). `Following` is the follower seam's subquery (Drizzle's `SQLWrapper`), rendered as `col IN (<subquery>)`, never a materialised array. `published` / `notPublished` use the database's `now()` and are parenthesised.
+The rendering contract is the table under [`./filter`](#filter). `Following` is the follower seam's subquery (Drizzle's `SQLWrapper`), rendered as `col IN (<subquery>)`, never a materialised array. `published` / `notPublished` use the database's `now()` and are parenthesised. A string comparison (`gt` / `gte` / `lt` / `lte`) uses the `"C"` collation, so it orders by code point as `evaluate` does; `anyOf` / `noneOf` bind their values as one array parameter.
 
 ### The viewer, the role axes and the follower seam
 
