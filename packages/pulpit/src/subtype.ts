@@ -17,7 +17,8 @@
  *   the corpus-write rung; when the view has a `visibility` column, reads
  *   show only `public` rows below the view-private rung, apart from the
  *   soft-delete axis, and the `followers` rows whose declared
- *   `followersOfColumn` names an account the viewer follows (pulpit#92). A
+ *   `followersOfColumn` names the viewer or an account they follow
+ *   (pulpit#92). A
  *   write or history read to an existing row also needs the row to be one
  *   `get` would serve the caller (pulpit#101).
  * - `owned` — a member's own row. Create gates on any signed-in account and
@@ -277,7 +278,8 @@ export type LeafAccess =
        * it holds the id of the account whose followers may read the row
        * (`PUB-009`). The column is the application's, and holds whatever id
        * its follower seam takes; no id brand is implied. Only the followers
-       * check reads it: the account it names gets no owner rights (a
+       * check reads it: the account it names and that account's followers
+       * read its `followers` rows, but it gets no other owner rights (a
        * `private` row stays the view-private rung's alone), and a value that
        * is not a string names nobody. Absent, or naming a column the view
        * lacks, a `followers` row is hidden below the view-private rung.
@@ -367,11 +369,15 @@ export const softDeleteFilter = <Following>(
  * column (an Entity leaf rides no such axis). Given a followers arm (the
  * leaf's `access`, declaring `followersOfColumn` over a view that carries
  * it, and the follower seam), a signed-in viewer also lists the `followers`
- * rows whose column names an account they follow (pulpit#92):
- * `visibility = 'followers' AND <followersOfColumn> IN (<following>)`.
- * Without one (the default, `Option.none()`), a `followers` row is the
- * view-private rung's alone. `defineSubtype`'s `get` / `getMany` read
- * the same facts, so they never serve a row this hides.
+ * rows whose column names them or an account they follow (pulpit#92):
+ * `visibility = 'followers' AND (<followersOfColumn> = <viewer> OR
+ * <followersOfColumn> IN (<following>))`. Without one (the default,
+ * `Option.none()`), a `followers` row is the view-private rung's alone.
+ * Pass `Option.some({ access, followers })` whenever the leaf declares
+ * `followersOfColumn`: `defineSubtype`'s `get` / `getMany` read the
+ * declared column, so the three-argument form agrees with them only for a
+ * leaf without it (for one with it, `get` serves `followers` rows this
+ * hides).
  *
  * @since 0.1.0
  */
@@ -676,7 +682,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
    * `ownedListFilter` lists none; a reference row shows only when the view
    * has no `visibility` column, the viewer holds the view-private rung, its
    * visibility is exactly `public`, or it is exactly `followers` and the
-   * viewer follows the account its declared `followersOfColumn` names, as
+   * viewer is, or follows, the account its declared `followersOfColumn` names, as
    * `referencePrivacyFilter` lists (pulpit#92). The reference arm is one
    * shared predicate with `./edges`' `canViewEndpoint`.
    */

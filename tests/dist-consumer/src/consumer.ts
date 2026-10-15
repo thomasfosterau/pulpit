@@ -277,14 +277,24 @@ export type _Get = Assert<
 // optional `Option`.
 export const curatedTerms: LeafAccess = { kind: "reference", followersOfColumn: "curatorId" };
 export const bareTerms: LeafAccess = { kind: "reference" };
+// A caller forwarding its own `undefined` (`exactOptionalPropertyTypes`).
+export const forwardedTerms: LeafAccess = { kind: "reference", followersOfColumn: undefined };
+const closedPolicy = {
+  canViewPrivate: () => false,
+  canViewDeleted: () => false,
+  canModerate: () => false,
+  canWriteCorpus: () => false,
+};
+// The three-argument form, from before pulpit#92, still type-checks.
+export const bareFilter = referencePrivacyFilter<Subquery>(
+  Option.none(),
+  closedPolicy,
+  leaves.columns,
+);
+export type _BareFilter = Assert<Equals<typeof bareFilter, ListFilter<Subquery>>>;
 export const curatedFilter = referencePrivacyFilter(
   Option.none(),
-  {
-    canViewPrivate: () => false,
-    canViewDeleted: () => false,
-    canModerate: () => false,
-    canWriteCorpus: () => false,
-  },
+  closedPolicy,
   leaves.columns,
   Option.some({
     access: { kind: "reference", followersOfColumn: "curatorId" },

@@ -301,8 +301,8 @@ const liveFilter = <Following>(): ListFilter<Following> =>
  * as the leaf's own `get` reads it, pulpit#93), and its leaf's access admits
  * the viewer, a tombstone's included. A reference node is
  * readable when its view has no `visibility` column, the viewer holds the
- * view-private rung, it is `public`, or it is `followers` and the viewer
- * follows the account its leaf's declared `followersOfColumn` names (the
+ * view-private rung, it is `public`, or it is `followers` and the viewer is,
+ * or follows, the account its leaf's declared `followersOfColumn` names (the
  * predicate `defineSubtype`'s `get` runs, pulpit#92); an owned node through
  * `canViewOwned`'s predicate, where an owner column holding no string reads
  * as no owner, matching no viewer and never asked of the follower seam. An

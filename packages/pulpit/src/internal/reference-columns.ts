@@ -65,9 +65,11 @@ const followersColumn = (
  * The reference privacy arm as a list filter: `always` over a view without a
  * `visibility` column or for the view-private rung (`scope.kind === "all"`);
  * otherwise `visibility = 'public'`, and for a signed-in viewer also
- * `visibility = 'followers' AND <followersOfColumn> IN (<following>)` when
- * the leaf declares that column and the view carries it (pulpit#92). The
- * account named in the column gets no arm of its own. Never throws.
+ * `visibility = 'followers' AND (<followersOfColumn> = <viewer> OR
+ * <followersOfColumn> IN (<following>))` when the leaf declares that column
+ * and the view carries it (pulpit#92): the account the column names and its
+ * followers read its `followers` rows. Its `private` rows stay the
+ * view-private rung's alone. Never throws.
  *
  * @internal
  */
@@ -88,7 +90,10 @@ export const referenceListFilter = <Following>(
           onSome: (followed) =>
             or<Following>(
               eq(VISIBILITY, "public"),
-              and<Following>(eq(VISIBILITY, "followers"), isIn(followed, member.following)),
+              and<Following>(
+                eq(VISIBILITY, "followers"),
+                or<Following>(eq(followed, member.userId), isIn(followed, member.following)),
+              ),
             ),
         }),
     }),
@@ -100,10 +105,12 @@ export const referenceListFilter = <Following>(
  * {@link referenceListFilter}: a view without a `visibility` column shows
  * the row; otherwise it shows when its visibility is exactly `public`, to
  * the view-private rung, or, when it is exactly `followers` and the leaf
- * declares a followers column the view carries, to a signed-in follower of
- * the account that column names, as the follower seam answers. A column
- * value that is not a string names no account, so the seam is never asked
- * about it (pulpit#85, pulpit#100). Anything else is hidden, which the
+ * declares a followers column the view carries, to the signed-in account
+ * that column names and to its followers, as the follower seam answers
+ * (pulpit#92). That account's `private` rows stay the view-private rung's
+ * alone. A column value that is not a string names no account, so it never
+ * matches the viewer and the seam is never asked about it (pulpit#85,
+ * pulpit#100). Anything else is hidden, which the
  * caller answers as `NodeNotFound` (`SEC-AUTH-ENUM-001`). The soft-delete
  * axis is the caller's. Never fails.
  *
@@ -134,7 +141,10 @@ export const canViewReferenceRow = <A extends Account, R>(
         ).ownerId,
         {
           onNone: () => Effect.succeed(false),
-          onSome: (ownerId) => followers.isFollower(account.id, ownerId),
+          onSome: (ownerId) =>
+            ownerId === account.id
+              ? Effect.succeed(true)
+              : followers.isFollower(account.id, ownerId),
         },
       ),
   });

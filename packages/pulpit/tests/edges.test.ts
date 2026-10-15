@@ -773,7 +773,7 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
       expect(asked.filter((ownerId) => !Predicate.isString(ownerId))).toEqual([]);
     });
 
-    it("is not vacuous: a follower reads the followed account's followers rows, and nobody else below the rung does", async () => {
+    it("is not vacuous: the named account and its follower read its followers rows, and nobody else below the rung does", async () => {
       const end = curatedEnd(["visibility", "curatorId"], "curatorId");
       const live = curatedRows.filter((row) => row.action !== "delete");
       const shown = async (viewer: Viewer) =>
@@ -788,8 +788,24 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
           )
           .map((row) => row.id),
       );
-      // The account the column names gets no owner arm.
-      const strangers = [anonymous, as(member), as(otherMember), as(contributor)];
+      // Each account the column names reads its own followers rows, never its private ones.
+      const named = [member, otherMember];
+      expect(
+        await Promise.all(
+          named.map(async (account) => (await shown(as(account))).map(({ id }) => id)),
+        ),
+      ).toEqual(
+        named.map((account) =>
+          live
+            .filter(
+              (row) =>
+                row["visibility"] === "public" ||
+                (row["visibility"] === "followers" && row["curatorId"] === account.id),
+            )
+            .map((row) => row.id),
+        ),
+      );
+      const strangers = [anonymous, as(contributor)];
       expect(
         await Promise.all(
           strangers.map(async (viewer) => (await shown(viewer)).map(({ id }) => id)),
@@ -891,10 +907,42 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
       expect(answers.map(({ name, byEndpoint }) => ({ name, answers: byEndpoint }))).toEqual(
         answers.map(({ name, byGet }) => ({ name, answers: byGet })),
       );
-      // Not vacuous: the follower reads one followers row the stranger does not.
-      const followerReads = await run(readBy(as(follower)));
-      const strangerReads = await run(readBy(as(otherMember)));
-      expect(followerReads.filter(Boolean).length - strangerReads.filter(Boolean).length).toBe(1);
+      // Not vacuous: rows are visibility (public, followers, private) × curator
+      // (member, otherMember, NULL). The follower reads the followed account's
+      // followers row; the named account its own, never its private one.
+      expect(await run(readBy(as(follower)))).toEqual([
+        true,
+        true,
+        true,
+        true,
+        false,
+        false,
+        false,
+        false,
+        false,
+      ]);
+      expect(await run(readBy(as(otherMember)))).toEqual([
+        true,
+        true,
+        true,
+        false,
+        true,
+        false,
+        false,
+        false,
+        false,
+      ]);
+      expect(await run(readBy(anonymous))).toEqual([
+        true,
+        true,
+        true,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+      ]);
     });
   });
 

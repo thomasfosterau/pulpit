@@ -26,8 +26,9 @@
  * - A reference leaf's `followers` rows, read through its declared
  *   `followersOfColumn` (pulpit#92): the list arm's shape, and `get` /
  *   `getMany` / `list` and the write and history gates agreeing for every
- *   visibility × curator × tombstone × viewer, a non-string curator never
- *   reaching the follower seam.
+ *   visibility × curator × tombstone × viewer, the named curator reading
+ *   its own `followers` rows (never its `private` ones), and a non-string
+ *   curator matching no viewer and never reaching the follower seam.
  *
  * @module tests/subtype
  */
@@ -310,11 +311,14 @@ describe("the reference list predicates", () => {
         Option.map(access, (leaf) => ({ access: leaf, followers: follows })),
       );
 
-    it("a signed-in viewer also lists the followers rows whose column names an account they follow", () => {
+    it("a signed-in viewer also lists the followers rows whose column names them or an account they follow", () => {
       expect(privacy(as(follower))).toEqual(
         or(
           eq("visibility", "public"),
-          and(eq("visibility", "followers"), isIn("curatorId", follows.following(follower.id))),
+          and(
+            eq("visibility", "followers"),
+            or(eq("curatorId", follower.id), isIn("curatorId", follows.following(follower.id))),
+          ),
         ),
       );
     });
@@ -1072,7 +1076,7 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
     const live = seeds.filter((seed) => !seed.deleted);
     const publicRows = live.filter((seed) => seed.state["visibility"] === "public").map(labelOf);
 
-    it("is not vacuous: a follower reads the followed account's live followers rows, and nobody else below the rung does", async () => {
+    it("is not vacuous: the named account and its follower read its live followers rows, and nobody else below the rung does", async () => {
       const leaf = await seededLeaf(
         curated,
         ["name", "visibility", "curatorId"],
@@ -1088,12 +1092,51 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
           )
           .map(labelOf),
       );
-      // The account the column names has no owner arm: it reads what a stranger reads.
-      const strangers = [anonymous, as(member), as(otherMember), as(contributor)];
+      // Each account the column names reads its own followers rows, never its private ones.
+      const named = [member, otherMember];
+      expect(
+        await Promise.all(named.map(async (account) => listedRows(await leaf.reads(as(account))))),
+      ).toEqual(
+        named.map((account) =>
+          live
+            .filter(
+              (seed) =>
+                seed.state["visibility"] === "public" ||
+                (seed.state["visibility"] === "followers" &&
+                  seed.state["curatorId"] === account.id),
+            )
+            .map(labelOf),
+        ),
+      );
+      const strangers = [anonymous, as(contributor)];
       expect(
         await Promise.all(strangers.map(async (viewer) => listedRows(await leaf.reads(viewer)))),
       ).toEqual(strangers.map(() => publicRows));
       expect(listedRows(await leaf.reads(as(moderator)))).toEqual(seeds.map(labelOf));
+    });
+
+    it("the named account reads its own followers row, not its private row, without following anybody", async () => {
+      const leaf = await seededLeaf(
+        curated,
+        ["name", "visibility", "curatorId"],
+        gardeneriaPolicy,
+        Arr.map(["followers", "private"] as const, (visibility) => ({
+          owner: admin,
+          state: { name: "n", visibility, curatorId: otherMember.id },
+          deleted: false,
+        })),
+        nobody,
+      );
+      const reads = await leaf.reads(as(otherMember));
+      expectAgreement(reads);
+      expect(await shownTo(leaf, as(otherMember))).toEqual([
+        [true, true],
+        [false, false],
+      ]);
+      expect(await shownTo(leaf, as(member))).toEqual([
+        [false, false],
+        [false, false],
+      ]);
     });
 
     it("a declared column the view lacks opens no followers row, fail closed", async () => {
@@ -1221,6 +1264,67 @@ describe("defineSubtype — an owner column holding no string is no owner (pulpi
       expect(asked).toEqual([]);
     },
   );
+
+  describe("a reference leaf's followers column holding no string names nobody (pulpit#92)", () => {
+    const curated: Extract<LeafAccess, { kind: "reference" }> = {
+      kind: "reference",
+      followersOfColumn: "curatorId",
+    };
+    const referenceSeeds: ReadonlyArray<Seed> = Arr.flatMap(owners, (curatorId) =>
+      Arr.map(["public", "followers", "private"] as const, (visibility) => ({
+        owner: admin,
+        state: { name: "n", visibility, curatorId },
+        deleted: false,
+      })),
+    );
+    const publicRows = referenceSeeds
+      .filter((seed) => seed.state["visibility"] === "public")
+      .map(labelOf);
+    const seams: ReadonlyArray<readonly [string, FollowerSeam<Following, never>]> = [
+      ["each follows the coerced ids", fans],
+      ["nobody follows anybody", nobody],
+    ];
+
+    it.each(
+      Arr.flatMap(seams, ([seamName, seam]) =>
+        Arr.map(viewers, ([viewerName, viewer]) => ({ seamName, seam, viewerName, viewer })),
+      ),
+    )(
+      "matches no viewer and asks no follower, $seamName, for $viewerName",
+      async ({ seam, viewer }) => {
+        asked.length = 0;
+        const leaf = await seededLeaf(
+          curated,
+          ["name", "visibility", "curatorId"],
+          gardeneriaPolicy,
+          referenceSeeds,
+          seam,
+        );
+        const reads = await leaf.reads(viewer);
+        expectAgreement(reads);
+        expect(listedRows(reads)).toEqual(publicRows);
+        expect(asked).toEqual([]);
+      },
+    );
+
+    it('is not vacuous: a followers column holding the string "null" is that account\'s', async () => {
+      const leaf = await seededLeaf(
+        curated,
+        ["name", "visibility", "curatorId"],
+        gardeneriaPolicy,
+        [
+          {
+            owner: admin,
+            state: { name: "n", visibility: "followers", curatorId: "null" },
+            deleted: false,
+          },
+        ],
+        nobody,
+      );
+      expect(await shownTo(leaf, as(nullId))).toEqual([[true, true]]);
+      expect(await shownTo(leaf, as(undefinedId))).toEqual([[false, false]]);
+    });
+  });
 
   it("still shows every row to the view-private rung", async () => {
     const leaf = await seededLeaf(
