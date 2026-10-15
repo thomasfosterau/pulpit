@@ -11,8 +11,11 @@
     // Resolve each package name to the EMITTED declarations rather than the
     // workspace `exports` (which point at `src/` for the in-repo dev loop) —
     // which is also why this package declares no dependency on either: the
-    // mapping below is the whole resolution. Relative to this file;
-    // TypeScript 7 removed `baseUrl`.
+    // mapping below is the whole resolution. Keep it that way: with a
+    // `workspace:*` dependency, a subpath missing from `dist/` would fall
+    // through to the `node_modules` link and on to `src/`, and the check
+    // would pass. That is why `.fallowrc.json` ignores the two names instead.
+    // Relative to this file; TypeScript 7 removed `baseUrl`.
     "paths": {
       "@thomasfosterau/pulpit": ["../../packages/pulpit/dist/index.d.ts"],
       "@thomasfosterau/pulpit/*": ["../../packages/pulpit/dist/*.d.ts"],
