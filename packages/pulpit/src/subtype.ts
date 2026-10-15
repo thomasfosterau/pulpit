@@ -94,6 +94,7 @@ import {
   type StaleVersion,
   type VersionAction,
   type VersionChainStore,
+  type VersionComparison,
   type VersionConflict,
   type VersionNotFound,
   type VersionSnapshot,
@@ -648,6 +649,24 @@ export interface SubtypeOps<Resource, E, R> {
     version: bigint,
   ) => Effect.Effect<VersionSnapshot, Gate | NodeNotFound | VersionNotFound | E, R>;
   /**
+   * The field-level change set from version `from` to version `to`: the
+   * chain's `compare` (two version reads and `diffStates`, see
+   * {@link VersionComparison}) behind exactly {@link SubtypeOps.getVersion}'s
+   * gate (`READ-009`), which both run through, so nothing is read before it
+   * passes. Fails as `getVersion` does: `Unauthorized` when anonymous;
+   * `Forbidden` below the write rung (owner-or-moderator on an owned row,
+   * whatever its visibility, pulpit#24; the corpus-write rung on a reference
+   * leaf); `NodeNotFound` when an owned row has no owner or a reference row
+   * is missing or one `get` hides from the caller (pulpit#101), whichever
+   * version is asked for; then `VersionNotFound` for whichever version
+   * (`from` first) has no row.
+   */
+  readonly compare: (
+    id: string,
+    from: bigint,
+    to: bigint,
+  ) => Effect.Effect<VersionComparison, Gate | NodeNotFound | VersionNotFound | E, R>;
+  /**
    * Re-apply the state at `version` as a new version, gated like a write
    * (on a reference leaf, `NodeNotFound` for a row `get` hides from the
    * caller, pulpit#101). Fails `VersionNotFound`, before writing anything,
@@ -805,9 +824,23 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     return { rows: page.rows.map(toResource), total: page.total };
   });
 
+  /**
+   * A history read (`READ-009`): the viewer's {@link writer} gate on `id`,
+   * then `read`. `getVersion` and `compare` both run through it, so their
+   * gate is one code path and `read` never runs for a caller it refuses.
+   */
+  const historyRead = <A, E2>(id: string, read: Effect.Effect<A, E2, R>) =>
+    Effect.andThen(
+      Effect.flatMap(definition.viewer, (viewer) => writer(viewer, id)),
+      read,
+    );
+
   const getVersion = Effect.fn(`${type}.getVersion`)(function* (id: string, version: bigint) {
-    yield* writer(yield* definition.viewer, id);
-    return yield* chain.getVersion(id, version);
+    return yield* historyRead(id, chain.getVersion(id, version));
+  });
+
+  const compare = Effect.fn(`${type}.compare`)(function* (id: string, from: bigint, to: bigint) {
+    return yield* historyRead(id, chain.compare(id, from, to));
   });
 
   const restoreVersion = Effect.fn(`${type}.restoreVersion`)(function* (
@@ -829,6 +862,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     getMany,
     list,
     getVersion,
+    compare,
     restoreVersion,
   };
 };

@@ -271,6 +271,20 @@ export type _Get = Assert<
     Effect.Effect<PostDoc, NodeNotFound | StoreFailure, Transaction>
   >
 >;
+// The gated compare (pulpit#82): the chain's comparison behind `getVersion`'s gate.
+export type _SubtypeCompare = Assert<
+  Equals<
+    ReturnType<typeof posts.compare>,
+    Effect.Effect<
+      VersionComparison,
+      Unauthorized | Forbidden | NodeNotFound | VersionNotFound | StoreFailure,
+      Transaction
+    >
+  >
+>;
+export type _SubtypeCompareParameters = Assert<
+  Equals<Parameters<typeof posts.compare>, [id: string, from: bigint, to: bigint]>
+>;
 
 // A reference leaf's followers column (pulpit#92): an optional field, so
 // the bare declaration still compiles, and the list arm takes it as an

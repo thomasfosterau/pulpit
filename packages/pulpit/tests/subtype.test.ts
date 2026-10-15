@@ -69,7 +69,12 @@ import {
   type Viewer,
   type ViewerAccount,
 } from "../src/subtype.ts";
-import type { ColumnValue, Precondition } from "../src/version-chain.ts";
+import {
+  defineVersionChain,
+  VersionNotFound,
+  type ColumnValue,
+  type Precondition,
+} from "../src/version-chain.ts";
 import { isPubliclyServeable } from "../src/publication.ts";
 import { ABSENT } from "./fixtures.ts";
 import { makeInMemoryChainStore } from "./in-memory-chain.ts";
@@ -417,12 +422,26 @@ const ownedPosts = () => {
   const chain = makeInMemoryChainStore();
   const leaves = makeInMemoryLeafStore(chain, ["title", "visibility", "draft"]);
   let viewer: Viewer = anonymous;
+  /** Every version the operations read, logged before it yields: a history read past a refusing gate shows here. */
+  const snapshots: Array<readonly [string, bigint]> = [];
   const ops = defineSubtype({
     type: "posts",
     access: ownedAccess({ draft: true }),
-    chain,
+    chain: {
+      ...chain,
+      snapshot: (id, version) =>
+        Effect.suspend(() => {
+          snapshots.push([id, version]);
+          return chain.snapshot(id, version);
+        }),
+    },
     leaves,
-    viewer: Effect.sync(() => viewer),
+    // Yields first, as a real session lookup does: a history read forked
+    // beside the gate would then run before the gate refuses (pulpit#82).
+    viewer: Effect.andThen(
+      Effect.yieldNow,
+      Effect.sync(() => viewer),
+    ),
     policy: gardeneriaPolicy,
     followers: follows,
     toResource: (row: LeafRow) => ({
@@ -445,7 +464,7 @@ const ownedPosts = () => {
     );
     return written.id;
   };
-  return { chain, leaves, ops, actAs, post };
+  return { chain, leaves, ops, actAs, post, snapshots };
 };
 
 describe("defineSubtype — an owned leaf", () => {
@@ -543,7 +562,7 @@ describe("defineSubtype — an owned leaf", () => {
   });
 
   it("the write and history gates confirm existence: a stranger gets Forbidden on every hidden row, the anonymous Unauthorized (pulpit#24)", async () => {
-    const { ops, actAs, post } = ownedPosts();
+    const { ops, actAs, post, snapshots } = ownedPosts();
     const draft = await run(
       actAs(
         as(member),
@@ -564,6 +583,11 @@ describe("defineSubtype — an owned leaf", () => {
       ops.delete(id),
       ops.getVersion(id, 0n),
       ops.restoreVersion(id, 0n),
+      // A version no row has, on either side: the gate answers before the chain could.
+      ops.getVersion(id, 99n),
+      ops.compare(id, 0n, 0n),
+      ops.compare(id, 99n, 0n),
+      ops.compare(id, 0n, 99n),
     ];
     /** The failure tag `who` gets from `effect`, as an Effect so the probes run in sequence. */
     const tag = <A, E extends { readonly _tag: string }>(
@@ -586,6 +610,7 @@ describe("defineSubtype — an owned leaf", () => {
     const cases = Arr.flatMap([...hidden, "missing"], (id) =>
       Arr.map(gated(id), (op) => [id, op] as const),
     );
+    const readBefore = snapshots.length;
     const observed = await run(
       Effect.forEach(
         cases,
@@ -608,6 +633,184 @@ describe("defineSubtype — an owned leaf", () => {
         anonymous: Option.some("Unauthorized"),
       })),
     );
+    // No refused history read reached a version.
+    expect(snapshots.slice(readBefore)).toEqual([]);
+  });
+
+  describe("compare: getVersion's gate, then the chain's compare (pulpit#82)", () => {
+    /** A version no row has. */
+    const ABSENT_VERSION = 99n;
+    const pairs: ReadonlyArray<readonly [bigint, bigint]> = [
+      [0n, 0n],
+      [0n, 1n],
+      [1n, 0n],
+      [0n, ABSENT_VERSION],
+      [ABSENT_VERSION, 1n],
+      [ABSENT_VERSION, ABSENT_VERSION + 1n],
+    ];
+    const viewers: ReadonlyArray<readonly [string, Viewer]> = [
+      ["anonymous", anonymous],
+      ["the owner", as(member)],
+      ["a stranger", as(otherMember)],
+      ["the owner's follower", as(follower)],
+      ["a contributor", as(contributor)],
+      ["a moderator", as(moderator)],
+      ["an admin", as(admin)],
+    ];
+    /** An owned leaf with a row per state, each at head 1, plus a missing id and an ownerless row. */
+    const seeded = async () => {
+      const leaf = ownedPosts();
+      const { ops, actAs, post, leaves } = leaf;
+      const edited = async (id: string) => {
+        await run(actAs(as(member), ops.update({ id, patch: { title: "Second", draft: null } })));
+        return id;
+      };
+      const draft = (
+        await run(
+          actAs(
+            as(member),
+            ops.create({
+              id: Option.none(),
+              state: { title: "A draft", visibility: "public", draft: true },
+            }),
+          ),
+        )
+      ).id;
+      const tombstone = await post("private");
+      await run(actAs(as(member), ops.delete(tombstone)));
+      const ownerless = await edited(await post("public"));
+      leaves.owners.delete(ownerless);
+      const privateId = await edited(await post("private"));
+      const rows: ReadonlyArray<readonly [string, string]> = [
+        ["public", await edited(await post("public"))],
+        ["private", privateId],
+        ["followers", await edited(await post("followers"))],
+        ["draft", await edited(draft)],
+        ["tombstoned private", tombstone],
+        ["ownerless", ownerless],
+        ["missing", "missing"],
+      ];
+      return { ...leaf, rows, privateId };
+    };
+    it("answers every row × caller × version pair as getVersion(from) then getVersion(to) would, reading nothing past a refusing gate", async () => {
+      const { ops, actAs, rows, snapshots } = await seeded();
+      const cases = Arr.flatMap(rows, ([label, id]) =>
+        Arr.flatMap(viewers, ([viewerName, viewer]) =>
+          Arr.map(pairs, ([from, to]) => ({ label, id, viewerName, viewer, from, to })),
+        ),
+      );
+      const observed = await run(
+        Effect.forEach(
+          cases,
+          ({ label, id, viewerName, viewer, from, to }) =>
+            Effect.gen(function* () {
+              const fromAnswer = yield* actAs(viewer, Effect.result(ops.getVersion(id, from)));
+              const toAnswer = yield* actAs(viewer, Effect.result(ops.getVersion(id, to)));
+              const readBefore = snapshots.length;
+              const answer = yield* actAs(viewer, Effect.result(ops.compare(id, from, to)));
+              const read = snapshots.slice(readBefore);
+              const implied = Result.isFailure(fromAnswer)
+                ? Result.fail(fromAnswer.failure)
+                : Result.isFailure(toAnswer)
+                  ? Result.fail(toAnswer.failure)
+                  : Result.succeed({
+                      from: fromAnswer.success,
+                      to: toAnswer.success,
+                    });
+              return { label, viewerName, from, to, answer, implied, read };
+            }),
+          // One probe at a time: `actAs` sets a shared viewer.
+          { concurrency: 1 },
+        ),
+      );
+      // The failure itself (tag and fields), or the two snapshots `getVersion` serves.
+      expect(
+        observed.map(({ answer, implied: _, read: __, ...where }) => ({
+          ...where,
+          answer: Result.map(answer, ({ from, to }) => ({ from, to })),
+        })),
+      ).toEqual(
+        observed.map(({ answer: _, implied, read: __, ...where }) => ({
+          ...where,
+          answer: implied,
+        })),
+      );
+      // A compare the gate refuses reads no version.
+      expect(
+        observed.filter(
+          ({ answer, read }) =>
+            Result.isFailure(answer) &&
+            answer.failure._tag !== "VersionNotFound" &&
+            Arr.isReadonlyArrayNonEmpty(read),
+        ),
+      ).toEqual([]);
+      // Not vacuous: every answer occurs, and each where the gate puts it.
+      const tags = (label: string, viewerName: string) =>
+        observed
+          .filter((probe) => probe.label === label && probe.viewerName === viewerName)
+          .map(({ answer }) =>
+            Result.isFailure(answer) ? answer.failure._tag : Record.keys(answer.success.changes),
+          );
+      const admitted = [
+        [],
+        ["title", "draft"],
+        ["title", "draft"],
+        "VersionNotFound",
+        "VersionNotFound",
+        "VersionNotFound",
+      ];
+      expect(tags("private", "the owner")).toEqual(admitted);
+      expect(tags("tombstoned private", "a moderator")).toEqual([
+        [],
+        [],
+        [],
+        "VersionNotFound",
+        "VersionNotFound",
+        "VersionNotFound",
+      ]);
+      expect(tags("public", "a stranger")).toEqual(Arr.map(pairs, () => "Forbidden"));
+      expect(tags("draft", "the owner's follower")).toEqual(Arr.map(pairs, () => "Forbidden"));
+      expect(tags("followers", "anonymous")).toEqual(Arr.map(pairs, () => "Unauthorized"));
+      expect(tags("ownerless", "an admin")).toEqual(Arr.map(pairs, () => "NodeNotFound"));
+      expect(tags("missing", "the owner")).toEqual(Arr.map(pairs, () => "NodeNotFound"));
+    });
+
+    it("delegates to the chain's compare: the same comparison, and VersionNotFound naming the absent version, from first", async () => {
+      const { chain, ops, actAs, privateId: id } = await seeded();
+      const direct = defineVersionChain("posts", chain);
+      const admitted = pairs.slice(0, 3);
+      expect(
+        await run(
+          Effect.forEach(admitted, ([from, to]) => actAs(as(member), ops.compare(id, from, to)), {
+            concurrency: 1,
+          }),
+        ),
+      ).toEqual(
+        await run(
+          Effect.forEach(admitted, ([from, to]) => direct.compare(id, from, to), {
+            concurrency: 1,
+          }),
+        ),
+      );
+      const forward = await run(actAs(as(moderator), ops.compare(id, 0n, 1n)));
+      expect(forward.from.version).toBe(0n);
+      expect(forward.to.version).toBe(1n);
+      expect(forward.changes).toEqual({
+        title: { _tag: "changed", before: "A post", after: "Second" },
+        draft: { _tag: "changed", before: false, after: null },
+      });
+      const missingVersion = (from: bigint, to: bigint) =>
+        run(Effect.flip(actAs(as(member), ops.compare(id, from, to))));
+      expect(await missingVersion(0n, ABSENT_VERSION)).toEqual(
+        new VersionNotFound({ type: "posts", id, version: ABSENT_VERSION }),
+      );
+      expect(await missingVersion(ABSENT_VERSION, 0n)).toEqual(
+        new VersionNotFound({ type: "posts", id, version: ABSENT_VERSION }),
+      );
+      expect(await missingVersion(ABSENT_VERSION + 1n, ABSENT_VERSION)).toEqual(
+        new VersionNotFound({ type: "posts", id, version: ABSENT_VERSION + 1n }),
+      );
+    });
   });
 });
 
@@ -1457,6 +1660,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
    * which every seeded row has, and at {@link ABSENT_VERSION}, which none
    * has, so a chain lookup that ran before the gate would answer a hidden
    * row `VersionNotFound` where a missing id answers `NodeNotFound`.
+   * `compare` (pulpit#82) runs with the absent version on either side.
    */
   const operations = [
     "update",
@@ -1464,14 +1668,28 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     "delete",
     "getVersion",
     "restoreVersion",
+    "compare",
     "getVersion absent",
     "restoreVersion absent",
+    "compare absent from",
+    "compare absent to",
   ] as const;
   type Operation = (typeof operations)[number];
   /** A version no seeded row reaches. */
   const ABSENT_VERSION = 99n;
   const absentVersion = (operation: Operation) =>
-    operation === "getVersion absent" || operation === "restoreVersion absent";
+    operation === "getVersion absent" ||
+    operation === "restoreVersion absent" ||
+    operation === "compare absent from" ||
+    operation === "compare absent to";
+  /** The operations that write nothing: a refusal they answer can only be the gate's. */
+  const historyReads: ReadonlyArray<Operation> = [
+    "getVersion",
+    "compare",
+    "getVersion absent",
+    "compare absent from",
+    "compare absent to",
+  ];
 
   /** A leaf declaring the followers column the `curatorId` seeds fill (pulpit#92). */
   const curated: Extract<LeafAccess, { kind: "reference" }> = {
@@ -1491,12 +1709,26 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     const chain = makeInMemoryChainStore();
     const leaves = makeInMemoryLeafStore(chain, columns);
     let viewer: Viewer = anonymous;
+    /** How many versions the operations have read: a history read past a refusing gate shows here. */
+    let snapshotReads = 0;
     const ops = defineSubtype({
       type: "terms",
       access,
-      chain,
+      chain: {
+        ...chain,
+        snapshot: (id, version) =>
+          Effect.suspend(() => {
+            snapshotReads += 1;
+            return chain.snapshot(id, version);
+          }),
+      },
       leaves,
-      viewer: Effect.sync(() => viewer),
+      // Yields first, as a real session lookup does: a history read forked
+      // beside the gate would then run before the gate refuses (pulpit#82).
+      viewer: Effect.andThen(
+        Effect.yieldNow,
+        Effect.sync(() => viewer),
+      ),
       policy,
       followers: corpusFollowers,
       toResource: (row: LeafRow) => ({ id: row.id, name: row["name"] }),
@@ -1519,6 +1751,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
       chain,
       ops,
       actAs,
+      snapshotReads: () => snapshotReads,
       ids: [...ids, ["missing", "missing"] as const],
     }));
   };
@@ -1536,8 +1769,11 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
       Match.when("delete", () => leaf.ops.delete(id)),
       Match.when("getVersion", () => leaf.ops.getVersion(id, 0n)),
       Match.when("restoreVersion", () => leaf.ops.restoreVersion(id, 0n)),
+      Match.when("compare", () => leaf.ops.compare(id, 0n, 0n)),
       Match.when("getVersion absent", () => leaf.ops.getVersion(id, ABSENT_VERSION)),
       Match.when("restoreVersion absent", () => leaf.ops.restoreVersion(id, ABSENT_VERSION)),
+      Match.when("compare absent from", () => leaf.ops.compare(id, ABSENT_VERSION, 0n)),
+      Match.when("compare absent to", () => leaf.ops.compare(id, 0n, ABSENT_VERSION)),
       Match.exhaustive,
     );
 
@@ -1598,6 +1834,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
           );
           const got = yield* leaf.actAs(viewer, failureTag(leaf.ops.get(id)));
           const before = leaf.chain.rows().length;
+          const readBefore = leaf.snapshotReads();
           const answer = yield* leaf.actAs(viewer, failureTag(invoke(leaf, operation, id)));
           const tombstoned = seeds.some((seed) => seed.label === label && seed.deleted);
           return {
@@ -1606,6 +1843,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
             answer,
             implied: implied(viewer, policy, got, operation, tombstoned),
             wrote: leaf.chain.rows().length > before,
+            read: leaf.snapshotReads() > readBefore,
             got,
           };
         }),
@@ -1652,6 +1890,15 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
       );
       // A refused operation writes nothing.
       expect(results.filter((result) => Option.isSome(result.answer) && result.wrote)).toEqual([]);
+      // A history read the gate refuses reads no version (pulpit#82).
+      expect(
+        results.filter(
+          (result) =>
+            historyReads.includes(result.operation) &&
+            Option.exists(result.answer, (tag) => tag !== "VersionNotFound") &&
+            result.read,
+        ),
+      ).toEqual([]);
     },
   );
 
@@ -1719,6 +1966,18 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     expect(moderatorAnswers["getVersion absent tombstoned private"]).toEqual(
       Option.some("VersionNotFound"),
     );
+    // compare answers each row as getVersion does, whichever side is absent (pulpit#82).
+    expect(curatorAnswers["compare private"]).toEqual(Option.none());
+    expect(curatorAnswers["compare absent from private"]).toEqual(Option.some("VersionNotFound"));
+    expect(curatorAnswers["compare absent to tombstoned public"]).toEqual(
+      Option.some("NodeNotFound"),
+    );
+    expect(archivistAnswers["compare absent from private"]).toEqual(Option.some("NodeNotFound"));
+    expect(archivistAnswers["compare tombstoned public"]).toEqual(Option.none());
+    expect(moderatorAnswers["compare absent to tombstoned private"]).toEqual(
+      Option.some("VersionNotFound"),
+    );
+    expect(moderatorAnswers["compare absent from missing"]).toEqual(Option.some("NodeNotFound"));
   });
 
   it("is not vacuous: a declared followers column opens its followers rows to a following corpus writer, and nothing else (pulpit#92)", async () => {
@@ -1738,7 +1997,14 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
       ["private, curated by the member", Option.some("NodeNotFound")],
       ["tombstoned followers of the member", Option.some("NodeNotFound")],
     ] as const;
-    const gated = ["update", "restore", "delete", "getVersion", "restoreVersion"] as const;
+    const gated = [
+      "update",
+      "restore",
+      "delete",
+      "getVersion",
+      "restoreVersion",
+      "compare",
+    ] as const;
     const pairs = Arr.flatMap(gated, (operation) =>
       Arr.map(rowsByAnswer, ([label, answer]) => [`${operation} ${label}`, answer] as const),
     );
