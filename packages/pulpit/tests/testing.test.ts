@@ -109,4 +109,31 @@ describe("makeInMemoryEdgeStore", () => {
     await runAt(stamp, edges.insert({ fromId: "n-1" }));
     expect(edges.rows().map((row) => row.createdAt.getTime())).toEqual([stamp + 1]);
   });
+
+  it("stamps every third insert at its predecessor's instant, so the list's id tie-break decides", async () => {
+    const nodes = makeInMemoryNodes([]);
+    const edges = makeInMemoryEdgeStore({
+      ends: {
+        from: { column: "fromId", type: "nodes", access: { kind: "reference" }, nodes },
+      },
+      uniqueKey: [],
+      now: NOW,
+    });
+    nodes.put({ id: "n-1", action: "create" });
+    // Sequential: each insert mints the next id and instant.
+    await run(
+      Effect.forEach(Arr.range(1, 6), () => edges.insert({ fromId: "n-1" }), { concurrency: 1 }),
+    );
+    const stamp = NOW.getTime();
+    expect(edges.rows().map((row) => row.createdAt.getTime() - stamp)).toEqual([1, 2, 2, 4, 5, 5]);
+    const { rows } = await run(edges.list({ where: { kind: "always" }, limit: 10, offset: 0 }));
+    expect(rows.map((row) => row.id)).toEqual([
+      "edge-0001",
+      "edge-0002",
+      "edge-0003",
+      "edge-0004",
+      "edge-0005",
+      "edge-0006",
+    ]);
+  });
 });

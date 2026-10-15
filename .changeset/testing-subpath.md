@@ -6,8 +6,10 @@ Add `./testing`: in-memory fakes of the kernel's seams, for tests (not for produ
 
 - `makeInMemoryChainStore()` — a `VersionChainStore` with the `(id, version)` key, plus `rows`, `dropState` and `raceNextAppend` hooks.
 - `makeInMemoryLeafStore(chain, { columns, now? })` — a `LeafStore`: the current-version view over an in-memory chain and its owner stamps, plus `owners` and `dropOwner` hooks.
-- `makeInMemoryDocumentStore()` and `canonicalText(json)` — a `DocumentStore` that hashes exactly as the README's hash contract states, and the canonical text it hashes.
+- `makeInMemoryDocumentStore()` — a `DocumentStore` that hashes exactly as the README's hash contract states: SHA-256 over `canonicalText`.
 - `makeInMemoryEdgeStore({ ends, uniqueKey, now? })` and `makeInMemoryNodes(columns)` — an `EdgeStore` with the unique key, the INNER JOIN of each end's view and the window-column total, and a hand-written `EndpointView`.
 - `makeInMemoryFollowers(table)` and `InMemoryFollowing` — a `FollowerSeam` over an explicit table, whose `in` set is a `HashSet` of account ids.
 
 `now` (the instant `published` / `notPublished` compare against) is a fixed `Date`, or the Effect `Clock` at each call when left out.
+
+Add `canonicalText(json)` to `./documents`: the canonical text the `DocumentStore` hash contract takes SHA-256 over (PostgreSQL's `jsonb` text output), so a store that doesn't run on Postgres can reproduce the contract's hashes without importing `./testing`.

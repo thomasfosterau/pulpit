@@ -25,7 +25,9 @@
  * Hashing is the store's job, not the kernel's: the apps derive the hash in
  * Postgres and never re-derive it in JavaScript. The algorithm and the
  * canonical serialisation a store must use are stated in the package README →
- * Seams. The document type is a parameter; its schema and validation are the
+ * Seams; {@link canonicalText} is that serialisation in JavaScript, for a
+ * store that doesn't run on Postgres. The kernel itself never hashes. The
+ * document type is a parameter; its schema and validation are the
  * application's (prosekit-utilities), and pulpit never imports them.
  *
  * @copyright Thomas Foster
@@ -34,9 +36,12 @@
  */
 
 import { Resource } from "@thomasfosterau/effect-jsonapi";
+import * as Arr from "effect/Array";
 import type * as Effect from "effect/Effect";
 import type * as HashMap from "effect/HashMap";
 import type * as Option from "effect/Option";
+import * as Order from "effect/Order";
+import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
@@ -98,6 +103,98 @@ export interface DocumentStore<Document, E, R> {
     hashes: ReadonlyArray<DocumentHash>,
   ) => Effect.Effect<HashMap.HashMap<DocumentHash, Document>, E, R>;
 }
+
+// ── The hash contract ─────────────────────────────────────────────────
+
+const utf8 = new TextEncoder();
+
+/** A string's UTF-8 bytes as one character per byte, so that string order is byte order. */
+const byteString = (value: string): string => String.fromCharCode(...utf8.encode(value));
+
+/** jsonb's key order: shorter UTF-8 byte length first, then bytewise. */
+const keyOrder: Order.Order<string> = Order.combine(
+  Order.mapInput(Order.Number, (key: string) => utf8.encode(key).length),
+  Order.mapInput(Order.String, byteString),
+);
+
+/**
+ * A number as Postgres `numeric` prints it: JavaScript's shortest round-trip
+ * digits, written positionally (`1e+21` → `1000000000000000000000`,
+ * `1.5e-7` → `0.00000015`), since `numeric` has no exponent form.
+ */
+const numericText = (value: number): string => {
+  const shortest = String(value);
+  const match = /^(-?)(\d)(?:\.(\d+))?e([+-]\d+)$/.exec(shortest);
+  if (match === null) return shortest;
+  const [, sign = "", lead = "", fraction = "", exponent = "0"] = match;
+  const digits = lead + fraction;
+  const point = 1 + Number(exponent);
+  if (point >= digits.length) return sign + digits + "0".repeat(point - digits.length);
+  if (point <= 0) return `${sign}0.${"0".repeat(-point)}${digits}`;
+  return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
+};
+
+/** The short escapes jsonb's `escape_json` writes; every other control character is `\u00xx`. */
+const SHORT_ESCAPES: Record.ReadonlyRecord<string, string> = {
+  '"': '\\"',
+  "\\": "\\\\",
+  "\b": "\\b",
+  "\f": "\\f",
+  "\n": "\\n",
+  "\r": "\\r",
+  "\t": "\\t",
+};
+
+/** One character as jsonb's `escape_json` writes it: a short escape, `\u00xx` below U+0020, else itself. */
+const escapeCharacter = (character: string): string => {
+  const code = character.charCodeAt(0);
+  return (
+    SHORT_ESCAPES[character] ??
+    (code < 0x20 ? `\\u${code.toString(16).padStart(4, "0")}` : character)
+  );
+};
+
+/** A string literal as jsonb prints it: `"`, `\` and the control characters escaped, nothing else. */
+const stringText = (value: string): string =>
+  `"${Arr.map(Arr.fromIterable(value), escapeCharacter).join("")}"`;
+
+/**
+ * The canonical text of a JSON document, the bytes the {@link DocumentStore}
+ * hash contract (README → Seams → `DocumentStore`) takes SHA-256 over:
+ * PostgreSQL's `jsonb` text output, with object keys ordered shorter-first by
+ * UTF-8 byte length and then bytewise, `": "` after a key, `", "` between
+ * members and elements, only `"`, `\` and the control characters escaped, and
+ * numbers as `numeric` prints them (never with an exponent). A Postgres store
+ * never needs it (the database derives the hash from `document_jsonb::text`);
+ * a store that doesn't run on Postgres hashes the UTF-8 bytes of this text to
+ * reproduce the contract's hashes. The kernel's suite pins it to text and
+ * hashes taken from Postgres. Pure and total.
+ *
+ * @example
+ * ```ts
+ * import { strictEqual } from "node:assert";
+ * import { canonicalText } from "@thomasfosterau/pulpit/documents";
+ *
+ * strictEqual(
+ *   canonicalText({ b: 1e21, aa: [true, null], a: "é" }),
+ *   '{"a": "é", "b": 1000000000000000000000, "aa": [true, null]}',
+ * );
+ * ```
+ *
+ * @since 0.1.0
+ */
+export const canonicalText = (value: Schema.Json): string => {
+  if (value === null) return "null";
+  if (Predicate.isBoolean(value)) return value ? "true" : "false";
+  if (Predicate.isNumber(value)) return numericText(value);
+  if (Predicate.isString(value)) return stringText(value);
+  if (Arr.isArray<Schema.Json>(value)) return `[${value.map(canonicalText).join(", ")}]`;
+  const members = Arr.sort(
+    Record.toEntries(value),
+    Order.mapInput(keyOrder, ([key]: readonly [string, Schema.Json]) => key),
+  );
+  return `{${members.map(([key, member]) => `${stringText(key)}: ${canonicalText(member)}`).join(", ")}}`;
+};
 
 // ── The field spread ──────────────────────────────────────────────────
 

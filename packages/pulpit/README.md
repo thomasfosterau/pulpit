@@ -25,7 +25,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./filter` | `ListFilter`, the read-predicate tree a store renders to SQL, and its in-memory `evaluate`. |
 | `./subtype` | `LeafAccess`, the read scope and viewer predicates, the write gates, `defineSubtype`, `subtypeHandlers`. |
 | `./publication` | The publication and moderation predicates and the cache serveability policy. |
-| `./documents` | The content-addressed `DocumentStore` seam, the `DocumentHash` it is keyed by, and the `documentRef` field spread. |
+| `./documents` | The content-addressed `DocumentStore` seam, the `DocumentHash` it is keyed by, the `documentRef` field spread, and the hash contract's `canonicalText`. |
 | `./edges` | `defineEdgeOps`, the edge operations factory over an `EdgeStore` seam: relations between nodes, readable only when every end is, with declared cardinality limits. |
 | `./testing` | In-memory fakes of the seams (the chain, leaf, document and edge stores, an endpoint view, a follower seam), for tests only. Not on the root export. |
 
@@ -252,13 +252,14 @@ const program = <Document, E, R>(
   });
 ```
 
-The document type is a parameter: its schema and validation are the application's, and pulpit never imports them. The hash is the store's to derive; the algorithm and the bytes it is taken over are in [Seams](#seams).
+The document type is a parameter: its schema and validation are the application's, and pulpit never imports them. The hash is the store's to derive; the algorithm and the bytes it is taken over are in [Seams](#seams), and `canonicalText` produces those bytes for a store that doesn't run on Postgres.
 
 | Export | What it is |
 | --- | --- |
 | `DocumentStore<Document, E, R>` | The store seam: `put` (idempotent, returns the hash), `get`, `getMany` (see [Seams](#seams)). |
 | `DocumentHash` | A SHA-256 document hash as 64 lowercase hex characters. |
 | `documentRef(key)` | The attribute spread for a version row's document reference: the hash, required on the resource and at create, carried forward at update, never cleared. |
+| `canonicalText(json)` | The canonical text the hash contract takes SHA-256 over (Postgres's `jsonb` text output), for a store that doesn't run on Postgres. |
 
 ## `./edges`
 
@@ -395,7 +396,7 @@ const terms = defineSubtype({
   access: { kind: "reference" },
   chain,
   leaves: makeInMemoryLeafStore(chain, { columns: ["name"] }),
-  viewer: Effect.succeed(Option.some({ id: "u-editor", role: "editor" })),
+  viewer: Effect.succeedSome({ id: "u-editor", role: "editor" }),
   policy: {
     canViewPrivate: () => false,
     canViewDeleted: () => false,
@@ -417,7 +418,7 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | --- | --- | --- |
 | `makeInMemoryChainStore()`, `InMemoryChainStore` | [`VersionChainStore`](#versionchainstoree-r-the-version-chain-persistence), with the `(id, version)` key (`VersionConflict`) and sequential UUID-shaped `mintId`s. | `rows()` (every appended row), `dropState(id, version)` (a partial chain), `raceNextAppend(id)` (a concurrent writer). |
 | `makeInMemoryLeafStore(chain, { columns, now? })`, `InMemoryLeafStore`, `InMemoryLeafStoreOptions` | [`LeafStore`](#leafstorerow-following-e-r-the-current-version-view), as the current-version view over an in-memory chain plus the owner stamps; `list` evaluates the `ListFilter` in memory. | `owners()` (the stamps), `dropOwner(id)` (an ownerless owned node). |
-| `makeInMemoryDocumentStore()`, `InMemoryDocumentStore`, `canonicalText(json)` | [`DocumentStore`](#documentstoredocument-e-r-the-content-addressed-document-store), hashing exactly as the hash contract says (pinned to hashes taken from Postgres), and the canonical text it hashes. | `stored()` (every document by hash), `writes()` (how many `put`s inserted). |
+| `makeInMemoryDocumentStore()`, `InMemoryDocumentStore` | [`DocumentStore`](#documentstoredocument-e-r-the-content-addressed-document-store), hashing exactly as the hash contract says (SHA-256 over `./documents`' `canonicalText`, pinned to hashes taken from Postgres). | `stored()` (every document by hash), `writes()` (how many `put`s inserted). |
 | `makeInMemoryEdgeStore({ ends, uniqueKey, now? })`, `InMemoryEdgeStore`, `InMemoryEdgeStoreOptions` | [`EdgeStore`](#edgestorerow-following-e-r-the-edge-table), with the unique key (`NULLS NOT DISTINCT`), the INNER JOIN of each end's view, and the window-column total. | `rows()` (every edge, hidden ones included), `raceNextInsert(winner)` (a concurrent writer). |
 | `makeInMemoryNodes(columns)`, `InMemoryNodes` | `EndpointView`, an end's view whose rows a test writes directly (an `InMemoryLeafStore` is one too). | `put(row)`. |
 | `makeInMemoryFollowers(table)`, `InMemoryFollowing` | [`FollowerSeam`](#the-viewer-the-role-axes-and-the-follower-seam) over an explicit table of who follows whom; the `in` set is a `HashSet` of account ids, where SQL's is a subquery. |  |
@@ -478,7 +479,7 @@ document_jsonb jsonb NOT NULL
 - a string escapes `"`, `\` and the control characters below U+0020 (as `\b`, `\f`, `\n`, `\r`, `\t`, otherwise `\u00xx` in lowercase hex), and nothing else;
 - a number is written as `numeric` prints it, never with an exponent (`1e21` is `1000000000000000000000`, `1e-7` is `0.0000001`), and it keeps the scale it was written with: `{"n":1.0}` is `{"n": 1.0}` and `{"n":1}` is `{"n": 1}`, two different hashes although `jsonb` `=` calls the documents equal.
 
-So structurally equal documents share a hash whatever their member order, provided their numbers are spelled alike; that holds for documents serialised as `JSON.stringify` does (shortest round-trip digits, so `1.0` is written `1`). The hash is exchanged as a `DocumentHash`, the 32 bytes as 64 lowercase hex characters (`encode(hash_id, 'hex')`). A store that does not run on Postgres must reproduce these bytes exactly; `makeInMemoryDocumentStore` in [`./testing`](#testing) is a reference implementation, pinned to hashes taken from Postgres, and `canonicalText` there produces the canonical text.
+So structurally equal documents share a hash whatever their member order, provided their numbers are spelled alike; that holds for documents serialised as `JSON.stringify` does (shortest round-trip digits, so `1.0` is written `1`). The hash is exchanged as a `DocumentHash`, the 32 bytes as 64 lowercase hex characters (`encode(hash_id, 'hex')`). A store that does not run on Postgres must reproduce these bytes exactly: `canonicalText(json)` in [`./documents`](#documents) produces the canonical text (pinned, with its hashes, to Postgres), and the store hashes its UTF-8 bytes. `makeInMemoryDocumentStore` in [`./testing`](#testing) is the reference store, for tests only.
 
 Method contract: `put` is `INSERT … ON CONFLICT DO NOTHING RETURNING hash_id`, and when the insert returns no row it reads the row that conflicted, `hash_id = digest($document::jsonb::text, 'sha256')`; it never updates a stored row (`DOC-001`). `get` is `hash_id = $hash`; `getMany` is one `hash_id = ANY($hashes)` read, returning the documents found keyed by hash. `E` and `R` are as for the chain store, and the store never opens a transaction itself. A first insert's side effects (both apps enqueue an embedding job) stay outside this seam until the lifecycle-events seam lands (pulpit#45).
 
