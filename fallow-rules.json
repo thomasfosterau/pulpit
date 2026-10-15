@@ -7,7 +7,16 @@
     {
       "id": "adapter-imports-kernel-by-name",
       "kind": "banned-import",
-      "specifiers": ["../pulpit", "../../pulpit", "../../../pulpit", "../../../../pulpit"],
+      "specifiers": [
+        "../pulpit",
+        "../../pulpit",
+        "../../../pulpit",
+        "../../../../pulpit",
+        "../../packages/pulpit",
+        "../../../packages/pulpit",
+        "../../../../packages/pulpit",
+        "../../../../../packages/pulpit"
+      ],
       "files": ["packages/pulpit-wordpress/**"],
       "message": "Import the kernel by its package name and through its exports (`@thomasfosterau/pulpit`, `@thomasfosterau/pulpit/subtype`, …), never by a relative path into packages/pulpit. See packages/pulpit-wordpress/CLAUDE.md → Boundary.",
       "severity": "error"
