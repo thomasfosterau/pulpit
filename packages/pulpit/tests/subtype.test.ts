@@ -20,6 +20,9 @@
  *   viewer, out-of-enum visibility and a `null` or absent draft included
  *   (pulpit#73), and an owner column holding no string read as no owner
  *   (pulpit#85).
+ * - A reference leaf's write and history operations answer every row ×
+ *   caller × operation as that caller's `get` implies, and a refused one
+ *   writes nothing (pulpit#101).
  *
  * @module tests/subtype
  */
@@ -30,6 +33,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as HashSet from "effect/HashSet";
+import * as Match from "effect/Match";
 import * as MutableHashMap from "effect/MutableHashMap";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -1097,6 +1101,253 @@ describe("defineSubtype — an owner column holding no string is no owner (pulpi
       [true, true],
     ]);
     expect(asked).toContain("null");
+  });
+});
+
+// ── A reference row's write and history gates answer as `get` does ────
+
+describe("defineSubtype — a reference leaf's write and history gates answer a hidden row as get does (pulpit#101)", () => {
+  /** Roles that split the view rungs apart: each corpus writer holds at most one of them. */
+  const curator: ViewerAccount = { id: "u-curator", role: "curator" };
+  const archivist: ViewerAccount = { id: "u-archivist", role: "archivist" };
+  const roleIn =
+    (...roles: ReadonlyArray<string>) =>
+    (account: ViewerAccount) =>
+      roles.includes(account.role);
+  /** The corpus rung without, with view-private only, with view-deleted only, and with both. */
+  const splitPolicy: AccessPolicy = {
+    canWriteCorpus: roleIn("contributor", "curator", "archivist", "moderator", "admin"),
+    canViewPrivate: roleIn("curator", "moderator", "admin"),
+    canViewDeleted: roleIn("archivist", "moderator", "admin"),
+    canModerate: roleIn("moderator", "admin"),
+  };
+  const policies: ReadonlyArray<readonly [string, AccessPolicy]> = [
+    ["split", splitPolicy],
+    ...matrixPolicies,
+  ];
+  const viewers: ReadonlyArray<readonly [string, Viewer]> = [
+    ["anonymous", anonymous],
+    ["a member below the corpus rung", as(member)],
+    ["a contributor (corpus rung, no view rung)", as(contributor)],
+    ["a curator (corpus rung, view-private)", as(curator)],
+    ["an archivist (corpus rung, view-deleted)", as(archivist)],
+    ["a moderator", as(moderator)],
+    ["an admin", as(admin)],
+  ];
+
+  /** One reference row: its label, state and whether it is tombstoned. */
+  interface RefSeed {
+    readonly label: string;
+    readonly state: { readonly [column: string]: ColumnValue };
+    readonly deleted: boolean;
+  }
+  const seeds: ReadonlyArray<RefSeed> = [
+    { label: "public", state: { name: "n", visibility: "public" }, deleted: false },
+    { label: "private", state: { name: "n", visibility: "private" }, deleted: false },
+    { label: "followers", state: { name: "n", visibility: "followers" }, deleted: false },
+    { label: "out of the enum", state: { name: "n", visibility: "friends" }, deleted: false },
+    { label: "null visibility", state: { name: "n", visibility: null }, deleted: false },
+    {
+      label: "public draft",
+      state: { name: "n", visibility: "public", draft: true },
+      deleted: false,
+    },
+    { label: "tombstoned public", state: { name: "n", visibility: "public" }, deleted: true },
+    { label: "tombstoned private", state: { name: "n", visibility: "private" }, deleted: true },
+  ];
+
+  const operations = ["update", "restore", "delete", "getVersion", "restoreVersion"] as const;
+  type Operation = (typeof operations)[number];
+
+  /** A fresh reference leaf seeded (by an admin) with every row, plus a missing id. */
+  const referenceLeaf = (policy: AccessPolicy, columns: ReadonlyArray<string>) => {
+    const chain = makeInMemoryChainStore();
+    const leaves = makeInMemoryLeafStore(chain, columns);
+    let viewer: Viewer = anonymous;
+    const ops = defineSubtype({
+      type: "terms",
+      access: { kind: "reference" },
+      chain,
+      leaves,
+      viewer: Effect.sync(() => viewer),
+      policy,
+      followers: nobody,
+      toResource: (row: LeafRow) => ({ id: row.id, name: row["name"] }),
+    });
+    const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+      Effect.suspend(() => {
+        viewer = who;
+        return effect;
+      });
+    const seeding = Effect.forEach(
+      seeds,
+      (seed) =>
+        actAs(as(admin), ops.create({ id: Option.none(), state: seed.state })).pipe(
+          Effect.tap(({ id }) => (seed.deleted ? actAs(as(admin), ops.delete(id)) : Effect.void)),
+          Effect.map(({ id }) => [seed.label, id] as const),
+        ),
+      { concurrency: 1 },
+    );
+    return Effect.map(seeding, (ids) => ({
+      chain,
+      ops,
+      actAs,
+      ids: [...ids, ["missing", "missing"] as const],
+    }));
+  };
+
+  type Leaf = Effect.Success<ReturnType<typeof referenceLeaf>>;
+
+  const invoke = (
+    leaf: Leaf,
+    operation: Operation,
+    id: string,
+  ): Effect.Effect<unknown, { readonly _tag: string }> =>
+    Match.value(operation).pipe(
+      Match.when("update", () => leaf.ops.update({ id, patch: { name: "rewritten" } })),
+      Match.when("restore", () => leaf.ops.restore({ id, patch: { name: "revived" } })),
+      Match.when("delete", () => leaf.ops.delete(id)),
+      Match.when("getVersion", () => leaf.ops.getVersion(id, 0n)),
+      Match.when("restoreVersion", () => leaf.ops.restoreVersion(id, 0n)),
+      Match.exhaustive,
+    );
+
+  const failureTag = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
+    Effect.match(effect, {
+      onFailure: (error) => Option.some(error._tag),
+      onSuccess: () => Option.none<string>(),
+    });
+
+  /**
+   * What `get` implies for `operation` on a row: the gate's answer for a
+   * caller below the rung, `get`'s `NodeNotFound` for a row it hides, and
+   * otherwise the chain's own answer (only `update` refuses a tombstone).
+   */
+  const implied = (
+    viewer: Viewer,
+    policy: AccessPolicy,
+    got: Option.Option<string>,
+    operation: Operation,
+    tombstoned: boolean,
+  ): Option.Option<string> =>
+    Option.match(viewer, {
+      onNone: () => Option.some("Unauthorized"),
+      onSome: (account) => {
+        if (!policy.canWriteCorpus(account)) return Option.some("Forbidden");
+        if (Option.isSome(got)) return got;
+        return operation === "update" && tombstoned ? Option.some("NodeNotFound") : Option.none();
+      },
+    });
+
+  /** Every row × operation as one viewer gets it: `get`'s answer, the operation's, and whether the chain grew. */
+  const probe = (policy: AccessPolicy, columns: ReadonlyArray<string>, viewer: Viewer) =>
+    Effect.forEach(
+      Arr.flatMap(operations, (operation) =>
+        Arr.map([...seeds.map((seed) => seed.label), "missing"], (label) => ({
+          operation,
+          label,
+        })),
+      ),
+      ({ operation, label }) =>
+        Effect.gen(function* () {
+          // A fresh leaf per probe: a write that lands changes the row.
+          const leaf = yield* referenceLeaf(policy, columns);
+          const id = yield* Option.match(
+            Arr.findFirst(leaf.ids, ([seeded]) => seeded === label),
+            {
+              onNone: () => Effect.die(`no seeded row labelled ${label}`),
+              onSome: ([, seededId]) => Effect.succeed(seededId),
+            },
+          );
+          const got = yield* leaf.actAs(viewer, failureTag(leaf.ops.get(id)));
+          const before = leaf.chain.rows().length;
+          const answer = yield* leaf.actAs(viewer, failureTag(invoke(leaf, operation, id)));
+          const tombstoned = seeds.some((seed) => seed.label === label && seed.deleted);
+          return {
+            operation,
+            label,
+            answer,
+            implied: implied(viewer, policy, got, operation, tombstoned),
+            wrote: leaf.chain.rows().length > before,
+            got,
+          };
+        }),
+      { concurrency: 1 },
+    );
+
+  const columnVariants: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
+    ["with a visibility column", ["name", "visibility", "draft"]],
+    ["over a view without a visibility column", ["name", "draft"]],
+  ];
+
+  it.each(
+    Arr.flatMap(columnVariants, ([variant, columns]) =>
+      Arr.flatMap(policies, ([policyName, policy]) =>
+        Arr.map(viewers, ([viewerName, viewer]) => ({
+          variant,
+          columns,
+          policyName,
+          policy,
+          viewerName,
+          viewer,
+        })),
+      ),
+    ),
+  )("$variant, $policyName policy, for $viewerName", async ({ columns, policy, viewer }) => {
+    const results = await run(probe(policy, columns, viewer));
+    expect(results.map(({ operation, label, answer }) => ({ operation, label, answer }))).toEqual(
+      results.map(({ operation, label, implied }) => ({ operation, label, answer: implied })),
+    );
+    // A refused operation writes nothing.
+    expect(results.filter((result) => Option.isSome(result.answer) && result.wrote)).toEqual([]);
+  });
+
+  it("is not vacuous: a corpus writer without the view rungs reaches no hidden row, and the rungs restore access", async () => {
+    const answers = async (who: ViewerAccount) =>
+      Record.fromEntries(
+        (await run(probe(splitPolicy, ["name", "visibility", "draft"], as(who)))).map(
+          (result) => [`${result.operation} ${result.label}`, result.answer] as const,
+        ),
+      );
+    const hiddenFromContributor = [
+      "private",
+      "followers",
+      "out of the enum",
+      "null visibility",
+      "tombstoned public",
+      "tombstoned private",
+      "missing",
+    ];
+    // Every operation on every row: only the two rows `get` serves it reach the chain.
+    expect(await answers(contributor)).toEqual(
+      Record.fromEntries(
+        Arr.flatMap(operations, (operation) =>
+          Arr.map([...seeds.map((seed) => seed.label), "missing"], (label) => [
+            `${operation} ${label}`,
+            hiddenFromContributor.includes(label) ? Option.some("NodeNotFound") : Option.none(),
+          ]),
+        ),
+      ),
+    );
+    // view-private opens the live private rows, but no tombstone …
+    const curatorAnswers = await answers(curator);
+    expect(curatorAnswers["getVersion private"]).toEqual(Option.none());
+    expect(curatorAnswers["update private"]).toEqual(Option.none());
+    expect(curatorAnswers["restore tombstoned public"]).toEqual(Option.some("NodeNotFound"));
+    expect(curatorAnswers["getVersion tombstoned private"]).toEqual(Option.some("NodeNotFound"));
+    // … view-deleted opens the public tombstone, but not a private one …
+    const archivistAnswers = await answers(archivist);
+    expect(archivistAnswers["restore tombstoned public"]).toEqual(Option.none());
+    expect(archivistAnswers["delete tombstoned public"]).toEqual(Option.none());
+    expect(archivistAnswers["getVersion tombstoned public"]).toEqual(Option.none());
+    expect(archivistAnswers["restore tombstoned private"]).toEqual(Option.some("NodeNotFound"));
+    expect(archivistAnswers["getVersion private"]).toEqual(Option.some("NodeNotFound"));
+    // … and a moderator, holding both, reaches every existing row.
+    const moderatorAnswers = await answers(moderator);
+    expect(moderatorAnswers["restore tombstoned private"]).toEqual(Option.none());
+    expect(moderatorAnswers["getVersion tombstoned private"]).toEqual(Option.none());
+    expect(moderatorAnswers["restoreVersion private"]).toEqual(Option.none());
+    expect(moderatorAnswers["getVersion missing"]).toEqual(Option.some("NodeNotFound"));
   });
 });
 

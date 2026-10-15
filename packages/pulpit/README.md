@@ -180,10 +180,10 @@ A SQL renderer must honour this contract:
 
 `defineSubtype` binds a leaf's CRUD, version history and list over the chain store, a current-version `LeafStore`, and the viewer seam (`viewer`, `AccessPolicy`, `FollowerSeam`), gated by `LeafAccess`:
 
-- `reference` — writes at the corpus-write rung; when the view has a `visibility` column, reads only `public` rows below the view-private rung, apart from soft-delete.
+- `reference` — writes at the corpus-write rung; when the view has a `visibility` column, reads only `public` rows below the view-private rung, apart from soft-delete. A write or history read to an existing row also needs the caller to be able to `get` it: a row `get` hides from them (or a missing one) fails `NodeNotFound` before the chain is reached, so only the view-deleted rung can `restore` a tombstone.
 - `owned` — creates at any account (stamping the owner); other writes at owner-or-moderator; reads through `canViewOwned` (three-state visibility plus `draft`), lists through `ownedListFilter`, the same facts as a `ListFilter`. A row whose owner column holds no string (a `NULL`) has no owner: no viewer owns it and the follower seam is never asked about it, so it reads only when `public` and not a draft, or at the view-private rung.
 
-`get`, `getMany` and `list` treat a row the viewer may not see as missing (`NodeNotFound`, never `Forbidden`). The write and history operations don't: their gate answers `Forbidden` for an existing owned row the caller doesn't own. `subtypeHandlers(ops, { transact, cache })` wraps the operations as the handler record a JSON:API server is expected to accept (see [Seams](#seams)), writing every mutation through the resource cache.
+`get`, `getMany` and `list` treat a row the viewer may not see as missing (`NodeNotFound`, never `Forbidden`). So do a reference leaf's write and history operations. An owned leaf's don't: their gate answers `Forbidden` for an existing owned row the caller doesn't own. `subtypeHandlers(ops, { transact, cache })` wraps the operations as the handler record a JSON:API server is expected to accept (see [Seams](#seams)), writing every mutation through the resource cache.
 
 `update`, `restore`, `delete` and `restoreVersion` (and the handlers' `update`, `delete` and `restoreVersion`) take the chain's optional `expectedVersion` and fail `StaleVersion` when it is not the head. The write gate runs first, so only a caller who may write learns the head version.
 
@@ -197,7 +197,7 @@ A SQL renderer must honour this contract:
 | `ReadScope`, `readScopeFor(viewer, policy, followers)` | A viewer's owned-material read scope (`all` / `public` / `member`). |
 | `canViewOwned`, `OwnedFacts` | The owned-row read predicate and the facts it reads. |
 | `ownedListFilter`, `softDeleteFilter`, `referencePrivacyFilter` | The list arms: owned visibility, the soft-delete axis, and the reference privacy axis. |
-| `requireCreator`, `requireWriter` | The write gates for a create and for a write to an existing row. |
+| `requireCreator`, `requireWriter` | The write gates for a create and for a write to an existing row. On a reference leaf `requireWriter` is the rung check alone; `defineSubtype` follows it with `get`'s read check. |
 | `Unauthorized`, `Forbidden` | The gates' failures: no signed-in viewer (401); a viewer below the rung (403, never used to hide a row). |
 | `LeafStore`, `LeafRow`, `Page`, `ListRequest`, `MAX_PAGE_LIMIT` | The current-version view seam, its row and page shapes, the list request, and the page cap (1000). |
 
