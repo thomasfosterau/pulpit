@@ -191,23 +191,21 @@ const toWordPressInteger = (wireId: WireId): Option.Option<number> => {
 };
 
 /**
- * The first of `nodeIds` (distinct) whose integer in `found` an earlier node
- * id already holds, or none: two nodes must never share a WordPress id.
+ * The first node id whose integer an earlier, distinct node id already holds,
+ * or none: two nodes must never share a WordPress id. `encoded` pairs each
+ * node id with its integer, in input order, duplicates included.
  */
 const firstSharedInteger = (
-  nodeIds: ReadonlyArray<string>,
-  found: HashMap.HashMap<string, number>,
+  encoded: ReadonlyArray<readonly [string, number]>,
 ): Option.Option<string> => {
-  const holders = Arr.reduce(nodeIds, HashMap.empty<number, string>(), (held, nodeId) =>
-    Option.match(HashMap.get(found, nodeId), {
-      onNone: () => held,
-      onSome: (integer) => (HashMap.has(held, integer) ? held : HashMap.set(held, integer, nodeId)),
-    }),
+  const holders = Arr.reduce(encoded, HashMap.empty<number, string>(), (held, [nodeId, integer]) =>
+    HashMap.has(held, integer) ? held : HashMap.set(held, integer, nodeId),
   );
-  return Arr.findFirst(nodeIds, (nodeId) =>
-    Option.exists(HashMap.get(found, nodeId), (integer) =>
+  return Option.map(
+    Arr.findFirst(encoded, ([nodeId, integer]) =>
       Option.exists(HashMap.get(holders, integer), (holder) => holder !== nodeId),
     ),
+    ([nodeId]) => nodeId,
   );
 };
 
@@ -281,7 +279,7 @@ export const integerIds = <E, R>(
             { concurrency: 1 },
           ),
           (encoded) =>
-            Option.match(firstSharedInteger(unique, found), {
+            Option.match(firstSharedInteger(Arr.zip(nodeIds, encoded)), {
               onNone: () => Effect.succeed(encoded),
               onSome: (nodeId) =>
                 Effect.fail(new UnencodableNodeId({ nodeId, reason: "duplicate-integer" })),
