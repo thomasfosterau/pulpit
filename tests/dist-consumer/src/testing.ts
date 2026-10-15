@@ -2,17 +2,21 @@
  * A consumer's view of `@thomasfosterau/pulpit/testing`, the in-memory fakes,
  * through its EMITTED declarations (`paths` in tsconfig.json points the name
  * at `dist/*.d.ts`), as `consumer.ts` is for the other subpaths. Each fake is
- * asserted to satisfy the seam it fakes, so a declaration that degraded to
- * `any` or drifted from its seam fails here. Never executed; type-checked
- * only.
+ * asserted to satisfy the seam it fakes (`Satisfies`, one-way), and each
+ * factory's return type, test hook and `Following` parameter is asserted
+ * EXACTLY (`Equals`, two-way), because a one-way check passes `any`: a
+ * declaration that degraded to `any` or drifted from its seam fails here.
+ * Never executed; type-checked only.
  */
 
 import * as Effect from "effect/Effect";
 import type * as HashMap from "effect/HashMap";
 import type * as HashSet from "effect/HashSet";
 import type * as Option from "effect/Option";
-import type { DocumentStore } from "@thomasfosterau/pulpit/documents";
-import type { EdgeRow, EdgeStore, EndpointView } from "@thomasfosterau/pulpit/edges";
+import type * as Schema from "effect/Schema";
+import { canonicalText, type DocumentStore } from "@thomasfosterau/pulpit/documents";
+import type { EdgeRow, EdgeStore, EdgeValues, EndpointView } from "@thomasfosterau/pulpit/edges";
+import type { ListFilter } from "@thomasfosterau/pulpit/filter";
 import {
   defineSubtype,
   type FollowerSeam,
@@ -20,7 +24,6 @@ import {
   type LeafStore,
 } from "@thomasfosterau/pulpit/subtype";
 import {
-  canonicalText,
   makeInMemoryChainStore,
   makeInMemoryDocumentStore,
   makeInMemoryEdgeStore,
@@ -60,8 +63,9 @@ export type _ChainRows = Assert<
   Equals<ReturnType<InMemoryChainStore["rows"]>, ReadonlyArray<VersionRow>>
 >;
 export type _ChainDrop = Assert<
-  Equals<Parameters<InMemoryChainStore["dropState"]>, [id: string, version: bigint]>
+  Equals<InMemoryChainStore["dropState"], (id: string, version: bigint) => void>
 >;
+export type _ChainRace = Assert<Equals<InMemoryChainStore["raceNextAppend"], (id: string) => void>>;
 
 // ── the leaf view ────────────────────────────────────────────────────────
 
@@ -71,9 +75,17 @@ export type _Leaf = Assert<
     [chain: InMemoryChainStore, options: InMemoryLeafStoreOptions]
   >
 >;
+export type _LeafReturn = Assert<
+  Equals<ReturnType<typeof makeInMemoryLeafStore>, InMemoryLeafStore>
+>;
 export type _LeafSeam = Assert<
   Satisfies<InMemoryLeafStore, LeafStore<LeafRow, InMemoryFollowing, never, never>>
 >;
+/** The `Following` parameter exactly: `Satisfies` would pass `LeafStore<LeafRow, any, …>`. */
+export type _LeafFollowing = Assert<
+  Equals<Parameters<InMemoryLeafStore["list"]>[0]["where"], ListFilter<InMemoryFollowing>>
+>;
+export type _LeafDropOwner = Assert<Equals<InMemoryLeafStore["dropOwner"], (id: string) => void>>;
 export type _LeafOwners = Assert<
   Equals<ReturnType<InMemoryLeafStore["owners"]>, HashMap.HashMap<string, string>>
 >;
@@ -115,18 +127,28 @@ export type _DocumentsPut = Assert<
 export type _DocumentsGet = Assert<
   Equals<ReturnType<InMemoryDocumentStore<Prose>["get"]>, Effect.Effect<Option.Option<Prose>>>
 >;
-export type _Canonical = Assert<Equals<ReturnType<typeof canonicalText>, string>>;
+export type _Canonical = Assert<Equals<typeof canonicalText, (value: Schema.Json) => string>>;
 
 // ── edges ────────────────────────────────────────────────────────────────
 
 export type _Nodes = Assert<Equals<ReturnType<typeof makeInMemoryNodes>, InMemoryNodes>>;
 export type _NodesSeam = Assert<Satisfies<InMemoryNodes, EndpointView<never, never>>>;
+export type _NodesPut = Assert<Equals<InMemoryNodes["put"], (row: LeafRow) => void>>;
 export type _Edges = Assert<
   Equals<Parameters<typeof makeInMemoryEdgeStore>, [options: InMemoryEdgeStoreOptions]>
+>;
+export type _EdgesReturn = Assert<
+  Equals<ReturnType<typeof makeInMemoryEdgeStore>, InMemoryEdgeStore>
 >;
 export type _EdgesSeam = Assert<
   Satisfies<InMemoryEdgeStore, EdgeStore<EdgeRow, InMemoryFollowing, never, never>>
 >;
 export type _EdgeRows = Assert<
   Equals<ReturnType<InMemoryEdgeStore["rows"]>, ReadonlyArray<EdgeRow>>
+>;
+export type _EdgeFollowing = Assert<
+  Equals<Parameters<InMemoryEdgeStore["list"]>[0]["where"], ListFilter<InMemoryFollowing>>
+>;
+export type _EdgeRace = Assert<
+  Equals<InMemoryEdgeStore["raceNextInsert"], (winner: EdgeValues) => void>
 >;
