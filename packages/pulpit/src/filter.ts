@@ -23,7 +23,7 @@
  * | `always` | no predicate (`undefined` to Drizzle's `.where`) |
  * | `never` | a predicate no row satisfies (the apps: `id = '00000000-…'`) |
  * | `eq` / `ne` | `col = $v` / `col <> $v` — a `NULL` column satisfies neither |
- * | `in` | `col IN (<following subquery>)` — a subquery, never a materialised array (#1107) |
+ * | `in` | `col IN (<following subquery>)` — a subquery, never a materialised array (#1107); a `NULL` column satisfies none |
  * | `published` | `(col IS NOT NULL AND col <= now())` — the database's clock, one per query |
  * | `notPublished` | `(col IS NULL OR col > now())` — parenthesised, so it cannot bind to a surrounding `AND` |
  * | `and` / `or` | `AND` / `OR` over the parts |
@@ -99,7 +99,8 @@ export const eq = (column: string, value: Scalar) => ({ kind: "eq", column, valu
 export const ne = (column: string, value: Scalar) => ({ kind: "ne", column, value }) as const;
 
 /**
- * `column IN (following)`.
+ * `column IN (following)`. A `NULL` or absent column satisfies none, whatever
+ * `following` holds: SQL's `NULL IN (…)` is `NULL`, not true.
  *
  * @since 0.1.0
  */
@@ -177,7 +178,11 @@ export const or = <Following>(
 export interface EvaluationContext<Following> {
   /** The instant `published` / `notPublished` compare against — the query's `now()`. */
   readonly now: Date;
-  /** Whether `value` is a member of the follower seam's `set`. */
+  /**
+   * Whether `value` is a member of the follower seam's `set`. {@link evaluate}
+   * never asks it about a `null` or absent column: such a row satisfies no
+   * `in`, whatever this would answer.
+   */
   readonly contains: (set: Following, value: ColumnValue) => boolean;
 }
 
@@ -188,9 +193,11 @@ const instantOf = (value: ColumnValue): number =>
 /**
  * Run a filter against one row — the in-memory reading of the rendering
  * contract above. A column that is `null` or that the row lacks matches no
- * `eq`, satisfies no `ne`, and is unpublished: SQL reads `NULL = $v` and
- * `NULL <> $v` as `NULL`, which a `WHERE` drops, so `ne` is not the
- * complement of `eq` over a nullable column.
+ * `eq`, satisfies no `ne` or `in`, and is unpublished: SQL reads `NULL = $v`,
+ * `NULL <> $v` and `NULL IN (…)` as `NULL`, which a `WHERE` drops, so `ne` is
+ * not the complement of `eq` over a nullable column. Such a row fails an `in`
+ * without `context.contains` being asked, so the answer never depends on the
+ * seam (pulpit#94).
  *
  * @since 0.1.0
  */
@@ -209,7 +216,10 @@ export const evaluate = <Following>(
         const value = row[node.column] ?? null;
         return value !== null && value !== node.value;
       },
-      in: (node) => context.contains(node.set, row[node.column] ?? null),
+      in: (node) => {
+        const value = row[node.column] ?? null;
+        return value !== null && context.contains(node.set, value);
+      },
       published: (node) => arrived(node.column),
       notPublished: (node) => !arrived(node.column),
       and: (node) => node.filters.every((part) => evaluate(part, row, context)),
