@@ -505,7 +505,8 @@ export interface VersionChainOps<E, R> {
    * first) cannot be fully reconstructed. A tombstone on either side is that
    * side's `action`, never an entry in `changes` (see
    * {@link VersionComparison}). Ungated, like `getVersion`: `./subtype` gates
-   * history reads (`READ-009`), and a gated `compare` there is pulpit#82.
+   * history reads (`READ-009`), and its `SubtypeOps.compare` is this behind
+   * `getVersion`'s gate.
    */
   readonly compare: (
     id: string,
