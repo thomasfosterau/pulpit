@@ -14,6 +14,14 @@ import { defineConfig } from "vite-plus";
  * runs between them. A `!x/**` glob never matches the entry `x` itself, so
  * it takes this exact path. The listings of `src/` and `tests/` are their own
  * entries and stay tracked; a new file at the top level is outside `include`.
+ * The files vitest and vite look up by path at the top level
+ * (`vitest.config.ts`, `.env*`) stay tracked too, as specific-path lookups.
+ *
+ * The dropped listing was also the only signal that `packages/pulpit/
+ * node_modules` appeared when the cache was recorded without it, as it is
+ * under the hoisted install. A real install that nests a package there
+ * changes `pnpm-lock.yaml`, which is tracked; a hand-made nested directory
+ * is not caught, which is accepted.
  */
 const cacheInputs = [
   { auto: true },
