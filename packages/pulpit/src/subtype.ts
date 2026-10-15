@@ -705,7 +705,9 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
    * type (text, numeric, boolean, timestamp or bigint, never `json` /
    * `jsonb` or an array), or {@link defineSubtype} throws
    * {@link SubtypeDeclarationError}. An order key on any other column fails
-   * {@link InvalidListOrder}.
+   * {@link InvalidListOrder}. With a list, `id` sorts only if listed; `[]`
+   * admits only the default `id`-ascending order, so any non-empty
+   * {@link ListRequest.orderBy} fails {@link InvalidListOrder}.
    *
    * **Omitted, every declared view column is sortable**, the columns the
    * resource never shows included. That default discloses two things to any
@@ -732,8 +734,9 @@ export interface ListRequest {
   readonly where: ListFilter<never>;
   /**
    * The order, its keys in turn, closed by `id` ascending with `NULL`s last
-   * in both directions (see {@link ListOrder}); absent or empty is `id`
-   * ascending alone. A column that is not sortable (outside the leaf's
+   * in both directions (see {@link ListOrder}); absent, empty or `null` (as
+   * an unchecked caller may send it, the same as absent) is `id` ascending
+   * alone. A column that is not sortable (outside the leaf's
    * `sortable` allow-list or, **when the leaf declares none, any view column
    * at all, the ones the resource never shows included**), a direction other
    * than `asc` / `desc`, or input not shaped as an order (no array, a key

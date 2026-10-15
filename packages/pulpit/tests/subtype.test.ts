@@ -1053,18 +1053,24 @@ describe("defineSubtype — list ordering (pulpit#112)", () => {
     return { page, ids, queries, viewerReads: () => viewerReads };
   };
 
-  it("keeps the default order, id ascending, when the order is absent or empty", async () => {
+  it("keeps the default order, id ascending, when the order is absent, null or empty", async () => {
     const { page, queries } = await ranked([
       seed("c", { rank: 1 }),
       seed("a", { rank: 3 }),
       seed("b", { rank: 2 }),
     ]);
-    const listed = await run(Effect.all([page({}), page({ orderBy: [] })], { concurrency: 1 }));
+    // `null`, as an unchecked caller might send it, is the same as absent.
+    const nullOrder: Pick<ListRequest, "orderBy"> = {};
+    Reflect.set(nullOrder, "orderBy", null);
+    const listed = await run(
+      Effect.all([page({}), page(nullOrder), page({ orderBy: [] })], { concurrency: 1 }),
+    );
     expect(listed.map((each) => each.rows.map((row) => row.id))).toEqual([
       ["a", "b", "c"],
       ["a", "b", "c"],
+      ["a", "b", "c"],
     ]);
-    expect(queries.map((query) => query.orderBy)).toEqual([[], []]);
+    expect(queries.map((query) => query.orderBy)).toEqual([[], [], []]);
   });
 
   it("orders by one key in either direction, NULL and absent last in both", async () => {
@@ -1249,6 +1255,8 @@ describe("defineSubtype — list ordering (pulpit#112)", () => {
       Effect.forEach(
         [
           [{ column: 42, direction: "asc" }],
+          // A sortable column with no direction: refused, never defaulted to `asc`.
+          [{ column: "title" }],
           [null],
           ["title"],
           "title",
@@ -1261,6 +1269,7 @@ describe("defineSubtype — list ordering (pulpit#112)", () => {
     );
     expect(refused).toEqual([
       new InvalidListOrder({ type: "taxa", column: "" }),
+      new InvalidListOrder({ type: "taxa", column: "title" }),
       new InvalidListOrder({ type: "taxa", column: "" }),
       new InvalidListOrder({ type: "taxa", column: "" }),
       new InvalidListOrder({ type: "taxa", column: "" }),
