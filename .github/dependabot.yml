@@ -11,6 +11,11 @@
 # update types; a bare `dependency-name` ignore would block security updates
 # too).
 #
+# @vitest/coverage-istanbul is ignored the same way: vite-plus refuses to start
+# a coverage run unless the provider's version EQUALS its bundled vitest, so
+# the provider moves BY HAND with vite-plus (to the `vitest` catalog entry),
+# never alone (pulpit#119); SECURITY updates stay enabled.
+#
 # @effect/tsgo, `typescript` (the TS6 alias) and `@typescript/native` (TS7) are
 # one set: `effect-tsgo patch` matches the native `tsc` and the `oxlint` that
 # vite-plus pulls in by gitHead / version and hard-errors
@@ -82,6 +87,13 @@ updates:
             "version-update:semver-patch",
           ]
       - dependency-name: "vitest"
+        update-types:
+          [
+            "version-update:semver-major",
+            "version-update:semver-minor",
+            "version-update:semver-patch",
+          ]
+      - dependency-name: "@vitest/coverage-istanbul"
         update-types:
           [
             "version-update:semver-major",
