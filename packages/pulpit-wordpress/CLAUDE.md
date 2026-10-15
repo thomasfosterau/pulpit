@@ -1,6 +1,6 @@
 # packages/pulpit-wordpress — `@thomasfosterau/pulpit-wordpress`
 
-The WordPress-compatible (`wp/v2`), read-only REST API over the kernel's chains: the second package in this repo. It is a scaffold (pulpit#115), `"private": true` until the owner sets up its publishing ([PUBLISHING.md](../../PUBLISHING.md)). The spec, and the owner's decisions on it, are on pulpit#86; read them before adding code.
+The WordPress-compatible (`wp/v2`), read-only REST API over the kernel's chains: the second package in this repo. So far it exports the `IdCodec` seam (`./ids`, pulpit#114) and its in-memory fake (`./testing`); it is `"private": true` until the owner sets up its publishing ([PUBLISHING.md](../../PUBLISHING.md)). The spec, and the owner's decisions on it, are on pulpit#86; read them before adding code.
 
 ## Boundary
 
@@ -13,6 +13,8 @@ The WordPress-compatible (`wp/v2`), read-only REST API over the kernel's chains:
 
 - **The kernel never imports this package.** The `pulpit` zone's only allowed target is `pulpit-internal`.
 - **Reuse the kernel's read gates; never re-spell them.** Reads go through `SubtypeOps.get` / `getMany` / `list` and `EdgeOps.list`, so `SEC-AUTH-ENUM-001` and `EDGE-001` hold by construction. If the adapter needs something the kernel doesn't export, that is a kernel issue (as pulpit#112 and pulpit#113 are), not a copy here.
+- **Ids decode before the read gate and encode after it** (`SEC-AUTH-ENUM-001`). Every wire id goes through `./ids` (`integerIds` or `stringIds`), and a wire id that decodes to none (unknown to the codec, or no WordPress id at all) answers exactly as a hidden row does: `404`, never a `400` or a `500`. Encode only a node the read gate has let through, once per response, never per item (`PERF-DB-001`).
+- **The adapter's fakes are its public `./testing`** (`src/testing.ts`), mirroring the kernel's: the reference semantics of each seam in [README.md → Seams](README.md#seams), imported by this package's tests and an application's. It is not on the root barrel, and nothing in `src/` but `testing.ts` itself imports it; change a seam's contract and its fake together.
 - **No application vocabulary.** `post`, `page`, `attachment`, `category` and `tag` are WordPress's protocol vocabulary; the application binds its own leaves to them.
 
 ## In-repo wiring

@@ -13,6 +13,8 @@
     "packages/pulpit/tests/**/*.test.ts",
     "packages/pulpit/tests/**/*.types.ts",
     "packages/pulpit-wordpress/src/index.ts",
+    "packages/pulpit-wordpress/src/ids.ts",
+    "packages/pulpit-wordpress/src/testing.ts",
     "packages/pulpit-wordpress/tests/**/*.test.ts",
     "packages/pulpit-wordpress/tests/**/*.types.ts",
     "tests/dist-consumer/src/*.ts",
