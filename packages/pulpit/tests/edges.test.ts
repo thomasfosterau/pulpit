@@ -14,7 +14,10 @@
  *   list filter never disagrees with the per-endpoint predicate, for every
  *   endpoint state × viewer, and `list` ≡ `get` end to end over two ends),
  *   the endpoint lifecycle (a tombstoned end hides its edges until the node
- *   is restored) and the declared cardinality limits.
+ *   is restored, except from the view-deleted rung, pulpit#93), the declared
+ *   cardinality limits (counting only readable edges with live ends,
+ *   pulpit#77 / pulpit#93) and what a create discloses (nothing about a
+ *   hidden edge, pulpit#93).
  *
  * @module tests/edges
  */
@@ -48,6 +51,7 @@ import {
   nobodyFollows,
   ownedAccess,
   requireWriter,
+  type AccessPolicy,
   type FollowerSeam,
   type LeafRow,
   type Viewer,
@@ -84,6 +88,32 @@ const tagOf = async <A, E extends { readonly _tag: string }>(effect: Effect.Effe
 
 const as = (account: ViewerAccount): Viewer => Option.some(account);
 const anonymous: Viewer = Option.none();
+
+/**
+ * gardeneria's axes with the two read rungs split: a moderator sees
+ * tombstones but not `private` rows or drafts, which only an admin sees. The
+ * view-deleted rung's reading of a tombstoned end (pulpit#93) is visible only
+ * when the rungs differ.
+ */
+const splitPolicy: AccessPolicy = {
+  ...gardeneriaPolicy,
+  canViewPrivate: (account) => account.role === "admin",
+};
+
+/** A write's answer without its minted id: what a caller can compare across two worlds. */
+const answerOf = <E extends { readonly _tag: string }>(
+  effect: Effect.Effect<{ readonly created: boolean }, E>,
+) =>
+  Effect.map(Effect.exit(effect), (exit) =>
+    Exit.match(exit, {
+      onSuccess: (written) => ({ created: written.created }),
+      onFailure: () =>
+        Option.match(Exit.findErrorOption(exit), {
+          onNone: () => ({ defect: true }),
+          onSome: (error) => ({ ...error, _tag: error._tag }),
+        }),
+    }),
+  );
 
 /** `follower` follows `member`; nobody else follows anybody. */
 const follows: FollowerSeam<Following, never> = {
@@ -142,10 +172,10 @@ const recorded = (store: InMemoryEdgeStore) => {
         windows = [...windows, { limit: query.limit, offset: query.offset }];
         return store.list(query);
       }),
-    countAt: (column, nodeId) =>
+    countAt: (query) =>
       Effect.suspend(() => {
-        counted = [...counted, `${column}:${nodeId}`];
-        return store.countAt(column, nodeId);
+        counted = [...counted, `${query.column}:${query.nodeId}`];
+        return store.countAt(query);
       }),
   };
   return { edges, seen: { windows: () => windows, counted: () => counted } };
@@ -155,6 +185,7 @@ const recorded = (store: InMemoryEdgeStore) => {
 const family = (
   declaration: Pick<Definition, "ends" | "onConflict" | "writeGate">,
   uniqueKey: ReadonlyArray<string> = [],
+  policy: AccessPolicy = gardeneriaPolicy,
 ) => {
   const { edges, seen } = recorded(makeInMemoryEdgeStore({ ends: declaration.ends, uniqueKey }));
   let viewer: Viewer = anonymous;
@@ -163,7 +194,7 @@ const family = (
     type: "links",
     edges,
     viewer: Effect.sync(() => viewer),
-    policy: gardeneriaPolicy,
+    policy,
     followers: follows,
     values: (input: EdgeValues) => input,
     toResource: (row: EdgeRow) => row,
@@ -333,10 +364,10 @@ describe("ported: CMS rows on the moderator rung (gardeneria's page collections 
     expect(await tagOf(actAs(as(contributor), ops.delete(id)))).toEqual(Option.some("Forbidden"));
   });
 
-  const slugs = () => {
-    const pages = makeInMemoryNodes([]);
-    pages.put(node("page-1", {}));
-    pages.put(node("page-2", {}));
+  const slugs = (policy: AccessPolicy = gardeneriaPolicy) => {
+    const pages = makeInMemoryNodes(["visibility"]);
+    pages.put(node("page-1", { visibility: "public" }));
+    pages.put(node("page-2", { visibility: "public" }));
     const links = family(
       {
         ends: {
@@ -347,6 +378,7 @@ describe("ported: CMS rows on the moderator rung (gardeneria's page collections 
       },
       // The unique variant does not cover the page: a path is claimed once.
       ["path", "collectionId"],
+      policy,
     );
     return { pages, ...links };
   };
@@ -364,14 +396,28 @@ describe("ported: CMS rows on the moderator rung (gardeneria's page collections 
     expect(edges.rows()[0]?.["pageId"]).toBe("page-1");
   });
 
-  it("never resolves a collision to an edge the viewer cannot read", async () => {
-    const { pages, ops, actAs } = slugs();
-    await run(actAs(as(moderator), ops.create({ pageId: "page-1", path: "retired" })));
-    // The page the stored alias points at is tombstoned: its alias is hidden
-    // from everyone, so the collision must not hand back its id.
-    pages.put(node("page-1", {}, "delete"));
+  it("resolves a collision only to an edge the viewer can read: a retired page's alias, for the view-deleted rung", async () => {
+    const { pages, ops, actAs } = slugs(splitPolicy);
+    const retired = await run(
+      actAs(as(moderator), ops.create({ pageId: "page-1", path: "retired" })),
+    );
+    // The page the stored alias points at is tombstoned. The view-deleted
+    // rung reads its alias (pulpit#93), so the collision resolves to it.
+    pages.put(node("page-1", { visibility: "public" }, "delete"));
     expect(
-      await errorOf(actAs(as(moderator), ops.create({ pageId: "page-2", path: "retired" }))),
+      await run(actAs(as(moderator), ops.create({ pageId: "page-2", path: "retired" }))),
+    ).toEqual({ id: retired.id, created: false });
+  });
+
+  it("never resolves a collision to an edge the viewer cannot read", async () => {
+    const { pages, ops, actAs } = slugs(splitPolicy);
+    await run(actAs(as(admin), ops.create({ pageId: "page-1", path: "hidden" })));
+    // A private page is hidden from a moderator below the view-private rung
+    // (splitPolicy), tombstoned or not: the collision must not hand back its
+    // alias's id, and answers as any unresolved collision does.
+    pages.put(node("page-1", { visibility: "private" }, "delete"));
+    expect(
+      await errorOf(actAs(as(moderator), ops.create({ pageId: "page-2", path: "hidden" }))),
     ).toEqual(Option.some(expect.objectContaining({ _tag: "EdgeConflict", type: "links" })));
   });
 });
@@ -527,17 +573,18 @@ const readings = (
   viewer: Viewer,
   rows: ReadonlyArray<LeafRow>,
   followers: FollowerSeam<Following, never> = follows,
+  policy: AccessPolicy = gardeneriaPolicy,
 ) =>
   run(
     Effect.forEach(
       rows,
       (row) =>
         Effect.map(
-          canViewEndpoint(end, viewer, gardeneriaPolicy, followers, Option.some(row)),
+          canViewEndpoint(end, viewer, policy, followers, Option.some(row)),
           (readable) => ({
             id: row.id,
             listed: evaluate(
-              endpointFilter({ end }, viewer, gardeneriaPolicy, followers),
+              endpointFilter({ end }, viewer, policy, followers),
               joinedRow("end", end.column, row),
               evaluationContext,
             ),
@@ -573,14 +620,38 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
   );
   const ownedNodes = makeInMemoryNodes(["ownerId", "visibility", "draft"]);
 
-  it.each(viewers)("an owned end, for %s", async (_name, viewer) => {
-    const seen = await readings(ownedEnd("entryId", ownedNodes), viewer, ownedRows);
+  /** Every viewer (and the admin) under each policy: the split one tells the two read rungs apart. */
+  const viewersByPolicy = Arr.flatMap(
+    [
+      ["gardeneria's policy", gardeneriaPolicy],
+      ["the split policy", splitPolicy],
+    ] as const,
+    ([policyName, policy]) =>
+      Arr.map(
+        [...viewers, ["an admin", as(admin)] as const],
+        ([name, viewer]) => [`${name}, under ${policyName}`, viewer, policy] as const,
+      ),
+  );
+
+  /** Whether the viewer holds both read rungs, and so reads every row of a declared view. */
+  const seesEverything = (viewer: Viewer, policy: AccessPolicy) =>
+    Option.exists(viewer, policy.canViewPrivate) && Option.exists(viewer, policy.canViewDeleted);
+
+  it.each(viewersByPolicy)("an owned end, for %s", async (_name, viewer, policy) => {
+    const seen = await readings(
+      ownedEnd("entryId", ownedNodes),
+      viewer,
+      ownedRows,
+      follows,
+      policy,
+    );
     expect(seen.map(({ id, listed }) => [id, listed])).toEqual(
       seen.map(({ id, readable }) => [id, readable]),
     );
-    // Not vacuous: some rows are readable and some are not, for every viewer.
+    // Not vacuous: some rows are readable, and some are not unless the
+    // viewer holds both read rungs.
     expect(seen.some((reading) => reading.readable)).toBe(true);
-    expect(seen.some((reading) => !reading.readable)).toBe(true);
+    expect(seen.some((reading) => !reading.readable)).toBe(!seesEverything(viewer, policy));
   });
 
   const referenceRows = Arr.flatMap(actions, (action) =>
@@ -589,27 +660,34 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
     ),
   );
 
-  it.each(viewers)(
+  it.each(viewersByPolicy)(
     "a reference end, with and without a visibility column, for %s",
-    async (_name, viewer) => {
+    async (_name, viewer, policy) => {
       const withAxis = await readings(
         referenceEnd("subjectId", makeInMemoryNodes(["visibility"])),
         viewer,
         referenceRows,
+        follows,
+        policy,
       );
       const withoutAxis = await readings(
         referenceEnd("subjectId", makeInMemoryNodes([])),
         viewer,
         referenceRows,
+        follows,
+        policy,
       );
       expect(
         [withAxis, withoutAxis].map((seen) => seen.map(({ id, listed }) => [id, listed])),
       ).toEqual(
         [withAxis, withoutAxis].map((seen) => seen.map(({ id, readable }) => [id, readable])),
       );
-      // A view with no visibility axis hides only the tombstones.
+      // A view with no visibility axis hides only the tombstones, and those
+      // only below the view-deleted rung.
       expect(withoutAxis.filter((reading) => reading.readable)).toHaveLength(
-        referenceRows.filter((row) => row.action !== "delete").length,
+        referenceRows.filter(
+          (row) => row.action !== "delete" || Option.exists(viewer, policy.canViewDeleted),
+        ).length,
       );
     },
   );
@@ -705,21 +783,52 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
     });
   });
 
-  it("a tombstoned node is unreadable to every viewer, the view-deleted rung included", async () => {
-    const tombstones = ownedRows.filter((row) => row.action === "delete");
-    const seen = await readings(ownedEnd("entryId", ownedNodes), as(admin), tombstones);
-    expect(seen.every(({ listed, readable }) => !listed && !readable)).toBe(true);
-    expect(
-      await run(
-        canViewEndpoint(
-          ownedEnd("entryId", ownedNodes),
-          as(admin),
-          gardeneriaPolicy,
-          follows,
-          Option.none(),
-        ),
+  describe("a tombstoned node, by rung (pulpit#93)", () => {
+    const tombstones = [
+      ...ownedRows.filter((row) => row.action === "delete"),
+      // A tombstone the view-private rung alone would hide: another owner's private draft.
+      node(
+        "delete-other-private",
+        { ownerId: otherMember.id, visibility: "private", draft: true },
+        "delete",
       ),
-    ).toBe(false);
+    ];
+    /** The same row, live: what a tombstone reads as to the view-deleted rung. */
+    const revived = (row: LeafRow): LeafRow => ({ ...row, action: "update" });
+    const end = ownedEnd("entryId", ownedNodes);
+
+    it.each(viewers.filter(([, viewer]) => !Option.exists(viewer, splitPolicy.canViewDeleted)))(
+      "is unreadable below the view-deleted rung, for %s",
+      async (_name, viewer) => {
+        const seen = await readings(end, viewer, tombstones, follows, splitPolicy);
+        expect(seen.every(({ listed, readable }) => !listed && !readable)).toBe(true);
+      },
+    );
+
+    it.each([
+      ["a moderator (view-deleted only)", as(moderator)],
+      ["an admin (both read rungs)", as(admin)],
+    ] as const)(
+      "reads as the live row would, by its access rule, for %s",
+      async (_name, viewer) => {
+        const seen = await readings(end, viewer, tombstones, follows, splitPolicy);
+        const live = await readings(end, viewer, tombstones.map(revived), follows, splitPolicy);
+        expect(seen.map(({ listed, readable }) => [listed, readable])).toEqual(
+          live.map(({ readable }) => [readable, readable]),
+        );
+        // Not vacuous: below the view-private rung, a private tombstone stays hidden.
+        expect(seen.some(({ readable }) => readable)).toBe(true);
+        expect(seen.some(({ readable }) => !readable)).toBe(
+          !Option.exists(viewer, splitPolicy.canViewPrivate),
+        );
+      },
+    );
+
+    it("a missing node is unreadable even to both rungs", async () => {
+      expect(
+        await run(canViewEndpoint(end, as(admin), gardeneriaPolicy, follows, Option.none())),
+      ).toBe(false);
+    });
   });
 });
 
@@ -821,11 +930,12 @@ describe("EDGE-001: an edge is readable only if every end is", () => {
       "s-public/e-private",
       "s-public/e-public",
     ]);
-    // The rung sees private nodes on both ends, and still no tombstone.
+    // The rung (both read rungs, under gardeneria's policy) sees private
+    // nodes and tombstoned ones on both ends (pulpit#93).
     expect(await pairs(as(moderator))).toEqual(
-      Arr.flatMap(["s-private", "s-public"], (subject) =>
+      Arr.flatMap(["s-gone", "s-private", "s-public"], (subject) =>
         Arr.map(
-          ["e-draft", "e-followers", "e-other", "e-private", "e-public"],
+          ["e-draft", "e-followers", "e-gone", "e-other", "e-private", "e-public"],
           (entry) => `${subject}/${entry}`,
         ),
       ),
@@ -898,7 +1008,7 @@ describe("EDGE-001: an edge is readable only if every end is", () => {
   });
 });
 
-describe("EDGE-001: a tombstoned end hides its edges, and a restore brings them back", () => {
+describe("EDGE-001: a tombstoned end hides its edges below the view-deleted rung, and a restore brings them back", () => {
   it("over the subtype factory's own stores", async () => {
     // oxlint-disable-next-line effect/avoid-native-object-helpers -- the in-memory leaf store's follower set is the native `ReadonlySet` its seam type names
     const noFollowers = nobodyFollows<ReadonlySet<string>>(new Set());
@@ -976,17 +1086,26 @@ describe("EDGE-001: a tombstoned end hides its edges, and a restore brings them 
     expect(await visibleTo(anonymous)).toEqual([id]);
 
     await run(actAs(as(member), entryOps.delete(entry.id)));
-    // Hidden from everyone — the rung that may read the tombstone itself included.
-    const everyone = [anonymous, as(member), as(moderator), as(admin)];
-    expect(await Promise.all(everyone.map(visibleTo))).toEqual(everyone.map(() => []));
-    const reads = await Promise.all(everyone.map((who) => tagOf(actAs(who, ops.get(id)))));
-    expect(reads).toEqual(everyone.map(() => Option.some("EdgeNotFound")));
+    // Hidden from everyone below the view-deleted rung …
+    const below = [anonymous, as(member), as(contributor)];
+    expect(await Promise.all(below.map(visibleTo))).toEqual(below.map(() => []));
+    const reads = await Promise.all(below.map((who) => tagOf(actAs(who, ops.get(id)))));
+    expect(reads).toEqual(below.map(() => Option.some("EdgeNotFound")));
     expect(await tagOf(actAs(as(contributor), ops.delete(id)))).toEqual(
       Option.some("EdgeNotFound"),
     );
+    // … and read by the rung, which reads the tombstone itself (pulpit#93).
+    const rung = [as(moderator), as(admin)];
+    expect(await Promise.all(rung.map(visibleTo))).toEqual(rung.map(() => [id]));
+    await run(actAs(as(moderator), entryOps.get(entry.id)));
+    // A create can't name the tombstone, whoever asks.
     expect(
-      await tagOf(actAs(as(contributor), ops.create({ subjectId: subject.id, entryId: entry.id }))),
-    ).toEqual(Option.some("NodeNotFound"));
+      await Promise.all(
+        [as(contributor), as(moderator)].map((who) =>
+          tagOf(actAs(who, ops.create({ subjectId: subject.id, entryId: entry.id }))),
+        ),
+      ),
+    ).toEqual([Option.some("NodeNotFound"), Option.some("NodeNotFound")]);
     // Hidden, not deleted.
     expect(edges.rows().map((row) => row.id)).toEqual([id]);
 
@@ -994,6 +1113,201 @@ describe("EDGE-001: a tombstoned end hides its edges, and a restore brings them 
     expect(await visibleTo(anonymous)).toEqual([id]);
     expect(await run(actAs(anonymous, ops.get(id)))).toMatchObject({ id, entryId: entry.id });
   });
+});
+
+describe("EDGE-001 by rung × end state: the view-deleted rung reads an edge whose only hidden end is tombstoned (pulpit#93)", () => {
+  /** The subject end's states; the part end is always a live public node. */
+  const states = {
+    live: node("s-live", { visibility: "public" }),
+    "live and private": node("s-private", { visibility: "private" }),
+    tombstoned: node("s-gone", { visibility: "public" }, "delete"),
+    "tombstoned and private": node("s-gone-private", { visibility: "private" }, "delete"),
+  };
+  type State = keyof typeof states;
+
+  /** One edge from each subject state to `p1`, seeded past `create`, under the split policy. */
+  const world = async () => {
+    const subjects = makeInMemoryNodes(["visibility"]);
+    const parts = makeInMemoryNodes(["visibility"]);
+    Record.values(states).forEach((row) => subjects.put(row));
+    parts.put(node("p1", { visibility: "public" }));
+    const links = family(
+      {
+        ends: { subject: referenceEnd("subjectId", subjects), part: referenceEnd("partId", parts) },
+      },
+      [],
+      splitPolicy,
+    );
+    await run(
+      Effect.forEach(
+        Record.values(states),
+        (row) => links.edges.insert({ subjectId: row.id, partId: "p1" }),
+        { concurrency: 1 },
+      ),
+    );
+    const idOf = (state: State) =>
+      String(links.edges.rows().find((row) => row["subjectId"] === states[state].id)?.id);
+    return { ...links, idOf };
+  };
+
+  /** Each rung (all past the corpus-write gate) and the subject states it reads. */
+  const rungs: ReadonlyArray<readonly [string, Viewer, ReadonlyArray<State>]> = [
+    ["a contributor (neither read rung)", as(contributor), ["live"]],
+    ["a moderator (view-deleted only)", as(moderator), ["live", "tombstoned"]],
+    [
+      "an admin (both read rungs)",
+      as(admin),
+      ["live", "live and private", "tombstoned", "tombstoned and private"],
+    ],
+  ];
+  const cases = Arr.flatMap(rungs, ([rung, viewer, reads]) =>
+    Arr.map(Record.keys(states), (state) => [rung, state, viewer, reads.includes(state)] as const),
+  );
+
+  it.each(cases)("%s, an edge whose subject is %s", async (_rung, state, viewer, readable) => {
+    const { edges, ops, actAs, listed, idOf } = await world();
+    const id = idOf(state);
+    expect((await listed(viewer)).ids.includes(id)).toBe(readable);
+    expect((await listed(viewer, eq("partId", "p1"))).ids.includes(id)).toBe(readable);
+    expect(Exit.isSuccess(await Effect.runPromiseExit(actAs(viewer, ops.get(id))))).toBe(readable);
+    expect(await tagOf(actAs(viewer, ops.delete(id)))).toEqual(
+      readable ? Option.none() : Option.some("EdgeNotFound"),
+    );
+    expect(edges.rows().some((row) => row.id === id)).toBe(!readable);
+  });
+
+  it("a create naming a tombstoned node is NodeNotFound to the rung that reads it", async () => {
+    const { ops, actAs } = await world();
+    expect(
+      await errorOf(actAs(as(admin), ops.create({ subjectId: "s-gone", partId: "p1" }))),
+    ).toEqual(
+      Option.some(
+        expect.objectContaining({ _tag: "NodeNotFound", type: "subjects", id: "s-gone" }),
+      ),
+    );
+  });
+});
+
+describe("what a create discloses: nothing that tells a hidden edge from a readable one, or from none (pulpit#93)", () => {
+  /**
+   * `s1` with `hidden` stored edges to private parts, which a contributor
+   * can't read and a moderator can, and room for `maxEdges` on its end.
+   */
+  const slotWorld = async (maxEdges: number, hidden: number) => {
+    const { subjects, parts } = twoReferenceLeaves();
+    const secret = Arr.makeBy(hidden, (index) => `h${String(index + 1)}`);
+    secret.forEach((id) => parts.put(node(id, { visibility: "private" })));
+    const links = family({
+      ends: {
+        subject: { ...referenceEnd("subjectId", subjects), maxEdges },
+        part: referenceEnd("partId", parts),
+      },
+    });
+    await run(
+      Effect.forEach(secret, (partId) => links.edges.insert({ subjectId: "s1", partId }), {
+        concurrency: 1,
+      }),
+    );
+    return links;
+  };
+  /** A caller's answers to three creates at `s1`, in order. */
+  const answers = (links: Awaited<ReturnType<typeof slotWorld>>, viewer: Viewer) =>
+    run(
+      Effect.forEach(
+        ["p1", "p2", "p3"],
+        (partId) => answerOf(links.actAs(viewer, links.ops.create({ subjectId: "s1", partId }))),
+        { concurrency: 1 },
+      ),
+    );
+
+  it.each([1, 2])(
+    "at maxEdges %i, a contributor's creates answer alike whether the node holds 0, 1 or 2 hidden edges",
+    async (maxEdges) => {
+      const worlds = await Promise.all(
+        [0, 1, 2].map(async (hidden) =>
+          answers(await slotWorld(maxEdges, hidden), as(contributor)),
+        ),
+      );
+      expect(worlds[1]).toEqual(worlds[0]);
+      expect(worlds[2]).toEqual(worlds[0]);
+      // Not vacuous: the limit refuses the create past it, by the edges the caller can read.
+      expect(worlds[0]?.[maxEdges]).toEqual({
+        _tag: "EdgeCardinalityExceeded",
+        type: "links",
+        end: "subject",
+        nodeId: "s1",
+        max: maxEdges,
+      });
+    },
+  );
+
+  it("a caller who can read every edge is held to the limit over all of them", async () => {
+    const links = await slotWorld(2, 2);
+    expect((await answers(links, as(moderator)))[0]).toMatchObject({
+      _tag: "EdgeCardinalityExceeded",
+    });
+    // The contributor, who can't read the two, is not: the documented trade-off.
+    expect((await answers(links, as(contributor))).slice(0, 2)).toEqual([
+      { created: true },
+      { created: true },
+    ]);
+    expect(links.edges.rows()).toHaveLength(4);
+  });
+
+  /**
+   * A family keyed on `path` alone (it leaves the page out), whose page end
+   * holds one edge: an edge on `page-other` already holds the path `taken`,
+   * that page `colliding` (readable or hidden from a contributor), and with
+   * `full` the target page already holds its one edge.
+   */
+  const keyWorld = async (
+    colliding: "public" | "private",
+    onConflict: "fail" | "ignore",
+    full: boolean,
+  ) => {
+    const pages = makeInMemoryNodes(["visibility"]);
+    pages.put(node("page-target", { visibility: "public" }));
+    pages.put(node("page-other", { visibility: colliding }));
+    const links = family(
+      {
+        ends: {
+          page: {
+            column: "pageId",
+            type: "pages",
+            access: { kind: "reference" },
+            nodes: pages,
+            maxEdges: 1,
+          },
+        },
+        onConflict,
+      },
+      ["path"],
+    );
+    await run(links.edges.insert({ pageId: "page-other", path: "taken" }));
+    if (full) await run(links.edges.insert({ pageId: "page-target", path: "own" }));
+    return run(
+      answerOf(
+        links.actAs(as(contributor), links.ops.create({ pageId: "page-target", path: "taken" })),
+      ),
+    );
+  };
+  const conflict = { _tag: "EdgeConflict", type: "links" };
+
+  it.each([
+    ["below the limit", false],
+    ["at the limit", true],
+  ] as const)(
+    "a collision with a hidden edge answers as one with a readable edge, %s",
+    async (_where, full) => {
+      const hidden = await keyWorld("private", "fail", full);
+      expect(hidden).toEqual(await keyWorld("public", "fail", full));
+      expect(hidden).toEqual(conflict);
+      // Under `ignore` the hidden collision is the same unresolved answer;
+      // a readable one resolves to an edge the caller could already read.
+      expect(await keyWorld("private", "ignore", full)).toEqual(conflict);
+      expect(await keyWorld("public", "ignore", full)).toEqual({ created: false });
+    },
+  );
 });
 
 // ── Cardinality ───────────────────────────────────────────────────────
@@ -1077,24 +1391,31 @@ describe("cardinality: an end's maxEdges is declared and enforced", () => {
     expect(await tagOf(link(links, "s1", "p2"))).toEqual(Option.none());
   });
 
-  it("every stored edge counts, a hidden one included, so a restore cannot overshoot", async () => {
-    const links = bounded({ subject: 1 });
-    await run(link(links, "s1", "p1"));
-    links.parts.put(node("p1", { visibility: "public" }, "delete"));
-    expect(await tagOf(link(links, "s1", "p2"))).toEqual(Option.some("EdgeCardinalityExceeded"));
-  });
-
-  it("known limitation (pulpit#77): a tombstoned partner holds its slot until it is restored", async () => {
+  it("counts only edges whose other end is live, so a tombstoned partner frees its slot (pulpit#77)", async () => {
     const links = bounded({ subject: 1 });
     const { id } = await run(link(links, "s1", "p1"));
+    expect(await tagOf(link(links, "s1", "p2"))).toEqual(Option.some("EdgeCardinalityExceeded"));
     links.parts.put(node("p1", { visibility: "public" }, "delete"));
-    // The edge is hidden from everyone, so nobody can delete it …
-    const writers = [as(contributor), as(moderator), as(admin)];
+    // The edge to the tombstoned p1 stays stored, but no longer counts, for
+    // the view-deleted rung that can still read it as for anyone else.
     expect(
-      await Promise.all(writers.map((who) => tagOf(links.actAs(who, links.ops.delete(id))))),
-    ).toEqual(writers.map(() => Option.some("EdgeNotFound")));
-    // … it still holds s1's only slot …
-    expect(await errorOf(link(links, "s1", "p2"))).toEqual(
+      await tagOf(links.actAs(as(moderator), links.ops.create({ subjectId: "s1", partId: "p2" }))),
+    ).toEqual(Option.none());
+    expect(links.edges.rows().map((row) => row.id)).toContain(id);
+  });
+
+  it("a restore may bring a node past its limit; the next create still refuses (pulpit#77)", async () => {
+    const links = bounded({ subject: 1 });
+    const stale = await run(link(links, "s1", "p1"));
+    links.parts.put(node("p1", { visibility: "public" }, "delete"));
+    const fresh = await run(link(links, "s1", "p2"));
+    // Restoring p1 brings its edge back without a check: s1 now holds two.
+    links.parts.put(node("p1", { visibility: "public" }, "update"));
+    expect(await links.listed(anonymous, eq("subjectId", "s1"))).toEqual({
+      ids: [stale.id, fresh.id],
+      total: 2,
+    });
+    expect(await errorOf(link(links, "s1", "p3"))).toEqual(
       Option.some(
         expect.objectContaining({
           _tag: "EdgeCardinalityExceeded",
@@ -1104,12 +1425,11 @@ describe("cardinality: an end's maxEdges is declared and enforced", () => {
         }),
       ),
     );
-    // … and no list shows it, not even the rung's.
-    expect(await links.listed(as(admin), eq("subjectId", "s1"))).toEqual({ ids: [], total: 0 });
-    // Only restoring the partner frees the slot: then the edge can be deleted.
-    links.parts.put(node("p1", { visibility: "public" }, "update"));
-    await run(links.actAs(as(contributor), links.ops.delete(id)));
-    expect(await tagOf(link(links, "s1", "p2"))).toEqual(Option.none());
+    // One delete leaves s1 at its limit, still full; the second frees a slot.
+    await run(links.actAs(as(contributor), links.ops.delete(stale.id)));
+    expect(await tagOf(link(links, "s1", "p3"))).toEqual(Option.some("EdgeCardinalityExceeded"));
+    await run(links.actAs(as(contributor), links.ops.delete(fresh.id)));
+    expect(await tagOf(link(links, "s1", "p3"))).toEqual(Option.none());
   });
 
   it("counts a self-referential family's bounded ends in ascending node id, the order a store locks them", async () => {
