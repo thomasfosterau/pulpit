@@ -53,7 +53,13 @@ catalog:
   # The JSON:API model layer the `./content` and `./registry` subpaths build on.
   "@thomasfosterau/effect-jsonapi": ^0.16.3
   "@types/node": ^26.6.4
-  "@vitest/coverage-istanbul": 5.0.3
+  # The coverage provider for `vp run -r test:coverage`. vite-plus bundles its
+  # own vitest and refuses to start a coverage run unless the provider's
+  # version EQUALS that bundled vitest exactly (`assertCoverageProviderVersionMatch`
+  # in node_modules/vite-plus/dist/define-config-*.js), so this moves only with
+  # vite-plus: pin it to the `vitest` entry below (vite-plus 0.3.3 → 4.1.11),
+  # never ahead of it (pulpit#119).
+  "@vitest/coverage-istanbul": 4.1.11
   effect: 4.0.4
   effect-solutions: ^0.5.3
   fallow: 3.33.1
@@ -74,7 +80,7 @@ catalog:
   # 1.83.0. `vite` is the same release under its aliased core package, and
   # `vitest` must match vite-plus's exact pin (0.3.3 → 4.1.11) because the
   # `vitest: "catalog:"` override forces every resolution to the catalog
-  # singleton.
+  # singleton, as must `@vitest/coverage-istanbul` (above).
   vite-plus: 0.3.3
   vite: npm:@voidzero-dev/vite-plus-core@0.3.3
   vitest: 4.1.11
