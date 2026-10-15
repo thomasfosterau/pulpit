@@ -881,8 +881,10 @@ export interface ResourceCacheSeam<Resource, R> {
  * committed write from its write-through or eviction: a failure of the
  * boundary after the operation itself succeeded (an interrupt included)
  * evicts too, since the write may have committed, while a write the gate
- * or the precondition refuses never touches the cache. That holds for
- * `delete`'s eviction as well.
+ * or the precondition refuses never touches the cache, even when a
+ * `transact` that retries internally rolled back an earlier attempt that
+ * wrote: only the last attempt counts. That holds for `delete`'s eviction
+ * as well.
  *
  * `update`, `delete` and `restoreVersion` take the operations' optional
  * expected version ({@link Precondition}); the HTTP layer maps a request's
@@ -951,14 +953,21 @@ export const subtypeHandlers = <Resource, E, R>(
   // (its gate passed and the chain write ran), any later failure of the
   // boundary, an interrupt included, evicts: the write may have committed.
   // A request the gate refused never evicts, so a forbidden request can't
-  // bust the cache.
+  // bust the cache. The flag is cleared at the start of each attempt, so a
+  // `transact` that retries internally, rolling back an attempt that wrote,
+  // evicts only when its last attempt wrote.
   const committed = <A extends ChainWrite, E2>(
     restore: <AX, EX, RX>(effect: Effect.Effect<AX, EX, RX>) => Effect.Effect<AX, EX, RX>,
     operation: Effect.Effect<A, E2, R>,
   ) =>
     Effect.flatMap(Ref.make(Option.none<string>()), (wrote) =>
       restore(
-        config.transact(Effect.tap(operation, ({ id }) => Ref.set(wrote, Option.some(id)))),
+        config.transact(
+          Effect.andThen(
+            Ref.set(wrote, Option.none()),
+            Effect.tap(operation, ({ id }) => Ref.set(wrote, Option.some(id))),
+          ),
+        ),
       ).pipe(
         Effect.onError(() =>
           Effect.flatMap(
