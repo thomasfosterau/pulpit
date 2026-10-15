@@ -26,9 +26,10 @@ catalog:
   "@changesets/changelog-github": ^1.0.1
   "@changesets/cli": ^3.0.3
   # Compiles AND executes every JSDoc `@example` (`vp run -r docgen`): parses
-  # `src/` with the TypeScript 5.5 compiler bundled in its own bin,
+  # `src/` with `ts-morph` (and the TypeScript 6.0 that ts-morph 28 bundles),
   # type-checks the examples with the `tsc` on PATH (the native one below) and
-  # runs them under `tsx`, hence that entry. See `peerDependencyRules`.
+  # runs them under `tsx`, hence that entry. Its `typescript >=5.8.2 <7` peer
+  # is met by the TS6 alias below, so it needs no `peerDependencyRules` entry.
   "@effect/docgen": ^4.0.4
   "@effect/language-service": ^0.87.4
   # Effect Language Service as a native (TypeScript-Go) binary — the TS7 side
@@ -118,12 +119,6 @@ peerDependencyRules:
   allowedVersions:
     vite: "*"
     vitest: "*"
-    # @effect/docgen 0.5.2 declares `typescript ^5.2.2` but never loads it:
-    # its bin bundles TypeScript 5.5.2 for parsing and shells out to the `tsc`
-    # on PATH for the examples, so admitting the TS6 alias only silences the
-    # peer warning. `vp run -r docgen` is the proof, in CI on every push
-    # (pulpit#8, the setup effect-jsonapi#175 settled for the template).
-    "@effect/docgen>typescript": "6"
 
 # Supply-chain delay (owner's policy, gardeneria #1149): hold newly published
 # versions for 1 day (unit: MINUTES) before pnpm will install them.
