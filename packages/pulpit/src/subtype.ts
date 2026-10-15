@@ -40,6 +40,10 @@
  *   leaf, a corpus writer's write or history read to a row `get` hides from
  *   them fails `NodeNotFound`, as `get` does, before the chain is reached
  *   (pulpit#101, `PUB-009`).
+ * - A list's order ({@link ListOrder}) only places the rows its filters
+ *   chose: it never changes membership or the total, and a column outside
+ *   the view's declared `columns` fails {@link InvalidListOrder} before
+ *   anything is read, never reaching the store (pulpit#112).
  * - Soft-deleted rows are visible only to the view-deleted rung, and a list
  *   includes them only when the caller also asked (`includeDeleted`).
  * - A declaration naming columns the view lacks fails closed — nothing lists,
@@ -183,6 +187,20 @@ export class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthoriz
  * @since 0.1.0
  */
 export class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
+
+/**
+ * A list order naming a column the leaf's view does not declare
+ * (`LeafStore.columns`), or a direction other than `asc` / `desc`: the
+ * wire's 400. The order is checked before anything is read, so it says
+ * nothing about any row; `column` is the caller's own key, never passed to
+ * the store (pulpit#112).
+ *
+ * @since 0.1.0
+ */
+export class InvalidListOrder extends Schema.TaggedError<InvalidListOrder>()("InvalidListOrder", {
+  type: Schema.String,
+  column: Schema.String,
+}) {}
 
 // ── Read scope and the row predicate ──────────────────────────────────
 
@@ -501,6 +519,23 @@ export interface Page<A> {
 export const MAX_PAGE_LIMIT = 1000;
 
 /**
+ * One key of a list's order: a column of the leaf's current-version view and
+ * its direction. A list sorts by its keys in turn with a `NULL` (or absent)
+ * column after every value in **both** directions (`NULLS LAST`, which
+ * PostgreSQL's `DESC` does not default to), then by `id` ascending, so the
+ * order is total and an offset page never skips or repeats a row. A string
+ * sorts by code point (SQL's `COLLATE "C"`), a number numerically and a
+ * `Date` by its instant (pulpit#112).
+ *
+ * @since 0.1.0
+ */
+export interface ListOrder {
+  /** A column of the view; one outside `LeafStore.columns` fails the list with {@link InvalidListOrder}. */
+  readonly column: string;
+  readonly direction: "asc" | "desc";
+}
+
+/**
  * The read seam over a leaf's fail-closed current-version view, plus the
  * owner stamp. `columns` is the view's column set — what the owned filter
  * checks its declaration against.
@@ -514,9 +549,17 @@ export interface LeafStore<Row extends LeafRow, Following, E, R> {
   readonly get: (id: string) => Effect.Effect<Option.Option<Row>, E, R>;
   /** One `id = ANY($ids)` read, never `ids.length` sequential gets. */
   readonly getMany: (ids: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<Row>, E, R>;
-  /** The page under `where`, ordered totally (the view's `id` closes every order), with the unpaged total. */
+  /**
+   * The page under `where`, with the unpaged total, ordered totally by
+   * `orderBy` and then `id`: `ORDER BY <column> ASC|DESC NULLS LAST, …,
+   * id ASC`, every string key under `COLLATE "C"` (see {@link ListOrder}).
+   * `orderBy` arrives checked: each column is in `columns`, each direction
+   * `asc` or `desc`, no column twice; empty is `id` ascending alone. The
+   * order never changes which rows match `where`, nor `total`.
+   */
   readonly list: (query: {
     readonly where: ListFilter<Following>;
+    readonly orderBy: ReadonlyArray<ListOrder>;
     readonly limit: number;
     readonly offset: number;
   }) => Effect.Effect<Page<Row>, E, R>;
@@ -527,6 +570,36 @@ export interface LeafStore<Row extends LeafRow, Following, E, R> {
 }
 
 // ── The factory ───────────────────────────────────────────────────────
+
+/**
+ * A list request's order as the store receives it: every key's column in
+ * `columns` and its direction `asc` or `desc`, or {@link InvalidListOrder}
+ * for the first key that isn't, so no undeclared name reaches SQL. A
+ * repeated column is dropped (its first key already ordered every tie it
+ * could), which bounds the keys by the view's columns; each key is rebuilt,
+ * so nothing but `column` and `direction` reaches the store.
+ */
+const checkedOrder = (
+  type: string,
+  columns: ReadonlySet<string>,
+  keys: ReadonlyArray<ListOrder>,
+): Effect.Effect<ReadonlyArray<ListOrder>, InvalidListOrder> =>
+  Option.match(
+    Array.findFirst(
+      keys,
+      (key) => !columns.has(key.column) || (key.direction !== "asc" && key.direction !== "desc"),
+    ),
+    {
+      onNone: () =>
+        Effect.succeed(
+          Array.map(
+            Array.dedupeWith(keys, (self, that) => self.column === that.column),
+            ({ column, direction }): ListOrder => ({ column, direction }),
+          ),
+        ),
+      onSome: ({ column }) => Effect.fail(new InvalidListOrder({ type, column })),
+    },
+  );
 
 /**
  * A leaf's declaration: its type and access, its seams, and its row → resource mapper.
@@ -563,6 +636,15 @@ export interface ListRequest {
   readonly includeDeleted: boolean;
   /** The family's own extra predicate (a `?filter[published]=`), or `always`. */
   readonly where: ListFilter<never>;
+  /**
+   * The order, its keys in turn, closed by `id` ascending with `NULL`s last
+   * in both directions (see {@link ListOrder}); absent or empty is `id`
+   * ascending alone. A column outside the view's `LeafStore.columns` (or a
+   * direction other than `asc` / `desc`) fails the list with
+   * {@link InvalidListOrder}; a repeated column adds nothing and is dropped.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the default order
+  readonly orderBy?: ReadonlyArray<ListOrder> | undefined;
 }
 
 type Gate = Unauthorized | Forbidden;
@@ -634,10 +716,14 @@ export interface SubtypeOps<Resource, E, R> {
     ids: ReadonlyArray<string>,
   ) => Effect.Effect<HashMap.HashMap<string, Resource>, E, R>;
   /**
-   * One page of the rows the viewer may see, with the unpaged total. The
-   * limit is clamped to {@link MAX_PAGE_LIMIT}.
+   * One page of the rows the viewer may see, with the unpaged total, in
+   * `request.orderBy` closed by `id` (`NULL`s last; see {@link ListOrder}).
+   * The limit is clamped to {@link MAX_PAGE_LIMIT}. Fails
+   * {@link InvalidListOrder}, before the viewer or the store is read, when
+   * an order key names a column the view does not declare. The order never
+   * changes which rows are listed, nor the total (`SEC-AUTH-ENUM-001`).
    */
-  readonly list: (request: ListRequest) => Effect.Effect<Page<Resource>, E, R>;
+  readonly list: (request: ListRequest) => Effect.Effect<Page<Resource>, InvalidListOrder | E, R>;
   /**
    * Gated like a write (`READ-009`): the history exposes every state,
    * private and deleted included. Fails as `update` does at the gate (on a
@@ -801,6 +887,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   });
 
   const list = Effect.fn(`${type}.list`)(function* (request: ListRequest) {
+    const orderBy = yield* checkedOrder(type, leaves.columns, request.orderBy ?? []);
     const viewer = yield* definition.viewer;
     const privacy =
       access.kind === "owned"
@@ -818,6 +905,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     );
     const page = yield* leaves.list({
       where,
+      orderBy,
       limit: Math.max(1, Math.min(Math.trunc(request.limit), MAX_PAGE_LIMIT)),
       offset: Math.max(0, Math.trunc(request.offset)),
     });

@@ -29,12 +29,17 @@
  *   visibility × curator × tombstone × viewer, the named curator reading
  *   its own `followers` rows (never its `private` ones), and a non-string
  *   curator matching no viewer and never reaching the follower seam.
+ * - The list order (pulpit#112): one and two keys in each direction, `NULL`s
+ *   last in both, the `id` tiebreak across page boundaries, code-point
+ *   strings, dates, an undeclared column refused before the store is read,
+ *   and membership and the total unchanged under every order × viewer.
  *
  * @module tests/subtype
  */
 
 import { describe, expect, it } from "vite-plus/test";
 import * as Arr from "effect/Array";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -44,15 +49,17 @@ import * as HashSet from "effect/HashSet";
 import * as Match from "effect/Match";
 import * as MutableHashMap from "effect/MutableHashMap";
 import * as Option from "effect/Option";
+import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { Visibility } from "../src/content.ts";
-import { always, and, eq, evaluate, isIn, ne, never, or } from "../src/filter.ts";
+import { always, and, eq, evaluate, isIn, ne, never, or, type ListFilter } from "../src/filter.ts";
 import {
   canViewOwned,
   defineSubtype,
+  InvalidListOrder,
   nobodyFollows,
   ownedAccess,
   ownedListFilter,
@@ -66,12 +73,15 @@ import {
   type FollowerSeam,
   type LeafAccess,
   type LeafRow,
+  type ListOrder,
+  type ListRequest,
   type Viewer,
   type ViewerAccount,
 } from "../src/subtype.ts";
 import {
   defineVersionChain,
   VersionNotFound,
+  type ChainState,
   type ColumnValue,
   type Precondition,
 } from "../src/version-chain.ts";
@@ -937,6 +947,355 @@ describe("defineSubtype — a reference leaf", () => {
     expect(HashMap.size(leaves.owners())).toBe(0);
     viewer = anonymous;
     expect(await tagOf(ops.get(id))).toEqual(Option.none());
+  });
+});
+
+// ── List ordering (pulpit#112) ────────────────────────────────────────
+
+describe("defineSubtype — list ordering (pulpit#112)", () => {
+  type Keys = ReadonlyArray<ListOrder>;
+  /** One seeded node: its caller-chosen id, its state and whether it is tombstoned. */
+  interface Seed {
+    readonly id: string;
+    readonly state: ChainState;
+    readonly deleted: boolean;
+  }
+  const seed = (id: string, state: ChainState, deleted = false): Seed => ({ id, state, deleted });
+  /** Who lists, whether they asked for tombstones, and the page window. */
+  interface Ask {
+    readonly who: Viewer;
+    readonly includeDeleted: boolean;
+    readonly limit: number;
+    readonly offset: number;
+  }
+  const everything: Ask = { who: anonymous, includeDeleted: false, limit: 100, offset: 0 };
+  const asc = (column: string): ListOrder => ({ column, direction: "asc" });
+  const desc = (column: string): ListOrder => ({ column, direction: "desc" });
+  const at = (iso: string) => DateTime.toDate(DateTime.makeUnsafe(iso));
+  const byText = (ids: ReadonlyArray<string>) => Arr.sort(ids, Order.String);
+
+  /**
+   * A reference leaf with a `visibility` column (`public` unless a seed
+   * says otherwise), seeded straight through the chain with caller-chosen
+   * ids so the `id` tiebreak is checkable, and a log of every query the
+   * store receives.
+   */
+  const ranked = async (seeds: ReadonlyArray<Seed>) => {
+    const chain = makeInMemoryChainStore();
+    const store = makeInMemoryLeafStore(chain, {
+      columns: ["title", "rank", "publishedAt", "visibility"],
+      now: NOW,
+    });
+    const queries: Array<Parameters<typeof store.list>[0]> = [];
+    let viewer: Viewer = anonymous;
+    const ops = defineSubtype({
+      type: "taxa",
+      access: { kind: "reference" },
+      chain,
+      leaves: {
+        ...store,
+        list: (query) =>
+          Effect.suspend(() => {
+            queries.push(query);
+            return store.list(query);
+          }),
+      },
+      viewer: Effect.sync(() => viewer),
+      policy: gardeneriaPolicy,
+      followers: nobody,
+      toResource: (row: LeafRow) => row,
+    });
+    const versions = defineVersionChain("taxa", chain);
+    await run(
+      Effect.forEach(
+        seeds,
+        ({ id, state, deleted }) =>
+          Effect.andThen(
+            versions.create({
+              id: Option.some(id),
+              state: { visibility: "public", ...state },
+              actorId: Option.none(),
+            }),
+            deleted ? versions.delete(id, Option.none()) : Effect.void,
+          ),
+        { concurrency: 1, discard: true },
+      ),
+    );
+    /** One page, as `ask.who`; `order` carries `orderBy`, or leaves it out. */
+    const page = (order: Pick<ListRequest, "orderBy">, ask: Ask = everything) =>
+      Effect.suspend(() => {
+        viewer = ask.who;
+        return ops.list({
+          limit: ask.limit,
+          offset: ask.offset,
+          includeDeleted: ask.includeDeleted,
+          where: always,
+          ...order,
+        });
+      });
+    const ids = (orderBy: Keys, who: Viewer = anonymous) =>
+      run(
+        Effect.map(page({ orderBy }, { ...everything, who }), (listed) =>
+          listed.rows.map((row) => row.id),
+        ),
+      );
+    return { page, ids, queries };
+  };
+
+  it("keeps the default order, id ascending, when the order is absent or empty", async () => {
+    const { page, queries } = await ranked([
+      seed("c", { rank: 1 }),
+      seed("a", { rank: 3 }),
+      seed("b", { rank: 2 }),
+    ]);
+    const listed = await run(Effect.all([page({}), page({ orderBy: [] })], { concurrency: 1 }));
+    expect(listed.map((each) => each.rows.map((row) => row.id))).toEqual([
+      ["a", "b", "c"],
+      ["a", "b", "c"],
+    ]);
+    expect(queries.map((query) => query.orderBy)).toEqual([[], []]);
+  });
+
+  it("orders by one key in either direction, NULL and absent last in both", async () => {
+    const { ids } = await ranked([
+      seed("a", { rank: 2 }),
+      seed("b", { rank: null }),
+      seed("c", { rank: 10 }),
+      seed("d", {}),
+      seed("e", { rank: -1 }),
+    ]);
+    // Numerically (10 after 2), not as text; NULL and absent tie, so `id` orders them.
+    expect(await ids([asc("rank")])).toEqual(["e", "a", "c", "b", "d"]);
+    expect(await ids([desc("rank")])).toEqual(["c", "a", "e", "b", "d"]);
+  });
+
+  it("sorts NaN after every number, as PostgreSQL's float8 does, and false before true", async () => {
+    const { ids } = await ranked([
+      seed("a", { rank: Number.NaN, title: true }),
+      seed("b", { rank: Number.POSITIVE_INFINITY, title: false }),
+      seed("c", { rank: null, title: null }),
+      seed("d", { rank: Number.NEGATIVE_INFINITY, title: true }),
+      seed("e", { rank: Number.NaN, title: false }),
+    ]);
+    expect(await ids([asc("rank")])).toEqual(["d", "b", "a", "e", "c"]);
+    expect(await ids([desc("rank")])).toEqual(["a", "e", "b", "d", "c"]);
+    expect(await ids([asc("title")])).toEqual(["b", "e", "a", "d", "c"]);
+    expect(await ids([desc("title")])).toEqual(["a", "d", "b", "e", "c"]);
+  });
+
+  it("orders by two keys, the second breaking the first's ties, then id", async () => {
+    const { ids } = await ranked([
+      seed("a", { title: "Oak", rank: 1 }),
+      seed("b", { title: "Ash", rank: 1 }),
+      seed("c", { title: "Oak", rank: 2 }),
+      seed("d", { title: "Ash", rank: 1 }),
+      seed("e", { title: null, rank: 2 }),
+    ]);
+    expect(await ids([asc("title"), desc("rank")])).toEqual(["b", "d", "c", "a", "e"]);
+    expect(await ids([desc("title"), asc("rank")])).toEqual(["a", "c", "b", "d", "e"]);
+    expect(await ids([desc("rank"), asc("title")])).toEqual(["c", "e", "b", "d", "a"]);
+  });
+
+  it('compares strings by code point, as COLLATE "C" does, astral characters after the BMP', async () => {
+    const { ids } = await ranked([
+      seed("a", { title: "\u{1F600}" }),
+      seed("b", { title: "�" }),
+      seed("c", { title: "a" }),
+      seed("d", { title: "B" }),
+      seed("e", { title: "" }),
+    ]);
+    // UTF-16's `<` would put U+1F600 (a surrogate pair from U+D83D) before U+FFFD.
+    expect(await ids([asc("title")])).toEqual(["e", "d", "c", "b", "a"]);
+    expect(await ids([desc("title")])).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  it("compares dates by instant", async () => {
+    const { ids } = await ranked([
+      seed("a", { publishedAt: at("2026-01-02T00:00:00.000Z") }),
+      seed("b", { publishedAt: at("2025-12-31T23:59:59.999Z") }),
+      seed("c", { publishedAt: null }),
+      seed("d", { publishedAt: at("2026-01-02T00:00:00.001Z") }),
+    ]);
+    expect(await ids([asc("publishedAt")])).toEqual(["b", "a", "d", "c"]);
+    expect(await ids([desc("publishedAt")])).toEqual(["d", "a", "b", "c"]);
+  });
+
+  it("closes every order with id, so pages never skip or repeat a row across a tie", async () => {
+    const order = ["h", "c", "f", "a", "g", "b", "e", "d", "i"];
+    const { page, ids } = await ranked(
+      Arr.map(order, (id, index) =>
+        seed(id, { rank: index % 3 === 0 ? null : index % 2, title: "same" }),
+      ),
+    );
+    const offsets = Arr.makeBy(Math.ceil(order.length / 2), (index) => index * 2);
+    const orders: ReadonlyArray<Keys> = [
+      [],
+      [asc("rank")],
+      [desc("rank")],
+      [asc("title"), desc("rank")],
+    ];
+    const paged = await run(
+      Effect.forEach(
+        orders,
+        (orderBy) =>
+          Effect.all(
+            {
+              whole: page({ orderBy }),
+              pages: Effect.forEach(
+                offsets,
+                (offset) => page({ orderBy }, { ...everything, limit: 2, offset }),
+                { concurrency: 1 },
+              ),
+            },
+            { concurrency: 1 },
+          ),
+        { concurrency: 1 },
+      ),
+    );
+    expect(paged).toHaveLength(orders.length);
+    Arr.forEach(paged, ({ whole, pages }) => {
+      const stitched = Arr.flatMap(pages, (each) => each.rows.map((row) => row.id));
+      expect(stitched).toEqual(whole.rows.map((row) => row.id));
+      expect(Arr.dedupe(stitched)).toHaveLength(order.length);
+      expect(Arr.map(pages, (each) => each.total)).toEqual(Arr.map(offsets, () => order.length));
+    });
+    // Within a tie, id ascending: every row has the same title.
+    expect(await ids([asc("title")])).toEqual(byText(order));
+  });
+
+  it("refuses a column the view does not declare, before the store is read", async () => {
+    const { page, queries } = await ranked([seed("a", { rank: 1, secret: "x" })]);
+    // A direction outside the type, as an unchecked caller might send it.
+    const sideways = asc("rank");
+    Reflect.set(sideways, "direction", "sideways");
+    const refused = await run(
+      Effect.forEach(
+        [[asc("secret")], [asc("rank"), desc("rank; DROP TABLE taxa")], [sideways]],
+        (orderBy) => Effect.flip(page({ orderBy })),
+        { concurrency: 1 },
+      ),
+    );
+    expect(refused).toEqual([
+      new InvalidListOrder({ type: "taxa", column: "secret" }),
+      new InvalidListOrder({ type: "taxa", column: "rank; DROP TABLE taxa" }),
+      new InvalidListOrder({ type: "taxa", column: "rank" }),
+    ]);
+    expect(queries).toEqual([]);
+  });
+
+  it("hands the store each column once, rebuilt to its column and direction", async () => {
+    const { ids, queries } = await ranked([seed("a", { rank: 1 })]);
+    const extra = { ...desc("rank"), raw: "DESC NULLS FIRST" };
+    await ids([extra, asc("title"), asc("rank"), desc("title")]);
+    expect(queries.map((query) => query.orderBy)).toEqual([[desc("rank"), asc("title")]]);
+  });
+
+  it("never changes membership or the total: the privacy, soft-delete and where filters apply as before (SEC-AUTH-ENUM-001)", async () => {
+    const { page, ids } = await ranked([
+      seed("a", { rank: 3, title: "Oak", visibility: "public" }),
+      seed("b", { rank: 1, title: "Ash", visibility: "private" }),
+      seed("c", { rank: null, title: "Elm", visibility: "public" }),
+      seed("d", { rank: 2, title: "Yew", visibility: "public" }, true),
+      seed("e", { rank: 0, title: "Fir", visibility: "followers" }),
+      seed("f", { rank: 4, title: "Box", visibility: "public" }),
+    ]);
+    const orders: ReadonlyArray<Keys> = [
+      [],
+      [asc("rank")],
+      [desc("rank")],
+      [asc("title")],
+      [desc("visibility"), asc("rank")],
+      [asc("id")],
+      [desc("id")],
+    ];
+    const cases = [
+      { who: anonymous, includeDeleted: false, members: ["a", "c", "f"] },
+      { who: as(member), includeDeleted: true, members: ["a", "c", "f"] },
+      { who: as(moderator), includeDeleted: false, members: ["a", "b", "c", "e", "f"] },
+      { who: as(moderator), includeDeleted: true, members: ["a", "b", "c", "d", "e", "f"] },
+    ];
+    const seen = await run(
+      Effect.forEach(
+        cases,
+        ({ who, includeDeleted }) =>
+          Effect.forEach(
+            orders,
+            (orderBy) =>
+              Effect.all(
+                {
+                  all: page({ orderBy }, { ...everything, who, includeDeleted }),
+                  // A one-row page reports the same unpaged total.
+                  one: page({ orderBy }, { who, includeDeleted, limit: 1, offset: 1 }),
+                },
+                { concurrency: 1 },
+              ),
+            { concurrency: 1 },
+          ),
+        { concurrency: 1 },
+      ),
+    );
+    expect(
+      seen.map((byOrder) =>
+        byOrder.map(({ all, one }) => [
+          byText(all.rows.map((row) => row.id)),
+          all.total,
+          one.total,
+        ]),
+      ),
+    ).toEqual(
+      cases.map(({ members }) => orders.map(() => [members, members.length, members.length])),
+    );
+    // The anonymous reader's order sorts only what it may see: the hidden ranks 0–2 leave no gap to probe.
+    expect(await ids([asc("rank")])).toEqual(["a", "f", "c"]);
+  });
+
+  it("orders inside the caller's own where, and on an owned leaf inside the read scope", async () => {
+    const { ops, actAs, post } = ownedPosts();
+    const open = await post("public");
+    const hidden = await post("private");
+    const theirs = await post("public", otherMember);
+    const listed = (who: Viewer, orderBy: Keys, where: ListFilter<never> = always) =>
+      Effect.map(
+        actAs(who, ops.list({ limit: 50, offset: 0, includeDeleted: false, where, orderBy })),
+        ({ rows, total }) => ({ ids: byText(rows.map((row) => row.id)), total }),
+      );
+    const orders: ReadonlyArray<Keys> = [[asc("ownerId")], [desc("ownerId")], [desc("visibility")]];
+    const seen = await run(
+      Effect.forEach(
+        orders,
+        (orderBy) =>
+          Effect.all(
+            [
+              listed(anonymous, orderBy),
+              listed(as(member), orderBy),
+              listed(as(member), orderBy, eq("visibility", "private")),
+            ],
+            { concurrency: 1 },
+          ),
+        { concurrency: 1 },
+      ),
+    );
+    expect(seen).toEqual(
+      Arr.map(orders, () => [
+        { ids: byText([open, theirs]), total: 2 },
+        { ids: byText([open, hidden, theirs]), total: 3 },
+        { ids: [hidden], total: 1 },
+      ]),
+    );
+    const ordered = await run(
+      actAs(
+        as(member),
+        ops.list({
+          limit: 50,
+          offset: 0,
+          includeDeleted: false,
+          where: always,
+          orderBy: [desc("ownerId")],
+        }),
+      ),
+    );
+    // `u-other` sorts after `u-member`; the member's two rows tie, so `id` orders them.
+    expect(ordered.rows.map((row) => row.id)).toEqual([theirs, ...byText([open, hidden])]);
   });
 });
 

@@ -201,6 +201,8 @@ Some inputs are outside the contract: SQL and `evaluate` can't be made to agree 
 
 The version history is gated like a write (`READ-009`): `getVersion(id, version)` and `compare(id, from, to)` run the same gate as `update`, through one code path, before any version is read, and then delegate to the chain's `getVersion` / `compare`. So `compare` answers exactly as `getVersion` would for `from` and then `to`: `Unauthorized`, `Forbidden` or `NodeNotFound` from the gate, whichever version is asked for, and `VersionNotFound` (naming `from` first) only to a caller the gate admits. `subtypeHandlers` doesn't expose `compare`: no JSON:API operation exists for it, so an application calls it directly.
 
+`list` takes an optional `orderBy`, a list of `{ column, direction }` keys (`direction` is `"asc"` or `"desc"`); absent or empty is `id` ascending. The rows sort by each key in turn, a `NULL` (or absent) column after every value in both directions, then by `id` ascending, so the order is total and an offset page never skips or repeats a row. A string sorts by code point, a number numerically and a `Date` by its instant. Each column is checked against the view's `LeafStore.columns` before the viewer or the store is read: an undeclared column (or another direction) fails `InvalidListOrder`, and never reaches the store. A repeated column is dropped, since its first key already ordered every tie it could. The order decides only where the visible rows fall: the privacy, soft-delete and `where` filters choose them exactly as before, and `total` is the same under every order (`SEC-AUTH-ENUM-001`). Which columns a wire format may sort by (WordPress's `orderby`) is the adapter's list to keep, since sorting by a column the resource does not expose reveals that column's order.
+
 `update`, `restore`, `delete` and `restoreVersion` (and the handlers' `update`, `delete` and `restoreVersion`) take the chain's optional `expectedVersion` and fail `StaleVersion` when it is not the head. The write gate runs first, so only a caller who may write learns the head version.
 
 | Export | What it is |
@@ -214,8 +216,8 @@ The version history is gated like a write (`READ-009`): `getVersion(id, version)
 | `canViewOwned`, `OwnedFacts` | The owned-row read predicate and the facts it reads. |
 | `ownedListFilter`, `softDeleteFilter`, `referencePrivacyFilter` | The list arms: owned visibility, the soft-delete axis, and the reference privacy axis (given `Option.some({ access, followers })`, with its followers arm). Pass that fourth argument whenever the leaf declares `followersOfColumn`: the three-argument form agrees with `get` only for a leaf without it. |
 | `requireCreator`, `requireWriter` | The write gates for a create and for a write to an existing row. On a reference leaf `requireWriter` is the rung check alone; `defineSubtype` follows it with `get`'s read check. |
-| `Unauthorized`, `Forbidden` | The gates' failures: no signed-in viewer (401); a viewer below the rung (403, never used to hide a row). |
-| `LeafStore`, `LeafRow`, `Page`, `ListRequest`, `MAX_PAGE_LIMIT` | The current-version view seam, its row and page shapes, the list request, and the page cap (1000). |
+| `Unauthorized`, `Forbidden`, `InvalidListOrder` | The gates' failures: no signed-in viewer (401); a viewer below the rung (403, never used to hide a row). And `list`'s: an order key naming a column the view doesn't declare (400). |
+| `LeafStore`, `LeafRow`, `Page`, `ListRequest`, `ListOrder`, `MAX_PAGE_LIMIT` | The current-version view seam, its row and page shapes, the list request and one key of its order, and the page cap (1000). |
 
 ## `./publication`
 
@@ -423,7 +425,7 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | Export | Fakes | Test hooks |
 | --- | --- | --- |
 | `makeInMemoryChainStore()`, `InMemoryChainStore` | [`VersionChainStore`](#versionchainstoree-r-the-version-chain-persistence), with the `(id, version)` key (`VersionConflict`) and sequential UUID-shaped `mintId`s. | `rows()` (every appended row), `dropState(id, version)` (a partial chain), `raceNextAppend(id)` (a concurrent writer). |
-| `makeInMemoryLeafStore(chain, { columns, now? })`, `InMemoryLeafStore`, `InMemoryLeafStoreOptions` | [`LeafStore`](#leafstorerow-following-e-r-the-current-version-view), as the current-version view over an in-memory chain plus the owner stamps; `list` evaluates the `ListFilter` in memory. | `owners()` (the stamps), `dropOwner(id)` (an ownerless owned node). |
+| `makeInMemoryLeafStore(chain, { columns, now? })`, `InMemoryLeafStore`, `InMemoryLeafStoreOptions` | [`LeafStore`](#leafstorerow-following-e-r-the-current-version-view), as the current-version view over an in-memory chain plus the owner stamps; `list` evaluates the `ListFilter` in memory and sorts by the list order contract (`NULLS LAST`, code-point strings, `id` last). | `owners()` (the stamps), `dropOwner(id)` (an ownerless owned node). |
 | `makeInMemoryDocumentStore()`, `InMemoryDocumentStore` | [`DocumentStore`](#documentstoredocument-e-r-the-content-addressed-document-store), hashing exactly as the hash contract says (SHA-256 over `./documents`' `canonicalText`, pinned to hashes taken from Postgres). | `stored()` (every document by hash), `writes()` (how many `put`s inserted). |
 | `makeInMemoryEdgeStore({ ends, uniqueKey, now? })`, `InMemoryEdgeStore`, `InMemoryEdgeStoreOptions` | [`EdgeStore`](#edgestorerow-following-e-r-the-edge-table), with the unique key (`NULLS NOT DISTINCT`), the INNER JOIN of each end's view, and the window-column total. | `rows()` (every edge, hidden ones included), `raceNextInsert(winner)` (a concurrent writer). |
 | `makeInMemoryNodes(columns)`, `InMemoryNodes` | `EndpointView`, an end's view whose rows a test writes directly (an `InMemoryLeafStore` is one too). | `put(row)`. |
@@ -446,7 +448,20 @@ Method contract: `head` is `SELECT … ORDER BY version DESC LIMIT 1` on the roo
 
 ### `LeafStore<Row, Following, E, R>`: the current-version view
 
-Expected to be a Drizzle store over the leaf's current-version view (pulpit#5). `columns` is the view's column-name set (`getColumns(view)`); `get` / `getMany` are `id = $id` / `id = ANY($ids)` reads with `LIMIT`; `list` renders its `ListFilter` (below), orders totally (the caller's order closed by `id`), and returns the page plus the unpaged total as a window column; `ownerOf` / `stampOwner` read and insert the node's owner row (`core.node_owner`).
+Expected to be a Drizzle store over the leaf's current-version view (pulpit#5). `columns` is the view's column-name set (`getColumns(view)`); `get` / `getMany` are `id = $id` / `id = ANY($ids)` reads with `LIMIT`; `list` renders its `ListFilter` (below), orders totally by its `orderBy` (below), and returns the page plus the unpaged total as a window column; `ownerOf` / `stampOwner` read and insert the node's owner row (`core.node_owner`).
+
+The list order contract (pulpit#112). `orderBy` arrives checked: every column is in `columns`, every direction is `asc` or `desc`, and no column appears twice. Empty means `id` ascending alone. The store renders it as
+
+```sql
+ORDER BY <column> ASC|DESC NULLS LAST, …, id ASC
+```
+
+- **`NULLS LAST` in both directions**, spelled out on every key, because PostgreSQL defaults to `NULLS FIRST` for `DESC`.
+- **`id ASC` closes every order**, so no two rows tie and an `OFFSET` page never skips or repeats a row while the data holds still. Pagination is by `LIMIT` / `OFFSET`; there is no cursor to carry the order key.
+- **A string key sorts with `COLLATE "C"`** (code-point order), as the filter's comparisons do. A store that sorts under another collation must accept that its order can differ from the in-memory fake's. A `Date` sorts by its instant and a number numerically; the fake places `NaN` after every number, as PostgreSQL's `float8` does.
+- **The order never changes membership.** It is applied after `where`, and `total` is the same under every order.
+
+`makeInMemoryLeafStore` in [`./testing`](#testing) follows this contract.
 
 ### `ListFilter<Following>` → SQL: the filter renderer
 
