@@ -3,7 +3,7 @@ import { defineConfig } from "vite-plus";
 export default defineConfig({
   run: {
     tasks: {
-      // Type-checks the emitted declarations of both published packages;
+      // Type-checks the emitted declarations of both workspace packages;
       // depends on each package's build so `vp run check` at the root always
       // exercises fresh `dist/` output.
       check: {

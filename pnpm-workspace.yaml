@@ -1,4 +1,8 @@
-# pnpm workspace — the published package plus the dist-consumer check.
+# pnpm workspace — two packages under `packages/*`, the published kernel
+# (`packages/pulpit`, `@thomasfosterau/pulpit`) and its WordPress-compatible
+# read API (`packages/pulpit-wordpress`, `@thomasfosterau/pulpit-wordpress`,
+# private until its publishing is set up), plus the private dist-consumer
+# declaration check of both under `tests/*`.
 #
 # The `catalog:` protocol pins versions that MUST be singletons across the
 # workspace. Effect especially: two copies of `effect` break Context / Layer /
@@ -85,10 +89,11 @@ catalog:
   vite: npm:@voidzero-dev/vite-plus-core@0.3.3
   vitest: 4.1.11
 
-# Peer ranges the PUBLISHED package declares. Kept as a named catalog so the
+# Peer ranges the packages under `packages/*` declare (the adapter's peer on
+# the kernel is `workspace:^` instead). Kept as a named catalog so the
 # strict catalog mode still governs them while they stay ranges (an exact
 # `4.0.0-rc.118` peer would reject a consumer on a later prerelease). `pnpm publish`
-# replaces `catalog:peers` with these ranges in the published manifest.
+# replaces `catalog:peers` with these ranges in each published manifest.
 catalogs:
   peers:
     "@thomasfosterau/effect-jsonapi": ">=0.16.0"
