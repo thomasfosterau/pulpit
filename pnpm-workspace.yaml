@@ -56,7 +56,7 @@ catalog:
   "@mpsuesser/oxlint-plugin-effect": ^0.6.0
   # The JSON:API model layer the `./content` and `./registry` subpaths build on.
   "@thomasfosterau/effect-jsonapi": ^0.16.3
-  "@types/node": ^26.6.4
+  "@types/node": ^26.6.5
   # The coverage provider for `vp run -r test:coverage`. vite-plus bundles its
   # own vitest and refuses to start a coverage run unless the provider's
   # version EQUALS that bundled vitest exactly (`assertCoverageProviderVersionMatch`
