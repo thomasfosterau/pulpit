@@ -34,8 +34,8 @@ catalog:
   # type-checks the examples with the `tsc` on PATH (the native one below) and
   # runs them under `tsx`, hence that entry. Its `typescript >=5.8.2 <7` peer
   # is met by the TS6 alias below, so it needs no `peerDependencyRules` entry.
-  "@effect/docgen": ^4.0.4
-  "@effect/language-service": ^0.87.4
+  "@effect/docgen": ^4.0.5
+  "@effect/language-service": ^0.87.5
   # Effect Language Service as a native (TypeScript-Go) binary — the TS7 side
   # of the 6/7 split. `effect-tsgo patch` overwrites the native `tsc` binary
   # with an Effect-patched build matched by gitHead, so this pins in lockstep
@@ -64,7 +64,7 @@ catalog:
   # vite-plus: pin it to the `vitest` entry below (vite-plus 0.3.3 → 4.1.11),
   # never ahead of it (pulpit#119).
   "@vitest/coverage-istanbul": 4.1.11
-  effect: 4.0.4
+  effect: 4.0.5
   effect-solutions: ^0.5.3
   fallow: 3.34.1
   # The runtime `@effect/docgen` executes examples under.
