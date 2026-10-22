@@ -24,7 +24,6 @@
     "@types/node": "catalog:",
     "@typescript/native": "catalog:",
     "effect": "catalog:",
-    "effect-solutions": "catalog:",
     "fallow": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",

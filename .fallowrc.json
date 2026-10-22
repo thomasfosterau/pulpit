@@ -28,7 +28,6 @@
   ],
   "ignoreDependencies": [
     "@types/node",
-    "effect-solutions",
     "@effect/docgen",
     "@effect/tsgo",
     "@effect/language-service",

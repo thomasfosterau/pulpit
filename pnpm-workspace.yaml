@@ -63,7 +63,6 @@ catalog:
   # never ahead of it (pulpit#119).
   "@vitest/coverage-istanbul": 5.0.5
   effect: 4.0.5
-  effect-solutions: ^0.5.3
   fallow: 3.34.1
   # The runtime `@effect/docgen` executes examples under.
   tsx: ^4.23.13
