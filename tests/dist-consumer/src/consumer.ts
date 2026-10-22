@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import { Resource } from "@thomasfosterau/effect-jsonapi";
 import {
   Blobs,
+  Comments,
   Content,
   Documents,
   Edges,
@@ -170,6 +171,7 @@ import {
 
 import type { PublicationFact, PublicationOps, SubtypeOps } from "@thomasfosterau/pulpit/subtype";
 import { defineWorkingCopy } from "@thomasfosterau/pulpit/working-copy";
+import { CommentDepthExceeded, defineComments } from "@thomasfosterau/pulpit/comments";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -1014,3 +1016,8 @@ export type _PublicResource = Assert<
     Effect.Effect<Option.Option<string>, StoreFailure, Transaction>
   >
 >;
+
+// ── comments ─────────────────────────────────────────────────────────────
+
+export type _CommentsBarrel = Assert<Equals<typeof Comments.defineComments, typeof defineComments>>;
+export type _DepthError = Assert<Equals<CommentDepthExceeded["maxDepth"], number>>;
