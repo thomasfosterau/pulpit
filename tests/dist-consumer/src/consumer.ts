@@ -45,7 +45,30 @@ import {
   type VersionNotFound,
   type VersionSnapshot,
 } from "@thomasfosterau/pulpit/version-chain";
-import { and, eq, type ListFilter } from "@thomasfosterau/pulpit/filter";
+import {
+  always,
+  and,
+  anyOf,
+  eq,
+  evaluate,
+  gt,
+  gte,
+  isIn,
+  lt,
+  lte,
+  MAX_SET_VALUES,
+  ne,
+  never,
+  noneOf,
+  notPublished,
+  or,
+  published,
+  type Comparable,
+  type EvaluationContext,
+  type FilterRow,
+  type ListFilter,
+  type Scalar,
+} from "@thomasfosterau/pulpit/filter";
 import {
   defineSubtype,
   ownedAccess,
@@ -107,7 +130,7 @@ import {
   type ProposalRow,
   type ProposalStatus,
 } from "@thomasfosterau/pulpit/proposals";
-import type { VersionRow } from "@thomasfosterau/pulpit/version-chain";
+import type { ColumnValue, VersionRow } from "@thomasfosterau/pulpit/version-chain";
 
 import { defineFileWrites, fileUrl, type FileWrite } from "@thomasfosterau/pulpit/blobs";
 
@@ -281,6 +304,215 @@ interface Subquery {
 }
 export const filter = and<Subquery>(eq("visibility", "public"));
 export type _Filter = Assert<Equals<typeof filter, ListFilter<Subquery>>>;
+// Each `filter` export is asserted on its own declared type, not only through a
+// call: a call on a degraded (unbound, so error-typed) callee yields a result
+// that `Equals` cannot tell from the real one (pulpit#139).
+export type _Scalar = Assert<Equals<Scalar, string | number | boolean>>;
+export type _Comparable = Assert<Equals<Comparable, string | number | Date>>;
+export type _MaxSetValues = Assert<Equals<typeof MAX_SET_VALUES, 1000>>;
+export type _FilterRow = Assert<Equals<FilterRow, { readonly [column: string]: ColumnValue }>>;
+type Never = { readonly kind: "never" };
+type Always = { readonly kind: "always" };
+type Arm<Kind> = Extract<ListFilter<Subquery>, { readonly kind: Kind }>;
+export type _ListFilterKind = Assert<
+  Equals<
+    ListFilter<Subquery>["kind"],
+    | "always"
+    | "never"
+    | "eq"
+    | "ne"
+    | "in"
+    | "gt"
+    | "gte"
+    | "lt"
+    | "lte"
+    | "anyOf"
+    | "noneOf"
+    | "published"
+    | "notPublished"
+    | "and"
+    | "or"
+  >
+>;
+export type _ListFilterEq = Assert<
+  Equals<Arm<"eq">, { readonly kind: "eq"; readonly column: string; readonly value: Scalar }>
+>;
+export type _ListFilterNe = Assert<
+  Equals<Arm<"ne">, { readonly kind: "ne"; readonly column: string; readonly value: Scalar }>
+>;
+export type _ListFilterGt = Assert<
+  Equals<Arm<"gt">, { readonly kind: "gt"; readonly column: string; readonly value: Comparable }>
+>;
+export type _ListFilterGte = Assert<
+  Equals<Arm<"gte">, { readonly kind: "gte"; readonly column: string; readonly value: Comparable }>
+>;
+export type _ListFilterLt = Assert<
+  Equals<Arm<"lt">, { readonly kind: "lt"; readonly column: string; readonly value: Comparable }>
+>;
+export type _ListFilterLte = Assert<
+  Equals<Arm<"lte">, { readonly kind: "lte"; readonly column: string; readonly value: Comparable }>
+>;
+export type _ListFilterAnyOf = Assert<
+  Equals<
+    Arm<"anyOf">,
+    { readonly kind: "anyOf"; readonly column: string; readonly values: ReadonlyArray<Scalar> }
+  >
+>;
+export type _ListFilterNoneOf = Assert<
+  Equals<
+    Arm<"noneOf">,
+    { readonly kind: "noneOf"; readonly column: string; readonly values: ReadonlyArray<Scalar> }
+  >
+>;
+export type _ListFilterPublished = Assert<
+  Equals<Arm<"published">, { readonly kind: "published"; readonly column: string }>
+>;
+export type _ListFilterNotPublished = Assert<
+  Equals<Arm<"notPublished">, { readonly kind: "notPublished"; readonly column: string }>
+>;
+export type _ListFilterIn = Assert<
+  Equals<Arm<"in">, { readonly kind: "in"; readonly column: string; readonly set: Subquery }>
+>;
+export type _ListFilterAnd = Assert<
+  Equals<
+    Arm<"and">,
+    { readonly kind: "and"; readonly filters: ReadonlyArray<ListFilter<Subquery>> }
+  >
+>;
+export type _ListFilterOr = Assert<
+  Equals<Arm<"or">, { readonly kind: "or"; readonly filters: ReadonlyArray<ListFilter<Subquery>> }>
+>;
+export type _Always = Assert<Equals<typeof always, Always>>;
+export type _Never = Assert<Equals<typeof never, Never>>;
+export type _Eq = Assert<
+  Equals<
+    typeof eq,
+    (
+      column: string,
+      value: Scalar,
+    ) => Never | { readonly kind: "eq"; readonly column: string; readonly value: Scalar }
+  >
+>;
+export type _Ne = Assert<
+  Equals<
+    typeof ne,
+    (
+      column: string,
+      value: Scalar,
+    ) => Never | { readonly kind: "ne"; readonly column: string; readonly value: Scalar }
+  >
+>;
+export type _Gt = Assert<
+  Equals<
+    typeof gt,
+    (
+      column: string,
+      value: Comparable,
+    ) => Never | { readonly kind: "gt"; readonly column: string; readonly value: Comparable }
+  >
+>;
+export type _Gte = Assert<
+  Equals<
+    typeof gte,
+    (
+      column: string,
+      value: Comparable,
+    ) => Never | { readonly kind: "gte"; readonly column: string; readonly value: Comparable }
+  >
+>;
+export type _Lt = Assert<
+  Equals<
+    typeof lt,
+    (
+      column: string,
+      value: Comparable,
+    ) => Never | { readonly kind: "lt"; readonly column: string; readonly value: Comparable }
+  >
+>;
+export type _Lte = Assert<
+  Equals<
+    typeof lte,
+    (
+      column: string,
+      value: Comparable,
+    ) => Never | { readonly kind: "lte"; readonly column: string; readonly value: Comparable }
+  >
+>;
+export type _AnyOf = Assert<
+  Equals<
+    typeof anyOf,
+    (
+      column: string,
+      values: ReadonlyArray<Scalar>,
+    ) =>
+      | Never
+      | { readonly kind: "anyOf"; readonly column: string; readonly values: ReadonlyArray<Scalar> }
+  >
+>;
+export type _NoneOf = Assert<
+  Equals<
+    typeof noneOf,
+    (
+      column: string,
+      values: ReadonlyArray<Scalar>,
+    ) =>
+      | Always
+      | Never
+      | { readonly kind: "noneOf"; readonly column: string; readonly values: ReadonlyArray<Scalar> }
+  >
+>;
+export type _Published = Assert<
+  Equals<
+    typeof published,
+    (column: string) => { readonly kind: "published"; readonly column: string }
+  >
+>;
+export type _NotPublished = Assert<
+  Equals<
+    typeof notPublished,
+    (column: string) => { readonly kind: "notPublished"; readonly column: string }
+  >
+>;
+export type _IsIn = Assert<
+  Equals<
+    typeof isIn,
+    <Following>(
+      column: string,
+      set: Following,
+    ) => { readonly kind: "in"; readonly column: string; readonly set: Following }
+  >
+>;
+export type _And = Assert<
+  Equals<
+    typeof and,
+    <Following>(...filters: ReadonlyArray<ListFilter<Following>>) => ListFilter<Following>
+  >
+>;
+export type _Or = Assert<
+  Equals<
+    typeof or,
+    <Following>(...filters: ReadonlyArray<ListFilter<Following>>) => ListFilter<Following>
+  >
+>;
+export type _EvaluationContext = Assert<
+  Equals<
+    EvaluationContext<Subquery>,
+    {
+      readonly now: Date;
+      readonly contains: (set: Subquery, value: ColumnValue) => boolean;
+    }
+  >
+>;
+export type _Evaluate = Assert<
+  Equals<
+    typeof evaluate,
+    <Following>(
+      filter: ListFilter<Following>,
+      row: FilterRow,
+      context: EvaluationContext<Following>,
+    ) => boolean
+  >
+>;
 
 declare const leaves: LeafStore<LeafRow, Subquery, StoreFailure, Transaction>;
 interface PostDoc {
