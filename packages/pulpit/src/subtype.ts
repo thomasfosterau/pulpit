@@ -1586,16 +1586,31 @@ export const hydrateSearchHits = <Hit extends { readonly id: string }, Resource,
  * (effect-web dropped its Cloudflare package, and the planned cache with it,
  * on effect-web#33).
  *
+ * **Compare-on-set** (pulpit#121). Both calls carry the version they speak
+ * for, and the cache keeps, per id, the highest version it has been given by
+ * either. A `set` below that version is a no-op, and a `delete` (or a refused
+ * `set`) raises it, outliving the entry it evicted. So a racing writer's
+ * late write-through, or a read-through fill that read before a hiding
+ * write, can never re-cache a resource older than one already evicted or
+ * replaced for the id (`CACHE-AUTH-005`). The compare and the write must be
+ * one atomic step in the cache's store: a store with no conditional write
+ * cannot honour the seam. A read-through fill passes the version its read
+ * saw, and goes through `set` like any other.
+ *
  * @since 0.1.0
  */
 export interface ResourceCacheSeam<Resource, R> {
   /**
-   * Write the resource through; the cache refuses (and evicts) one that
-   * isn't serveable. Never fails.
+   * Write the resource through, as of `version`: a no-op below the highest
+   * version the cache holds for `id`; the cache refuses (and evicts at
+   * `version`) one that isn't serveable. Never fails.
    */
-  readonly set: (id: string, resource: Resource) => Effect.Effect<void, never, R>;
-  /** Evict the resource. Never fails. */
-  readonly delete: (id: string) => Effect.Effect<void, never, R>;
+  readonly set: (id: string, resource: Resource, version: bigint) => Effect.Effect<void, never, R>;
+  /**
+   * Evict the resource as of `version`, which a later `set` must reach to
+   * cache it again. Never fails.
+   */
+  readonly delete: (id: string, version: bigint) => Effect.Effect<void, never, R>;
 }
 
 /**
@@ -1613,8 +1628,8 @@ export const cacheWriteThrough = <Resource, R>(
   name: "cache",
   run: ({ write, resource }) =>
     Option.match(resource, {
-      onNone: () => cache.delete(write.id),
-      onSome: (value) => cache.set(write.id, value),
+      onNone: () => cache.delete(write.id, write.version),
+      onSome: (value) => cache.set(write.id, value, write.version),
     }),
 });
 
@@ -1725,8 +1740,11 @@ export const subtypeHandlers = <Resource, E, R>(
   ops: SubtypeOps<Resource, E, R>,
   config: SubtypeHandlersConfig<Resource, R>,
 ): SubtypeHandlers<Resource, E, R> => {
-  const evict = (id: string) =>
-    Option.match(config.cache, { onNone: () => Effect.void, onSome: (cache) => cache.delete(id) });
+  const evict = ({ id, version }: ChainWrite) =>
+    Option.match(config.cache, {
+      onNone: () => Effect.void,
+      onSome: (cache) => cache.delete(id, version),
+    });
 
   // A write runs under `uninterruptibleMask`: the chain write (inside
   // `transact`) and the re-read stay interruptible through `restore`, but
@@ -1743,12 +1761,14 @@ export const subtypeHandlers = <Resource, E, R>(
     restore: <AX, EX, RX>(effect: Effect.Effect<AX, EX, RX>) => Effect.Effect<AX, EX, RX>,
     operation: Effect.Effect<A, E2, R>,
   ) =>
-    Effect.flatMap(Ref.make(Option.none<string>()), (wrote) =>
+    Effect.flatMap(Ref.make(Option.none<ChainWrite>()), (wrote) =>
       restore(
         config.transact(
           Effect.andThen(
             Ref.set(wrote, Option.none()),
-            Effect.tap(operation, ({ id }) => Ref.set(wrote, Option.some(id))),
+            Effect.tap(operation, ({ id, version }) =>
+              Ref.set(wrote, Option.some({ id, version })),
+            ),
           ),
         ),
       ).pipe(
@@ -1813,7 +1833,7 @@ export const subtypeHandlers = <Resource, E, R>(
       Effect.uninterruptibleMask((restore) =>
         Effect.flatMap(committed(restore, ops.delete(id, precondition)), (written) =>
           written.alreadyDeleted
-            ? evict(id)
+            ? evict(written)
             : after({
                 type: ops.type,
                 action: "delete",
