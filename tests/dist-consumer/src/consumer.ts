@@ -96,6 +96,12 @@ import {
   type VersionMeta,
   subtypeResourceHandlers,
   type SubtypeResourceHandlersConfig,
+  defineSearchProjection,
+  hydrateSearchHits,
+  searchScopeFilter,
+  type SearchField,
+  type SearchProjection,
+  type SearchWeight,
 } from "@thomasfosterau/pulpit/subtype";
 import {
   duePublications,
@@ -625,6 +631,47 @@ export type _ResourceHandlersListRequest = Assert<
   Equals<PostHandlersConfig["listRequest"], (query: PostQuery) => ListRequest>
 >;
 export type _ResourceHandlersSegment = Assert<Equals<PostHandlersConfig["segment"], string>>;
+// Search (pulpit#54): the projection, the scope and the gated hydration.
+export type _SearchWeight = Assert<Equals<SearchWeight, "A" | "B" | "C" | "D">>;
+export type _SearchField = Assert<
+  Equals<SearchField, { readonly column: string; readonly weight: SearchWeight }>
+>;
+export type _SearchProjection = Assert<
+  Equals<
+    SearchProjection,
+    {
+      readonly fields: ReadonlyArray<SearchField>;
+      readonly languageColumn: Option.Option<string>;
+    }
+  >
+>;
+export type _DefineSearchProjection = Assert<
+  Equals<ReturnType<typeof defineSearchProjection>, SearchProjection>
+>;
+export type _SearchScope = Assert<
+  Equals<ReturnType<typeof searchScopeFilter<Subquery>>, ListFilter<Subquery>>
+>;
+export type _SearchScopeRequest = Assert<
+  Equals<Parameters<typeof searchScopeFilter>[2], Pick<ListRequest, "includeDeleted" | "where">>
+>;
+export type _HydrateSearchHits = Assert<
+  Equals<
+    ReturnType<
+      typeof hydrateSearchHits<{ readonly id: string }, PostDoc, StoreFailure, Transaction>
+    >,
+    Effect.Effect<
+      ReadonlyArray<{ readonly hit: { readonly id: string }; readonly resource: PostDoc }>,
+      StoreFailure,
+      Transaction
+    >
+  >
+>;
+export type _SubtypeSearch = Assert<
+  Equals<
+    SubtypeDefinition<LeafRow, unknown, never, never, never>["search"],
+    SearchProjection | undefined
+  >
+>;
 /* oxlint-enable effect/prefer-option-over-null */
 export type _SubtypeDeclarationError = Assert<
   Equals<SubtypeDeclarationError["_tag"], "SubtypeDeclarationError">

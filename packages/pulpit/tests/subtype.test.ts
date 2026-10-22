@@ -88,6 +88,9 @@ import {
   noHooks,
   WriteRejected,
   subtypeResourceHandlers,
+  defineSearchProjection,
+  hydrateSearchHits,
+  searchScopeFilter,
   type AfterWriteHook,
   type BeforeWriteHook,
   type VersionedResource,
@@ -1499,6 +1502,10 @@ interface RowReads {
   /** `get`'s error tag; none when the row reads. */
   readonly got: Option.Option<string>;
   readonly many: boolean;
+  /** Under `searchScopeFilter`, read straight from the store (pulpit#54). */
+  readonly searched: boolean;
+  /** Kept by `hydrateSearchHits`, given every seeded id as a hit. */
+  readonly hydrated: boolean;
 }
 
 /** A seeded column for a test name: a string quoted, so `"false"` never reads as `false`. */
@@ -1572,6 +1579,26 @@ const seededLeaf = (
       );
       const listed = HashSet.fromIterable(page.rows.map((row) => row.id));
       const many = yield* actAs(who, ops.getMany(ids));
+      // The search scope over the store itself: no factory gate in between.
+      const scoped = yield* leaves.list({
+        where: searchScopeFilter({ access, columns: leaves.columns, policy, followers }, who, {
+          includeDeleted: true,
+          where: always,
+        }),
+        orderBy: [],
+        limit: 1000,
+        offset: 0,
+      });
+      const searched = HashSet.fromIterable(scoped.rows.map((row) => row.id));
+      // A poisoned index: every seeded id is a hit, hidden ones included.
+      const hydrated = yield* actAs(
+        who,
+        hydrateSearchHits(
+          ops,
+          ids.map((id) => ({ id })),
+        ),
+      );
+      const kept = HashSet.fromIterable(hydrated.map(({ hit }) => hit.id));
       return yield* Effect.forEach(
         Arr.zip(seeds, ids),
         ([seed, id]) =>
@@ -1585,6 +1612,8 @@ const seededLeaf = (
               listed: HashSet.has(listed, id),
               got,
               many: HashMap.has(many, id),
+              searched: HashSet.has(searched, id),
+              hydrated: HashSet.has(kept, id),
             })),
           ),
         { concurrency: 1 },
@@ -1600,6 +1629,8 @@ const expectAgreement = (reads: ReadonlyArray<RowReads>) =>
       ...read,
       got: read.listed ? Option.none() : Option.some("NodeNotFound"),
       many: read.listed,
+      searched: read.listed,
+      hydrated: read.listed,
     })),
   );
 
@@ -3413,5 +3444,137 @@ describe("subtypeResourceHandlers — effect-jsonapi's ResourceHandlers (pulpit#
         ),
       ),
     ).toEqual(Option.some("Forbidden"));
+  });
+});
+
+describe("search: the projection and gated hydration (pulpit#54)", () => {
+  const searchLeaf = (search?: Parameters<typeof defineSubtype>[0]["search"]) => {
+    const chain = makeInMemoryChainStore();
+    const leaves = makeInMemoryLeafStore(chain, {
+      columns: ["title", "visibility", "language"],
+      now: NOW,
+    });
+    let viewer: Viewer = as(member);
+    const ops = defineSubtype({
+      type: "posts",
+      access: ownedAccess(),
+      chain,
+      leaves,
+      viewer: Effect.sync(() => viewer),
+      policy: gardeneriaPolicy,
+      followers: follows,
+      toResource: (row: LeafRow) => ({ id: row.id, title: row["title"] }),
+      search,
+    });
+    const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+      Effect.suspend(() => {
+        viewer = who;
+        return effect;
+      });
+    return { ops, actAs };
+  };
+
+  it("declares the indexed columns, their weights and the language column", () => {
+    expect(
+      defineSearchProjection({
+        fields: [
+          { column: "title", weight: "A" },
+          { column: "body", weight: "D" },
+        ],
+        languageColumn: "language",
+      }),
+    ).toEqual({
+      fields: [
+        { column: "title", weight: "A" },
+        { column: "body", weight: "D" },
+      ],
+      languageColumn: Option.some("language"),
+    });
+    expect(defineSearchProjection({ fields: [{ column: "title", weight: "B" }] })).toEqual({
+      fields: [{ column: "title", weight: "B" }],
+      languageColumn: Option.none(),
+    });
+  });
+
+  it.each([
+    ["no field", { fields: [] }, "search declares no field"],
+    [
+      "a column twice",
+      {
+        fields: [
+          { column: "title", weight: "A" },
+          { column: "title", weight: "B" },
+        ],
+      },
+      "search names 'title' twice",
+    ],
+    [
+      "a weight outside A–D",
+      // SAFETY: deliberately ill-typed, as an unchecked JavaScript caller passes it; the type admits only A–D.
+      { fields: [{ column: "title", weight: "E" as "A" }] },
+      "search weighs 'title' outside A–D",
+    ],
+  ] as const)("throws SubtypeDeclarationError for %s", (_, declaration, message) => {
+    expect(() => defineSearchProjection(declaration)).toThrow(
+      new SubtypeDeclarationError({ message }),
+    );
+  });
+
+  it("defineSubtype throws for a projection naming a column the view lacks, the language column included", () => {
+    expect(() =>
+      searchLeaf(defineSearchProjection({ fields: [{ column: "body", weight: "A" }] })),
+    ).toThrow(
+      new SubtypeDeclarationError({
+        message: "search names 'body', which is not a column of the view",
+      }),
+    );
+    expect(() =>
+      searchLeaf(
+        defineSearchProjection({
+          fields: [{ column: "title", weight: "A" }],
+          languageColumn: "lang",
+        }),
+      ),
+    ).toThrow(
+      new SubtypeDeclarationError({
+        message: "search names 'lang', which is not a column of the view",
+      }),
+    );
+    expect(() =>
+      searchLeaf(
+        defineSearchProjection({
+          fields: [{ column: "title", weight: "A" }],
+          languageColumn: "language",
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it("hydrates in rank order, drops a hidden or missing hit, and keeps a repeated id's first rank", async () => {
+    const { ops, actAs } = searchLeaf();
+    const create = (title: string, visibility: Visibility) =>
+      run(actAs(as(member), ops.create({ id: Option.none(), state: { title, visibility } }))).then(
+        ({ id }) => id,
+      );
+    const first = await create("first", "public");
+    const hidden = await create("hidden", "private");
+    const second = await create("second", "public");
+    const hits = [
+      { id: second, score: 0.9 },
+      { id: hidden, score: 0.8 },
+      { id: "missing", score: 0.7 },
+      { id: first, score: 0.6 },
+      { id: second, score: 0.1 },
+    ];
+    const hydrated = await run(actAs(as(otherMember), hydrateSearchHits(ops, hits)));
+    expect(hydrated).toEqual([
+      { hit: { id: second, score: 0.9 }, resource: { id: second, title: "second" } },
+      { hit: { id: first, score: 0.6 }, resource: { id: first, title: "first" } },
+    ]);
+    // The owner reads its own private row.
+    expect(
+      (await run(actAs(as(member), hydrateSearchHits(ops, hits)))).map(({ hit }) => hit.id),
+    ).toEqual([second, hidden, first]);
+    expect(await run(hydrateSearchHits(ops, []))).toEqual([]);
   });
 });

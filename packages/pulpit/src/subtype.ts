@@ -1013,6 +1013,15 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
    */
   // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no hooks"
   readonly hooks?: Effect.Effect<LifecycleHooks<Resource, E, R>, never, R> | undefined;
+  /**
+   * The leaf's searchable projection ({@link defineSearchProjection}), the
+   * same declaration the application's search-view generator reads. Each
+   * field and the language column must be a column of the view, or
+   * {@link defineSubtype} throws {@link SubtypeDeclarationError}. Omitted,
+   * the leaf is not searched.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "not searchable"
+  readonly search?: SearchProjection | undefined;
 }
 
 /**
@@ -1246,6 +1255,8 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   const ownedColumnsDeclared = access.kind === "owned" && declaresColumns(access, leaves.columns);
   // Checked here, so a misspelt `sortable` entry throws when the leaf is declared.
   const isSortable = sortableColumns(type, leaves.columns, definition.sortable);
+  // Checked here too, so a projection naming a column the view lacks throws when the leaf is declared.
+  if (definition.search !== undefined) checkSearchProjection(definition.search, leaves.columns);
 
   /**
    * The row's own visibility, by access kind; the soft-delete axis is checked
@@ -1345,19 +1356,10 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   const list = Effect.fn(`${type}.list`)(function* (request: ListRequest) {
     const orderBy = yield* checkedOrder(type, isSortable, request.orderBy ?? []);
     const viewer = yield* definition.viewer;
-    const privacy =
-      access.kind === "owned"
-        ? ownedListFilter(access, leaves.columns, readScopeFor(viewer, policy, followers))
-        : referencePrivacyFilter(
-            viewer,
-            policy,
-            leaves.columns,
-            Option.some({ access, followers }),
-          );
-    const where = and<Following>(
-      softDeleteFilter(viewer, policy, request.includeDeleted),
-      privacy,
-      request.where,
+    const where = searchScopeFilter(
+      { access, columns: leaves.columns, policy, followers },
+      viewer,
+      request,
     );
     const page = yield* leaves.list({
       where,
@@ -1411,6 +1413,167 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     compare,
     restoreVersion,
   };
+};
+
+// ── Search ────────────────────────────────────────────────────────────
+
+/**
+ * A searchable field's rank weight, PostgreSQL's `setweight` labels from the
+ * strongest (`A`) to the weakest (`D`).
+ *
+ * @since 0.1.0
+ */
+export type SearchWeight = "A" | "B" | "C" | "D";
+
+/**
+ * One indexed column of a {@link SearchProjection} and its weight.
+ *
+ * @since 0.1.0
+ */
+export interface SearchField {
+  readonly column: string;
+  readonly weight: SearchWeight;
+}
+
+/**
+ * A leaf's searchable projection (pulpit#54): which view columns its search
+ * view indexes, at what weight, and the column naming each row's text
+ * search configuration (its language), if any. Declared once, beside the
+ * leaf's registry entry, so the application's search-view generator and
+ * {@link defineSubtype} (`search`) read the same value. The ranking itself
+ * (full text, trigram, vectors, their fusion) is the application's SQL.
+ *
+ * @since 0.1.0
+ */
+export interface SearchProjection {
+  /** The indexed columns, each once, strongest first by convention. */
+  readonly fields: ReadonlyArray<SearchField>;
+  /** The view column holding each row's text search configuration, or none for one fixed configuration. */
+  readonly languageColumn: Option.Option<string>;
+}
+
+const checkSearchProjection = (projection: SearchProjection, columns: ReadonlySet<string>) => {
+  const named = [
+    ...Array.map(projection.fields, (field) => field.column),
+    ...Option.toArray(projection.languageColumn),
+  ];
+  const undeclared = Array.findFirst(named, (column) => !columns.has(column));
+  if (Option.isSome(undeclared)) {
+    throw new SubtypeDeclarationError({
+      message: `search names '${undeclared.value}', which is not a column of the view`,
+    });
+  }
+};
+
+/**
+ * Declare a {@link SearchProjection}. Throws {@link SubtypeDeclarationError}
+ * at import, as a registry violation is, for no field, a column named twice
+ * or a weight outside `A`–`D`; {@link defineSubtype} checks the columns
+ * against the view.
+ *
+ * @example
+ * ```ts
+ * import { strictEqual } from "node:assert";
+ * import { defineSearchProjection } from "@thomasfosterau/pulpit/subtype";
+ *
+ * const posts = defineSearchProjection({
+ *   fields: [
+ *     { column: "title", weight: "A" },
+ *     { column: "excerpt", weight: "B" },
+ *   ],
+ *   languageColumn: "language",
+ * });
+ * strictEqual(posts.fields.length, 2);
+ * ```
+ *
+ * @since 0.1.0
+ */
+export const defineSearchProjection = (declaration: {
+  readonly fields: ReadonlyArray<SearchField>;
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is one fixed configuration
+  readonly languageColumn?: string | undefined;
+}): SearchProjection => {
+  if (!Array.isReadonlyArrayNonEmpty(declaration.fields)) {
+    throw new SubtypeDeclarationError({ message: "search declares no field" });
+  }
+  const repeated = Array.findFirst(declaration.fields, (field, index) =>
+    declaration.fields.slice(0, index).some((earlier) => earlier.column === field.column),
+  );
+  if (Option.isSome(repeated)) {
+    throw new SubtypeDeclarationError({
+      message: `search names '${repeated.value.column}' twice`,
+    });
+  }
+  const unweighted = Array.findFirst(
+    declaration.fields,
+    (field) => !Array.contains(["A", "B", "C", "D"], field.weight),
+  );
+  if (Option.isSome(unweighted)) {
+    throw new SubtypeDeclarationError({
+      message: `search weighs '${unweighted.value.column}' outside A–D`,
+    });
+  }
+  return {
+    fields: declaration.fields,
+    languageColumn: Option.fromNullishOr(declaration.languageColumn),
+  };
+};
+
+/**
+ * The read scope a search over one leaf must apply to its hits: exactly the
+ * filter {@link defineSubtype}'s `list` reads under (`list` calls this), the
+ * soft-delete arm, the access kind's privacy arm (owned visibility and draft
+ * through {@link ownedListFilter}; the reference privacy arm with its
+ * followers, `PUB-009`) and the family's own `where` (a publication arm, for
+ * a publish-gated leaf), so a search can never surface a row `list` hides
+ * (`SEC-AUTH-ENUM-001`). The application renders it into its search query
+ * as the list store renders it into the list's.
+ *
+ * @since 0.1.0
+ */
+export const searchScopeFilter = <Following>(
+  leaf: {
+    readonly access: LeafAccess;
+    readonly columns: ReadonlySet<string>;
+    readonly policy: AccessPolicy;
+    readonly followers: FollowerSeam<Following, unknown>;
+  },
+  viewer: Viewer,
+  request: Pick<ListRequest, "includeDeleted" | "where">,
+): ListFilter<Following> => {
+  const { access, columns, policy, followers } = leaf;
+  const privacy =
+    access.kind === "owned"
+      ? ownedListFilter(access, columns, readScopeFor(viewer, policy, followers))
+      : referencePrivacyFilter(viewer, policy, columns, Option.some({ access, followers }));
+  return and<Following>(
+    softDeleteFilter(viewer, policy, request.includeDeleted),
+    privacy,
+    request.where,
+  );
+};
+
+/**
+ * Hydrate ranked search hits through the leaf's gated `getMany`: one read
+ * for every hit, each re-checked against the viewer by the same predicate
+ * `get` applies, so a stale or poisoned index (a hit the search scope should
+ * have excluded, or one hidden since it was indexed) never leaks a row
+ * (`SEC-AUTH-ENUM-001`). The hits keep their rank order, a hidden or
+ * missing one is dropped, and a repeated id keeps its first, best rank.
+ * Fails with the store's `E`.
+ *
+ * @since 0.1.0
+ */
+export const hydrateSearchHits = <Hit extends { readonly id: string }, Resource, E, R>(
+  ops: Pick<SubtypeOps<Resource, E, R>, "getMany">,
+  hits: ReadonlyArray<Hit>,
+): Effect.Effect<ReadonlyArray<{ readonly hit: Hit; readonly resource: Resource }>, E, R> => {
+  const ranked = Array.dedupeWith(hits, (a, b) => a.id === b.id);
+  return Effect.map(ops.getMany(Array.map(ranked, (hit) => hit.id)), (shown) =>
+    Array.flatMap(ranked, (hit) =>
+      Option.toArray(Option.map(HashMap.get(shown, hit.id), (resource) => ({ hit, resource }))),
+    ),
+  );
 };
 
 // ── The handlers seam ─────────────────────────────────────────────────
