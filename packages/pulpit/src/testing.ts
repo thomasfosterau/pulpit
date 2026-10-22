@@ -245,7 +245,7 @@ export interface InMemoryLeafStoreOptions {
 /**
  * An in-memory {@link LeafStore}: the seam's contract (README → Seams →
  * `LeafStore`) as a current-version view over an {@link InMemoryChainStore}.
- * Each node's row is its head version's state with its head `action`, and
+ * Each node's row is its head version's state with its head `version` and `action`, and
  * `ownerId` merged in from the owner stamps (the apps' `core.node_owner`
  * join); `list` evaluates its {@link ListFilter} in memory, orders by its
  * `orderBy` keys then `id` ascending as the seam's contract renders it
@@ -264,7 +264,7 @@ export const makeInMemoryLeafStore = (
   const fixedNow = Option.fromNullishOr(options.now);
   let owners = HashMap.empty<string, string>();
   const headOf = (row: VersionRow): LeafRow => {
-    const base: LeafRow = { ...row.state, id: row.id, action: row.action };
+    const base: LeafRow = { ...row.state, id: row.id, version: row.version, action: row.action };
     return Option.match(HashMap.get(owners, row.id), {
       onNone: () => base,
       onSome: (ownerId): LeafRow => ({ ...base, ownerId }),
@@ -281,7 +281,7 @@ export const makeInMemoryLeafStore = (
     );
   return {
     // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is the native `ReadonlySet` `LeafStore.columns` names
-    columns: new Set(["id", "action", "ownerId", ...options.columns]),
+    columns: new Set(["id", "version", "action", "ownerId", ...options.columns]),
     get: (id) => Effect.sync(() => Arr.findFirst(view(), (row) => row.id === id)),
     getMany: (ids) => Effect.sync(() => view().filter((row) => ids.includes(row.id))),
     list: ({ where, orderBy, limit, offset }) =>
@@ -388,7 +388,7 @@ export interface InMemoryNodes extends EndpointView<never, never> {
  * An in-memory {@link EndpointView}: an edge end's current-version view
  * (README → Seams → `EdgeStore`) as rows a test puts by hand, for an edge
  * suite that doesn't need the endpoint leaf's version chain. Its `columns`
- * are `id`, `action` and `columns`. An {@link InMemoryLeafStore} is an
+ * are `id`, `version`, `action` and `columns`. An {@link InMemoryLeafStore} is an
  * endpoint view too. In memory only; not for production.
  *
  * @since 0.1.0
@@ -397,7 +397,7 @@ export const makeInMemoryNodes = (columns: ReadonlyArray<string>): InMemoryNodes
   let nodes = HashMap.empty<string, LeafRow>();
   return {
     // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is a `ReadonlySet`, the type `LeafStore.columns` already has, so a `LeafStore` satisfies `EndpointView`
-    columns: new Set(["id", "action", ...columns]),
+    columns: new Set(["id", "version", "action", ...columns]),
     get: (id) => Effect.sync(() => HashMap.get(nodes, id)),
     put: (row) => {
       nodes = HashMap.set(nodes, row.id, row);

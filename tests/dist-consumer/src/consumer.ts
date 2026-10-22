@@ -59,6 +59,10 @@ import {
   type Page,
   type SubtypeDeclarationError,
   type SubtypeDefinition,
+  versionEtag,
+  versionMeta,
+  type VersionedResource,
+  type VersionMeta,
 } from "@thomasfosterau/pulpit/subtype";
 import {
   duePublications,
@@ -332,6 +336,18 @@ export type _SubtypeSortable = Assert<
     SubtypeDefinition<LeafRow, unknown, never, never, never>["sortable"],
     ReadonlyArray<string> | undefined
   >
+>;
+// The head version on the wire (pulpit#65).
+export type _LeafRowVersion = Assert<Equals<LeafRow["version"], bigint>>;
+export type _VersionMeta = Assert<
+  Equals<typeof versionMeta, (row: Pick<LeafRow, "version">) => VersionMeta>
+>;
+export type _VersionMetaFields = Assert<Equals<VersionMeta, { readonly version: string }>>;
+export type _VersionEtag = Assert<
+  Equals<typeof versionEtag, (resource: VersionedResource) => Option.Option<string>>
+>;
+export type _VersionedResource = Assert<
+  Equals<VersionedResource, { readonly meta?: object | undefined }>
 >;
 /* oxlint-enable effect/prefer-option-over-null */
 export type _SubtypeDeclarationError = Assert<
