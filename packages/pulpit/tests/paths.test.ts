@@ -179,6 +179,7 @@ describe("routable — claims follow the chain (pulpit#57)", () => {
     const leaf = pagesLeaf();
     const transacted: Array<string> = [];
     const handlers = subtypeHandlers(leaf.pages, {
+      inTransaction: Effect.succeed(false),
       transact: (effect) =>
         Effect.ensuring(
           effect,

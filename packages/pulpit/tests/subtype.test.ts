@@ -94,6 +94,8 @@ import {
   searchScopeFilter,
   type AfterWriteHook,
   type BeforeWriteHook,
+  type ResourceCacheSeam,
+  type SubtypeOps,
   type VersionedResource,
 } from "../src/subtype.ts";
 import {
@@ -927,6 +929,7 @@ describe("defineSubtype — the expected-version precondition", () => {
     const { ops, actAs, id } = await atHeadOne();
     const cached = MutableHashMap.make<Array<readonly [string, unknown]>>([id, "cached"]);
     const handlers = subtypeHandlers(ops, {
+      inTransaction: Effect.succeed(false),
       transact: (effect) => effect,
       cache: Option.some({
         set: (key, resource) => Effect.sync(() => void MutableHashMap.set(cached, key, resource)),
@@ -2600,6 +2603,7 @@ describe("subtypeHandlers — the handlers seam", () => {
     const cached = MutableHashMap.empty<string, unknown>();
     const log: Array<string> = [];
     const handlers = subtypeHandlers(ops, {
+      inTransaction: Effect.succeed(false),
       transact: (effect) =>
         Effect.andThen(
           Effect.sync(() => log.push("transact")),
@@ -2705,6 +2709,7 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
       // A retrying boundary runs the effect twice, as if its first attempt
       // had rolled back (the in-memory store can't roll back, so the first
       // attempt's write stands, and stands in for a racing writer's).
+      inTransaction: Effect.succeed(false),
       transact: (effect) =>
         Effect.suspend(() =>
           faults.interruptAfterWrite
@@ -2961,6 +2966,7 @@ describe("lifecycle hooks — before and after every write (pulpit#45)", () => {
     });
     const cached = MutableHashMap.empty<string, Post>();
     const handlers = subtypeHandlers(ops, {
+      inTransaction: Effect.succeed(false),
       transact: (effect) => effect,
       cache: Option.some({
         set: (id, resource) => Effect.sync(() => void MutableHashMap.set(cached, id, resource)),
@@ -3230,7 +3236,11 @@ describe("the head version on the wire (pulpit#65)", () => {
       followers: follows,
       toResource: (row: LeafRow) => ({ type: "posts", id: row.id, meta: versionMeta(row) }),
     });
-    const handlers = subtypeHandlers(ops, { transact: (effect) => effect, cache: Option.none() });
+    const handlers = subtypeHandlers(ops, {
+      inTransaction: Effect.succeed(false),
+      transact: (effect) => effect,
+      cache: Option.none(),
+    });
     const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
       Effect.suspend(() => {
         viewer = who;
@@ -3367,6 +3377,7 @@ describe("subtypeResourceHandlers — effect-jsonapi's ResourceHandlers (pulpit#
     });
     const cached = MutableHashMap.empty<string, unknown>();
     const record = subtypeHandlers(ops, {
+      inTransaction: Effect.succeed(false),
       transact: (effect) => effect,
       cache: Option.some({
         set: (id, resource) => Effect.sync(() => void MutableHashMap.set(cached, id, resource)),
@@ -3615,6 +3626,88 @@ describe("the resource cache's compare-on-set (pulpit#121)", () => {
     return { ops, cache };
   };
 
+  /** Handlers whose `inTransaction` reads an outer-transaction depth a test sets. */
+  const nestableHandlers = (
+    ops: SubtypeOps<Post, never, never>,
+    cache: ResourceCacheSeam<Post, never>,
+  ) => {
+    let depth = 0;
+    const handlers = subtypeHandlers(ops, {
+      inTransaction: Effect.sync(() => depth > 0),
+      transact: (effect) => effect,
+      cache: Option.some(cache),
+    });
+    // An outer transaction around `effect` that rolls back once it has run.
+    const rolledBack = <A, E>(effect: Effect.Effect<A, E>) =>
+      Effect.ensuring(
+        Effect.andThen(
+          Effect.suspend(() => {
+            depth += 1;
+            return effect;
+          }),
+          Effect.fail("rolled back" as const),
+        ),
+        Effect.sync(() => {
+          depth -= 1;
+        }),
+      );
+    return { handlers, rolledBack };
+  };
+
+  it("a write nested in an outer transaction caches nothing, so the outer rollback leaves no cached entry (pulpit#124)", async () => {
+    const { ops, cache } = racingLeaf();
+    const { handlers, rolledBack } = nestableHandlers(ops, cache);
+    const outcome = await run(
+      Effect.gen(function* () {
+        const created = yield* handlers.create({
+          id: Option.none(),
+          state: { title: "v0", visibility: "public" },
+        });
+        const committed = cache.get(created.id);
+        const rollback = yield* Effect.flip(
+          rolledBack(handlers.update({ id: created.id, patch: { title: "v1" } })),
+        );
+        const afterRollback = [cache.get(created.id), cache.versionOf(created.id)];
+        const nestedCreate = yield* Effect.flip(
+          rolledBack(
+            handlers.create({
+              id: Option.some("nested"),
+              state: { title: "n", visibility: "public" },
+            }),
+          ),
+        );
+        // Outside any outer transaction, the next write writes through again.
+        const next = yield* handlers.update({ id: created.id, patch: { title: "v2" } });
+        return {
+          committed,
+          rollback,
+          afterRollback,
+          nested: cache.get("nested"),
+          nestedCreate,
+          next,
+        };
+      }),
+    );
+    expect(outcome.committed).toEqual(Option.some(expect.objectContaining({ title: "v0" })));
+    expect(outcome.rollback).toBe("rolled back");
+    expect(outcome.afterRollback).toEqual([Option.none(), Option.some(1n)]);
+    expect([outcome.nestedCreate, outcome.nested]).toEqual(["rolled back", Option.none()]);
+    expect(cache.get(outcome.next.id)).toEqual(Option.some(outcome.next));
+  });
+
+  it("a delete nested in an outer transaction evicts as any delete does (pulpit#124)", async () => {
+    const { ops, cache } = racingLeaf();
+    const { handlers, rolledBack } = nestableHandlers(ops, cache);
+    const id = await run(
+      Effect.map(
+        handlers.create({ id: Option.none(), state: { title: "v0", visibility: "public" } }),
+        (post) => post.id,
+      ),
+    );
+    await Effect.runPromiseExit(rolledBack(handlers.delete(id)));
+    expect([cache.get(id), cache.versionOf(id)]).toEqual([Option.none(), Option.some(1n)]);
+  });
+
   it("a racing writer's late write-through of a public version never lands over a later hiding write's eviction", async () => {
     const { ops, cache } = racingLeaf();
     await run(
@@ -3623,6 +3716,7 @@ describe("the resource cache's compare-on-set (pulpit#121)", () => {
         const release = yield* Deferred.make<void>();
         // Writer A's write-through waits, holding the public resource it re-read.
         const held = subtypeHandlers(ops, {
+          inTransaction: Effect.succeed(false),
           transact: (effect) => effect,
           cache: Option.some({
             set: (id, resource, version) =>
@@ -3634,6 +3728,7 @@ describe("the resource cache's compare-on-set (pulpit#121)", () => {
           }),
         });
         const direct = subtypeHandlers(ops, {
+          inTransaction: Effect.succeed(false),
           transact: (effect) => effect,
           cache: Option.some(cache),
         });
@@ -3664,6 +3759,7 @@ describe("the resource cache's compare-on-set (pulpit#121)", () => {
   it("a read-through fill that read before a hiding write never re-caches the stale public resource", async () => {
     const { ops, cache } = racingLeaf();
     const handlers = subtypeHandlers(ops, {
+      inTransaction: Effect.succeed(false),
       transact: (effect) => effect,
       cache: Option.some(cache),
     });
@@ -3704,7 +3800,11 @@ describe("the resource cache's compare-on-set (pulpit#121)", () => {
     const { ops, cache } = racingLeaf();
     const handlers = subtypeHandlers(
       { ...ops, get: () => Effect.die("the re-read failed") },
-      { transact: (effect) => effect, cache: Option.some(cache) },
+      {
+        inTransaction: Effect.succeed(false),
+        transact: (effect) => effect,
+        cache: Option.some(cache),
+      },
     );
     const written = await run(
       ops.create({ id: Option.none(), state: { title: "v0", visibility: "public" } }),
@@ -3763,6 +3863,7 @@ describe("defineSubtype — the live pointer (pulpit#46)", () => {
     });
     const cache = makeInMemoryResourceCache((post: Post) => post.draft === false);
     const handlers = subtypeHandlers(ops, {
+      inTransaction: Effect.succeed(false),
       transact: (effect) => effect,
       cache: options.withCache === true ? Option.some(cache) : Option.none(),
     });
