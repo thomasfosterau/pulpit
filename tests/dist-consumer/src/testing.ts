@@ -23,6 +23,7 @@ import {
   type LeafRow,
   type LeafStore,
   type ListOrder,
+  type ResourceCacheSeam,
 } from "@thomasfosterau/pulpit/subtype";
 import {
   makeInMemoryChainStore,
@@ -31,6 +32,7 @@ import {
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
   makeInMemoryNodes,
+  makeInMemoryResourceCache,
   type InMemoryChainStore,
   type InMemoryDocumentStore,
   type InMemoryEdgeStore,
@@ -39,6 +41,7 @@ import {
   type InMemoryLeafStore,
   type InMemoryLeafStoreOptions,
   type InMemoryNodes,
+  type InMemoryResourceCache,
 } from "@thomasfosterau/pulpit/testing";
 import type { VersionChainStore, VersionRow } from "@thomasfosterau/pulpit/version-chain";
 
@@ -159,4 +162,37 @@ export type _EdgeFollowing = Assert<
 >;
 export type _EdgeRace = Assert<
   Equals<InMemoryEdgeStore["raceNextInsert"], (winner: EdgeValues) => void>
+>;
+
+// ── the resource cache (pulpit#121) ──────────────────────────────────────
+
+interface CachedPost {
+  readonly id: string;
+}
+export type _ResourceCache = Assert<
+  Satisfies<InMemoryResourceCache<CachedPost>, ResourceCacheSeam<CachedPost, never>>
+>;
+export type _MakeResourceCache = Assert<
+  Equals<
+    typeof makeInMemoryResourceCache,
+    <Resource>(serveable: (resource: Resource) => boolean) => InMemoryResourceCache<Resource>
+  >
+>;
+export type _CacheSet = Assert<
+  Equals<
+    ResourceCacheSeam<CachedPost, never>["set"],
+    (id: string, resource: CachedPost, version: bigint) => Effect.Effect<void>
+  >
+>;
+export type _CacheDelete = Assert<
+  Equals<
+    ResourceCacheSeam<CachedPost, never>["delete"],
+    (id: string, version: bigint) => Effect.Effect<void>
+  >
+>;
+export type _CacheGet = Assert<
+  Equals<InMemoryResourceCache<CachedPost>["get"], (id: string) => Option.Option<CachedPost>>
+>;
+export type _CacheVersionOf = Assert<
+  Equals<InMemoryResourceCache<CachedPost>["versionOf"], (id: string) => Option.Option<bigint>>
 >;

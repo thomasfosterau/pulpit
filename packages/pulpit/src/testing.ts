@@ -1,7 +1,7 @@
 /**
  * **In-memory fakes of the kernel's seams** — a store for each of the
- * version-chain, leaf, document, edge, proposal, path and report seams, an endpoint view and a
- * follower seam, all held in memory with no SQL. They are the reference semantics of
+ * version-chain, leaf, document, edge, proposal, path and report seams, an endpoint view, a
+ * follower seam and a resource cache, all held in memory with no SQL. They are the reference semantics of
  * each seam's contract in the package README → Seams, and the fakes the
  * kernel's own suites run against; an adapter's or an application's tests can
  * run the kernel's operations over them too.
@@ -72,7 +72,7 @@ import { rowOrder } from "./internal/list-order.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
 import type { ReportRow, ReportStore } from "./moderation.ts";
 import type { ProposalListing, ProposalRow, ProposalStore } from "./proposals.ts";
-import type { FollowerSeam, LeafRow, LeafStore } from "./subtype.ts";
+import type { FollowerSeam, LeafRow, LeafStore, ResourceCacheSeam } from "./subtype.ts";
 import {
   VersionConflict,
   type ColumnValue,
@@ -364,6 +364,61 @@ export const makeInMemoryPathStore = (): InMemoryPathStore => {
         });
       }),
     entries: () => entries,
+  };
+};
+
+// ── The resource cache ────────────────────────────────────────────────
+
+/**
+ * An in-memory {@link ResourceCacheSeam}, plus the reads a test checks it
+ * through. In memory only; not for production.
+ *
+ * @since 0.1.0
+ */
+export interface InMemoryResourceCache<Resource> extends ResourceCacheSeam<Resource, never> {
+  /** The resource the cache would serve for `id`: none when evicted, refused or never set. */
+  readonly get: (id: string) => Option.Option<Resource>;
+  /** The highest version the cache holds for `id`, set or evicted, or none. */
+  readonly versionOf: (id: string) => Option.Option<bigint>;
+}
+
+/**
+ * An in-memory {@link ResourceCacheSeam}: the seam's compare-on-set contract
+ * (README → Seams → the resource cache, pulpit#121). It keeps, per id, the
+ * highest version either call has given it: a `set` below it is a no-op, a
+ * `set` at or above it stores the resource when `serveable` admits it and
+ * evicts it otherwise, and a `delete` evicts and raises the version. Each
+ * call compares and writes in one step, as the real cache's conditional write
+ * must. In memory only; not for production.
+ *
+ * @since 0.1.0
+ */
+export const makeInMemoryResourceCache = <Resource>(
+  serveable: (resource: Resource) => boolean,
+): InMemoryResourceCache<Resource> => {
+  let entries = HashMap.empty<
+    string,
+    { readonly version: bigint; readonly resource: Option.Option<Resource> }
+  >();
+  const versionOf = (id: string) => Option.map(HashMap.get(entries, id), (entry) => entry.version);
+  const behind = (id: string, version: bigint) =>
+    Option.exists(versionOf(id), (held) => version < held);
+  return {
+    set: (id, resource, version) =>
+      Effect.sync(() => {
+        if (behind(id, version)) return;
+        entries = HashMap.set(entries, id, {
+          version,
+          resource: serveable(resource) ? Option.some(resource) : Option.none(),
+        });
+      }),
+    delete: (id, version) =>
+      Effect.sync(() => {
+        if (behind(id, version)) return;
+        entries = HashMap.set(entries, id, { version, resource: Option.none() });
+      }),
+    get: (id) => Option.flatMap(HashMap.get(entries, id), (entry) => entry.resource),
+    versionOf,
   };
 };
 

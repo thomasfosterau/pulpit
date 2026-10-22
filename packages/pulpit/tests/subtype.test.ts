@@ -108,6 +108,7 @@ import {
   makeInMemoryChainStore,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
+  makeInMemoryResourceCache,
   type InMemoryFollowing as Following,
 } from "../src/testing.ts";
 import {
@@ -3576,5 +3577,136 @@ describe("search: the projection and gated hydration (pulpit#54)", () => {
       (await run(actAs(as(member), hydrateSearchHits(ops, hits)))).map(({ hit }) => hit.id),
     ).toEqual([second, hidden, first]);
     expect(await run(hydrateSearchHits(ops, []))).toEqual([]);
+  });
+});
+
+describe("the resource cache's compare-on-set (pulpit#121)", () => {
+  interface Post {
+    readonly id: string;
+    readonly title: ColumnValue;
+    readonly visibility: ColumnValue;
+  }
+  const racingLeaf = () => {
+    const chain = makeInMemoryChainStore();
+    const leaves = makeInMemoryLeafStore(chain, { columns: ["title", "visibility"], now: NOW });
+    const ops = defineSubtype({
+      type: "posts",
+      access: ownedAccess({ draft: false }),
+      chain,
+      leaves,
+      // Both writers are the owner, so the one viewer never changes under a fiber.
+      viewer: Effect.succeed(as(member)),
+      policy: gardeneriaPolicy,
+      followers: follows,
+      toResource: (row: LeafRow): Post => ({
+        id: row.id,
+        title: row["title"],
+        visibility: row["visibility"],
+      }),
+    });
+    const cache = makeInMemoryResourceCache((post: Post) => post.visibility === "public");
+    return { ops, cache };
+  };
+
+  it("a racing writer's late write-through of a public version never lands over a later hiding write's eviction", async () => {
+    const { ops, cache } = racingLeaf();
+    await run(
+      Effect.gen(function* () {
+        const arrived = yield* Deferred.make<Post>();
+        const release = yield* Deferred.make<void>();
+        // Writer A's write-through waits, holding the public resource it re-read.
+        const held = subtypeHandlers(ops, {
+          transact: (effect) => effect,
+          cache: Option.some({
+            set: (id, resource, version) =>
+              Effect.andThen(
+                Effect.andThen(Deferred.succeed(arrived, resource), Deferred.await(release)),
+                cache.set(id, resource, version),
+              ),
+            delete: cache.delete,
+          }),
+        });
+        const direct = subtypeHandlers(ops, {
+          transact: (effect) => effect,
+          cache: Option.some(cache),
+        });
+        const created = yield* direct.create({
+          id: Option.none(),
+          state: { title: "v0", visibility: "public" },
+        });
+        expect(cache.get(created.id)).toEqual(Option.some(created));
+        const writerA = yield* Effect.forkChild(
+          held.update({ id: created.id, patch: { title: "v1" } }),
+        );
+        const stale = yield* Deferred.await(arrived);
+        expect(stale).toEqual({ id: created.id, title: "v1", visibility: "public" });
+        // Writer B commits v2 private; its write-through refuses and evicts at 2.
+        yield* direct.update({ id: created.id, patch: { visibility: "private" } });
+        expect(cache.get(created.id)).toEqual(Option.none());
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(writerA);
+        // A's set of v1 came in below the eviction: nothing public is cached.
+        expect([cache.get(created.id), cache.versionOf(created.id)]).toEqual([
+          Option.none(),
+          Option.some(2n),
+        ]);
+      }),
+    );
+  });
+
+  it("a read-through fill that read before a hiding write never re-caches the stale public resource", async () => {
+    const { ops, cache } = racingLeaf();
+    const handlers = subtypeHandlers(ops, {
+      transact: (effect) => effect,
+      cache: Option.some(cache),
+    });
+    const written = await run(
+      ops.create({ id: Option.none(), state: { title: "v0", visibility: "public" } }),
+    );
+    // The fill reads v0, public, and is about to set it.
+    const read = await run(ops.get(written.id));
+    // The hiding write commits first and evicts at its version.
+    await run(handlers.update({ id: written.id, patch: { visibility: "private" } }));
+    await run(cache.set(written.id, read, written.version));
+    expect([cache.get(written.id), cache.versionOf(written.id)]).toEqual([
+      Option.none(),
+      Option.some(1n),
+    ]);
+  });
+
+  it("keeps the highest version either call gave it: a set below is a no-op, at or above it lands", async () => {
+    const cache = makeInMemoryResourceCache((resource: string) => resource !== "hidden");
+    await run(cache.set("a", "v2", 2n));
+    await run(cache.set("a", "v1", 1n));
+    expect(cache.get("a")).toEqual(Option.some("v2"));
+    await run(cache.set("a", "v2 again", 2n));
+    expect(cache.get("a")).toEqual(Option.some("v2 again"));
+    await run(cache.delete("a", 1n));
+    expect(cache.get("a")).toEqual(Option.some("v2 again"));
+    await run(cache.delete("a", 3n));
+    await run(cache.set("a", "v2", 2n));
+    expect([cache.get("a"), cache.versionOf("a")]).toEqual([Option.none(), Option.some(3n)]);
+    await run(cache.set("a", "hidden", 4n));
+    expect([cache.get("a"), cache.versionOf("a")]).toEqual([Option.none(), Option.some(4n)]);
+    await run(cache.set("a", "v5", 5n));
+    expect(cache.get("a")).toEqual(Option.some("v5"));
+    expect(cache.versionOf("b")).toEqual(Option.none());
+  });
+
+  it("evicts a failed re-read at the version the write landed at", async () => {
+    const { ops, cache } = racingLeaf();
+    const handlers = subtypeHandlers(
+      { ...ops, get: () => Effect.die("the re-read failed") },
+      { transact: (effect) => effect, cache: Option.some(cache) },
+    );
+    const written = await run(
+      ops.create({ id: Option.none(), state: { title: "v0", visibility: "public" } }),
+    );
+    await run(cache.set(written.id, await run(ops.get(written.id)), 0n));
+    await Effect.runPromiseExit(handlers.update({ id: written.id, patch: { title: "v1" } }));
+    expect([cache.get(written.id), cache.versionOf(written.id)]).toEqual([
+      Option.none(),
+      Option.some(1n),
+    ]);
   });
 });
