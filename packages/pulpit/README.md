@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`). |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`) and `validateRegistry`. |
 | `./version-chain` | The append-only node/version chain operations over a `VersionChainStore` seam, and the field-level version compare (`diffStates`, `compare`). |
@@ -27,7 +27,8 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./publication` | The publication and moderation predicates, the scheduled-publication sweep window, and the cache serveability policy. |
 | `./documents` | The content-addressed `DocumentStore` seam and its first-insert hook, the `DocumentHash` it is keyed by, the `documentRef` field spread, and the hash contract's `canonicalText`. |
 | `./edges` | `defineEdgeOps`, the edge operations factory over an `EdgeStore` seam: relations between nodes, readable only when every end is, with declared cardinality limits. |
-| `./testing` | In-memory fakes of the seams (the chain, leaf, document and edge stores, an endpoint view, a follower seam), for tests only. Not on the root export. |
+| `./proposals` | `defineProposals`, suggested edits over a `ProposalStore` seam: a contributor's patch against a base version, its two-tier stale / conflict classification, and accept (through the target's own update, recording `proposedBy`), reject and withdraw. |
+| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge and proposal stores, an endpoint view, a follower seam), for tests only. Not on the root export. |
 
 The operations are written against seams that the application fills; their expected shapes are in [Seams](#seams).
 
@@ -404,6 +405,55 @@ const termsOf = <Following, E, R>(
 | `EdgeNotFound`, `EdgeConflict`, `EdgeCardinalityExceeded` | A missing or hidden edge (404), an unresolved unique-key collision (409, never naming the stored edge), and a create past a declared limit (409). |
 | `EdgeDeclarationError` | A malformed family (an end alias with a `.`, or a `maxEdges` that isn't a positive safe integer), thrown by `defineEdgeOps` when the family is declared, never as an Effect failure. |
 
+## `./proposals`
+
+Suggested edits (pulpit#49). A contributor proposes a patch to a node they can read; the node's writer accepts it (appending it as a new version) or rejects it, and the proposer may withdraw it while it is pending. A proposal is a plain row, not a node: the target, the patch as submitted, the `baseVersion` it was written against (stamped from the target's head, never client-supplied), its status (`pending | accepted | rejected | withdrawn`), the decider and the timestamps.
+
+```ts
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import { defineProposals } from "@thomasfosterau/pulpit/proposals";
+
+const pages = defineProposals({
+  type: "pages",
+  target: pageOps, // the leaf's defineSubtype operations
+  chain, // its chain store: the head a proposal is stamped with
+  ownerOf: pageLeaves.ownerOf,
+  proposals: proposalStore,
+  viewer,
+  policy,
+  canPropose: () => true, // any signed-in account (gardeneria); website: contributor+
+  attributes: ["title", "body"], // the leaf's update fields, in declaration order
+  decode: decodePageUpdate, // the leaf's update decoder over a patch's values
+});
+
+const program = Effect.gen(function* () {
+  const { id } = yield* pages.submit({
+    targetId,
+    patch: { title: "Better" },
+    rationale: Option.none(),
+  });
+  const review = yield* pages.review(id); // { baseState: "clean" | "moved", conflict: { state, conflictingAttributes } }
+  return yield* pages.accept(id, { note: Option.some("thanks") }); // the { id, version } it appended
+});
+```
+
+- **Classification comes in two tiers.** `classifyProposalBase(base, head)` is `clean` or `moved` from two version numbers, with no read, so `get` and `list` give it for every pending row. `classifyProposalConflict(baseSnapshot, headSnapshot, touchedKeys)` is `clean`, `stale` (the target moved, but no touched attribute changed) or `conflicting`, over `diffStates`; it needs two version reads, so only `review` and `accept` run it. A touched attribute either state lacks (kept outside the chain) counts as conflicting on a moved target: fail closed.
+- **The patch rules** (`validateProposalPatch`, at submit and again at accept): an object with at least one key; no `PROPOSAL_FORBIDDEN_KEYS` (`id`, `type`, `visibility`, `draft`, `publishedAt`, plus the leaf's own `forbidden`), checked before unknown keys; no key outside `attributes` (refused, never dropped); then the leaf's `decode`. A failure is `InvalidProposalPatch` (422).
+- **Accept appends through the target's own `update`** (`PUB-003`), as the account that accepted, with the head it classified against as `expectedVersion` and the proposer as the version's `proposedBy`; a conflicting proposal fails `ProposalConflict` (409) and writes nothing, and an edit landing between the classification and the append fails `StaleVersion`. The append and the proposal's close run in the caller's transaction, so they commit together. It runs the target's before hooks but not `subtypeHandlers`' cache write-through: an application that caches the target writes the accepted version through itself.
+- **Gates.** `submit`: signed in (`Unauthorized`), at `canPropose` (`Forbidden`), and able to `get` the target (`NodeNotFound` otherwise, never `Forbidden`). `review`, `accept`, `reject`: the target's write gate (`requireWriter`) before the proposal's status is disclosed; `review` and `accept` then read the versions through the target's gated `compare`. A proposal whose target was deleted can still be rejected. `withdraw`: its author (`Forbidden` for anyone else). A decided proposal fails `ProposalClosed` (409). `get` / `list`: the moderate rung reads every proposal; any other signed-in account reads its own and those on targets it owns; the anonymous read none, and a proposal the viewer can't read is `ProposalNotFound`.
+
+Rate limiting, notifications and the wire shape (a JSON:API `proposals` resource) are the application's.
+
+| Export | What it is |
+| --- | --- |
+| `defineProposals(definition)`, `ProposalsDefinition`, `ProposalOps` | The factory, its declaration and the operations (`submit`, `get`, `list`, `review`, `accept`, `reject`, `withdraw`). |
+| `ProposalStore`, `ProposalRow`, `ProposalListing`, `ProposalDecision` | The table seam (see [Seams](#seams)), its row, a read's row with the target's head version, and the write that closes a pending row. |
+| `ProposalStatus`, `ProposalView`, `ProposalReview` | The status vocabulary, and a read's and a review's result. |
+| `classifyProposalBase`, `classifyProposalConflict`, `ProposalBaseState`, `ProposalConflictState`, `ProposalConflictVerdict` | The two tiers of classification and their verdicts. |
+| `validateProposalPatch`, `ValidatedPatch`, `PROPOSAL_FORBIDDEN_KEYS` | The patch rules, a patch that passed them, and the keys no proposal may carry. |
+| `ProposalNotFound`, `ProposalClosed`, `ProposalConflict`, `InvalidProposalPatch` | The failures: 404, 409 (already decided), 409 (the target changed underneath), 422. |
+
 ## `./testing`
 
 In-memory fakes of the kernel's seams, for tests: an adapter's or an application's suite can run the real operations (`defineVersionChain`, `defineSubtype`, `defineEdgeOps`, …) over them without a database. Each fake implements its seam's contract as stated under [Seams](#seams), in memory and with no SQL, and enforces what the real table's schema enforces (a primary or unique key) and nothing the operations are responsible for. They are the fakes the kernel's own suites run against, so they are its reference semantics for each seam.
@@ -452,6 +502,7 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | `makeInMemoryDocumentStore()`, `InMemoryDocumentStore` | [`DocumentStore`](#documentstoredocument-e-r-the-content-addressed-document-store), hashing exactly as the hash contract says (SHA-256 over `./documents`' `canonicalText`, pinned to hashes taken from Postgres). | `stored()` (every document by hash), `writes()` (how many `put`s inserted). |
 | `makeInMemoryEdgeStore({ ends, uniqueKey, now? })`, `InMemoryEdgeStore`, `InMemoryEdgeStoreOptions` | [`EdgeStore`](#edgestorerow-following-e-r-the-edge-table), with the unique key (`NULLS NOT DISTINCT`), the INNER JOIN of each end's view, and the window-column total. | `rows()` (every edge, hidden ones included), `raceNextInsert(winner)` (a concurrent writer). |
 | `makeInMemoryNodes(columns)`, `InMemoryNodes` | `EndpointView`, an end's view whose rows a test writes directly (an `InMemoryLeafStore` is one too). | `put(row)`. |
+| `makeInMemoryProposalStore({ chain, leaves })`, `InMemoryProposalStore` | [`ProposalStore`](#proposalstoree-r-the-proposal-table), reading each listing's head version from `chain` and its `targetOwnerId` from `leaves`' owner stamps; newest first, `id` descending on a tie. | `rows()` (every proposal as it now stands). |
 | `makeInMemoryFollowers(table)`, `InMemoryFollowing` | [`FollowerSeam`](#the-viewer-the-role-axes-and-the-follower-seam) over an explicit table of who follows whom; the `in` set is a `HashSet` of account ids, where SQL's is a subquery. |  |
 
 `now` is the instant the list filter's `published` / `notPublished` compare against (and, for the edge store, the base of the minted `createdAt`s). Pass a fixed `Date` for a deterministic suite; left out, each call reads the Effect `Clock`, so `TestClock` steers it. The role ladder and the `AccessPolicy` are the application's, so `./testing` ships none.
@@ -464,7 +515,7 @@ The kernel is written against explicit interfaces, so that it doesn't depend on 
 
 Expected to be a Drizzle store built over the application's version tables (effect-drizzle-ext's `./versioned-chain`, once it publishes; pulpit#4). Expected schema:
 
-- a root version table (the apps' `core.node_version`) keyed `(id, version bigint)`, carrying `action` (`create | update | delete`, the single home of currency and tombstone state), `timestamp` and `user_id`; plus the identity row (`core.node`: `id`, `type`) inserted at version 0;
+- a root version table (the apps' `core.node_version`) keyed `(id, version bigint)`, carrying `action` (`create | update | delete`, the single home of currency and tombstone state), `timestamp`, `user_id` (the row's `actorId`) and `proposed_by` (nullable: the row's `proposedBy`, the contributor whose accepted proposal the version applies; pulpit#49); plus the identity row (`core.node`: `id`, `type`) inserted at version 0;
 - one version table per chain level keyed `(id, version)` with the `(id, version)` → parent-version FK, carrying that level's domain columns (6NF fact tables for a fact-scoped level).
 
 Method contract: `head` is `SELECT … ORDER BY version DESC LIMIT 1` on the root table; `snapshot` reads every level at `(id, version)` and returns none when ANY level is missing (no partial state); `append` inserts the root row and every level's row at the given version (at version 0 the identity row too) and maps a primary-key violation on `(id, version)` to `VersionConflict`; `entries` is `ORDER BY version ASC LIMIT $limit`; `mintId` is a UUID. `E` is the store's query error and `R` the ambient transaction (`EffectDrizzleQueryError` and `CurrentTransaction` for the Drizzle store). The store never opens a transaction itself.
@@ -548,6 +599,12 @@ Method contract:
 - `delete(id)` is `DELETE … WHERE id = $id RETURNING id`: whether a row went.
 
 `E` and `R` are as for the chain store, and the store never opens a transaction itself. Each end's `EndpointView` is the endpoint leaf's own `LeafStore` (its `columns` and `get`).
+
+### `ProposalStore<E, R>`: the proposal table
+
+Filled by the application over its own proposal table (gardeneria's `participation.proposal`); no library is expected to provide one. Expected schema: `id` (a UUID primary key), `target_node_id` (a foreign key to `core.node`), `author_id`, `patch` (`jsonb`, as submitted), `rationale` (nullable), `base_version` (`bigint`), `state` (`pending | accepted | rejected | withdrawn`), `submitted_at` (`timestamptz NOT NULL DEFAULT now()`), and the nullable `decided_at`, `decided_by`, `decision_note` and `applied_version` (with `(target_node_id, applied_version)` a foreign key to the root version table). Index `author_id`, `target_node_id`, and the pending rows.
+
+Method contract: `insert` inserts the row; `get(id)` is `id = $id LIMIT 1`, joined to `core.node` for `targetType`, with the target's head version as a correlated scalar subquery (`SELECT MAX(version) … WHERE id = target_node_id`: one indexed lookup per row, never a per-render aggregate over every node's versions); `lock(id)` is the row alone, `FOR UPDATE`, so two decisions on one proposal serialise; `close(id, decision)` updates the pending row's status, decider, timestamp, note and applied version; `list` renders `where` over the columns `authorId`, `targetId`, `targetType`, `status` and `targetOwnerId` (the target's owner, `core.node_owner`, `NULL` for none; a `LEFT JOIN`), orders by `submitted_at DESC, id DESC`, applies `LIMIT` / `OFFSET` and returns the unpaged total as a window column, each row with its target's head version as `get` reads it. `E` and `R` are as for the chain store, and the store never opens a transaction itself.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 

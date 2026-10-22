@@ -149,6 +149,13 @@ export interface VersionRow extends VersionSnapshot {
   readonly type: string;
   /** The acting account (#1581) — recorded on the version row, never inferred. */
   readonly actorId: Option.Option<string>;
+  /**
+   * The contributor whose accepted proposal this version applies
+   * (`./proposals`), recorded beside the actor, who is the account that
+   * accepted it; none for every other write. A store persists it with the
+   * version row (README → Seams → `VersionChainStore`).
+   */
+  readonly proposedBy: Option.Option<string>;
 }
 
 /**
@@ -447,6 +454,13 @@ export interface UpdateInput extends Precondition {
   readonly patch: ChainPatch;
   /** The acting account, recorded on the version row; none for a write with no session behind it. */
   readonly actorId: Option.Option<string>;
+  /**
+   * The contributor whose proposal this edit applies, recorded on the
+   * version row as `proposedBy`; absent (or `undefined`) for an ordinary
+   * edit. `./proposals`' `accept` sets it.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no proposal", and a given value is itself an `Option`
+  readonly proposedBy?: Option.Option<string> | undefined;
 }
 
 /**
@@ -654,6 +668,7 @@ export const defineVersionChain = <E, R>(
     state: ChainState,
     actorId: Option.Option<string>,
     precondition: Precondition,
+    proposedBy: Option.Option<string> = Option.none(),
   ): Effect.Effect<ChainWrite, E | StaleVersion | VersionConflict, R> =>
     Effect.gen(function* () {
       const expected = precondition.expectedVersion;
@@ -662,7 +677,7 @@ export const defineVersionChain = <E, R>(
       }
       const version = previous.version + 1n;
       const timestamp = yield* now;
-      yield* store.append({ id, type, version, action, timestamp, state, actorId });
+      yield* store.append({ id, type, version, action, timestamp, state, actorId, proposedBy });
       return { id, version };
     });
 
@@ -704,6 +719,7 @@ export const defineVersionChain = <E, R>(
         timestamp,
         state,
         actorId: input.actorId,
+        proposedBy: Option.none(),
       })
       .pipe(
         // A racing create that took the id between the check above and this
@@ -733,7 +749,15 @@ export const defineVersionChain = <E, R>(
         },
         head.value.state,
       );
-      return yield* appendNext(input.id, head.value, "update", state, input.actorId, input);
+      return yield* appendNext(
+        input.id,
+        head.value,
+        "update",
+        state,
+        input.actorId,
+        input,
+        input.proposedBy,
+      );
     });
 
   const update = Effect.fn(`${type}.update`)(function* (input: UpdateInput) {

@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Resource } from "@thomasfosterau/effect-jsonapi";
-import { Content, Documents, Edges, Registry } from "@thomasfosterau/pulpit";
+import { Content, Documents, Edges, Proposals, Registry } from "@thomasfosterau/pulpit";
 import {
   ContentResource,
   contentVisibilityResourceFields,
@@ -96,6 +96,15 @@ import type {
 import type { ChainPatch, WriteAction } from "@thomasfosterau/pulpit/version-chain";
 
 /** A compile-time assertion: `T` must be exactly `true`. */
+import {
+  classifyProposalConflict,
+  defineProposals,
+  type ProposalOps,
+  type ProposalRow,
+  type ProposalStatus,
+} from "@thomasfosterau/pulpit/proposals";
+import type { VersionRow } from "@thomasfosterau/pulpit/version-chain";
+
 type Assert<T extends true> = T;
 type Equals<A, B> =
   (<X>() => X extends A ? 1 : 2) extends <X>() => X extends B ? 1 : 2 ? true : false;
@@ -548,3 +557,26 @@ export type _EdgeGate = Assert<
 >;
 export type _EndpointColumn = Assert<Equals<ReturnType<typeof endpointColumn>, string>>;
 export type _EdgesBarrel = Assert<Equals<typeof Edges.defineEdgeOps, typeof defineEdgeOps>>;
+
+// ── proposals ────────────────────────────────────────────────────────────
+
+export type _ProposalsBarrel = Assert<
+  Equals<typeof Proposals.defineProposals, typeof defineProposals>
+>;
+export type _ProposalStatus = Assert<
+  Equals<ProposalStatus, "pending" | "accepted" | "rejected" | "withdrawn">
+>;
+export type _ProposalBase = Assert<Equals<ProposalRow["baseVersion"], bigint>>;
+export type _Accept = Assert<
+  Equals<
+    Effect.Success<ReturnType<ProposalOps<StoreFailure, Transaction>["accept"]>>,
+    { readonly id: string; readonly version: bigint }
+  >
+>;
+export type _Classify = Assert<
+  Equals<
+    ReturnType<typeof classifyProposalConflict>["conflictingAttributes"],
+    ReadonlyArray<string>
+  >
+>;
+export type _ProposedBy = Assert<Equals<VersionRow["proposedBy"], Option.Option<string>>>;

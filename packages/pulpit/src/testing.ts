@@ -1,6 +1,6 @@
 /**
  * **In-memory fakes of the kernel's seams** — a store for each of the
- * version-chain, leaf, document and edge seams, an endpoint view and a follower
+ * version-chain, leaf, document, edge and proposal seams, an endpoint view and a follower
  * seam, all held in memory with no SQL. They are the reference semantics of
  * each seam's contract in the package README → Seams, and the fakes the
  * kernel's own suites run against; an adapter's or an application's tests can
@@ -68,6 +68,7 @@ import {
 } from "./edges.ts";
 import { evaluate, type EvaluationContext, type FilterRow, type ListFilter } from "./filter.ts";
 import { rowOrder } from "./internal/list-order.ts";
+import type { ProposalListing, ProposalRow, ProposalStore } from "./proposals.ts";
 import type { FollowerSeam, LeafRow, LeafStore } from "./subtype.ts";
 import {
   VersionConflict,
@@ -568,5 +569,106 @@ export const makeInMemoryEdgeStore = (options: InMemoryEdgeStoreOptions): InMemo
     raceNextInsert: (winner) => {
       race = Option.some(winner);
     },
+  };
+};
+
+// ── Proposals ─────────────────────────────────────────────────────────
+
+/**
+ * An in-memory {@link ProposalStore}, plus the hook a test reads it through.
+ * In memory only; not for production.
+ *
+ * @since 0.1.0
+ */
+export interface InMemoryProposalStore extends ProposalStore<never, never> {
+  /** Every row, in insert order, as it now stands. */
+  readonly rows: () => ReadonlyArray<ProposalRow>;
+}
+
+/**
+ * An in-memory {@link ProposalStore}: the seam's contract (README → Seams →
+ * `ProposalStore`). A listing's `targetVersion` is the `chain`'s head for
+ * the target, and the `targetOwnerId` its `list` filters on is `leaves`'
+ * owner stamp (or `null`), as the SQL store's joins read them. `lock`
+ * locks nothing (one JavaScript thread has no concurrent decision to
+ * serialise). `mintId` mints sequential UUID-shaped ids. In memory only;
+ * not for production.
+ *
+ * @since 0.1.0
+ */
+export const makeInMemoryProposalStore = (options: {
+  readonly chain: InMemoryChainStore;
+  readonly leaves: InMemoryLeafStore;
+}): InMemoryProposalStore => {
+  let rows: ReadonlyArray<ProposalRow> = [];
+  let minted = 0;
+  const listingOf = (row: ProposalRow): Effect.Effect<ProposalListing> =>
+    Effect.map(options.chain.head(row.targetId), (head) => ({
+      row,
+      targetVersion: Option.map(head, (entry) => entry.version),
+    }));
+  const filterRowOf = (row: ProposalRow): FilterRow => ({
+    id: row.id,
+    authorId: row.authorId,
+    targetId: row.targetId,
+    targetType: row.targetType,
+    status: row.status,
+    submittedAt: row.submittedAt,
+    targetOwnerId: Option.getOrElse(HashMap.get(options.leaves.owners(), row.targetId), () => null),
+  });
+  const find = (id: string) => Arr.findFirst(rows, (row) => row.id === id);
+  const newestFirst = Order.combine(
+    Order.flip(Order.mapInput(Order.Date, (row: ProposalRow) => row.submittedAt)),
+    Order.flip(Order.mapInput(Order.String, (row: ProposalRow) => row.id)),
+  );
+  return {
+    mintId: Effect.sync(() => {
+      minted += 1;
+      return `00000000-0000-4000-9000-${String(minted).padStart(12, "0")}`;
+    }),
+    insert: (row) =>
+      Effect.sync(() => {
+        rows = [...rows, row];
+      }),
+    get: (id) =>
+      Effect.suspend(() =>
+        Option.match(find(id), {
+          onNone: () => Effect.succeed(Option.none()),
+          onSome: (row) => Effect.map(listingOf(row), Option.some),
+        }),
+      ),
+    lock: (id) => Effect.sync(() => find(id)),
+    close: (id, decision) =>
+      Effect.sync(() => {
+        rows = Arr.map(rows, (row) =>
+          row.id === id && row.status === "pending"
+            ? {
+                ...row,
+                status: decision.status,
+                decidedAt: Option.some(decision.decidedAt),
+                decidedBy: Option.some(decision.decidedBy),
+                decisionNote: decision.decisionNote,
+                appliedVersion: decision.appliedVersion,
+              }
+            : row,
+        );
+      }),
+    list: ({ where, limit, offset }) =>
+      Effect.suspend(() => {
+        // No proposal column is a publication stamp, so `now` is never read.
+        const context: EvaluationContext<never> = {
+          now: DateTime.toDate(DateTime.makeUnsafe(0)),
+          contains: () => false,
+        };
+        const matching = Arr.sort(
+          Arr.filter(rows, (row) => evaluate(where, filterRowOf(row), context)),
+          newestFirst,
+        );
+        return Effect.map(
+          Effect.forEach(matching.slice(offset, offset + limit), listingOf, { concurrency: 1 }),
+          (page) => ({ rows: page, total: matching.length }),
+        );
+      }),
+    rows: () => rows,
   };
 };

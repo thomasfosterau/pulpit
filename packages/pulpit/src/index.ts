@@ -59,3 +59,10 @@ export * as Documents from "./documents.ts";
  * is, with declared cardinality limits.
  */
 export * as Edges from "./edges.ts";
+
+/**
+ * Suggested edits: a contributor's patch against a node's version, accepted
+ * through the target's own update or rejected (`defineProposals` over a
+ * `ProposalStore` seam), with its two-tier stale / conflict classification.
+ */
+export * as Proposals from "./proposals.ts";
