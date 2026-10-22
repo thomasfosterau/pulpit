@@ -1,6 +1,6 @@
 # packages/pulpit-wordpress — `@thomasfosterau/pulpit-wordpress`
 
-The WordPress-compatible (`wp/v2`), read-only REST API over the kernel's chains: the second package in this repo. So far it exports the `IdCodec` seam (`./ids`, pulpit#114) and its in-memory fake (`./testing`); it is `"private": true` until the owner sets up its publishing ([PUBLISHING.md](../../PUBLISHING.md)). The spec, and the owner's decisions on it, are on pulpit#86; read them before adding code.
+The WordPress-compatible (`wp/v2`), read-only REST API over the kernel's chains: the second package in this repo. It exports the read API (`./api`, pulpit#86 phase 1: posts, pages, media and the discovery index), its `effect/http` adapter (`./http`), the `IdCodec` seam (`./ids`, pulpit#114) and its in-memory fake (`./testing`); `src/internal/wire.ts` holds WordPress's own wire vocabulary (the error envelope, dates, `Link`, `_fields`), off docgen. It is `"private": true` until the owner sets up its publishing ([PUBLISHING.md](../../PUBLISHING.md)). The spec, and the owner's decisions on it, are on pulpit#86; read them before adding code.
 
 ## Boundary
 

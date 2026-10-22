@@ -22,6 +22,22 @@ import {
   type WireIds,
 } from "@thomasfosterau/pulpit-wordpress/ids";
 import {
+  bind,
+  defineWordPress,
+  MAX_LIST_PARAMETER,
+  type BoundPostType,
+  type PostFields,
+  type PostTypeBinding,
+  type WordPressApi,
+  type WordPressConfig,
+  type WordPressRequest,
+  type WordPressResponse,
+} from "@thomasfosterau/pulpit-wordpress/api";
+import { wordPressHttp } from "@thomasfosterau/pulpit-wordpress/http";
+import type * as HttpServerRequest from "effect/http/HttpServerRequest";
+import type * as HttpServerResponse from "effect/http/HttpServerResponse";
+import type * as Schema from "effect/Schema";
+import {
   makeInMemoryIdCodec,
   type InMemoryIdCodec,
 } from "@thomasfosterau/pulpit-wordpress/testing";
@@ -35,7 +51,7 @@ type Satisfies<A, B> = [A] extends [B] ? true : false;
 
 // ── the root barrel ──────────────────────────────────────────────────────
 
-export type _Root = Assert<Equals<keyof typeof WordPress, "Ids">>;
+export type _Root = Assert<Equals<keyof typeof WordPress, "Ids" | "Api" | "Http">>;
 export type _RootIds = Assert<Equals<typeof WordPress.Ids.integerIds, typeof integerIds>>;
 
 // ── ./ids ────────────────────────────────────────────────────────────────
@@ -131,5 +147,58 @@ export type _InMemoryIdCodecHooks = Assert<
       readonly encodeCalls: () => ReadonlyArray<ReadonlyArray<string>>;
       readonly decodeCalls: () => ReadonlyArray<ReadonlyArray<number>>;
     }
+  >
+>;
+
+// ── ./api and ./http (pulpit#86 phase 1) ─────────────────────────────────
+
+export type _RootApi = Assert<Equals<typeof WordPress.Api.defineWordPress, typeof defineWordPress>>;
+export type _RootHttp = Assert<Equals<typeof WordPress.Http.wordPressHttp, typeof wordPressHttp>>;
+export type _MaxListParameter = Assert<Equals<typeof MAX_LIST_PARAMETER, 100>>;
+export type _DefineWordPress = Assert<
+  Equals<typeof defineWordPress, <R>(config: WordPressConfig<R>) => WordPressApi<R>>
+>;
+export type _Handle = Assert<
+  Equals<
+    WordPressApi<CodecDb>["handle"],
+    (request: WordPressRequest) => Effect.Effect<WordPressResponse, never, CodecDb>
+  >
+>;
+export type _Request = Assert<
+  Equals<
+    WordPressRequest,
+    {
+      readonly method: string;
+      readonly path: string;
+      readonly query: ReadonlyArray<readonly [string, string]>;
+    }
+  >
+>;
+export type _Response = Assert<
+  Equals<
+    WordPressResponse,
+    {
+      readonly status: number;
+      readonly headers: { readonly [name: string]: string };
+      readonly body: Option.Option<Schema.Json>;
+    }
+  >
+>;
+export type _Bind = Assert<
+  Equals<
+    typeof bind,
+    <Resource, E, R>(binding: PostTypeBinding<Resource, E, R>) => BoundPostType<R>
+  >
+>;
+export type _PostFieldsAuthor = Assert<Equals<PostFields["author"], Option.Option<string>>>;
+export type _PostFieldsDate = Assert<Equals<PostFields["date"], Option.Option<Date>>>;
+export type _WordPressHttp = Assert<
+  Equals<
+    ReturnType<typeof wordPressHttp<CodecDb>>,
+    Effect.Effect<
+      HttpServerResponse.HttpServerResponse,
+      never,
+      HttpServerRequest.HttpServerRequest | CodecDb
+    >
   >
 >;

@@ -35,6 +35,8 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
+    "./api": "./src/api.ts",
+    "./http": "./src/http.ts",
     "./ids": "./src/ids.ts",
     "./testing": "./src/testing.ts"
   },
@@ -43,6 +45,14 @@
       ".": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      },
+      "./api": {
+        "types": "./dist/api.d.ts",
+        "default": "./dist/api.js"
+      },
+      "./http": {
+        "types": "./dist/http.d.ts",
+        "default": "./dist/http.js"
       },
       "./ids": {
         "types": "./dist/ids.d.ts",
