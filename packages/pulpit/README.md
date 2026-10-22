@@ -18,9 +18,9 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`). |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
-| `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`) and `validateRegistry`. |
+| `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`) and `validateRegistry`. |
 | `./version-chain` | The append-only node/version chain operations over a `VersionChainStore` seam, and the field-level version compare (`diffStates`, `compare`). |
 | `./filter` | `ListFilter`, the read-predicate tree a store renders to SQL, and its in-memory `evaluate`. |
 | `./subtype` | `LeafAccess`, the read scope and viewer predicates, the write gates, `defineSubtype`, `subtypeHandlers`, and the lifecycle hook seam (before / after every write). |
@@ -29,7 +29,8 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./edges` | `defineEdgeOps`, the edge operations factory over an `EdgeStore` seam: relations between nodes, readable only when every end is, with declared cardinality limits. |
 | `./proposals` | `defineProposals`, suggested edits over a `ProposalStore` seam: a contributor's patch against a base version, its two-tier stale / conflict classification, and accept (through the target's own update, recording `proposedBy`), reject and withdraw. |
 | `./blobs` | File and media leaves: the `BlobStore` seam keyed by content hash, the file field spread, the commit-ordered byte write (`defineFileWrites`, with its `bytesPending` marker) and the usage index's edge ends. |
-| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal and blob stores, an endpoint view, a follower seam), for tests only. Not on the root export. |
+| `./paths` | Routable content: `routable`, a leaf's path claims tied to its chain over a `PathStore` seam, the aliases a path change leaves behind, and the gated `resolve`. |
+| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob and path stores, an endpoint view, a follower seam), for tests only. Not on the root export. |
 
 The operations are written against seams that the application fills; their expected shapes are in [Seams](#seams).
 
@@ -109,7 +110,7 @@ registryWireTypes(REGISTRY, ["content"]).owned; // ["posts"]
 
 | Export | What it is |
 | --- | --- |
-| `RegistryEntry`, `RESOURCE_FLAGS` | The entry shape and its flags: `pageable`, `agent`, `owned`, `referenceData`, `searchable`. `owned` and `referenceData` are mutually exclusive. |
+| `RegistryEntry`, `RESOURCE_FLAGS` | The entry shape and its flags: `pageable`, `agent`, `owned`, `referenceData`, `searchable`, `routable`. `owned` and `referenceData` are mutually exclusive. |
 | `parent(key)`, `root` | Declare an entry's parent with its key literal preserved (`Option.some` widens it to `string`, which empties every typed derivation). |
 | `validateRegistry(entries, checks?)` | Unique keys, parents resolve, a flag implies a resource, the trust axis, id / wire-type lockstep; then the application's own `RegistryCheck`s. |
 | `branchOf(entry, byKey, roots)` | The branch root an entry sits under, walking marker levels. |
@@ -499,6 +500,33 @@ fileUrl(row, r2); // none while the row's bytesPending is anything but false
 | `fileUrl(file, blobs)` | A version's URL, or none while its bytes are pending. |
 | `fileUsageEnds({ user, file })` | The usage index's edge ends (`userId`, `fileId`). |
 
+## `./paths`
+
+Routable content (pulpit#57). A path claim lives on the root node: one path per content item. The locale is chosen when the resolved node is read, never by the path, so a slug translation is not a claim of its own (pulpit#56's model (b)). `routable(ops, { column, paths, chain })` wraps a leaf's `defineSubtype` operations, so that each write keeps the node's claim in step with the state it landed at:
+
+```ts
+import { routable } from "@thomasfosterau/pulpit/paths";
+
+const pages = routable(pageOps, { column: "slug", paths: pagePaths, chain });
+const handlers = subtypeHandlers(pages, { transact, cache }); // the claims run inside `transact`
+
+pages.resolve("about"); // { kind: "node", id, resource } | { kind: "redirect", id, path } | PathNotFound
+```
+
+- **Claims follow the node's lifecycle.** A write that leaves the node live claims the path its state holds in `column` (a string; anything else claims nothing). A tombstone, or a state without a path, frees the claim. A restore (`restore` or `restoreVersion`) re-claims its path, or fails `PathTaken` (409) when another node holds it now. The claim runs after the append, in the same transaction, so a refused claim rolls the append back with it. The state is read from `chain` ungated, so a write that hides the row from its own writer still keeps its claim right.
+- **A path change records an alias.** The old path resolves as a redirect to the canonical one, until another node claims it (a canonical claim takes over an alias). A revert promotes the node's own alias back.
+- **Resolution is gated** (`SEC-AUTH-ENUM-001`). `resolve(path)` reads the node through the leaf's own `get`, so the path of a hidden node (private, a draft, a tombstone), and an alias to one, is `PathNotFound`, never a redirect. So is an alias whose node has no canonical path now.
+- **What `PathTaken` discloses.** It names the path, never the holder, but it says that some node holds the path, whether or not the writer can read it, as a unique-key conflict does.
+
+Free-form redirects (patterns, a 404 log) are the site's. The path's syntax is the attribute's schema (effect-schema-ext's `Ids.slug`, once it publishes).
+
+| Export | What it is |
+| --- | --- |
+| `routable(ops, config)`, `RoutableOps`, `RoutableConfig` | A leaf's operations with path claims and `resolve`, and what it takes: the path column, the `PathStore` and the chain store. |
+| `Resolution` | What a path resolves to: `{ kind: "node", id, resource }` or `{ kind: "redirect", id, path }`. |
+| `PathStore`, `PathEntry` | The path-table seam and one stored path (its node, canonical or alias). |
+| `PathTaken`, `PathNotFound` | Another node holds the path canonically (409); no node the viewer can read answers to it (404). |
+
 ## `./testing`
 
 In-memory fakes of the kernel's seams, for tests: an adapter's or an application's suite can run the real operations (`defineVersionChain`, `defineSubtype`, `defineEdgeOps`, …) over them without a database. Each fake implements its seam's contract as stated under [Seams](#seams), in memory and with no SQL, and enforces what the real table's schema enforces (a primary or unique key) and nothing the operations are responsible for. They are the fakes the kernel's own suites run against, so they are its reference semantics for each seam.
@@ -549,6 +577,7 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | `makeInMemoryNodes(columns)`, `InMemoryNodes` | `EndpointView`, an end's view whose rows a test writes directly (an `InMemoryLeafStore` is one too). | `put(row)`. |
 | `makeInMemoryProposalStore({ chain, leaves })`, `InMemoryProposalStore` | [`ProposalStore`](#proposalstoree-r-the-proposal-table), reading each listing's head version from `chain` and its `targetOwnerId` from `leaves`' owner stamps; newest first, `id` descending on a tie. | `rows()` (every proposal as it now stands). |
 | `makeInMemoryBlobStore()`, `InMemoryBlobStore`, `InMemoryBlob`, `InMemoryBlobFailure` | [`BlobStore`](#blobstoree-r-the-byte-store), with `memory://<key>` URLs and no signed upload. | `objects()` (every stored object), `failNextPut()` (a byte write failing after the commit). |
+| `makeInMemoryPathStore()`, `InMemoryPathStore` | [`PathStore`](#pathstoree-r-the-path-table), one entry per path, with `claim`'s `PathTaken` and alias rules in one step. | `entries()` (every stored path and its entry). |
 | `makeInMemoryFollowers(table)`, `InMemoryFollowing` | [`FollowerSeam`](#the-viewer-the-role-axes-and-the-follower-seam) over an explicit table of who follows whom; the `in` set is a `HashSet` of account ids, where SQL's is a subquery. |  |
 
 `now` is the instant the list filter's `published` / `notPublished` compare against (and, for the edge store, the base of the minted `createdAt`s). Pass a fixed `Date` for a deterministic suite; left out, each call reads the Effect `Clock`, so `TestClock` steers it. The role ladder and the `AccessPolicy` are the application's, so `./testing` ships none.
@@ -666,6 +695,10 @@ Method contract:
 - `signedUploadUrl`, when the store offers one, signs a direct client upload of `key`'s bytes. The node stays `bytesPending` until `confirmBytes` sees them.
 
 `E` is the store's own failure, and `R` whatever its client needs.
+
+### `PathStore<E, R>`: the path table
+
+Filled by the application, over a path table per routable namespace (gardeneria's `pages` canonical paths plus `page_slugs`; pulpit#57): `(path PRIMARY KEY, node_id, canonical boolean)`. At most one canonical row per node is held as a partial unique index on `node_id WHERE canonical`. It runs in the caller's transaction and applies no policy. `lookup(path)` is the row by key. `canonicalOf(id)` is the node's canonical row. `claim(id, path)` is one statement or one transaction step: it fails `PathTaken` when another node's canonical row holds `path`. Otherwise it turns the node's canonical row, if any, into an alias, and upserts `path` as the node's canonical row, replacing an alias row at it, whoever's. `release(id)` deletes the node's canonical row and keeps its aliases. `makeInMemoryPathStore` in [`./testing`](#testing) follows this contract.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 

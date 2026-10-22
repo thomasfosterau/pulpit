@@ -44,6 +44,7 @@
     "./edges": "./src/edges.ts",
     "./proposals": "./src/proposals.ts",
     "./blobs": "./src/blobs.ts",
+    "./paths": "./src/paths.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -91,6 +92,10 @@
       "./blobs": {
         "types": "./dist/blobs.d.ts",
         "default": "./dist/blobs.js"
+      },
+      "./paths": {
+        "types": "./dist/paths.d.ts",
+        "default": "./dist/paths.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",

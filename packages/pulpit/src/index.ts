@@ -73,3 +73,10 @@ export * as Proposals from "./proposals.ts";
  * (`defineFileWrites`) and the usage index's edge ends.
  */
 export * as Blobs from "./blobs.ts";
+
+/**
+ * Routable content: a leaf's path claims tied to its version chain
+ * (`routable` over a `PathStore` seam), the aliases a path change leaves
+ * behind, and the gated resolution of a path.
+ */
+export * as Paths from "./paths.ts";

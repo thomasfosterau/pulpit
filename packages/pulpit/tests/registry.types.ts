@@ -100,6 +100,7 @@ export const forwarded = (flag: true | undefined): RegistryEntry => ({
   owned: flag,
   referenceData: flag,
   searchable: flag,
+  routable: flag,
 });
 export const marker: RegistryEntry = {
   key: "node",

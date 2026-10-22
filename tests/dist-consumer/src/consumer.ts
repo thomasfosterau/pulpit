@@ -10,7 +10,15 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Resource } from "@thomasfosterau/effect-jsonapi";
-import { Blobs, Content, Documents, Edges, Proposals, Registry } from "@thomasfosterau/pulpit";
+import {
+  Blobs,
+  Content,
+  Documents,
+  Edges,
+  Paths,
+  Proposals,
+  Registry,
+} from "@thomasfosterau/pulpit";
 import {
   ContentResource,
   contentVisibilityResourceFields,
@@ -133,6 +141,15 @@ import {
 import type { ColumnValue, VersionRow } from "@thomasfosterau/pulpit/version-chain";
 
 import { defineFileWrites, fileUrl, type FileWrite } from "@thomasfosterau/pulpit/blobs";
+import {
+  PathNotFound,
+  PathTaken,
+  routable,
+  type PathEntry,
+  type PathStore,
+  type Resolution,
+  type RoutableOps,
+} from "@thomasfosterau/pulpit/paths";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -214,6 +231,7 @@ export const wire = registryWireTypes(REGISTRY, ["content"] as const);
 export type _Wire = Assert<
   Equals<typeof wire.branches, { readonly content: ReadonlyArray<string> }>
 >;
+export type _WireRoutable = Assert<Equals<typeof wire.routable, ReadonlyArray<string>>>;
 
 // ── version-chain ────────────────────────────────────────────────────────
 
@@ -837,3 +855,47 @@ export type _BlobsBarrel = Assert<Equals<typeof Blobs.defineFileWrites, typeof d
 export type _FileUrl = Assert<Equals<ReturnType<typeof fileUrl>, Option.Option<string>>>;
 export type _FileWrite = Assert<Equals<FileWrite["bytesPending"], boolean>>;
 export type _FileWriteVersion = Assert<Equals<FileWrite["version"], bigint>>;
+
+// ── paths (pulpit#57) ────────────────────────────────────────────────────
+
+export type _PathsBarrel = Assert<Equals<typeof Paths.routable, typeof routable>>;
+export type _PathEntry = Assert<
+  Equals<PathEntry, { readonly nodeId: string; readonly canonical: boolean }>
+>;
+export type _PathClaim = Assert<
+  Equals<
+    PathStore<StoreFailure, Transaction>["claim"],
+    (nodeId: string, path: string) => Effect.Effect<void, PathTaken | StoreFailure, Transaction>
+  >
+>;
+export type _PathLookup = Assert<
+  Equals<
+    PathStore<StoreFailure, Transaction>["lookup"],
+    (path: string) => Effect.Effect<Option.Option<PathEntry>, StoreFailure, Transaction>
+  >
+>;
+export type _PathTakenTag = Assert<Equals<PathTaken["_tag"], "PathTaken">>;
+export type _PathNotFoundTag = Assert<Equals<PathNotFound["_tag"], "PathNotFound">>;
+export type _PathTakenPath = Assert<Equals<PathTaken["path"], string>>;
+export type _Resolution = Assert<
+  Equals<
+    Resolution<PostDoc>,
+    | { readonly kind: "node"; readonly id: string; readonly resource: PostDoc }
+    | { readonly kind: "redirect"; readonly id: string; readonly path: string }
+  >
+>;
+export type _Resolve = Assert<
+  Equals<
+    RoutableOps<PostDoc, StoreFailure, Transaction>["resolve"],
+    (path: string) => Effect.Effect<Resolution<PostDoc>, PathNotFound | StoreFailure, Transaction>
+  >
+>;
+export type _RoutableUpdateError = Assert<
+  Equals<
+    Extract<
+      Effect.Error<ReturnType<RoutableOps<PostDoc, StoreFailure, Transaction>["update"]>>,
+      PathTaken
+    >,
+    PathTaken
+  >
+>;
