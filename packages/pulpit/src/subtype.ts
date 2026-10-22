@@ -98,6 +98,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import { ResourceHandlers, type Assemble, type Handlers } from "@thomasfosterau/effect-jsonapi";
 import type { Visibility } from "./content.ts";
 import { always, and, eq, isIn, ne, never, or, type ListFilter } from "./filter.ts";
 import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
@@ -1460,10 +1461,8 @@ export const cacheWriteThrough = <Resource, R>(
  * assembler wraps — plus the version-restore command, which has no JSON:API
  * endpoint and is run SSR-direct.
  *
- * effect-jsonapi's server skeleton has shipped as its `ResourceHandlers`
- * namespace (exported since 0.15.0; pulpit's peer is `>=0.16.0`), but
- * {@link subtypeHandlers} isn't wired to it yet (pulpit#5): when it is, this
- * record maps onto `ResourceHandlers`' real handler signatures.
+ * {@link subtypeResourceHandlers} turns the record into effect-jsonapi's
+ * `ResourceHandlers.make` CRUD handlers (pulpit#5).
  *
  * Every write re-reads the row after the chain write and hands it to the
  * leaf's after hooks ({@link LifecycleHooks}), the cache write-through
@@ -1666,4 +1665,123 @@ export const subtypeHandlers = <Resource, E, R>(
         ops.restoreVersion(input.id, input.version, { expectedVersion: input.expectedVersion }),
       ),
   };
+};
+
+// ── effect-jsonapi's ResourceHandlers ─────────────────────────────────
+
+/**
+ * What {@link subtypeResourceHandlers} needs besides the handler record:
+ * effect-jsonapi's `ResourceHandlers.make` config without its `ops`, `cache`
+ * and `transact` (the record already owns the write boundary, the re-read and
+ * the cache write-through), plus the three mappings from the endpoint's
+ * decoded inputs onto the operations' own.
+ *
+ * @since 0.1.0
+ */
+export interface SubtypeResourceHandlersConfig<
+  TQuery,
+  TCreate,
+  TUpdate extends { readonly id: string },
+  V,
+  RV,
+  RL,
+  Targets extends Handlers.IncludeTargets,
+> extends Omit<
+  ResourceHandlers.ReadOnlyConfig<
+    TQuery,
+    Assemble.ResourceLike,
+    string,
+    V,
+    never,
+    never,
+    RV,
+    RL,
+    never,
+    Targets
+  >,
+  "ops" | "cache"
+> {
+  /** The decoded list query as a {@link ListRequest}: its page, `includeDeleted`, `where` and order. */
+  readonly listRequest: (query: TQuery) => ListRequest;
+  /** The decoded create payload as the operation's input: the client id, if any, and the state. */
+  readonly createInput: (payload: TCreate) => {
+    readonly id: Option.Option<string>;
+    readonly state: ChainState;
+  };
+  /**
+   * The decoded update payload as the operation's input: the id, the
+   * tri-state patch and the optional expected version.
+   */
+  readonly updateInput: (
+    payload: TUpdate,
+  ) => { readonly id: string; readonly patch: ChainPatch } & Precondition;
+}
+
+/**
+ * A leaf's {@link SubtypeHandlers} as effect-jsonapi's CRUD handlers
+ * (`ResourceHandlers.make`), keyed by the endpoint names `Group.flat`
+ * declares (pulpit#5). Each write goes through the record, so it keeps the
+ * record's `transact` boundary, writer re-read, lifecycle hooks and cache
+ * write-through (`CACHE-AUTH-005`); effect-jsonapi is given no `cache` and no
+ * `transact` of its own, and its mutation tail re-reads the row once more
+ * with `get` to assemble the document. `list` answers the page with the
+ * unpaged total, and `delete` the 204. `restore` and `restoreVersion` have no
+ * JSON:API endpoint and stay on the record. The handlers fail with the
+ * record's errors (and effect-jsonapi's `Conflict` for an `update` whose
+ * payload id is not the route's, before any operation runs); mapping them to
+ * the wire is the application's `ServerErrors`.
+ *
+ * @since 0.1.0
+ */
+export const subtypeResourceHandlers = <
+  Resource extends Assemble.ResourceLike,
+  E,
+  R,
+  TQuery,
+  TCreate,
+  TUpdate extends { readonly id: string },
+  V = undefined,
+  RV = never,
+  RL = never,
+  Targets extends Handlers.IncludeTargets = never,
+>(
+  handlers: SubtypeHandlers<Resource, E, R>,
+  config: SubtypeResourceHandlersConfig<TQuery, TCreate, TUpdate, V, RV, RL, Targets>,
+) => {
+  const { listRequest, createInput, updateInput, ...rest } = config;
+  return ResourceHandlers.make<
+    TQuery,
+    TCreate,
+    TUpdate,
+    Resource,
+    string,
+    V,
+    | E
+    | Gate
+    | InvalidListOrder
+    | WriteRejected
+    | NodeAlreadyExists
+    | NodeNotFound
+    | StaleVersion
+    | VersionConflict,
+    R,
+    R,
+    RV,
+    RL,
+    never,
+    Targets
+  >({
+    ...rest,
+    ops: {
+      list: (query) =>
+        Effect.map(handlers.list(listRequest(query)), (page) => ({
+          items: page.rows,
+          totalCount: page.total,
+        })),
+      get: handlers.get,
+      create: (payload) => Effect.map(handlers.create(createInput(payload)), ({ id }) => ({ id })),
+      update: (payload) => Effect.map(handlers.update(updateInput(payload)), ({ id }) => ({ id })),
+      delete: (id) => handlers.delete(id),
+    },
+  });
 };
