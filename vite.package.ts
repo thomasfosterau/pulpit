@@ -127,7 +127,9 @@ export const packageConfig = (dir: string) => {
       ...maxWorkers,
       coverage: {
         provider: "istanbul",
-        reporter: ["text-summary", "json-summary"],
+        // `json` writes coverage-final.json, the per-package Istanbul map;
+        // the root `test:coverage` writes the merged one `fallow audit` reads.
+        reporter: ["text-summary", "json-summary", "json"],
         reportsDirectory: "./coverage",
         include: ["src/**/*.ts"],
         exclude: ["**/*.d.ts"],

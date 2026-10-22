@@ -2,8 +2,8 @@
  * @copyright Thomas Foster
  *
  * Root workspace config. Owns the repo-wide format/lint/staged passes (read
- * statically by `vp fmt` / `vp lint` / `vp staged`) and the root `check`
- * aggregate.
+ * statically by `vp fmt` / `vp lint` / `vp staged`), the root `check`
+ * aggregate and the root `test:coverage` map.
  *
  * Copied from the effect-drizzle-ext library (itself from the gardeneria
  * application's root config): every comment that explains a load-bearing
@@ -20,6 +20,7 @@ export default defineConfig({
     "*.{js,ts,css,json,md}": "vp check --fix",
   },
   fmt: {
+    ignorePatterns: ["**/dist/**", "**/docs/**", "**/coverage/**"],
     overrides: [
       {
         files: ["**/*.md"],
@@ -30,6 +31,7 @@ export default defineConfig({
     ],
   },
   lint: {
+    ignorePatterns: ["**/dist/**", "**/docs/**", "**/coverage/**", "**/node_modules/**"],
     extends: [recommended, effect.configs.recommended],
     categories: {
       correctness: "error",
@@ -154,6 +156,31 @@ export default defineConfig({
         ],
         cache: false,
       },
+      // Every package's unit suite under one Istanbul coverage map
+      // (`coverage/coverage-final.json`), which `fallow audit` reads for exact
+      // per-function CRAP scores (`health.coverage` in .fallowrc.json).
+      // Without it fallow estimates every function as uncovered, and any
+      // function with cyclomatic complexity ≥ 5 fails the gate on its own.
+      // Run this before `fallow audit` (the PreToolUse fallow gate runs the
+      // audit on `git commit` / `git push` but never refreshes this map). The
+      // per-package thresholds stay on each package's own `test:coverage`.
+      // Each package's `exports` point at `src/`, so no build edge is needed.
+      "test:coverage": {
+        command: "vp test run --coverage",
+        cache: false,
+      },
+    },
+  },
+  test: {
+    // One entry per package: each package's own vite.config.ts is a vitest
+    // project, so the root run and the root coverage map cover them all.
+    projects: ["packages/*/vite.config.ts"],
+    coverage: {
+      provider: "istanbul",
+      reporter: ["text-summary", "json-summary", "json"],
+      reportsDirectory: "./coverage",
+      include: ["packages/*/src/**/*.ts"],
+      exclude: ["**/*.d.ts"],
     },
   },
 });
