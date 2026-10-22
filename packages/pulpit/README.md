@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`). |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`) and `validateRegistry`. |
 | `./version-chain` | The append-only node/version chain operations over a `VersionChainStore` seam, and the field-level version compare (`diffStates`, `compare`). |
@@ -30,7 +30,8 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./proposals` | `defineProposals`, suggested edits over a `ProposalStore` seam: a contributor's patch against a base version, its two-tier stale / conflict classification, and accept (through the target's own update, recording `proposedBy`), reject and withdraw. |
 | `./blobs` | File and media leaves: the `BlobStore` seam keyed by content hash, the file field spread, the commit-ordered byte write (`defineFileWrites`, with its `bytesPending` marker) and the usage index's edge ends. |
 | `./paths` | Routable content: `routable`, a leaf's path claims tied to its chain over a `PathStore` seam, the aliases a path change leaves behind, and the gated `resolve`. |
-| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob and path stores, an endpoint view, a follower seam), for tests only. Not on the root export. |
+| `./moderation` | The moderation workflow: the transition rules as a before hook, the decision, the review-queue filter, threshold grading and member reports over a `ReportStore` seam. |
+| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path and report stores, an endpoint view, a follower seam), for tests only. Not on the root export. |
 
 The operations are written against seams that the application fills; their expected shapes are in [Seams](#seams).
 
@@ -528,6 +529,57 @@ Free-form redirects (patterns, a 404 log) are the site's. The path's syntax is t
 | `PathStore`, `PathEntry` | The path-table seam and one stored path (its node, canonical or alias). |
 | `PathTaken`, `PathNotFound` | Another node holds the path canonically (409); no node the viewer can read answers to it (404). |
 
+## `./moderation`
+
+The moderation workflow (pulpit#51). The kernel owns the rules; the transport (a queue, running the classifier, an API-call ledger, moderator notifications) stays the application's. A leaf's moderation state is a column of its version row (`ModerationState`: `pending | approved | rejected`), so every decision is an appended version.
+
+```ts
+import * as Effect from "effect/Effect";
+import {
+  defineModeration,
+  moderatedColumns,
+  moderationHook,
+} from "@thomasfosterau/pulpit/moderation";
+
+const declaration = moderatedColumns(["body"]); // moderationState / moderatedAt / moderatedBy; an edit to body re-reviews
+const comments = defineSubtype({
+  // …the leaf's declaration…
+  hooks: Effect.succeed({ before: [moderationHook(declaration, policy)], after: [] }),
+});
+const moderation = defineModeration({ target: comments, declaration, viewer, policy });
+// moderation.moderate(id, "approved")
+```
+
+- **The rules** (`moderatePatch`, run as `moderationHook`, a before hook on [`./subtype`'s lifecycle seam](#subtype), so every write path honours them):
+  - A create stores `pending`, and a create asking for another state fails `WriteRejected`.
+  - Only the moderate rung changes the state, along `isModerationTransition`: `pending → approved | rejected`, re-moderation between `approved` and `rejected`, and re-review back to `pending`. Anyone else's change fails `WriteRejected`, appending nothing. A patch echoing the current state changes nothing.
+  - A decision is stamped into the declared `moderatedAtColumn` and `moderatedByColumn`.
+  - An edit that changes one of the leaf's `reReviewOn` attributes sends an `approved` row back to `pending`.
+  - A `restoreVersion` below the moderate rung carries the current moderation columns over the restored version's, so an old approval never returns with old content.
+  - An owner withdraws their own content by deleting it, which the owned write gate admits in every state.
+- **The decision**, `defineModeration(...).moderate(id, decision, precondition?)`, is the moderate rung's: it fails `Unauthorized` / `Forbidden` before anything is read, then appends through the target's own `update`.
+- **The review queue** is the leaf's pending rows, `reviewQueueFilter(viewer, policy, column?)` (pass it as a list request's `where`; `never` below the moderate rung), plus the open member reports.
+- **Threshold grading**, `gradeScores(scores, thresholds, defaultThreshold?)`, is pure. It takes a classifier's report shaped like effect-ai-ext's `ModerationModel` output (`{ flagged, categoryScores }`; pulpit doesn't import it) and the leaf's per-category bars.
+  - A category with no bar is graded against `DEFAULT_MODERATION_THRESHOLD` (0.5).
+  - A score breaches only strictly above its bar, and an unassessed category (absent, never `0`) can't breach.
+  - The classifier's own flag is never overridden downward.
+  - The grade has a priority band (`low | medium | high | urgent`) from the worst breach.
+  - Classification runs from an application's after hook; acting on a grade is a `moderate` call.
+- **Member reports**, `defineReports({ target, reports, viewer, policy })`, are plain rows over a `ReportStore`.
+  - `file` needs a signed-in account that can `get` the target. One that can't gets `NodeNotFound`, never `Forbidden`, and the answer never says whether others reported the node.
+  - `get` / `list` are for the reporter and the moderate rung.
+  - `resolve(id, "resolved" | "dismissed", note)` is the moderate rung's alone. A closed report fails `ReportClosed`, and acting on the node is a separate call.
+
+Which rows a viewer below the moderate rung may _read_ in each state (gardeneria shows an unapproved comment to its author and the rung only) is still the application's read rule, as `PUB-005` records; `isPubliclyServeable` already refuses every state but `approved` from the cache.
+
+| Export | What it is |
+| --- | --- |
+| `moderationHook(declaration, policy)`, `moderatePatch`, `isModerationTransition`, `ModerationDeclaration`, `moderatedColumns(reReviewOn)` | The transition rules as a before hook, as a pure function, and the transition table; the leaf's columns and re-review triggers, and the declaration with the conventional names. |
+| `defineModeration(definition)`, `ModerationOps` | The decision (`moderate`). |
+| `reviewQueueFilter(viewer, policy, column?)` | The queue's leaf half as a list filter. |
+| `gradeScores`, `ModerationScores`, `ModerationGrade`, `ModerationPriority`, `DEFAULT_MODERATION_THRESHOLD` | Threshold grading and its shapes. |
+| `defineReports(definition)`, `ReportOps`, `ReportStore`, `ReportRow`, `ReportResolution`, `ReportStatus`, `ReportNotFound`, `ReportClosed` | Member reports: the operations, the table seam (see [Seams](#seams)), its row, the closing write, the status vocabulary and the failures (404, 409). |
+
 ## `./testing`
 
 In-memory fakes of the kernel's seams, for tests: an adapter's or an application's suite can run the real operations (`defineVersionChain`, `defineSubtype`, `defineEdgeOps`, …) over them without a database. Each fake implements its seam's contract as stated under [Seams](#seams), in memory and with no SQL, and enforces what the real table's schema enforces (a primary or unique key) and nothing the operations are responsible for. They are the fakes the kernel's own suites run against, so they are its reference semantics for each seam.
@@ -579,6 +631,7 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | `makeInMemoryProposalStore({ chain, leaves })`, `InMemoryProposalStore` | [`ProposalStore`](#proposalstoree-r-the-proposal-table), reading each listing's head version from `chain` and its `targetOwnerId` from `leaves`' owner stamps; newest first, `id` descending on a tie. | `rows()` (every proposal as it now stands). |
 | `makeInMemoryBlobStore()`, `InMemoryBlobStore`, `InMemoryBlob`, `InMemoryBlobFailure` | [`BlobStore`](#blobstoree-r-the-byte-store), with `memory://<key>` URLs and no signed upload. | `objects()` (every stored object), `failNextPut()` (a byte write failing after the commit). |
 | `makeInMemoryPathStore()`, `InMemoryPathStore` | [`PathStore`](#pathstoree-r-the-path-table), one entry per path, with `claim`'s `PathTaken` and alias rules in one step. | `entries()` (every stored path and its entry). |
+| `makeInMemoryReportStore()`, `InMemoryReportStore` | [`ReportStore`](#reportstoree-r-the-member-report-table), evaluating the filter in memory, newest first with `id` descending on a tie. | `rows()` (every report as it now stands). |
 | `makeInMemoryFollowers(table)`, `InMemoryFollowing` | [`FollowerSeam`](#the-viewer-the-role-axes-and-the-follower-seam) over an explicit table of who follows whom; the `in` set is a `HashSet` of account ids, where SQL's is a subquery. |  |
 
 `now` is the instant the list filter's `published` / `notPublished` compare against (and, for the edge store, the base of the minted `createdAt`s). Pass a fixed `Date` for a deterministic suite; left out, each call reads the Effect `Clock`, so `TestClock` steers it. The role ladder and the `AccessPolicy` are the application's, so `./testing` ships none.
@@ -700,6 +753,12 @@ Method contract:
 ### `PathStore<E, R>`: the path table
 
 Filled by the application, over a path table per routable namespace (gardeneria's `pages` canonical paths plus `page_slugs`; pulpit#57): `(path PRIMARY KEY, node_id, canonical boolean)`. At most one canonical row per node is held as a partial unique index on `node_id WHERE canonical`. It runs in the caller's transaction and applies no policy. `lookup(path)` is the row by key. `canonicalOf(id)` is the node's canonical row. `claim(id, path)` is one statement or one transaction step: it fails `PathTaken` when another node's canonical row holds `path`. Otherwise it turns the node's canonical row, if any, into an alias, and upserts `path` as the node's canonical row, replacing an alias row at it, whoever's. `release(id)` deletes the node's canonical row and keeps its aliases. `makeInMemoryPathStore` in [`./testing`](#testing) follows this contract.
+
+### `ReportStore<E, R>`: the member report table
+
+Filled by the application over its own report table (gardeneria's `user_reports`); no library is expected to provide one. Expected schema: `id` (a UUID primary key), `target_node_id` (a foreign key to `core.node`), `reporter_id`, `reason`, `details` (nullable), `status` (`open | resolved | dismissed`), `filed_at` (`timestamptz NOT NULL DEFAULT now()`), and the nullable `resolved_at`, `resolved_by` and `resolution_note`. Index `reporter_id`, `target_node_id`, and the open rows.
+
+Method contract: `insert` inserts the row; `get(id)` is `id = $id LIMIT 1`, joined to `core.node` for `targetType`; `lock(id)` is the same row `FOR UPDATE`, so two resolutions serialise; `close(id, resolution)` updates the open row's status, resolver, timestamp and note; `list` renders `where` over `reporterId`, `targetId`, `targetType` and `status`, orders by `filed_at DESC, id DESC`, applies `LIMIT` / `OFFSET` and returns the unpaged total as a window column. `E` and `R` are as for the chain store, and the store never opens a transaction itself.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 

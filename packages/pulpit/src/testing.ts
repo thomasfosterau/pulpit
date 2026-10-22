@@ -1,6 +1,6 @@
 /**
  * **In-memory fakes of the kernel's seams** — a store for each of the
- * version-chain, leaf, document, edge, proposal and path seams, an endpoint view and a
+ * version-chain, leaf, document, edge, proposal, path and report seams, an endpoint view and a
  * follower seam, all held in memory with no SQL. They are the reference semantics of
  * each seam's contract in the package README → Seams, and the fakes the
  * kernel's own suites run against; an adapter's or an application's tests can
@@ -70,6 +70,7 @@ import {
 import { evaluate, type EvaluationContext, type FilterRow, type ListFilter } from "./filter.ts";
 import { rowOrder } from "./internal/list-order.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
+import type { ReportRow, ReportStore } from "./moderation.ts";
 import type { ProposalListing, ProposalRow, ProposalStore } from "./proposals.ts";
 import type { FollowerSeam, LeafRow, LeafStore } from "./subtype.ts";
 import {
@@ -625,6 +626,61 @@ export const makeInMemoryEdgeStore = (options: InMemoryEdgeStoreOptions): InMemo
   };
 };
 
+/** One plain row (a proposal, a report): an id, a status, a filing instant. */
+interface PlainRow {
+  readonly id: string;
+  readonly status: string;
+}
+
+/**
+ * The table both plain-row fakes keep: insert order, sequential UUID-shaped
+ * ids under `prefix`, `close` on an `open`-status row only, and a page
+ * newest first by `at`, `id` descending on a tie, evaluated in memory.
+ */
+const plainRowTable = <Row extends PlainRow>(options: {
+  readonly prefix: string;
+  readonly open: Row["status"];
+  readonly at: (row: Row) => Date;
+  readonly filterRow: (row: Row) => FilterRow;
+}) => {
+  let rows: ReadonlyArray<Row> = [];
+  let minted = 0;
+  const newestFirst = Order.combine(
+    Order.flip(Order.mapInput(Order.Date, options.at)),
+    Order.flip(Order.mapInput(Order.String, (row: Row) => row.id)),
+  );
+  // No plain-row column is a publication stamp, so `now` is never read.
+  const context: EvaluationContext<never> = {
+    now: DateTime.toDate(DateTime.makeUnsafe(0)),
+    contains: () => false,
+  };
+  const find = (id: string) => Arr.findFirst(rows, (row) => row.id === id);
+  return {
+    rows: () => rows,
+    find,
+    mintId: Effect.sync(() => {
+      minted += 1;
+      return `00000000-0000-4000-${options.prefix}-${String(minted).padStart(12, "0")}`;
+    }),
+    insert: (row: Row) =>
+      Effect.sync(() => {
+        rows = [...rows, row];
+      }),
+    lock: (id: string) => Effect.sync(() => find(id)),
+    close: (id: string, closed: (row: Row) => Row) =>
+      Effect.sync(() => {
+        rows = Arr.map(rows, (row) =>
+          row.id === id && row.status === options.open ? closed(row) : row,
+        );
+      }),
+    matching: (where: ListFilter<never>) =>
+      Arr.sort(
+        Arr.filter(rows, (row) => evaluate(where, options.filterRow(row), context)),
+        newestFirst,
+      ),
+  };
+};
+
 // ── Proposals ─────────────────────────────────────────────────────────
 
 /**
@@ -653,76 +709,114 @@ export const makeInMemoryProposalStore = (options: {
   readonly chain: InMemoryChainStore;
   readonly leaves: InMemoryLeafStore;
 }): InMemoryProposalStore => {
-  let rows: ReadonlyArray<ProposalRow> = [];
-  let minted = 0;
+  const table = plainRowTable<ProposalRow>({
+    prefix: "9000",
+    open: "pending",
+    at: (row) => row.submittedAt,
+    filterRow: (row) => ({
+      id: row.id,
+      authorId: row.authorId,
+      targetId: row.targetId,
+      targetType: row.targetType,
+      status: row.status,
+      submittedAt: row.submittedAt,
+      targetOwnerId: Option.getOrElse(
+        HashMap.get(options.leaves.owners(), row.targetId),
+        () => null,
+      ),
+    }),
+  });
   const listingOf = (row: ProposalRow): Effect.Effect<ProposalListing> =>
     Effect.map(options.chain.head(row.targetId), (head) => ({
       row,
       targetVersion: Option.map(head, (entry) => entry.version),
     }));
-  const filterRowOf = (row: ProposalRow): FilterRow => ({
-    id: row.id,
-    authorId: row.authorId,
-    targetId: row.targetId,
-    targetType: row.targetType,
-    status: row.status,
-    submittedAt: row.submittedAt,
-    targetOwnerId: Option.getOrElse(HashMap.get(options.leaves.owners(), row.targetId), () => null),
-  });
-  const find = (id: string) => Arr.findFirst(rows, (row) => row.id === id);
-  const newestFirst = Order.combine(
-    Order.flip(Order.mapInput(Order.Date, (row: ProposalRow) => row.submittedAt)),
-    Order.flip(Order.mapInput(Order.String, (row: ProposalRow) => row.id)),
-  );
   return {
-    mintId: Effect.sync(() => {
-      minted += 1;
-      return `00000000-0000-4000-9000-${String(minted).padStart(12, "0")}`;
-    }),
-    insert: (row) =>
-      Effect.sync(() => {
-        rows = [...rows, row];
-      }),
+    mintId: table.mintId,
+    insert: table.insert,
     get: (id) =>
       Effect.suspend(() =>
-        Option.match(find(id), {
+        Option.match(table.find(id), {
           onNone: () => Effect.succeed(Option.none()),
           onSome: (row) => Effect.map(listingOf(row), Option.some),
         }),
       ),
-    lock: (id) => Effect.sync(() => find(id)),
+    lock: table.lock,
     close: (id, decision) =>
-      Effect.sync(() => {
-        rows = Arr.map(rows, (row) =>
-          row.id === id && row.status === "pending"
-            ? {
-                ...row,
-                status: decision.status,
-                decidedAt: Option.some(decision.decidedAt),
-                decidedBy: Option.some(decision.decidedBy),
-                decisionNote: decision.decisionNote,
-                appliedVersion: decision.appliedVersion,
-              }
-            : row,
-        );
-      }),
+      table.close(id, (row) => ({
+        ...row,
+        status: decision.status,
+        decidedAt: Option.some(decision.decidedAt),
+        decidedBy: Option.some(decision.decidedBy),
+        decisionNote: decision.decisionNote,
+        appliedVersion: decision.appliedVersion,
+      })),
     list: ({ where, limit, offset }) =>
       Effect.suspend(() => {
-        // No proposal column is a publication stamp, so `now` is never read.
-        const context: EvaluationContext<never> = {
-          now: DateTime.toDate(DateTime.makeUnsafe(0)),
-          contains: () => false,
-        };
-        const matching = Arr.sort(
-          Arr.filter(rows, (row) => evaluate(where, filterRowOf(row), context)),
-          newestFirst,
-        );
+        const matching = table.matching(where);
         return Effect.map(
           Effect.forEach(matching.slice(offset, offset + limit), listingOf, { concurrency: 1 }),
           (page) => ({ rows: page, total: matching.length }),
         );
       }),
-    rows: () => rows,
+    rows: table.rows,
+  };
+};
+
+// ── Member reports ────────────────────────────────────────────────────
+
+/**
+ * An in-memory {@link ReportStore}, plus the hook a test reads it through.
+ * In memory only; not for production.
+ *
+ * @since 0.1.0
+ */
+export interface InMemoryReportStore extends ReportStore<never, never> {
+  /** Every report, in filing order, as it now stands. */
+  readonly rows: () => ReadonlyArray<ReportRow>;
+}
+
+/**
+ * An in-memory {@link ReportStore}: the seam's contract (README → Seams →
+ * `ReportStore`). `list` evaluates the filter in memory, newest first with
+ * `id` descending on a tie; `lock` locks nothing (one JavaScript thread has
+ * no concurrent resolution to serialise); `mintId` mints sequential
+ * UUID-shaped ids. In memory only; not for production.
+ *
+ * @since 0.1.0
+ */
+export const makeInMemoryReportStore = (): InMemoryReportStore => {
+  const table = plainRowTable<ReportRow>({
+    prefix: "a000",
+    open: "open",
+    at: (row) => row.filedAt,
+    filterRow: (row) => ({
+      id: row.id,
+      reporterId: row.reporterId,
+      targetId: row.targetId,
+      targetType: row.targetType,
+      status: row.status,
+    }),
+  });
+  return {
+    mintId: table.mintId,
+    insert: table.insert,
+    get: (id) => Effect.sync(() => table.find(id)),
+    lock: table.lock,
+    close: (id, resolution) =>
+      table.close(id, (row) => ({
+        ...row,
+        status: resolution.status,
+        resolvedAt: Option.some(resolution.resolvedAt),
+        resolvedBy: Option.some(resolution.resolvedBy),
+        resolutionNote: resolution.resolutionNote,
+      })),
+    list: ({ where, limit, offset }) =>
+      Effect.sync(() => {
+        const matching = table.matching(where);
+        return { rows: matching.slice(offset, offset + limit), total: matching.length };
+      }),
+    rows: table.rows,
   };
 };
 

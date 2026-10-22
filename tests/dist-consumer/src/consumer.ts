@@ -16,6 +16,7 @@ import {
   Documents,
   Edges,
   Paths,
+  Moderation,
   Proposals,
   Registry,
 } from "@thomasfosterau/pulpit";
@@ -141,6 +142,13 @@ import {
   type ProposalStatus,
 } from "@thomasfosterau/pulpit/proposals";
 import type { ColumnValue, VersionRow } from "@thomasfosterau/pulpit/version-chain";
+import {
+  defineModeration,
+  gradeScores,
+  moderationHook,
+  type ModerationGrade,
+  type ReportStatus,
+} from "@thomasfosterau/pulpit/moderation";
 
 import { defineFileWrites, fileUrl, type FileWrite } from "@thomasfosterau/pulpit/blobs";
 import {
@@ -924,4 +932,18 @@ export type _RoutableUpdateError = Assert<
     >,
     PathTaken
   >
+>;
+
+// ── moderation ───────────────────────────────────────────────────────────
+
+export type _ModerationBarrel = Assert<
+  Equals<typeof Moderation.defineModeration, typeof defineModeration>
+>;
+export type _Grade = Assert<Equals<ReturnType<typeof gradeScores>, ModerationGrade>>;
+export type _GradePriority = Assert<
+  Equals<ModerationGrade["priority"], "low" | "medium" | "high" | "urgent">
+>;
+export type _ReportStatus = Assert<Equals<ReportStatus, "open" | "resolved" | "dismissed">>;
+export type _ModerationHook = Assert<
+  Equals<ReturnType<typeof moderationHook<StoreFailure, Transaction>>["name"], string>
 >;

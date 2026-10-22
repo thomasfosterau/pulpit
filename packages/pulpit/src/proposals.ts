@@ -58,14 +58,13 @@
  */
 
 import * as Arr from "effect/Array";
-import * as Clock from "effect/Clock";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
-import { always, and, eq, never, or, type ListFilter } from "./filter.ts";
+import { always, eq, never, or, type ListFilter } from "./filter.ts";
+import { nowDate, plainRowQuery, signedIn as signedInAs } from "./internal/plain-rows.ts";
 import {
   Forbidden,
   requireWriter,
@@ -581,10 +580,6 @@ interface DecisionOptions {
 
 const noNote: DecisionOptions = { note: Option.none() };
 
-const nowDate: Effect.Effect<Date> = Effect.map(Clock.currentTimeMillis, (millis) =>
-  DateTime.toDate(DateTime.makeUnsafe(millis)),
-);
-
 /** The cheap verdict, while pending and the target has a head. */
 const viewOf = ({ row, targetVersion }: ProposalListing): ProposalView => ({
   proposal: row,
@@ -616,12 +611,7 @@ export const defineProposals = <Resource, E, R>(
       decode: definition.decode,
     });
 
-  const signedIn = Effect.flatMap(definition.viewer, (viewer) =>
-    Option.match(viewer, {
-      onNone: () => Effect.fail(new Unauthorized()),
-      onSome: Effect.succeed,
-    }),
-  );
+  const signedIn = signedInAs(definition.viewer);
 
   /** The target's write gate: before any proposal state is disclosed to the caller. */
   const writerOf = (targetId: string) =>
@@ -752,20 +742,7 @@ export const defineProposals = <Resource, E, R>(
     readonly offset: number;
   }) {
     const viewer = yield* definition.viewer;
-    const where = and<never>(
-      eq("targetType", type),
-      readFilter(viewer),
-      Option.match(request.targetId, { onNone: () => always, onSome: (id) => eq("targetId", id) }),
-      Option.match(request.status, {
-        onNone: () => always,
-        onSome: (status) => eq("status", status),
-      }),
-    );
-    const page = yield* proposals.list({
-      where,
-      limit: Math.max(1, Math.min(Math.trunc(request.limit), 1000)),
-      offset: Math.max(0, Math.trunc(request.offset)),
-    });
+    const page = yield* proposals.list(plainRowQuery(type, readFilter(viewer), request));
     return { rows: Arr.map(page.rows, viewOf), total: page.total };
   });
 
