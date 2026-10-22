@@ -47,6 +47,7 @@
     "./paths": "./src/paths.ts",
     "./moderation": "./src/moderation.ts",
     "./working-copy": "./src/working-copy.ts",
+    "./comments": "./src/comments.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -106,6 +107,10 @@
       "./working-copy": {
         "types": "./dist/working-copy.d.ts",
         "default": "./dist/working-copy.js"
+      },
+      "./comments": {
+        "types": "./dist/comments.d.ts",
+        "default": "./dist/comments.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",

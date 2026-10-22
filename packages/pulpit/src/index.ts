@@ -95,3 +95,10 @@ export * as Moderation from "./moderation.ts";
  * (`defineWorkingCopy`).
  */
 export * as WorkingCopy from "./working-copy.ts";
+
+/**
+ * The comments family: threaded comments on any node as versioned owned
+ * leaves (`defineComments`), behind the target's read gate and the
+ * moderation gate.
+ */
+export * as Comments from "./comments.ts";

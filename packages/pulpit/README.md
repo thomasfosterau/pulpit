@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`, `Comments`). |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`) and `validateRegistry`. |
 | `./version-chain` | The append-only node/version chain operations over a `VersionChainStore` seam, and the field-level version compare (`diffStates`, `compare`). |
@@ -32,6 +32,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./paths` | Routable content: `routable`, a leaf's path claims tied to its chain over a `PathStore` seam, the aliases a path change leaves behind, and the gated `resolve`. |
 | `./moderation` | The moderation workflow: the transition rules as a before hook, the decision, the review-queue filter, threshold grading and member reports over a `ReportStore` seam. |
 | `./working-copy` | An editor's autosave buffer outside the version chain (`WorkingCopyStore`), committed as one ordinary version (`defineWorkingCopy`). |
+| `./comments` | The comments family: threaded comments on any node as versioned owned leaves (`defineComments`), behind the target's read gate and the moderation gate, with a configurable reply depth. |
 | `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication and working-copy stores, an endpoint view, a follower seam), for tests only. Not on the root export. |
 
 The operations are written against seams that the application fills; their expected shapes are in [Seams](#seams).
@@ -630,6 +631,46 @@ const copies = defineWorkingCopy({ leaf: postOps, chain, store: workingCopies })
 | `defineWorkingCopy(definition)`, `WorkingCopyOps` | The operations (`save`, `get`, `discard`, `commit`). |
 | `WorkingCopyStore`, `WorkingCopy`, `WorkingCopyKey` | The buffer seam (see [Seams](#seams)), one copy, and its `(id, userId)` key. |
 | `WorkingCopyNotFound` | `commit` with no copy (404). |
+
+## `./comments`
+
+The comments family (pulpit#50). A comment is an ordinary owned leaf, built with `defineSubtype` with `./moderation`'s `moderationHook` among its hooks. Edits append versions, a delete tombstones, and its history is gated like any leaf's. `defineComments` wraps it with the comment's own rules.
+
+```ts
+import { defineComments } from "@thomasfosterau/pulpit/comments";
+import { moderatedColumns, moderationHook } from "@thomasfosterau/pulpit/moderation";
+
+const moderation = moderatedColumns(["body"]);
+// commentOps = defineSubtype({ …, access: ownedAccess(), hooks: Effect.succeed({ before: [moderationHook(moderation, policy)], after: [] }) })
+const comments = defineComments({
+  comments: commentOps,
+  leaves: commentLeaves, // the comment leaf's current-version view
+  targets: { posts: postOps, images: imageOps }, // each target leaf's own operations
+  viewer,
+  policy,
+  moderation,
+  authorColumn: "ownerId",
+  maxDepth: 1, // the default: one level of replies; 0 is flat
+});
+```
+
+- **Three read gates, all of them** (`SEC-AUTH-ENUM-001`). A comment reads to a viewer only when all three admit it; anything else is `NodeNotFound`, never `Forbidden`.
+  1. **The comment leaf's own `get`**: its owned visibility, and a tombstone only to the view-deleted rung.
+  2. **The moderation gate.** An unapproved comment reads only to its author and the moderate rung, so the target's owner does not see a pending comment on their own row. `canViewModerated` and `moderationListFilter` are this one rule in two readings and never disagree.
+  3. **The target gate**, run through the target leaf's own `get`. A comment on a target the viewer can't read is missing to them: a private or followers-only target they aren't admitted to, or a tombstoned one. The comment's own author is no exception.
+- **`listByTarget`** checks the target first (`NodeNotFound` for one the viewer can't read), then lists through the comment leaf's own list and the moderation gate. It lists either every comment on the target, the top-level ones only (`parentId: some(none)`), or one comment's replies.
+- **Reply depth is `maxDepth`**, default `1`: `0` is flat, `N` nests `N` deep.
+  - A reply past it fails `CommentDepthExceeded`.
+  - A reply's parent must be a comment the viewer can read, on the same target.
+  - Each comment stores `targetType`, `targetId`, `parentId` and `depth`, all written by `create`.
+  - A `maxDepth` that isn't a non-negative safe integer throws `CommentDeclarationError` when the family is declared.
+- **Stays outside the kernel:** the document grammar (prosekit-utilities), captcha and spam handling, reactions and the UI.
+
+| Export | What it is |
+| --- | --- |
+| `defineComments(definition)`, `CommentsDefinition`, `CommentOps`, `CommentCreate`, `CommentListRequest`, `CommentTarget` | The family, its declaration, the operations (`create`, `get`, `listByTarget`), their inputs, and a target leaf's read. |
+| `canViewModerated`, `moderationListFilter`, `ModeratedColumns` | The moderation gate as a row predicate and as a list filter, and the columns it reads. |
+| `CommentDepthExceeded`, `CommentDeclarationError` | A reply past `maxDepth` (422); a malformed `maxDepth`, thrown at declaration. |
 
 ## `./testing`
 
