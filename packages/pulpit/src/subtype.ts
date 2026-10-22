@@ -53,6 +53,17 @@
  *   follows anybody" — a `followers` row is then its owner's and the rung's
  *   alone. Fail closed.
  *
+ * ## Lifecycle hooks
+ *
+ * A leaf's write side effects compose as {@link LifecycleHooks} (pulpit#45):
+ * before hooks run inside each write, after its gate and before the append,
+ * and may transform the patch or refuse the write ({@link WriteRejected});
+ * after hooks run in {@link subtypeHandlers} once the write's transaction
+ * has returned, and never fail it. The cache write-through is the first
+ * after hook ({@link cacheWriteThrough}). Events fire on explicit writes
+ * only: a future `publishedAt` arriving emits nothing (`./publication`'s
+ * `duePublications` drives an application's sweep instead).
+ *
  * ## Seams
  *
  * Three things the kernel does not own, each an explicit parameter rather
@@ -78,7 +89,9 @@
  */
 
 import * as Array from "effect/Array";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
@@ -105,6 +118,8 @@ import {
   type VersionNotFound,
   type VersionSnapshot,
   type NodeAlreadyExists,
+  type WriteAction,
+  type ChainAppendEvent,
 } from "./version-chain.ts";
 
 // ── The viewer seam ───────────────────────────────────────────────────
@@ -606,6 +621,186 @@ export interface LeafStore<Row extends LeafRow, Following, E, R> {
   readonly stampOwner: (id: string, ownerId: string) => Effect.Effect<void, E, R>;
 }
 
+// ── The lifecycle hook seam ───────────────────────────────────────────
+
+/**
+ * A before hook's refusal: the write it was shown does not happen, and the
+ * caller's transaction rolls back with it. `reason` is the hook's own,
+ * for the wire's 422 (or whatever the application maps it to).
+ *
+ * @since 0.1.0
+ */
+export class WriteRejected extends Schema.TaggedError<WriteRejected>()("WriteRejected", {
+  type: Schema.String,
+  id: Schema.String,
+  action: Schema.String,
+  reason: Schema.String,
+}) {}
+
+/**
+ * What a {@link BeforeWriteHook} is shown: the chain's {@link ChainAppendEvent}
+ * (the action, the node, the head the write extends, the patch), plus the
+ * leaf's type and the request's viewer.
+ *
+ * @since 0.1.0
+ */
+export interface BeforeWriteEvent extends ChainAppendEvent {
+  readonly type: string;
+  readonly viewer: Viewer;
+}
+
+/**
+ * A hook that runs inside the write, after its gate and its head read and
+ * before the version is appended, in the caller's transaction. It returns
+ * the patch the write applies (the event's, or a transformed one: a derived
+ * slug, a normalised field), or fails the write, appending nothing, with
+ * {@link WriteRejected} or the store's `E` (an outbox insert that failed). A
+ * side effect that must not be lost belongs here, as a row the same
+ * transaction writes (an outbox), never in an {@link AfterWriteHook}.
+ *
+ * @since 0.1.0
+ */
+export interface BeforeWriteHook<E, R> {
+  /** Names the hook in its span and in a logged failure. */
+  readonly name: string;
+  readonly run: (event: BeforeWriteEvent) => Effect.Effect<ChainPatch, WriteRejected | E, R>;
+}
+
+/**
+ * What an {@link AfterWriteHook} is shown, once the write has committed:
+ * the leaf's type, the action, the version entry the write landed at, and
+ * the resource as its writer now reads it (none for a `delete`, or when the
+ * write hid the row from its own writer or the re-read failed).
+ *
+ * @since 0.1.0
+ */
+export interface AfterWriteEvent<Resource> {
+  readonly type: string;
+  readonly action: WriteAction;
+  readonly write: ChainWrite;
+  readonly resource: Option.Option<Resource>;
+}
+
+/**
+ * A hook that runs after the write's transaction has committed
+ * ({@link subtypeHandlers}, which owns the boundary). It never fails the
+ * write: its failure, a defect included, goes to the hooks'
+ * {@link LifecycleHooks.afterFailure} policy, and the next hook still runs
+ * under `"log"`. It runs uninterruptibly, so a committed write always
+ * reaches it; a delivery that must survive a crash is an outbox row
+ * written by a {@link BeforeWriteHook} instead.
+ *
+ * @since 0.1.0
+ */
+export interface AfterWriteHook<Resource, E, R> {
+  /** Names the hook in its span and in a logged failure. */
+  readonly name: string;
+  readonly run: (event: AfterWriteEvent<Resource>) => Effect.Effect<void, E, R>;
+}
+
+/**
+ * A leaf's write side effects, composed per leaf type by the application:
+ * provide them from a `Context` service (a `Layer`) through
+ * {@link SubtypeDefinition.hooks}. The hooks run in array order, so their
+ * order is deterministic and is the application's to choose; the default is
+ * none ({@link noHooks}).
+ *
+ * Events fire on explicit writes only: `create`, `update`, `restore`,
+ * `delete` (not an already tombstoned node's, which writes nothing) and
+ * `restoreVersion`. A scheduled version whose `publishedAt` stamp arrives
+ * later writes nothing and emits nothing; an application that needs a side
+ * effect when scheduled content goes live drives a sweep from its cron with
+ * `./publication`'s `duePublications`.
+ *
+ * @since 0.1.0
+ */
+export interface LifecycleHooks<Resource, E, R> {
+  readonly before: ReadonlyArray<BeforeWriteHook<E, R>>;
+  readonly after: ReadonlyArray<AfterWriteHook<Resource, E, R>>;
+  /**
+   * What an after hook's failure becomes: `"log"` (the default) logs its
+   * cause at error level and goes on; `"defect"` dies with it, so the
+   * handler fails with a defect although the write committed.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is the `"log"` default
+  readonly afterFailure?: "log" | "defect" | undefined;
+}
+
+/**
+ * No hooks: the default for a leaf that declares none.
+ *
+ * @since 0.1.0
+ */
+export const noHooks = <Resource = never, E = never, R = never>(): LifecycleHooks<
+  Resource,
+  E,
+  R
+> => ({ before: [], after: [] });
+
+/**
+ * Concatenate hook sets in order: `a`'s before hooks run before `b`'s, and
+ * likewise after. The first set's `afterFailure` that is given wins.
+ *
+ * @example
+ * ```ts
+ * import { strictEqual } from "node:assert";
+ * import * as Effect from "effect/Effect";
+ * import { composeHooks, noHooks, type BeforeWriteHook } from "@thomasfosterau/pulpit/subtype";
+ *
+ * const audit: BeforeWriteHook<never, never> = {
+ *   name: "audit",
+ *   run: (event) => Effect.succeed(event.patch),
+ * };
+ * const hooks = composeHooks({ before: [audit], after: [] }, noHooks());
+ * strictEqual(hooks.before[0]?.name, "audit");
+ * ```
+ *
+ * @since 0.1.0
+ */
+export const composeHooks = <Resource, E, R>(
+  ...sets: ReadonlyArray<LifecycleHooks<Resource, E, R>>
+): LifecycleHooks<Resource, E, R> => {
+  const afterFailure = Array.findFirst(sets, (set) => set.afterFailure !== undefined);
+  return {
+    before: Array.flatMap(sets, (set) => set.before),
+    after: Array.flatMap(sets, (set) => set.after),
+    afterFailure: Option.getOrUndefined(
+      Option.flatMapNullishOr(afterFailure, (set) => set.afterFailure),
+    ),
+  };
+};
+
+/** Run the before hooks in order, each shown the patch the previous one returned. */
+const runBefore = <E, R>(
+  hooks: ReadonlyArray<BeforeWriteHook<E, R>>,
+  event: BeforeWriteEvent,
+): Effect.Effect<ChainPatch, WriteRejected | E, R> =>
+  Effect.reduce(
+    hooks,
+    () => event.patch,
+    (patch, hook) =>
+      hook.run({ ...event, patch }).pipe(Effect.withSpan(`${event.type}.before.${hook.name}`)),
+  );
+
+/** Run the after hooks in order, each failure handed to the policy, never to the write. */
+const runAfter = <Resource, E, R>(
+  hooks: LifecycleHooks<Resource, E, R>,
+  event: AfterWriteEvent<Resource>,
+): Effect.Effect<void, never, R> =>
+  Effect.forEach(
+    hooks.after,
+    (hook) =>
+      hook.run(event).pipe(
+        Effect.withSpan(`${event.type}.after.${hook.name}`),
+        Effect.catchCause((cause) =>
+          hooks.afterFailure === "defect"
+            ? Effect.die(Cause.squash(cause))
+            : Effect.logError(`${event.type}.after.${hook.name} failed`, cause),
+        ),
+      ),
+    { concurrency: 1, discard: true },
+  );
+
 // ── The factory ───────────────────────────────────────────────────────
 
 /**
@@ -719,6 +914,15 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
    */
   // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the every-declared-column default
   readonly sortable?: ReadonlyArray<string> | undefined;
+  /**
+   * The leaf's lifecycle hooks, read per write: an Effect, so the
+   * application can hold them in a `Context` service and provide it with a
+   * `Layer`. The before hooks run inside every write; the after hooks run in
+   * {@link subtypeHandlers} once its transaction has committed. Omitted, the
+   * leaf has none ({@link noHooks}), and a write reads nothing extra.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no hooks"
+  readonly hooks?: Effect.Effect<LifecycleHooks<Resource, E, R>, never, R> | undefined;
 }
 
 /**
@@ -753,13 +957,22 @@ export interface ListRequest {
 type Gate = Unauthorized | Forbidden;
 
 /**
- * The operations {@link defineSubtype} produces for one leaf.
+ * The operations {@link defineSubtype} produces for one leaf. Every write
+ * also fails {@link WriteRejected} when one of the leaf's before hooks
+ * refuses it, after the gate and with nothing appended.
  *
  * @since 0.1.0
  */
 export interface SubtypeOps<Resource, E, R> {
+  /** The leaf's wire type, as declared. */
+  readonly type: string;
   /** The access declaration the operations gate by. */
   readonly access: LeafAccess;
+  /**
+   * The leaf's lifecycle hooks, as {@link SubtypeDefinition.hooks} provides
+   * them; {@link subtypeHandlers} runs their after hooks.
+   */
+  readonly hooks: Effect.Effect<LifecycleHooks<Resource, E, R>, never, R>;
   /**
    * Create the node at version 0, stamping the viewer as owner on an owned
    * leaf. Fails `Unauthorized` when anonymous, `Forbidden` below the
@@ -769,7 +982,11 @@ export interface SubtypeOps<Resource, E, R> {
   readonly create: (input: {
     readonly id: Option.Option<string>;
     readonly state: ChainState;
-  }) => Effect.Effect<ChainWrite, Gate | NodeAlreadyExists | VersionConflict | E, R>;
+  }) => Effect.Effect<
+    ChainWrite,
+    Gate | WriteRejected | NodeAlreadyExists | VersionConflict | E,
+    R
+  >;
   /**
    * Append a tri-state patch. Fails `Unauthorized` when anonymous,
    * `Forbidden` below the write rung (the corpus-write rung for reference
@@ -781,7 +998,11 @@ export interface SubtypeOps<Resource, E, R> {
    */
   readonly update: (
     input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
-  ) => Effect.Effect<ChainWrite, Gate | NodeNotFound | StaleVersion | VersionConflict | E, R>;
+  ) => Effect.Effect<
+    ChainWrite,
+    Gate | WriteRejected | NodeNotFound | StaleVersion | VersionConflict | E,
+    R
+  >;
   /**
    * {@link SubtypeOps.update}, except a tombstone does not fail: the node
    * comes back live (`VERSION-CHAIN-006`). Fails as `update` does, apart from
@@ -790,7 +1011,11 @@ export interface SubtypeOps<Resource, E, R> {
    */
   readonly restore: (
     input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
-  ) => Effect.Effect<ChainWrite, Gate | NodeNotFound | StaleVersion | VersionConflict | E, R>;
+  ) => Effect.Effect<
+    ChainWrite,
+    Gate | WriteRejected | NodeNotFound | StaleVersion | VersionConflict | E,
+    R
+  >;
   /**
    * Tombstone the node (idempotent: an already tombstoned node reports
    * `alreadyDeleted: true` and writes nothing, whatever the precondition).
@@ -806,7 +1031,7 @@ export interface SubtypeOps<Resource, E, R> {
     precondition?: Precondition,
   ) => Effect.Effect<
     ChainWrite & { readonly alreadyDeleted: boolean },
-    Gate | NodeNotFound | StaleVersion | VersionConflict | E,
+    Gate | WriteRejected | NodeNotFound | StaleVersion | VersionConflict | E,
     R
   >;
   /**
@@ -871,7 +1096,7 @@ export interface SubtypeOps<Resource, E, R> {
     precondition?: Precondition,
   ) => Effect.Effect<
     ChainWrite,
-    Gate | NodeNotFound | VersionNotFound | StaleVersion | VersionConflict | E,
+    Gate | WriteRejected | NodeNotFound | VersionNotFound | StaleVersion | VersionConflict | E,
     R
   >;
 }
@@ -890,7 +1115,26 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   definition: SubtypeDefinition<Row, Resource, Following, E, R>,
 ): SubtypeOps<Resource, E, R> => {
   const { type, access, leaves, policy, followers, toResource } = definition;
-  const chain = defineVersionChain(type, definition.chain);
+  const hooks = definition.hooks ?? Effect.succeed(noHooks<Resource, E, R>());
+  // The history reads run no hook, so they read through a chain bound without one.
+  const history = defineVersionChain(type, definition.chain);
+  // Bound only for a leaf that declares hooks, so a leaf without them reads nothing extra.
+  const chain = defineVersionChain<E | WriteRejected, R>(
+    type,
+    definition.chain,
+    definition.hooks === undefined
+      ? {}
+      : {
+          beforeAppend: (event) =>
+            Effect.flatMap(hooks, ({ before }) =>
+              Array.isReadonlyArrayNonEmpty(before)
+                ? Effect.flatMap(definition.viewer, (viewer) =>
+                    runBefore(before, { ...event, type, viewer }),
+                  )
+                : Effect.succeed(event.patch),
+            ),
+        },
+  );
   const actor = (account: ViewerAccount) => Option.some(account.id);
 
   // The view's column set is fixed at bind time, so the owned leaf's
@@ -1034,11 +1278,11 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     );
 
   const getVersion = Effect.fn(`${type}.getVersion`)(function* (id: string, version: bigint) {
-    return yield* historyRead(id, chain.getVersion(id, version));
+    return yield* historyRead(id, history.getVersion(id, version));
   });
 
   const compare = Effect.fn(`${type}.compare`)(function* (id: string, from: bigint, to: bigint) {
-    return yield* historyRead(id, chain.compare(id, from, to));
+    return yield* historyRead(id, history.compare(id, from, to));
   });
 
   const restoreVersion = Effect.fn(`${type}.restoreVersion`)(function* (
@@ -1051,7 +1295,9 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   });
 
   return {
+    type,
     access,
+    hooks,
     create,
     update,
     restore,
@@ -1088,6 +1334,26 @@ export interface ResourceCacheSeam<Resource, R> {
 }
 
 /**
+ * The resource cache's write-through as an {@link AfterWriteHook}: a write
+ * whose writer re-read the resource sets it, and any other (a `delete`, or a
+ * write whose re-read failed or no longer shows the row) evicts it
+ * (`CACHE-AUTH-005`). {@link subtypeHandlers} runs it first, before the
+ * leaf's own after hooks, whenever its config has a cache. Never fails.
+ *
+ * @since 0.1.0
+ */
+export const cacheWriteThrough = <Resource, R>(
+  cache: ResourceCacheSeam<Resource, R>,
+): AfterWriteHook<Resource, never, R> => ({
+  name: "cache",
+  run: ({ write, resource }) =>
+    Option.match(resource, {
+      onNone: () => cache.delete(write.id),
+      onSome: (value) => cache.set(write.id, value),
+    }),
+});
+
+/**
  * The handler record a leaf contributes to a JSON:API server's resource
  * handlers — one entry per endpoint, each returning the resource the document
  * assembler wraps — plus the version-restore command, which has no JSON:API
@@ -1098,8 +1364,10 @@ export interface ResourceCacheSeam<Resource, R> {
  * {@link subtypeHandlers} isn't wired to it yet (pulpit#5): when it is, this
  * record maps onto `ResourceHandlers`' real handler signatures.
  *
- * Every write re-reads the row after the chain write and writes it through
- * the cache; that write-through is why these exist rather than each route
+ * Every write re-reads the row after the chain write and hands it to the
+ * leaf's after hooks ({@link LifecycleHooks}), the cache write-through
+ * ({@link cacheWriteThrough}) first, so it writes the resource through the
+ * cache; that write-through is why these exist rather than each route
  * calling the operation directly: the cache serves
  * anonymous reads, and a write that skipped it would leave them on the
  * superseded content until the TTL expired. The re-read runs as the writer,
@@ -1118,7 +1386,8 @@ export interface ResourceCacheSeam<Resource, R> {
  * wrote: only the last attempt counts. That holds for `delete`'s eviction
  * as well.
  *
- * `update`, `delete` and `restoreVersion` take the operations' optional
+ * `restore` is the operations' `restore` with the same write-through.
+ * `update`, `restore`, `delete` and `restoreVersion` take the operations' optional
  * expected version ({@link Precondition}); the HTTP layer maps a request's
  * `If-Match` onto it and a `StaleVersion` failure onto the 412.
  *
@@ -1130,19 +1399,38 @@ export interface SubtypeHandlers<Resource, E, R> {
   readonly create: (input: {
     readonly id: Option.Option<string>;
     readonly state: ChainState;
-  }) => Effect.Effect<Resource, Gate | NodeAlreadyExists | NodeNotFound | VersionConflict | E, R>;
+  }) => Effect.Effect<
+    Resource,
+    Gate | WriteRejected | NodeAlreadyExists | NodeNotFound | VersionConflict | E,
+    R
+  >;
   readonly update: (
     input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
-  ) => Effect.Effect<Resource, Gate | NodeNotFound | StaleVersion | VersionConflict | E, R>;
+  ) => Effect.Effect<
+    Resource,
+    Gate | WriteRejected | NodeNotFound | StaleVersion | VersionConflict | E,
+    R
+  >;
+  readonly restore: (
+    input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
+  ) => Effect.Effect<
+    Resource,
+    Gate | WriteRejected | NodeNotFound | StaleVersion | VersionConflict | E,
+    R
+  >;
   readonly delete: (
     id: string,
     precondition?: Precondition,
-  ) => Effect.Effect<void, Gate | NodeNotFound | StaleVersion | VersionConflict | E, R>;
+  ) => Effect.Effect<
+    void,
+    Gate | WriteRejected | NodeNotFound | StaleVersion | VersionConflict | E,
+    R
+  >;
   readonly restoreVersion: (
     input: { readonly id: string; readonly version: bigint } & Precondition,
   ) => Effect.Effect<
     Resource,
-    Gate | NodeNotFound | VersionNotFound | StaleVersion | VersionConflict | E,
+    Gate | WriteRejected | NodeNotFound | VersionNotFound | StaleVersion | VersionConflict | E,
     R
   >;
 }
@@ -1210,37 +1498,70 @@ export const subtypeHandlers = <Resource, E, R>(
       ),
     );
 
-  // The re-read runs as the writer, after the write committed. When it
-  // fails (the write hid the row from its own writer: a corpus writer below
-  // the view-private rung making a reference row `private`; a store error;
-  // an interrupt), the entry is evicted: the cache must never go on serving
-  // the superseded resource, whatever the writer may read now
-  // (`CACHE-AUTH-005`, pulpit#107).
-  const write = <E2>(operation: Effect.Effect<ChainWrite, E2, R>) =>
+  /**
+   * The after hooks for one committed write: the cache write-through first
+   * (when the leaf has a cache), then the leaf's own, in order.
+   */
+  const after = (event: AfterWriteEvent<Resource>) =>
+    Effect.flatMap(ops.hooks, (hooks) =>
+      runAfter(
+        {
+          ...hooks,
+          after: [...Option.toArray(Option.map(config.cache, cacheWriteThrough)), ...hooks.after],
+        },
+        event,
+      ),
+    );
+
+  // The re-read runs as the writer, after the write committed, and its
+  // outcome is the after hooks' `resource`. When it fails (the write hid
+  // the row from its own writer: a corpus writer below the view-private
+  // rung making a reference row `private`; a store error; an interrupt),
+  // the resource is none and the cache hook evicts: the cache must never go
+  // on serving the superseded resource, whatever the writer may read now
+  // (`CACHE-AUTH-005`, pulpit#107). The handler then fails with the
+  // re-read's own error.
+  const write = <E2>(action: WriteAction, operation: Effect.Effect<ChainWrite, E2, R>) =>
     Effect.uninterruptibleMask((restore) =>
-      Effect.flatMap(committed(restore, operation), ({ id }) =>
-        Option.match(config.cache, {
-          onNone: () => restore(ops.get(id)),
-          onSome: (cache) =>
-            restore(ops.get(id)).pipe(
-              Effect.onError(() => cache.delete(id)),
-              Effect.tap((resource) => cache.set(id, resource)),
-            ),
-        }),
+      Effect.flatMap(committed(restore, operation), (written) =>
+        Effect.flatMap(Effect.exit(restore(ops.get(written.id))), (reread) =>
+          Effect.andThen(
+            after({
+              type: ops.type,
+              action,
+              write: { id: written.id, version: written.version },
+              resource: Exit.isSuccess(reread) ? Option.some(reread.value) : Option.none(),
+            }),
+            reread,
+          ),
+        ),
       ),
     );
 
   return {
     list: ops.list,
     get: ops.get,
-    create: (input) => write(ops.create(input)),
-    update: (input) => write(ops.update(input)),
+    create: (input) => write("create", ops.create(input)),
+    update: (input) => write("update", ops.update(input)),
+    restore: (input) => write("restore", ops.restore(input)),
+    // An already tombstoned node wrote nothing, so it emits nothing; its
+    // cache entry is still evicted, as every delete's is.
     delete: (id, precondition) =>
       Effect.uninterruptibleMask((restore) =>
-        Effect.andThen(committed(restore, ops.delete(id, precondition)), evict(id)),
+        Effect.flatMap(committed(restore, ops.delete(id, precondition)), (written) =>
+          written.alreadyDeleted
+            ? evict(id)
+            : after({
+                type: ops.type,
+                action: "delete",
+                write: { id: written.id, version: written.version },
+                resource: Option.none(),
+              }),
+        ),
       ),
     restoreVersion: (input) =>
       write(
+        "restoreVersion",
         ops.restoreVersion(input.id, input.version, { expectedVersion: input.expectedVersion }),
       ),
   };

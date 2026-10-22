@@ -10,12 +10,19 @@
 
 import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import { Resource } from "@thomasfosterau/effect-jsonapi";
-import { canonicalText, DocumentHash, documentRef } from "../src/documents.ts";
+import {
+  canonicalText,
+  DocumentHash,
+  documentRef,
+  onDocumentInsert,
+  type DocumentInserted,
+} from "../src/documents.ts";
 import { defineVersionChain } from "../src/version-chain.ts";
 import { decodes } from "./fixtures.ts";
 import { makeInMemoryChainStore, makeInMemoryDocumentStore } from "../src/testing.ts";
@@ -112,7 +119,7 @@ const VECTORS: ReadonlyArray<{
 describe("the hash contract — the in-memory store against Postgres", () => {
   it.each(VECTORS)("$name", async ({ document, text, hash }) => {
     expect(canonicalText(document)).toBe(text);
-    expect(await run(makeInMemoryDocumentStore().put(document))).toBe(hash);
+    expect((await run(makeInMemoryDocumentStore().put(document))).hash).toBe(hash);
     expect(decodes(DocumentHash, hash)).toBe(true);
   });
 
@@ -122,7 +129,7 @@ describe("the hash contract — the in-memory store against Postgres", () => {
       content: [{ content: [{ text: "Hello", type: "text" }], type: "paragraph" }],
       type: "doc",
     };
-    expect(await run(store.put(reordered))).toBe(HELLO);
+    expect((await run(store.put(reordered))).hash).toBe(HELLO);
   });
 
   it("DocumentHash is exactly 64 lowercase hex characters", () => {
@@ -138,7 +145,8 @@ describe("put — idempotent, never rewritten (DOC-001)", () => {
     const document = paragraph("Hello");
     const first = await run(store.put(document));
     const second = await run(store.put(document));
-    expect(second).toBe(first);
+    expect(first.inserted).toBe(true);
+    expect(second).toEqual({ hash: first.hash, inserted: false });
     expect(HashMap.size(store.stored())).toBe(1);
     expect(store.writes()).toBe(1);
   });
@@ -146,12 +154,12 @@ describe("put — idempotent, never rewritten (DOC-001)", () => {
   it("an equal document never replaces the stored one; a different one is a new write", async () => {
     const store = makeInMemoryDocumentStore();
     const original = paragraph("Hello");
-    const hash = await run(store.put(original));
+    const hash = (await run(store.put(original))).hash;
     expect(store.writes()).toBe(1);
     // A structurally equal copy reaches the same hash and writes nothing.
     // `stored()` alone can't show that: `HashMap.set` keeps the existing value
     // when the new one is `Equal`, so only the write count tells them apart.
-    expect(await run(store.put(paragraph("Hello")))).toBe(hash);
+    expect((await run(store.put(paragraph("Hello")))).hash).toBe(hash);
     expect(store.writes()).toBe(1);
     expect(Option.exists(HashMap.get(store.stored(), hash), (stored) => stored === original)).toBe(
       true,
@@ -163,26 +171,59 @@ describe("put — idempotent, never rewritten (DOC-001)", () => {
   it("a changed document is a new hash, and the old one is untouched", async () => {
     const store = makeInMemoryDocumentStore();
     const original = paragraph("Hello");
-    const before = await run(store.put(original));
-    const after = await run(store.put(paragraph("Hello, world")));
+    const before = (await run(store.put(original))).hash;
+    const after = (await run(store.put(paragraph("Hello, world")))).hash;
     expect(after).not.toBe(before);
     expect(HashMap.size(store.stored())).toBe(2);
     expect(await run(store.get(before))).toEqual(Option.some(original));
   });
 });
 
+describe("onDocumentInsert — the first-insert event (pulpit#45)", () => {
+  const recording = () => {
+    const seen: Array<DocumentInserted<Schema.Json>> = [];
+    const inner = makeInMemoryDocumentStore();
+    const store = onDocumentInsert(inner, (event) =>
+      Effect.sync(() => {
+        seen.push(event);
+      }),
+    );
+    return { seen, inner, store };
+  };
+
+  it("runs once per stored document, never for a put that found it stored", async () => {
+    const { seen, store } = recording();
+    const first = await run(store.put(paragraph("Hello")));
+    await run(store.put(paragraph("Hello")));
+    const second = await run(store.put(paragraph("World")));
+    expect(seen).toEqual([
+      { hash: first.hash, document: paragraph("Hello") },
+      { hash: second.hash, document: paragraph("World") },
+    ]);
+  });
+
+  it("a hook that fails fails the put; get and getMany are the store's own", async () => {
+    const inner = makeInMemoryDocumentStore();
+    const store = onDocumentInsert(inner, () => Effect.fail("queue down" as const));
+    const exit = await Effect.runPromiseExit(store.put(paragraph("Hello")));
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(store.get).toBe(inner.get);
+    expect(store.getMany).toBe(inner.getMany);
+  });
+});
+
 describe("get / getMany", () => {
   it("get returns the stored document, or none for an unseen hash", async () => {
     const store = makeInMemoryDocumentStore();
-    const hash = await run(store.put(paragraph("Hello")));
+    const hash = (await run(store.put(paragraph("Hello")))).hash;
     expect(await run(store.get(hash))).toEqual(Option.some(paragraph("Hello")));
     expect(await run(store.get(UNSEEN))).toEqual(Option.none());
   });
 
   it("getMany returns the found documents keyed by hash, omitting an unseen one", async () => {
     const store = makeInMemoryDocumentStore();
-    const hello = await run(store.put(paragraph("Hello")));
-    const world = await run(store.put(paragraph("World")));
+    const hello = (await run(store.put(paragraph("Hello")))).hash;
+    const world = (await run(store.put(paragraph("World")))).hash;
     const found = await run(store.getMany([hello, UNSEEN, world, hello]));
     expect(HashMap.size(found)).toBe(2);
     expect(HashMap.get(found, hello)).toEqual(Option.some(paragraph("Hello")));
@@ -228,7 +269,7 @@ describe("version rows that reference documents", () => {
     const body = paragraph("Shared");
     const createWith = (document: Schema.Json) =>
       Effect.gen(function* () {
-        const hash = yield* documents.put(document);
+        const { hash } = yield* documents.put(document);
         const write = yield* chain.create({
           id: Option.none(),
           state: { body: hash },
@@ -250,13 +291,13 @@ describe("version rows that reference documents", () => {
     const original = paragraph("First draft");
     const restored = await run(
       Effect.gen(function* () {
-        const before = yield* documents.put(original);
+        const { hash: before } = yield* documents.put(original);
         const { id } = yield* chain.create({
           id: Option.none(),
           state: { body: before },
           actorId: ACTOR,
         });
-        const after = yield* documents.put(paragraph("Second draft"));
+        const { hash: after } = yield* documents.put(paragraph("Second draft"));
         yield* chain.update({ id, patch: { body: after }, actorId: ACTOR });
         const write = yield* chain.restoreVersion(id, 0n, ACTOR);
         return { before, after, write };

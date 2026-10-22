@@ -39,6 +39,7 @@
 
 import { describe, expect, it } from "vite-plus/test";
 import * as Arr from "effect/Array";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -79,10 +80,17 @@ import {
   type SubtypeDefinition,
   type Viewer,
   type ViewerAccount,
+  cacheWriteThrough,
+  composeHooks,
+  noHooks,
+  WriteRejected,
+  type AfterWriteHook,
+  type BeforeWriteHook,
 } from "../src/subtype.ts";
 import {
   defineVersionChain,
   VersionNotFound,
+  type ChainPatch,
   type ChainState,
   type ColumnValue,
   type Precondition,
@@ -2872,5 +2880,292 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
     expect(Exit.hasDies(exit)).toBe(true);
     expect(MutableHashMap.has(cached, died)).toBe(false);
     expect(chain.rows()).toHaveLength(4);
+  });
+});
+
+describe("lifecycle hooks — before and after every write (pulpit#45)", () => {
+  /** One hook's sight of a write, as the tests record it. */
+  type Seen = readonly [hook: string, action: string, detail: string];
+  /** The leaf's resource. */
+  interface Post {
+    readonly id: string;
+    readonly title: ColumnValue;
+    readonly slug: ColumnValue;
+  }
+
+  const hooked = (options: {
+    readonly before?: ReadonlyArray<BeforeWriteHook<never, never>>;
+    readonly after?: ReadonlyArray<AfterWriteHook<Post, never, never>>;
+    readonly afterFailure?: "log" | "defect";
+  }) => {
+    const chain = makeInMemoryChainStore();
+    const leaves = makeInMemoryLeafStore(chain, {
+      columns: ["title", "slug", "visibility", "draft"],
+      now: NOW,
+    });
+    const viewer: Viewer = as(member);
+    const ops = defineSubtype<LeafRow, Post, Following, never, never>({
+      type: "posts",
+      access: ownedAccess({ draft: true }),
+      chain,
+      leaves,
+      viewer: Effect.succeed(viewer),
+      policy: gardeneriaPolicy,
+      followers: follows,
+      toResource: (row) => ({ id: row.id, title: row["title"], slug: row["slug"] }),
+      hooks: Effect.succeed({
+        before: options.before ?? [],
+        after: options.after ?? [],
+        afterFailure: options.afterFailure,
+      }),
+    });
+    const cached = MutableHashMap.empty<string, Post>();
+    const handlers = subtypeHandlers(ops, {
+      transact: (effect) => effect,
+      cache: Option.some({
+        set: (id, resource) => Effect.sync(() => void MutableHashMap.set(cached, id, resource)),
+        delete: (id) => Effect.sync(() => void MutableHashMap.remove(cached, id)),
+      }),
+    });
+    return { chain, ops, handlers, cached };
+  };
+
+  const recordBefore = (seen: Array<Seen>, name: string): BeforeWriteHook<never, never> => ({
+    name,
+    run: (event) =>
+      Effect.sync(() => {
+        seen.push([name, event.action, `${event.type}:${Option.isSome(event.prior)}`]);
+        return event.patch;
+      }),
+  });
+
+  const recordAfter = (seen: Array<Seen>, name: string): AfterWriteHook<Post, never, never> => ({
+    name,
+    run: (event) =>
+      Effect.sync(() => {
+        seen.push([name, event.action, `${event.write.version}:${Option.isSome(event.resource)}`]);
+      }),
+  });
+
+  const state = { title: "A post", slug: null, visibility: "public", draft: false } as const;
+
+  it("every write operation emits, before and after, in the hooks' order", async () => {
+    const seen: Array<Seen> = [];
+    const { handlers } = hooked({
+      before: [recordBefore(seen, "b1"), recordBefore(seen, "b2")],
+      after: [recordAfter(seen, "a1"), recordAfter(seen, "a2")],
+    });
+    const { id } = await run(handlers.create({ id: Option.none(), state }));
+    await run(handlers.update({ id, patch: { title: "Edited" } }));
+    await run(handlers.delete(id));
+    await run(handlers.restore({ id, patch: {} }));
+    await run(handlers.restoreVersion({ id, version: 0n }));
+    expect(seen).toEqual([
+      ["b1", "create", "posts:false"],
+      ["b2", "create", "posts:false"],
+      ["a1", "create", "0:true"],
+      ["a2", "create", "0:true"],
+      ["b1", "update", "posts:true"],
+      ["b2", "update", "posts:true"],
+      ["a1", "update", "1:true"],
+      ["a2", "update", "1:true"],
+      ["b1", "delete", "posts:true"],
+      ["b2", "delete", "posts:true"],
+      ["a1", "delete", "2:false"],
+      ["a2", "delete", "2:false"],
+      ["b1", "restore", "posts:true"],
+      ["b2", "restore", "posts:true"],
+      ["a1", "restore", "3:true"],
+      ["a2", "restore", "3:true"],
+      ["b1", "restoreVersion", "posts:true"],
+      ["b2", "restoreVersion", "posts:true"],
+      ["a1", "restoreVersion", "4:true"],
+      ["a2", "restoreVersion", "4:true"],
+    ]);
+  });
+
+  it("an already tombstoned node's delete writes nothing and emits nothing", async () => {
+    const seen: Array<Seen> = [];
+    const { handlers } = hooked({
+      before: [recordBefore(seen, "b")],
+      after: [recordAfter(seen, "a")],
+    });
+    const { id } = await run(handlers.create({ id: Option.none(), state }));
+    await run(handlers.delete(id));
+    seen.length = 0;
+    await run(handlers.delete(id));
+    expect(seen).toEqual([]);
+  });
+
+  it("a before hook transforms the patch: each hook sees the previous one's", async () => {
+    const title = (patch: ChainPatch) => Option.liftPredicate(patch["title"], Predicate.isString);
+    const slugOf = (patch: ChainPatch): ChainPatch =>
+      Option.match(title(patch), {
+        onNone: () => patch,
+        onSome: (value) => ({ ...patch, slug: value.toLowerCase() }),
+      });
+    const shout: BeforeWriteHook<never, never> = {
+      name: "shout",
+      run: (event) =>
+        Effect.succeed(
+          Option.match(title(event.patch), {
+            onNone: () => event.patch,
+            onSome: (value) => ({ ...event.patch, title: value.toUpperCase() }),
+          }),
+        ),
+    };
+    const slug: BeforeWriteHook<never, never> = {
+      name: "slug",
+      run: (event) => Effect.succeed(slugOf(event.patch)),
+    };
+    const { chain, ops } = hooked({ before: [shout, slug] });
+    const { id } = await run(ops.create({ id: Option.none(), state }));
+    await run(ops.update({ id, patch: { title: "Edited" } }));
+    expect(chain.rows().map((row) => [row.state["title"], row.state["slug"]])).toEqual([
+      ["A POST", "a post"],
+      ["EDITED", "edited"],
+    ]);
+  });
+
+  it("a before hook that fails rolls the write back: nothing is appended, nothing emitted after", async () => {
+    const seen: Array<Seen> = [];
+    const refuse: BeforeWriteHook<never, never> = {
+      name: "refuse",
+      run: (event) =>
+        event.action === "create"
+          ? Effect.succeed(event.patch)
+          : Effect.fail(
+              new WriteRejected({
+                type: event.type,
+                id: event.id,
+                action: event.action,
+                reason: "no",
+              }),
+            ),
+    };
+    const { chain, handlers, cached } = hooked({
+      before: [refuse, recordBefore(seen, "later")],
+      after: [recordAfter(seen, "a")],
+    });
+    const { id } = await run(handlers.create({ id: Option.none(), state }));
+    seen.length = 0;
+    const cachedBefore = MutableHashMap.get(cached, id);
+    const refused = await Promise.all([
+      tagOf(handlers.update({ id, patch: { title: "x" } })),
+      tagOf(handlers.delete(id)),
+      tagOf(handlers.restore({ id, patch: {} })),
+      tagOf(handlers.restoreVersion({ id, version: 0n })),
+    ]);
+    expect(refused).toEqual(Arr.replicate(Option.some("WriteRejected"), 4));
+    expect(chain.rows()).toHaveLength(1);
+    expect(seen).toEqual([]);
+    expect(MutableHashMap.get(cached, id)).toEqual(cachedBefore);
+  });
+
+  it("a before hook runs after the gate: a refused caller never reaches it", async () => {
+    const seen: Array<Seen> = [];
+    const chain = makeInMemoryChainStore();
+    const leaves = makeInMemoryLeafStore(chain, { columns: ["title"], now: NOW });
+    const ops = defineSubtype<LeafRow, unknown, Following, never, never>({
+      type: "pages",
+      access: { kind: "reference" },
+      chain,
+      leaves,
+      viewer: Effect.succeed(as(member)),
+      policy: gardeneriaPolicy,
+      followers: follows,
+      toResource: (row) => row,
+      hooks: Effect.succeed({ before: [recordBefore(seen, "b")], after: [] }),
+    });
+    expect(await tagOf(ops.create({ id: Option.none(), state: { title: "t" } }))).toEqual(
+      Option.some("Forbidden"),
+    );
+    expect(seen).toEqual([]);
+  });
+
+  it("an after hook that fails doesn't fail the write, and the next one still runs", async () => {
+    const seen: Array<Seen> = [];
+    const broken: AfterWriteHook<Post, never, never> = {
+      name: "broken",
+      run: () => Effect.die("webhook down"),
+    };
+    const { chain, handlers, cached } = hooked({
+      after: [broken, recordAfter(seen, "next")],
+    });
+    const created = await run(handlers.create({ id: Option.none(), state }));
+    expect(chain.rows()).toHaveLength(1);
+    expect(seen).toEqual([["next", "create", "0:true"]]);
+    // The cache write-through is the first after hook, and still ran.
+    expect(MutableHashMap.get(cached, created.id)).toEqual(Option.some(created));
+  });
+
+  it("under afterFailure: defect, an after hook's failure is a defect after the commit", async () => {
+    const broken: AfterWriteHook<Post, never, never> = {
+      name: "broken",
+      run: () => Effect.die("webhook down"),
+    };
+    const { chain, handlers } = hooked({ after: [broken], afterFailure: "defect" });
+    const exit = await Effect.runPromiseExit(handlers.create({ id: Option.none(), state }));
+    expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+    expect(chain.rows()).toHaveLength(1);
+  });
+
+  it("a leaf without hooks reads no head snapshot for restoreVersion beyond the restored one", async () => {
+    const chain = makeInMemoryChainStore();
+    const snapshots: Array<bigint> = [];
+    const leaves = makeInMemoryLeafStore(chain, { columns: ["title"], now: NOW });
+    const ops = defineSubtype<LeafRow, unknown, Following, never, never>({
+      type: "pages",
+      access: { kind: "reference" },
+      chain: {
+        ...chain,
+        snapshot: (id, version) =>
+          Effect.suspend(() => {
+            snapshots.push(version);
+            return chain.snapshot(id, version);
+          }),
+      },
+      leaves,
+      viewer: Effect.succeed(as(admin)),
+      policy: gardeneriaPolicy,
+      followers: follows,
+      toResource: (row) => row,
+    });
+    const { id } = await run(ops.create({ id: Option.none(), state: { title: "t" } }));
+    await run(ops.update({ id, patch: { title: "u" } }));
+    snapshots.length = 0;
+    await run(ops.restoreVersion(id, 0n));
+    expect(snapshots).toEqual([0n]);
+  });
+
+  it("composeHooks concatenates in order, and the first given afterFailure wins", () => {
+    const seen: Array<Seen> = [];
+    const composed = composeHooks<Post, never, never>(
+      { before: [recordBefore(seen, "x")], after: [] },
+      {
+        before: [recordBefore(seen, "y")],
+        after: [recordAfter(seen, "z")],
+        afterFailure: "defect",
+      },
+      noHooks(),
+      { before: [], after: [], afterFailure: "log" },
+    );
+    expect(composed.before.map((hook) => hook.name)).toEqual(["x", "y"]);
+    expect(composed.after.map((hook) => hook.name)).toEqual(["z"]);
+    expect(composed.afterFailure).toBe("defect");
+    expect(composeHooks().afterFailure).toBeUndefined();
+  });
+
+  it("cacheWriteThrough sets a re-read resource and evicts on none", async () => {
+    const cached = MutableHashMap.empty<string, unknown>();
+    const hook = cacheWriteThrough<unknown, never>({
+      set: (id, resource) => Effect.sync(() => void MutableHashMap.set(cached, id, resource)),
+      delete: (id) => Effect.sync(() => void MutableHashMap.remove(cached, id)),
+    });
+    const event = { type: "posts", action: "update", write: { id: "p", version: 1n } } as const;
+    await run(hook.run({ ...event, resource: Option.some("r") }));
+    expect(MutableHashMap.get(cached, "p")).toEqual(Option.some("r"));
+    await run(hook.run({ ...event, resource: Option.none() }));
+    expect(MutableHashMap.has(cached, "p")).toBe(false);
   });
 });

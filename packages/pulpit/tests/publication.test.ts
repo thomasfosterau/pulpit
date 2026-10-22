@@ -13,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { always, evaluate, notPublished, published } from "../src/filter.ts";
 import {
+  duePublications,
   isNotPublishedAt,
   isPublishedAt,
   isPubliclyServeable,
@@ -275,5 +276,47 @@ describe("serveablePolicy — the hook the application's resource cache takes", 
     // An explicit `undefined` is the absent flag, so a caller can forward its own.
     const unset = serveablePolicy({ owned: undefined, publishGated: undefined });
     expect(unset({ attributes: { name: "Ada" } })).toBe(true);
+  });
+});
+
+describe("duePublications — the scheduled-publication sweep window (pulpit#45)", () => {
+  const context = { now: NOW, contains: () => false };
+  const due = (since: Date, until: Date, stamp: Option.Option<Date>) =>
+    evaluate(
+      duePublications(since, until),
+      { publishedAt: Option.getOrElse(stamp, () => null) },
+      context,
+    );
+
+  it("matches a stamp in (since, now], and nothing outside it", () => {
+    const since = at(-hourMs);
+    const stamps = [at(-hourMs / 2), NOW, since, at(-2 * hourMs), at(hourMs)];
+    expect(stamps.map((stamp) => due(since, NOW, Option.some(stamp)))).toEqual([
+      true,
+      true,
+      false,
+      false,
+      false,
+    ]);
+    expect(due(since, NOW, Option.none())).toBe(false);
+  });
+
+  it("abutting windows see every stamp exactly once", () => {
+    const boundaries = [at(-3 * hourMs), at(-2 * hourMs), at(-hourMs), NOW];
+    const stamps = [at(-2 * hourMs), at(-hourMs - 1), at(-hourMs), NOW];
+    const windowsSeeing = (stamp: Date) =>
+      boundaries
+        .slice(1)
+        .filter((until, index) => due(boundaries[index] ?? until, until, Option.some(stamp)))
+        .length;
+    expect(stamps.map(windowsSeeing)).toEqual([1, 1, 1, 1]);
+  });
+
+  it("reads the named column, and an invalid instant matches nothing", () => {
+    const filter = duePublications(at(-hourMs), NOW, "goesLiveAt");
+    expect(evaluate(filter, { goesLiveAt: at(-1) }, context)).toBe(true);
+    expect(evaluate(filter, { publishedAt: at(-1) }, context)).toBe(false);
+    // oxlint-disable-next-line effect/use-clock-service -- an invalid instant is the case under test, and no clock produces one
+    expect(due(new Date(Number.NaN), NOW, Option.some(at(-1)))).toBe(false);
   });
 });

@@ -60,8 +60,18 @@ import {
   type SubtypeDeclarationError,
   type SubtypeDefinition,
 } from "@thomasfosterau/pulpit/subtype";
-import { isPubliclyServeable, serveablePolicy } from "@thomasfosterau/pulpit/publication";
-import { DocumentHash, documentRef, type DocumentStore } from "@thomasfosterau/pulpit/documents";
+import {
+  duePublications,
+  isPubliclyServeable,
+  serveablePolicy,
+} from "@thomasfosterau/pulpit/publication";
+import {
+  DocumentHash,
+  documentRef,
+  onDocumentInsert,
+  type DocumentPut,
+  type DocumentStore,
+} from "@thomasfosterau/pulpit/documents";
 import {
   defineEdgeOps,
   endpointColumn,
@@ -75,7 +85,15 @@ import {
   type EdgeWrite,
   type EdgeWriteGate,
 } from "@thomasfosterau/pulpit/edges";
-import type { Forbidden, Unauthorized } from "@thomasfosterau/pulpit/subtype";
+import type {
+  AfterWriteEvent,
+  BeforeWriteEvent,
+  Forbidden,
+  LifecycleHooks,
+  Unauthorized,
+  WriteRejected,
+} from "@thomasfosterau/pulpit/subtype";
+import type { ChainPatch, WriteAction } from "@thomasfosterau/pulpit/version-chain";
 
 /** A compile-time assertion: `T` must be exactly `true`. */
 type Assert<T extends true> = T;
@@ -387,8 +405,39 @@ interface ProseDocument {
 }
 declare const documents: DocumentStore<ProseDocument, StoreFailure, Transaction>;
 export type _Put = Assert<
-  Equals<ReturnType<typeof documents.put>, Effect.Effect<string, StoreFailure, Transaction>>
+  Equals<ReturnType<typeof documents.put>, Effect.Effect<DocumentPut, StoreFailure, Transaction>>
 >;
+export type _PutResult = Assert<
+  Equals<DocumentPut, { readonly hash: string; readonly inserted: boolean }>
+>;
+export type _OnInsert = Assert<
+  Equals<
+    ReturnType<typeof onDocumentInsert<ProseDocument, StoreFailure, Transaction>>,
+    DocumentStore<ProseDocument, StoreFailure, Transaction>
+  >
+>;
+
+// ── lifecycle hooks ──────────────────────────────────────────────────────
+
+export type _WriteAction = Assert<
+  Equals<WriteAction, "create" | "update" | "delete" | "restore" | "restoreVersion">
+>;
+export type _BeforeRun = Assert<
+  Equals<
+    ReturnType<LifecycleHooks<string, StoreFailure, Transaction>["before"][number]["run"]>,
+    Effect.Effect<ChainPatch, WriteRejected | StoreFailure, Transaction>
+  >
+>;
+export type _BeforeEvent = Assert<
+  Equals<
+    Parameters<LifecycleHooks<string, never, never>["before"][number]["run"]>,
+    [event: BeforeWriteEvent]
+  >
+>;
+export type _AfterResource = Assert<
+  Equals<AfterWriteEvent<string>["resource"], Option.Option<string>>
+>;
+export type _Due = Assert<Equals<ReturnType<typeof duePublications<never>>, ListFilter<never>>>;
 export type _GetDocument = Assert<
   Equals<
     ReturnType<typeof documents.get>,
