@@ -27,7 +27,6 @@ import { NOW } from "./fixtures.ts";
 
 const at = (millis: number) => DateTime.toDate(DateTime.makeUnsafe(millis));
 
-// oxlint-disable-next-line effect/effect-run-in-body -- the test harness is the runtime boundary the rule asks for
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 
 /** Run `effect` with the `TestClock` set to `millis`. */

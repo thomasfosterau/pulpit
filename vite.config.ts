@@ -65,31 +65,9 @@ export default defineConfig({
       // unsatisfiable under the full-name convention (`import * as Option from
       // "effect/Option"`) this library shares with its consumers.
       "effect/prefer-namespace-imports": "off",
-
-      // ---- Effect preset: ported-code allowances ---------------------------
-      // The modules under packages/*/src port behaviour the applications
-      // carry today, which predates the Effect oxlint preset. The rules below
-      // sit at `warn` so a faithful port stays committable while each site
-      // stays reported; a new site is a defect, not headroom.
-      "effect/imperative-loops": "warn",
-      "effect/avoid-native-object-helpers": "warn",
-      "effect/avoid-non-null-assertion": "warn",
-      "effect/avoid-any": "warn",
-      "effect/avoid-untagged-errors": "warn",
-      "effect/avoid-direct-json": "warn",
-      "effect/prefer-arr-match": "warn",
-      "effect/no-length-comparison": "warn",
-      "effect/prefer-arr-sort": "warn",
-      "effect/avoid-try-catch": "warn",
-      "effect/yield-in-for-loop": "warn",
-      "effect/prefer-effect-is": "warn",
-      "effect/avoid-expect-in-if": "warn",
-      "effect/effect-run-in-body": "warn",
-      "effect/prefer-effect-fn": "warn",
-      "effect/avoid-direct-tag-checks": "warn",
-      "effect/avoid-option-getorthrow": "warn",
-      "effect/no-barrel-imports": "warn",
-      "effect/throw-in-effect-gen": "warn",
+      // Every former ported-code allowance (the preset rules this workspace
+      // once held at `warn` while ported modules were paid down) is at zero
+      // and back at the preset's `error`; a new site is a defect.
       "typescript/no-explicit-any": "off",
       "typescript/no-empty-object-type": "off",
       "typescript/ban-ts-comment": "off",
@@ -104,6 +82,15 @@ export default defineConfig({
         files: ["**/tests/**/*.types.ts"],
         rules: {
           "effect/avoid-ts-ignore": "off",
+        },
+      },
+      // A test file IS the runtime boundary `effect-run-in-body` asks for
+      // ("entrypoint/test harness"): its `run` helper is where each case's
+      // Effect meets the Promise vitest awaits.
+      {
+        files: ["**/tests/**/*.test.ts"],
+        rules: {
+          "effect/effect-run-in-body": "off",
         },
       },
       // Build/test configs are evaluated by Vite and Vitest in bare Node,

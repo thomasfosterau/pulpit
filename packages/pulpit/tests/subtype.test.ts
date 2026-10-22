@@ -108,6 +108,12 @@ import {
 } from "./fixtures.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
+
+/** A view's column set, with the `id` and `action` every view carries. */
+const viewOf = (...columns: ReadonlyArray<string>): ReadonlySet<string> =>
+  // oxlint-disable-next-line effect/avoid-native-object-helpers -- a view's column set is the native `ReadonlySet` `LeafStore.columns` names
+  new Set(["id", "action", ...columns]);
+
 const tagOf = async <A, E extends { readonly _tag: string }>(
   effect: Effect.Effect<A, E>,
 ): Promise<Option.Option<string>> => {
@@ -213,52 +219,59 @@ describe("ownedListFilter ≡ canViewOwned", () => {
     ["a contributor", as(contributor)],
     ["a moderator", as(moderator)],
   ];
-  const rows: Array<
+  const rows: ReadonlyArray<
     LeafRow & { readonly visibility: Visibility; readonly draft: boolean; readonly ownerId: string }
-  > = [];
-  for (const visibility of ["public", "followers", "private"] as const) {
-    for (const draft of [false, true]) {
-      for (const ownerId of [member.id, otherMember.id]) {
-        rows.push({
-          id: `${visibility}-${draft}-${ownerId}`,
-          action: "create",
-          visibility,
-          draft,
-          ownerId,
-        });
-      }
-    }
-  }
-  const columns = new Set(["id", "action", "ownerId", "visibility", "draft"]);
+  > = Arr.flatMap(["public", "followers", "private"] as const, (visibility) =>
+    Arr.flatMap([false, true], (draft) =>
+      Arr.map([member.id, otherMember.id], (ownerId) => ({
+        id: `${visibility}-${draft}-${ownerId}`,
+        action: "create" as const,
+        visibility,
+        draft,
+        ownerId,
+      })),
+    ),
+  );
+  const columns = viewOf("ownerId", "visibility", "draft");
+  const cases = Arr.flatMap([true, false], (withDraft) =>
+    Arr.map(viewers, ([name, viewer]) => ({
+      label: `${withDraft ? "with" : "without"} a draft column, for ${name}`,
+      withDraft,
+      viewer,
+    })),
+  );
 
-  for (const withDraft of [true, false]) {
-    const access = ownedAccess({ draft: withDraft });
-    for (const [name, viewer] of viewers) {
-      it(`${withDraft ? "with" : "without"} a draft column, for ${name}`, async () => {
-        const filter = ownedListFilter(
-          access,
-          columns,
-          readScopeFor(viewer, gardeneriaPolicy, follows),
-        );
-        for (const row of rows) {
-          const listed = evaluate(filter, row, {
-            now: NOW,
-            contains: (set: Following, value) =>
-              Predicate.isString(value) && HashSet.has(set, value),
-          });
-          const seen = await run(
+  it.each(cases)("$label", async ({ withDraft, viewer }) => {
+    const filter = ownedListFilter(
+      ownedAccess({ draft: withDraft }),
+      columns,
+      readScopeFor(viewer, gardeneriaPolicy, follows),
+    );
+    const listed = Arr.map(rows, (row) => [
+      row.id,
+      evaluate(filter, row, {
+        now: NOW,
+        contains: (set: Following, value) => Predicate.isString(value) && HashSet.has(set, value),
+      }),
+    ]);
+    const seen = await run(
+      Effect.forEach(
+        rows,
+        (row) =>
+          Effect.map(
             canViewOwned(viewer, gardeneriaPolicy, follows, {
               ownerId: row.ownerId,
               visibility: row.visibility,
               // A leaf without the axis reads every row as not-a-draft.
               draft: withDraft && row.draft,
             }),
-          );
-          expect(listed, `${row.id}`).toBe(seen);
-        }
-      });
-    }
-  }
+            (visible) => [row.id, visible],
+          ),
+        { concurrency: 1 },
+      ),
+    );
+    expect(listed).toEqual(seen);
+  });
 
   it("reads an explicitly undefined draft option as no draft column", () => {
     expect(ownedAccess({ draft: undefined })).toEqual(ownedAccess());
@@ -266,11 +279,9 @@ describe("ownedListFilter ≡ canViewOwned", () => {
   });
 
   it("fails closed when the declaration names a column the view lacks", () => {
-    const filter = ownedListFilter(
-      ownedAccess({ draft: true }),
-      new Set(["id", "action", "ownerId", "visibility"]),
-      { kind: "all" },
-    );
+    const filter = ownedListFilter(ownedAccess({ draft: true }), viewOf("ownerId", "visibility"), {
+      kind: "all",
+    });
     expect(filter).toEqual(never);
   });
 });
@@ -278,7 +289,7 @@ describe("ownedListFilter ≡ canViewOwned", () => {
 // ── The reference two-state predicate (website's matrix) ─────────────
 
 describe("the reference list predicates", () => {
-  const view = new Set(["id", "action", "visibility"]);
+  const view = viewOf("visibility");
   const reader: ViewerAccount = { id: "u1", role: "user" };
   const filters = (viewer: Viewer, includeDeleted: boolean, columns = view) =>
     and<never>(
@@ -310,14 +321,10 @@ describe("the reference list predicates", () => {
   });
 
   it("a view with no visibility column rides no privacy axis", () => {
-    expect(filters(anonymous, false, new Set(["id", "action"]))).toEqual(ne("action", "delete"));
+    expect(filters(anonymous, false, viewOf())).toEqual(ne("action", "delete"));
   });
 
   describe("the followers arm (pulpit#92)", () => {
-    /** A view's column set, with the `id` and `action` every view carries. */
-    const viewOf = (...columns: ReadonlyArray<string>): ReadonlySet<string> =>
-      // oxlint-disable-next-line effect/avoid-native-object-helpers -- a view's column set is the native `ReadonlySet` `LeafStore.columns` names
-      new Set(["id", "action", ...columns]);
     const curated = viewOf("visibility", "curatorId");
     const declared: Extract<LeafAccess, { kind: "reference" }> = {
       kind: "reference",
@@ -490,7 +497,7 @@ describe("defineSubtype — an owned leaf", () => {
     const { chain, leaves, post } = ownedPosts();
     const id = await post("public");
     expect(HashMap.get(leaves.owners(), id)).toEqual(Option.some(member.id));
-    expect(chain.rows()[0]!.actorId).toEqual(Option.some(member.id));
+    expect(chain.rows()[0]?.actorId).toEqual(Option.some(member.id));
   });
 
   it("a private target refuses a stranger and the anonymous as NotFound, never Forbidden", async () => {
@@ -537,8 +544,9 @@ describe("defineSubtype — an owned leaf", () => {
         await run(actAs(who, ops.list({ limit: 50, offset: 0, includeDeleted, where: always })))
       ).rows.map((row) => row.id);
     expect(await listed(anonymous)).toEqual([open]);
-    expect((await listed(as(follower))).sort()).toEqual([open, followersOnly].sort());
-    expect((await listed(as(member))).sort()).toEqual([open, followersOnly, hidden].sort());
+    const sorted = Arr.sort(Order.String);
+    expect(sorted(await listed(as(follower)))).toEqual(sorted([open, followersOnly]));
+    expect(sorted(await listed(as(member)))).toEqual(sorted([open, followersOnly, hidden]));
     const many = await run(
       actAs(as(otherMember), ops.getMany([open, followersOnly, hidden, "missing"])),
     );
@@ -576,7 +584,7 @@ describe("defineSubtype — an owned leaf", () => {
     expect(snapshot.state["title"]).toBe("A post");
     const restored = await run(actAs(as(moderator), ops.restoreVersion(id, 0n)));
     expect(restored.version).toBe(2n);
-    expect(chain.rows()[2]!.actorId).toEqual(Option.some(moderator.id));
+    expect(chain.rows()[2]?.actorId).toEqual(Option.some(moderator.id));
   });
 
   it("the write and history gates confirm existence: a stranger gets Forbidden on every hidden row, the anonymous Unauthorized (pulpit#24)", async () => {
@@ -2541,7 +2549,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
 describe("subtypeHandlers — the handlers seam", () => {
   it("writes every mutation through the cache inside the write boundary, and evicts on delete", async () => {
     const { ops, actAs, post } = ownedPosts();
-    const cached = new Map<string, unknown>();
+    const cached = MutableHashMap.empty<string, unknown>();
     const log: Array<string> = [];
     const handlers = subtypeHandlers(ops, {
       transact: (effect) =>
@@ -2550,8 +2558,8 @@ describe("subtypeHandlers — the handlers seam", () => {
           effect,
         ),
       cache: Option.some({
-        set: (id, resource) => Effect.sync(() => void cached.set(id, resource)),
-        delete: (id) => Effect.sync(() => void cached.delete(id)),
+        set: (id, resource) => Effect.sync(() => void MutableHashMap.set(cached, id, resource)),
+        delete: (id) => Effect.sync(() => void MutableHashMap.remove(cached, id)),
       }),
     });
     const id = await post("public");
@@ -2559,12 +2567,14 @@ describe("subtypeHandlers — the handlers seam", () => {
       actAs(as(member), handlers.update({ id, patch: { title: "Cached" } })),
     );
     expect(updated).toMatchObject({ id, title: "Cached" });
-    expect(cached.get(id)).toEqual(updated);
+    expect(MutableHashMap.get(cached, id)).toEqual(Option.some(updated));
     const restored = await run(actAs(as(member), handlers.restoreVersion({ id, version: 0n })));
-    expect(cached.get(id)).toMatchObject({ title: "A post" });
-    expect(restored).toEqual(cached.get(id));
+    expect(Option.getOrUndefined(MutableHashMap.get(cached, id))).toMatchObject({
+      title: "A post",
+    });
+    expect(MutableHashMap.get(cached, id)).toEqual(Option.some(restored));
     await run(actAs(as(member), handlers.delete(id)));
-    expect(cached.has(id)).toBe(false);
+    expect(MutableHashMap.has(cached, id)).toBe(false);
     expect(log).toEqual(["transact", "transact", "transact"]);
   });
 });

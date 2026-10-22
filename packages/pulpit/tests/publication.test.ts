@@ -35,9 +35,9 @@ describe("the publication axis", () => {
       Option.some(at(hourMs)),
     ];
     expect(cases.map((stamp) => isPublishedAt(stamp, NOW))).toEqual([false, true, true, false]);
-    for (const stamp of cases) {
-      expect(isNotPublishedAt(stamp, NOW)).toBe(!isPublishedAt(stamp, NOW));
-    }
+    expect(cases.map((stamp) => isNotPublishedAt(stamp, NOW))).toEqual(
+      cases.map((stamp) => !isPublishedAt(stamp, NOW)),
+    );
   });
 
   it("publishedFilter: absent in, no predicate out; otherwise the arm that was asked for", () => {
@@ -48,13 +48,16 @@ describe("the publication axis", () => {
 
   it("the list arms agree with the row predicates on every stamp", () => {
     const context = { now: NOW, contains: () => false };
-    for (const stamp of [Option.none<Date>(), Option.some(at(-hourMs)), Option.some(at(hourMs))]) {
-      const row = { publishedAt: Option.getOrElse(stamp, () => null) };
-      expect(evaluate(published("publishedAt"), row, context)).toBe(isPublishedAt(stamp, NOW));
-      expect(evaluate(notPublished("publishedAt"), row, context)).toBe(
-        isNotPublishedAt(stamp, NOW),
-      );
-    }
+    const stamps = [Option.none<Date>(), Option.some(at(-hourMs)), Option.some(at(hourMs))];
+    const rowOf = (stamp: Option.Option<Date>) => ({
+      publishedAt: Option.getOrElse(stamp, () => null),
+    });
+    expect(
+      stamps.map((stamp) => evaluate(published("publishedAt"), rowOf(stamp), context)),
+    ).toEqual(stamps.map((stamp) => isPublishedAt(stamp, NOW)));
+    expect(
+      stamps.map((stamp) => evaluate(notPublished("publishedAt"), rowOf(stamp), context)),
+    ).toEqual(stamps.map((stamp) => isNotPublishedAt(stamp, NOW)));
   });
 
   it("ModerationState is the three-state review axis", () => {
@@ -101,9 +104,11 @@ describe("isPubliclyServeable — the moderationState axis (CACHE-AUTH-005)", ()
   });
 
   it("refuses any non-'approved' moderationState defensively", () => {
-    for (const state of ["escalated", "", null, "APPROVED"]) {
-      expect(isPubliclyServeable({ attributes: { moderationState: state } })).toBe(false);
-    }
+    expect(
+      ["escalated", "", null, "APPROVED"].map((state) =>
+        isPubliclyServeable({ attributes: { moderationState: state } }),
+      ),
+    ).toEqual([false, false, false, false]);
   });
 
   it("axes compose as AND — a public visibility cannot rescue a pending comment", () => {
@@ -177,11 +182,9 @@ describe("isPubliclyServeable — the owned-family posture (#1096)", () => {
     expect(isPubliclyServeable({ attributes: { visibility: "public" } }, owned)).toBe(true);
   });
 
-  for (const visibility of ["private", "followers"] as const) {
-    it(`REFUSES a ${visibility} owned row`, () => {
-      expect(isPubliclyServeable({ attributes: { visibility } }, owned)).toBe(false);
-    });
-  }
+  it.each(["private", "followers"] as const)("REFUSES a %s owned row", (visibility) => {
+    expect(isPubliclyServeable({ attributes: { visibility } }, owned)).toBe(false);
+  });
 
   it("REFUSES an owned row whose visibility attribute is ABSENT", () => {
     expect(isPubliclyServeable({ attributes: { name: "Ada" } }, owned)).toBe(false);

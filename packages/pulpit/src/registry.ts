@@ -303,9 +303,7 @@ export const branchOf = <Root extends string>(
   byKey: HashMap.HashMap<string, RegistryEntry>,
   roots: ReadonlyArray<Root>,
 ): Option.Option<Root> => {
-  // SAFETY: `Array.contains` only ever answers `true` for a member of `roots`,
-  // so the widened lookup is exactly the type guard it is declared as.
-  const isRoot = (key: string): key is Root => Array.contains(roots, key as Root);
+  const isRoot = (key: string): key is Root => Array.some(roots, (root) => root === key);
   const walk = (key: string): Option.Option<Root> =>
     isRoot(key)
       ? Option.some(key)

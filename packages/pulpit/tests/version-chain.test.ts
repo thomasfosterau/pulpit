@@ -64,7 +64,7 @@ describe("create", () => {
     expect(written.version).toBe(0n);
     expect(store.rows()).toHaveLength(1);
     expect(store.rows()[0]).toMatchObject({ id: written.id, type: "posts", action: "create" });
-    expect(store.rows()[0]!.actorId).toEqual(ACTOR);
+    expect(store.rows()[0]?.actorId).toEqual(ACTOR);
   });
 
   it("uses a caller-supplied id, and is never an upsert over an existing node", async () => {
@@ -92,7 +92,7 @@ describe("update — append and carry forward", () => {
     const second = await run(chain.update({ id: ID, patch: { summary: null }, actorId: ACTOR }));
     expect([first.version, second.version]).toEqual([1n, 2n]);
     expect(store.rows().map((row) => row.action)).toEqual(["create", "update", "update"]);
-    expect(store.rows()[2]!.state).toEqual({ title: "Second", body: "Hello", summary: null });
+    expect(store.rows()[2]?.state).toEqual({ title: "Second", body: "Hello", summary: null });
   });
 
   it("never rewrites an existing version row", async () => {
@@ -194,7 +194,7 @@ describe("getVersion / restoreVersion — history as data", () => {
     expect(restored.version).toBe(2n);
     expect(store.rows()[2]).toMatchObject({ version: 2n, action: "update", state: initial });
     // Versions 0 and 1 are untouched.
-    expect(store.rows()[1]!.state).toEqual({ title: "Second", body: "Hello", summary: null });
+    expect(store.rows()[1]?.state).toEqual({ title: "Second", body: "Hello", summary: null });
   });
 
   it("restoreVersion restores from a tombstone, over a tombstone", async () => {
@@ -203,7 +203,7 @@ describe("getVersion / restoreVersion — history as data", () => {
     const restored = await run(chain.restoreVersion(ID, 2n, ACTOR));
     expect(restored.version).toBe(3n);
     expect(store.rows()[3]).toMatchObject({ action: "update" });
-    expect(store.rows()[3]!.state).toEqual(store.rows()[2]!.state);
+    expect(store.rows()[3]?.state).toEqual(store.rows()[2]?.state);
   });
 
   it("refuses an unknown version, and a partial chain, before writing anything", async () => {

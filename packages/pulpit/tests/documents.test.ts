@@ -20,7 +20,6 @@ import { defineVersionChain } from "../src/version-chain.ts";
 import { decodes } from "./fixtures.ts";
 import { makeInMemoryChainStore, makeInMemoryDocumentStore } from "../src/testing.ts";
 
-// oxlint-disable-next-line effect/effect-run-in-body -- the test harness is the runtime boundary
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 
 const ACTOR = Option.some("u-author");
