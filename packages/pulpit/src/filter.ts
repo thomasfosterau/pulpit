@@ -88,8 +88,9 @@ export type Comparable = string | number | Date;
 /**
  * The most values an `anyOf` / `noneOf` node carries (`SEC-INPUT-003`): a
  * literal set past it is `never`, so no request drives an unbounded
- * `= ANY($values)` parameter. An application's own bound (WordPress caps
- * `include` at 100) sits below it.
+ * `= ANY($values)` parameter. An application's own bound sits below it:
+ * `@thomasfosterau/pulpit-wordpress` caps each list parameter at 100, a cap
+ * WordPress core itself doesn't set (pulpit#86).
  *
  * @since 0.1.0
  */

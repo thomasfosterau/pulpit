@@ -8,8 +8,8 @@ A WordPress-compatible (`wp/v2`), read-only REST API over the chains of [`@thoma
 
 **Not published.** The package is `"private": true` ([pulpit#115](https://github.com/thomasfosterau/pulpit/issues/115)). The API is specified on [pulpit#86](https://github.com/thomasfosterau/pulpit/issues/86) (the spec draft and the owner's decisions of 2026-10-15) and lands in phases:
 
-- **Landed:** the `IdCodec` seam and the id modes ([`./ids`](#ids), [pulpit#114](https://github.com/thomasfosterau/pulpit/issues/114)), with an in-memory codec in [`./testing`](#testing). No endpoint serves them yet.
-- **Phase 1:** posts, pages and media (list and get), the discovery index, `_links`, `_embed`, `_fields`, the headers and the errors. It waits for the kernel's list ordering ([pulpit#112](https://github.com/thomasfosterau/pulpit/issues/112)) and filter arms ([pulpit#113](https://github.com/thomasfosterau/pulpit/issues/113)).
+- **Landed:** the `IdCodec` seam and the id modes ([`./ids`](#ids), [pulpit#114](https://github.com/thomasfosterau/pulpit/issues/114)), with an in-memory codec in [`./testing`](#testing).
+- **Phase 1 (landed):** posts, pages and media (list and get), the discovery index, `_links`, `_embed`, `_fields`, the headers and the errors ([`./api`](#api), [`./http`](#http)).
 - **Phase 2:** categories, tags and `/users`.
 - **Phase 3:** each later kernel slice as it lands.
 
@@ -29,7 +29,9 @@ Every module is a namespace on the root export (`import { Ids } from "@thomasfos
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Ids`). |
+| `.` | Every module below as a namespace (`Ids`, `Api`, `Http`). |
+| `./api` | The `wp/v2` read API: `defineWordPress`, the post-type binding (`bind`) and the seams it reads (`render`, the author seam, the site). |
+| `./http` | `wordPressHttp(api)`, the read API as an `effect/http` request handler. |
 | `./ids` | The `IdCodec` seam an application fills, the integer-id mode over it (`integerIds`) and the opt-in string-id mode (`stringIds`). |
 | `./testing` | In-memory fakes of the adapter's seams (`makeInMemoryIdCodec`), for tests only. Not on the root export. |
 
@@ -44,7 +46,7 @@ Both answer per input, in input order, duplicates included:
 
 - `encode(nodeIds)` answers each node id's wire id. In integer mode it reads the codec once for the whole batch, deduplicated, and fails `UnencodableNodeId` if the codec has no integer for a node (`unmapped`), answers one that isn't a positive safe integer (`invalid-integer`), or answers one integer for two distinct node ids in the batch (`duplicate-integer`), each an application defect: the adapter encodes only nodes the read gate has let through.
 - `decode(wireIds)` answers the node id each wire id names, or `Option.none()`. In integer mode a wire id that isn't a positive safe integer (`0`, a negative, a fraction, an exponent, a non-numeric string, one above `Number.MAX_SAFE_INTEGER`) is none without reaching the codec; a string must be decimal digits, and leading zeros read as decimal, as WordPress's `absint` reads them (`007` is 7). An integer the codec doesn't know is none too. `decode` fails only with the codec's own error (its error type is the codec's `E` alone), never on a malformed input.
-- **A `decode` batch is capped at the kernel's `MAX_SET_VALUES`** (1000, duplicates counted; `SEC-INPUT-003`), the cap on the `= ANY($values)` set the decoded ids feed. Past it, every wire id decodes to none and the codec isn't read, failing closed as the kernel's `anyOf` does. That is closed for an `include` list or a path id, but not for `exclude`, where excluding nothing is open: the adapter must cap `include`, `exclude` and every other id list itself, before `decode` (to be enforced by pulpit#86, not built yet).
+- **A `decode` batch is capped at the kernel's `MAX_SET_VALUES`** (1000, duplicates counted; `SEC-INPUT-003`), the cap on the `= ANY($values)` set the decoded ids feed. Past it, every wire id decodes to none and the codec isn't read, failing closed as the kernel's `anyOf` does. That is closed for an `include` list or a path id, but not for `exclude`, where excluding nothing is open: the adapter caps `include`, `exclude` and every other list parameter itself, at `MAX_LIST_PARAMETER` (100), before `decode` ([`./api`](#api)).
 
 **Unknown, malformed and hidden ids answer alike (`SEC-AUTH-ENUM-001`).** Every none is answered exactly as a hidden or missing row is (`404 rest_post_invalid_id`), never as a `400` or a `500`, and a decoded id still goes through the kernel's read gate. Integer ids are guessable where UUIDs aren't, so this is what keeps them from confirming that a hidden node exists. The answer is the same; the timing is not: a malformed id skips the codec, an unknown one costs one codec read, and a hidden one a codec read and a store read. That is the same timing residue the kernel accepts between a missing and a hidden row.
 
@@ -66,6 +68,68 @@ deepStrictEqual(Effect.runSync(ids.decode(["1", "7", "0", "1.5"])), [
 ]);
 ```
 
+## `./api`
+
+`defineWordPress(config)` declares a `wp/v2` read API over the leaves an application binds to WordPress's post types, and returns `{ handle }`, which answers one request (its method, its path from the site root, and its query pairs in order) with a status, headers and a JSON body. `handle` never fails: a WordPress error is its envelope (`{ code, message, data: { status } }`), and a failure of a store, the codec or the renderer is `500 internal_server_error`. It is framework-free; [`./http`](#http) mounts it on `effect/http`.
+
+```ts
+import { bind, defineWordPress } from "@thomasfosterau/pulpit-wordpress/api";
+import { integerIds } from "@thomasfosterau/pulpit-wordpress/ids";
+
+const wp = defineWordPress({
+  site: {
+    url: "https://example.org",
+    name: "Example",
+    description: "",
+    timezone: "Australia/Sydney",
+  },
+  ids: integerIds(nodeCodec),
+  viewer, // the request's viewer, as the leaves read it
+  policy, // the application's role axes
+  render: (requests) => renderHtml(requests), // one batch per response, in order
+  link: (type, fields) => `https://example.org/${fields.slug}`,
+  types: {
+    post: bind({
+      ops: postOps,
+      columns: { slug: "slug", date: "publishedAt", modified: "updatedAt" },
+      fields: postFields,
+      serveable,
+    }),
+    page: bind({ ops: pageOps, columns, fields: pageFields, serveable }),
+    attachment: bind({ ops: imageOps, columns, fields: imageFields, serveable }),
+  },
+  authors: { ids: integerIds(accountCodec), getMany: readProfiles },
+});
+```
+
+**Routes.** Under the prefix (`/wp-json`, by default): the discovery index `/` (`namespaces`, `routes`, `gmt_offset`, `timezone_string`), the namespace `/wp/v2`, and for each bound type its collection and item routes (`/posts`, `/pages`, `/media`, each with `/{id}`). `GET` and `HEAD` only; any other method, an unbound type, and any other route answer `404 rest_no_route`. Every response carries `Link: <…/wp-json/>; rel="https://api.w.org/"`.
+
+**Collections** take `context` (`view` | `embed`), `page`, `per_page` (1–100, default 10), `offset`, `order`, `orderby` (`date` by default; `author`, `id`, `include`, `modified`, `slug`, `title`, plus `parent` and `menu_order` where they apply), `include`, `exclude`, `slug`, `status`, `author`, `author_exclude`, `after`, `before`, `modified_after`, `modified_before`, `_fields` and `_embed`; pages and media add `parent` / `parent_exclude`, pages `menu_order`, media `mime_type` / `media_type`. A list is a bare JSON array with `X-WP-Total`, `X-WP-TotalPages` and the `Link` `prev` / `next` WordPress builds; a page past the end of a non-empty list is `400 rest_post_invalid_page_number`. Bad parameters are one `400 rest_invalid_param` naming each in `data.params`. A parameter phase 1 can't honour (`search`, `categories`, `tags`, `sticky`, `format`, …), or one whose column the binding doesn't declare, is `rest_invalid_param` too, never silently ignored.
+
+**Items** carry WordPress's fields in core's wire form (pinned to the fixture core generates from its REST API): `title` / `content` / `excerpt` as `{ rendered }` through `render`, `date` in the site's time zone and `date_gmt` in UTC (`null` for an item never stamped), `status` derived from the binding's facts (`trash` for a tombstone, `draft`, `private` for any visibility but `public`, `future` for an unarrived stamp, else `publish`; media are `inherit`), `_links` (`self`, `collection`, `about`, `author`, `wp:featuredmedia`, `up`, `wp:attachment`, `curies`), and, with `_embed` (all, or a list of rels), `_embedded.author`, `wp:featuredmedia` and `up`. Fields pulpit doesn't model are constants: `comment_status` and `ping_status` `"closed"`, `sticky: false`, `format: "standard"`, `template: ""`, `meta: []`, and, until phase 2, `categories: []` and `tags: []`.
+
+**The read rule, and where it differs from WordPress.**
+
+- **A hidden item is a missing one** (`SEC-AUTH-ENUM-001`). Reads go through each bound leaf's own `get` / `getMany` / `list`, so a hidden, draft, tombstoned or unpublished item answers `404 rest_post_invalid_id` exactly as an unknown id does, and a list omits it from its page and its `X-WP-Total`. WordPress answers `rest_forbidden` (401 / 403) for a post that exists but can't be read; this adapter never does.
+- **A readable item never points at a hidden one.** `featured_media` and `parent` are read through the target type's own `getMany`; a target the viewer can't read is `0`, and is left out of `_links` and `_embedded`.
+- **`status`.** The default is `publish` (`inherit` for media). Any other status from an anonymous caller is `401 rest_forbidden_status`, and `trash` without the view-deleted rung is `403` (pulpit#86, decision 4); the answer names no row. A signed-in caller's `draft` or `private` list is whatever the leaf's gates show them (their own drafts, say). A `followers` item reads as `private` to a viewer who may see it (decision 7).
+- **`context=edit`** is `rest_forbidden_context` (401 / 403), checked after the 404, so it never confirms a hidden item (decision 6). Revisions are not routed.
+- **List parameters are capped** at `MAX_LIST_PARAMETER` (100) values each, `400 rest_invalid_param` past it, before any id is decoded (`SEC-INPUT-003`). WordPress core sets no such cap; the cap keeps an over-long `exclude` from decoding to an all-none batch that would exclude nothing.
+- **Caching** (`CACHE-AUTH-005`). `Cache-Control: public` only for an anonymous viewer when every item, embeds included, is its binding's `serveable`; otherwise `private, no-store`.
+- **Batched reads** (`PERF-DB-001`). One response is one node `encode`, one author `encode` (plus one profile read with `_embed`), one `render`, and one `getMany` per related type, however many items it carries. `orderby=include` reads the whole `include` list (at most 100 items) and orders it in memory.
+
+| Export | What it is |
+| --- | --- |
+| `defineWordPress(config)`, `WordPressConfig`, `WordPressApi`, `WordPressRequest`, `WordPressResponse` | The API, its declaration, and one request and response. |
+| `bind(binding)`, `PostTypeBinding`, `BoundPostType`, `ShownItem` | One leaf bound to a post type: its gated operations, view columns, field mapper and serveability. |
+| `PostFields`, `MediaFields`, `PostColumns` | What a binding reads off its resource, and the view columns its parameters filter and sort by. |
+| `RenderRequest`, `Author`, `AuthorSeam`, `Site` | The render seam's request, the author seam and its profile, and the site. |
+| `PostType`, `PostStatus`, `MAX_LIST_PARAMETER` | The served post types, the statuses, and the list-parameter cap (100). |
+
+## `./http`
+
+`wordPressHttp(api)` is the API as an `effect/http` handler, `Effect<HttpServerResponse, never, HttpServerRequest | R>`: it reads the method, path and query pairs from the request URL and answers a JSON response (an empty one for `HEAD`) with the API's status and headers. Mount it on the application's router under the prefix.
+
 ## `./testing`
 
 In-memory fakes of the adapter's seams, for tests, mirroring the kernel's [`@thomasfosterau/pulpit/testing`](../pulpit/README.md#testing). Each implements its seam's contract under [Seams](#seams) and records its calls, so a test can pin how many reads a request made. **Not for production**; the subpath isn't on the root export.
@@ -76,7 +140,7 @@ In-memory fakes of the adapter's seams, for tests, mirroring the kernel's [`@tho
 
 ## Seams
 
-The adapter is written against interfaces the application fills. Each states the shape its implementation must have; [`./testing`](#testing) has an in-memory fake of each, which implements the contract stated here.
+The adapter is written against interfaces the application fills. Besides the codec below: each **post-type binding** is a kernel leaf's `defineSubtype` operations (`get`, `getMany`, `list`, so the kernel's gates hold), the view columns its parameters read (`slug`, `date`, `modified`, and optionally `id`, `title`, `author`, `parent`, `menuOrder`, `draft`, `visibility`, `mimeType`, `mediaType`), a `fields` mapper from its resource to `PostFields`, and a `serveable` predicate (typically the kernel's `serveablePolicy`); **`render`** turns a response's `title` / `content` / `excerpt` / `caption` / `description` values into HTML in one batch, in order (resolving a `documentRef` hash through the kernel's `DocumentStore.getMany`, say); the **author seam** is an account id mode (`integerIds` over an account codec, typically) and a batched profile read. Each states the shape its implementation must have; [`./testing`](#testing) has an in-memory fake of each, which implements the contract stated here.
 
 ### `IdCodec<E, R>`: node ids to WordPress integers
 
