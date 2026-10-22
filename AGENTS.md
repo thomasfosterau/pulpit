@@ -27,6 +27,7 @@ The kernel's own invariants, terms and import boundary, including the seams-befo
 - `pnpm install` — dependencies, the Vite+ git hooks (pre-commit runs `vp staged`: format + lint on staged files) and, through `prepare`, the Effect-patched `tsc` / `oxlint`. There is no pre-push hook.
 - `vp check` — format + lint (Oxfmt + Oxlint). `vp run check` — the type gate: each package's `check` (which also type-checks its `tests/**/*.types.ts`) plus the dist-consumer declaration check, which builds both packages' `dist/` and asserts the emitted types. They are different commands. The root `check` task in `vite.config.ts` lists each package's `check` by name, so a new package must be added there.
 - `vp run -r test:unit` — unit tests (pure code; no database), in every package.
+- `vp run test:coverage` — every package's unit suite under one Istanbul map at `coverage/coverage-final.json`, which `fallow audit` reads for exact per-function CRAP scores (`health.coverage` in `.fallowrc.json`). Without it fallow scores every function as uncovered, and any function with cyclomatic complexity ≥ 5 fails the gate on its own. Each package's own `vp run -r test:coverage` also enforces its thresholds.
 - `vp run -r build` — emit each package's `dist/`.
 - `vp run -r docgen` — build, then type-check and execute every JSDoc `@example` and generate the API docs under each package's `docs/` (gitignored).
 - `fallow audit --base origin/trunk` — the fallow gate over your change set.
@@ -44,9 +45,9 @@ Before you report work as done, run the gates below in order and quote each comm
 4. `vp run -r build`
 5. `vp run -r docgen`
 6. `pnpm audit --audit-level high`
-7. `fallow audit --base origin/trunk`
+7. `vp run test:coverage`, then `fallow audit --base origin/trunk`
 
-Steps 1–6 are what CI runs (`.github/workflows/ci.yml`); step 7 is the fallow gate the PreToolUse hook also runs on commit and push. For CI parity from a clean tree, first run `rm -rf node_modules packages/*/node_modules tests/*/node_modules && pnpm install --frozen-lockfile`: a warm tree hides a peer that a dependency requires but a package's `package.json` does not declare (declare it under `peerDependencies` via `catalog:peers`, or `workspace:^` for the kernel).
+Steps 1–6 are what CI runs (`.github/workflows/ci.yml`); step 7 is the fallow gate the PreToolUse hook also runs on commit and push. The hook reads the coverage map on disk and never refreshes it, so run `vp run test:coverage` first. For CI parity from a clean tree, first run `rm -rf node_modules packages/*/node_modules tests/*/node_modules && pnpm install --frozen-lockfile`: a warm tree hides a peer that a dependency requires but a package's `package.json` does not declare (declare it under `peerDependencies` via `catalog:peers`, or `workspace:^` for the kernel).
 
 ## Branches and pull requests
 
@@ -70,7 +71,7 @@ Consult effect-solutions before writing Effect code (`vp exec effect-solutions l
 
 ## Agent sessions
 
-`.claude/hooks/session-start.sh` (SessionStart) installs dependencies against the lockfile, puts `vp` and `fallow` on PATH for non-interactive shells, and repairs a broken bare `node`. It hydrates no secrets, and none are needed: every gate above runs offline. A PostToolUse hook runs `vp fmt <file> --write` after every Write / Edit, and a PreToolUse hook (`.claude/hooks/fallow-gate.sh`) runs `fallow audit --base origin/trunk` on every `git commit` / `git push` and blocks on a `fail` verdict. A worktree needs its own `pnpm install` before `vp` resolves the worktree's own vitest.
+`.claude/hooks/session-start.sh` (SessionStart) installs dependencies against the lockfile, puts `vp` (a re-exec shim), `fallow` and `tsx` (docgen's example runner) on PATH for non-interactive shells, and repairs a broken bare `node`. It hydrates no secrets, and none are needed: every gate above runs offline. A PostToolUse hook runs `vp fmt <file> --write` after every Write / Edit, and a PreToolUse hook (`.claude/hooks/fallow-gate.sh`) runs `fallow audit --base origin/trunk` on every `git commit` / `git push` and blocks on a `fail` verdict. A worktree needs its own `pnpm install` before `vp` resolves the worktree's own vitest.
 
 ## Documentation surfaces
 
@@ -88,7 +89,7 @@ Consult effect-solutions before writing Effect code (`vp exec effect-solutions l
 
 This block, the task map below and `.claude/hooks/fallow-gate.sh` are hand-maintained: do not regenerate them with `fallow setup-hooks`, `fallow hooks install --target agent` or `fallow agent install`. Checked against fallow 3.31.0: every form of these that targets Claude Code (the default auto-detection here, `--agent claude` or `--harness claude`) rewrites `.claude/hooks/fallow-gate.sh` without `--force`, dropping `--base origin/trunk` from its audit and this hook's header note; only the Codex-only forms (`--agent codex`, `--harness codex`) leave the hook alone. This block carries no `<!-- fallow:… -->` markers, so every form except `--agent claude` also appends a second, marked block to this file instead of replacing this one, and that block's commands omit `--base`. `fallow agent install` with Claude Code also appends `@AGENTS.md` to `CLAUDE.md`, which is a symlink to this file, so AGENTS.md would import itself.
 
-Before any `git commit` or `git push`, run `fallow audit --format json --quiet --explain --gate-marker agent --base origin/trunk`. The PreToolUse hook `.claude/hooks/fallow-gate.sh` runs this same audit on every `git commit` / `git push` and blocks the command on a `fail` verdict, so running it first just surfaces the findings sooner. If the verdict is `fail`, fix the reported findings before retrying. Treat JSON runtime errors like `{ "error": true, ... }` as non-blocking. Audit defaults to `gate=new-only`: only findings introduced by the current changeset affect the verdict.
+Before any `git commit` or `git push`, run `vp run test:coverage` (the audit reads `coverage/coverage-final.json`), then `fallow audit --format json --quiet --explain --gate-marker agent --base origin/trunk`. The PreToolUse hook `.claude/hooks/fallow-gate.sh` runs this same audit on every `git commit` / `git push` and blocks the command on a `fail` verdict, so running it first just surfaces the findings sooner. If the verdict is `fail`, fix the reported findings before retrying. Treat JSON runtime errors like `{ "error": true, ... }` as non-blocking. Audit defaults to `gate=new-only`: only findings introduced by the current changeset affect the verdict.
 
 ## Fallow task map
 

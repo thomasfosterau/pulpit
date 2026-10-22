@@ -16,8 +16,9 @@
 # and the line that puts the toolchain on PATH — `. "$HOME/.vite-plus/env"` —
 # sits *below* it. So the environment is correct for a human at a prompt and
 # broken for every non-interactive shell, which is what an agent's tool calls
-# and a git hook both are. `fallow` (which the fallow gate runs before every
-# commit) is in `node_modules/.bin`, which is on nobody's PATH.
+# and a git hook both are. `fallow` (the PreToolUse fallow gate runs it before
+# every agent `git commit` / `git push`) and `tsx` (docgen's example runner)
+# are in `node_modules/.bin`, which is on nobody's PATH.
 #
 # Rather than fight PATH — which this script cannot export into its caller —
 # it links the tools into `~/.local/bin`, a directory already on PATH in this
@@ -122,10 +123,10 @@ SHIM
 }
 
 # ── 1. Repo binaries the documented workflows invoke directly ─────────────────
-# The fallow gate runs `fallow audit …` before every commit, and `fallow`
-# resolves only from node_modules/.bin. `vp` is included for the remote/web runner, where the
+# `fallow` (the PreToolUse fallow gate) and `tsx` (docgen's example runner)
+# resolve only from node_modules/.bin. `vp` is included for the remote/web runner, where the
 # global launcher does not exist.
-for tool in fallow; do
+for tool in tsx fallow; do
   link_tool "$PROJECT_DIR/node_modules/.bin/$tool"
 done
 write_vp_shim
@@ -162,7 +163,7 @@ if [ -f "$PROJECT_DIR/pnpm-lock.yaml" ]; then
     || (cd "$PROJECT_DIR" && pnpm install --frozen-lockfile >/dev/null 2>&1) \
     || log "dependency install failed; continuing"
   # node_modules/.bin only exists after the install, so re-link what it provides.
-  for tool in fallow; do
+  for tool in tsx fallow; do
     link_tool "$PROJECT_DIR/node_modules/.bin/$tool"
   done
   write_vp_shim
