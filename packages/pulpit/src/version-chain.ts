@@ -558,7 +558,9 @@ export interface VersionChainOps<E, R> {
  * The write that is about to append: the chain's `action` vocabulary, with
  * the two explicit restore surfaces named apart (`VERSION-CHAIN-006`), so a
  * hook can tell a resurrection from an edit. `restore` and `restoreVersion`
- * still append an `update` row.
+ * still append an `update` row. `publish` and `unpublish` are `./subtype`'s
+ * publication operations, which record a publication fact and append no
+ * version; the chain itself never emits them.
  *
  * @since 0.1.0
  */
@@ -568,6 +570,8 @@ export const WriteAction = Schema.Literals([
   "delete",
   "restore",
   "restoreVersion",
+  "publish",
+  "unpublish",
 ]);
 /**
  * The {@link WriteAction} literal union.

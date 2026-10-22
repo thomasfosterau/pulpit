@@ -55,6 +55,7 @@ import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { FlatQuery, Group, Resource } from "@thomasfosterau/effect-jsonapi";
 import type { Visibility } from "../src/content.ts";
 import { always, and, eq, evaluate, isIn, ne, never, or, type ListFilter } from "../src/filter.ts";
@@ -108,6 +109,7 @@ import {
   makeInMemoryChainStore,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
+  makeInMemoryPublication,
   makeInMemoryResourceCache,
   type InMemoryFollowing as Following,
 } from "../src/testing.ts";
@@ -3200,7 +3202,12 @@ describe("lifecycle hooks — before and after every write (pulpit#45)", () => {
       set: (id, resource) => Effect.sync(() => void MutableHashMap.set(cached, id, resource)),
       delete: (id) => Effect.sync(() => void MutableHashMap.remove(cached, id)),
     });
-    const event = { type: "posts", action: "update", write: { id: "p", version: 1n } } as const;
+    const event = {
+      type: "posts",
+      action: "update",
+      write: { id: "p", version: 1n },
+      publication: Option.none(),
+    } as const;
     await run(hook.run({ ...event, resource: Option.some("r") }));
     expect(MutableHashMap.get(cached, "p")).toEqual(Option.some("r"));
     await run(hook.run({ ...event, resource: Option.none() }));
@@ -3708,5 +3715,359 @@ describe("the resource cache's compare-on-set (pulpit#121)", () => {
       Option.none(),
       Option.some(1n),
     ]);
+  });
+});
+
+describe("defineSubtype — the live pointer (pulpit#46)", () => {
+  /** The leaf's resource. */
+  interface Post {
+    readonly id: string;
+    readonly version: bigint;
+    readonly title: ColumnValue;
+    readonly draft: ColumnValue;
+  }
+
+  /** The publication operations a gated leaf has; failing the test on one that hasn't. */
+  const present = <A>(operations: Option.Option<A>): A =>
+    Option.match(operations, {
+      onNone: () => expect.fail("a publish-gated leaf has publication operations"),
+      onSome: (value) => value,
+    });
+
+  /** A publish-gated owned leaf over the in-memory seams, with a preview grant a test sets. */
+  const gatedPosts = (options: { readonly withCache?: boolean } = {}) => {
+    const chain = makeInMemoryChainStore();
+    const heads = makeInMemoryLeafStore(chain, { columns: ["title", "visibility", "draft"] });
+    const publication = makeInMemoryPublication({ chain, leaves: heads });
+    let viewer: Viewer = anonymous;
+    let grant = Option.none<string>();
+    const ops = defineSubtype({
+      type: "posts",
+      access: ownedAccess({ draft: true }),
+      chain,
+      leaves: publication.leaves,
+      viewer: Effect.sync(() => viewer),
+      policy: gardeneriaPolicy,
+      followers: follows,
+      toResource: (row: LeafRow): Post => ({
+        id: row.id,
+        version: row.version,
+        title: row["title"],
+        draft: row["draft"],
+      }),
+      publication: {
+        live: publication.live,
+        facts: publication.facts,
+        preview: Effect.sync(() => grant),
+      },
+    });
+    const cache = makeInMemoryResourceCache((post: Post) => post.draft === false);
+    const handlers = subtypeHandlers(ops, {
+      transact: (effect) => effect,
+      cache: options.withCache === true ? Option.some(cache) : Option.none(),
+    });
+    const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+      Effect.suspend(() => {
+        viewer = who;
+        return effect;
+      });
+    const preview = (id: Option.Option<string>) => {
+      grant = id;
+    };
+    const publicationOps = present(ops.publication);
+    return { chain, publication, ops, handlers, cache, actAs, preview, publicationOps };
+  };
+
+  const atClock = <A, E>(effect: Effect.Effect<A, E>) =>
+    run(
+      Effect.andThen(TestClock.setTime(NOW.getTime()), effect).pipe(
+        Effect.provide(TestClock.layer()),
+      ),
+    );
+
+  const titleSeen = <E>(effect: Effect.Effect<Post, E>) =>
+    Effect.map(Effect.option(effect), (found) => Option.map(found, (resource) => resource.title));
+
+  it("a reader never sees an unpublished head; the owner and the rung do", async () => {
+    const { ops, actAs, publicationOps } = gatedPosts();
+    const seen = await atClock(
+      Effect.gen(function* () {
+        const { id } = yield* actAs(
+          as(member),
+          ops.create({
+            id: Option.none(),
+            state: { title: "v0", visibility: "public", draft: false },
+          }),
+        );
+        const listed = (who: Viewer) =>
+          Effect.map(
+            actAs(who, ops.list({ limit: 10, offset: 0, includeDeleted: false, where: always })),
+            (page) => page.rows.map((row) => row.title),
+          );
+        const before = {
+          anonymous: yield* titleSeen(actAs(anonymous, ops.get(id))),
+          stranger: yield* titleSeen(actAs(as(otherMember), ops.get(id))),
+          owner: yield* titleSeen(actAs(as(member), ops.get(id))),
+          rung: yield* titleSeen(actAs(as(moderator), ops.get(id))),
+          strangerList: yield* listed(as(otherMember)),
+          ownerList: yield* listed(as(member)),
+        };
+        yield* actAs(as(member), publicationOps.publish(id));
+        yield* actAs(as(member), ops.update({ id, patch: { title: "v1" } }));
+        const after = {
+          anonymous: yield* titleSeen(actAs(anonymous, ops.get(id))),
+          owner: yield* titleSeen(actAs(as(member), ops.get(id))),
+          rung: yield* titleSeen(actAs(as(moderator), ops.get(id))),
+          strangerList: yield* listed(as(otherMember)),
+          ownerList: yield* listed(as(member)),
+          many: [...HashMap.values(yield* actAs(anonymous, ops.getMany([id])))],
+          public: yield* ops.publicResource(id),
+          versions: {
+            anonymous: (yield* actAs(anonymous, ops.get(id))).version,
+            owner: (yield* actAs(as(member), ops.get(id))).version,
+          },
+        };
+        return { before, after };
+      }),
+    );
+    expect(seen.before).toEqual({
+      anonymous: Option.none(),
+      stranger: Option.none(),
+      owner: Option.some("v0"),
+      rung: Option.some("v0"),
+      strangerList: [],
+      ownerList: ["v0"],
+    });
+    expect(seen.after).toMatchObject({
+      anonymous: Option.some("v0"),
+      owner: Option.some("v1"),
+      rung: Option.some("v1"),
+      strangerList: ["v0"],
+      ownerList: ["v1"],
+      many: [{ title: "v0", version: 0n, draft: false }],
+      versions: { anonymous: 0n, owner: 1n },
+    });
+    expect(Option.map(seen.after.public, (resource) => resource.title)).toEqual(Option.some("v0"));
+  });
+
+  it("on a gated leaf, draft means no live version", async () => {
+    const { ops, actAs, publicationOps } = gatedPosts();
+    const drafts = await atClock(
+      Effect.gen(function* () {
+        const { id } = yield* actAs(
+          as(member),
+          ops.create({
+            id: Option.none(),
+            state: { title: "t", visibility: "public", draft: false },
+          }),
+        );
+        const draftOf = Effect.map(actAs(as(member), ops.get(id)), (resource) => resource.draft);
+        const before = yield* draftOf;
+        yield* actAs(as(member), publicationOps.publish(id));
+        const published = yield* draftOf;
+        yield* actAs(as(member), publicationOps.unpublish(id));
+        return [before, published, yield* draftOf];
+      }),
+    );
+    expect(drafts).toEqual([true, false, true]);
+  });
+
+  it("a scheduled version becomes visible at its stamp, with no write", async () => {
+    const { ops, actAs, publicationOps, chain } = gatedPosts();
+    const seen = await atClock(
+      Effect.gen(function* () {
+        const { id } = yield* actAs(
+          as(member),
+          ops.create({
+            id: Option.none(),
+            state: { title: "v0", visibility: "public", draft: false },
+          }),
+        );
+        yield* actAs(as(member), publicationOps.publish(id));
+        yield* actAs(as(member), ops.update({ id, patch: { title: "v1" } }));
+        const at = DateTime.toDate(DateTime.makeUnsafe(NOW.getTime() + 60_000));
+        yield* actAs(as(member), publicationOps.publish(id, { version: 1n, at }));
+        const early = yield* titleSeen(actAs(anonymous, ops.get(id)));
+        const rows = chain.rows().length;
+        yield* TestClock.adjust("1 minute");
+        const due = yield* titleSeen(actAs(anonymous, ops.get(id)));
+        return { early, due, wrote: chain.rows().length - rows };
+      }),
+    );
+    expect(seen).toEqual({ early: Option.some("v0"), due: Option.some("v1"), wrote: 0 });
+  });
+
+  it("discardDraft appends the live version's state and never rewrites", async () => {
+    const { ops, actAs, publicationOps, chain } = gatedPosts();
+    const result = await atClock(
+      Effect.gen(function* () {
+        const { id } = yield* actAs(
+          as(member),
+          ops.create({
+            id: Option.none(),
+            state: { title: "v0", visibility: "public", draft: false },
+          }),
+        );
+        const noLive = yield* Effect.flip(actAs(as(member), publicationOps.discardDraft(id)));
+        yield* actAs(as(member), publicationOps.publish(id));
+        const unchanged = yield* actAs(as(member), publicationOps.discardDraft(id));
+        yield* actAs(as(member), ops.update({ id, patch: { title: "draft" } }));
+        const before = chain.rows().map((row) => row.state["title"]);
+        const written = yield* actAs(as(member), publicationOps.discardDraft(id));
+        return { noLive: noLive._tag, unchanged, before, written, id };
+      }),
+    );
+    expect(result.noLive).toBe("NotPublished");
+    expect(result.unchanged).toEqual({ id: result.id, version: 0n });
+    expect(result.before).toEqual(["v0", "draft"]);
+    expect(result.written).toEqual({ id: result.id, version: 2n });
+    expect(chain.rows().map((row) => row.state["title"])).toEqual(["v0", "draft", "v0"]);
+  });
+
+  it("a preview grant widens get for exactly one node", async () => {
+    const { ops, actAs, preview } = gatedPosts();
+    const seen = await atClock(
+      Effect.gen(function* () {
+        const create = (title: string) =>
+          actAs(
+            as(member),
+            ops.create({
+              id: Option.none(),
+              state: { title, visibility: "private", draft: false },
+            }),
+          );
+        const a = (yield* create("a")).id;
+        const b = (yield* create("b")).id;
+        preview(Option.some(a));
+        const granted = yield* titleSeen(actAs(anonymous, ops.get(a)));
+        const other = yield* titleSeen(actAs(anonymous, ops.get(b)));
+        const listed = yield* actAs(
+          anonymous,
+          ops.list({ limit: 10, offset: 0, includeDeleted: false, where: always }),
+        );
+        yield* actAs(as(member), ops.delete(a));
+        const tombstone = yield* titleSeen(actAs(anonymous, ops.get(a)));
+        return { granted, other, listed: listed.total, tombstone };
+      }),
+    );
+    expect(seen).toEqual({
+      granted: Option.some("a"),
+      other: Option.none(),
+      listed: 0,
+      tombstone: Option.none(),
+    });
+  });
+
+  it("publish and unpublish are gated like a write, record facts and fire their events; the cache only holds the live resource", async () => {
+    const { ops, actAs, handlers, cache, publication } = gatedPosts({ withCache: true });
+    const outcome = await atClock(
+      Effect.gen(function* () {
+        const { id } = yield* actAs(
+          as(member),
+          ops.create({
+            id: Option.none(),
+            state: { title: "v0", visibility: "public", draft: false },
+          }),
+        );
+        const publishing = present(handlers.publication);
+        const refused = yield* Effect.flip(actAs(as(otherMember), publishing.publish(id)));
+        const missingVersion = yield* Effect.flip(
+          actAs(as(member), publishing.publish(id, { version: 7n })),
+        );
+        yield* actAs(as(member), handlers.update({ id, patch: { title: "head" } }));
+        const cachedBefore = cache.get(id);
+        yield* actAs(as(member), publishing.publish(id, { version: 0n }));
+        const cachedLive = cache.get(id);
+        yield* actAs(as(member), handlers.update({ id, patch: { title: "head 2" } }));
+        const cachedAfterEdit = cache.get(id);
+        // Publishing the newer head (2) lands: a publication event is stamped at the
+        // head, so the cache's compare-on-set (pulpit#121) orders it after the edits.
+        yield* actAs(as(member), publishing.publish(id));
+        const cachedRepublished = cache.get(id);
+        yield* actAs(as(member), publishing.unpublish(id));
+        const facts = yield* actAs(as(member), publishing.facts(id));
+        return {
+          refused: refused._tag,
+          missingVersion: missingVersion._tag,
+          cachedBefore,
+          cachedLive,
+          cachedAfterEdit,
+          cachedRepublished,
+          cachedAfterUnpublish: [cache.get(id), cache.versionOf(id)],
+          facts: facts.map((fact) => Option.getOrNull(fact.version)),
+          recorded: publication.recorded().length,
+        };
+      }),
+    );
+    expect(outcome.refused).toBe("Forbidden");
+    expect(outcome.missingVersion).toBe("VersionNotFound");
+    // Never the head: nothing live yet, then the live v0 through every head edit, then gone.
+    expect(outcome.cachedBefore).toEqual(Option.none());
+    expect(outcome.cachedLive).toEqual(Option.some(expect.objectContaining({ title: "v0" })));
+    expect(outcome.cachedAfterEdit).toEqual(Option.some(expect.objectContaining({ title: "v0" })));
+    expect(outcome.cachedRepublished).toEqual(
+      Option.some(expect.objectContaining({ title: "head 2", version: 2n })),
+    );
+    expect(outcome.cachedAfterUnpublish).toEqual([Option.none(), Option.some(2n)]);
+    expect(outcome.facts).toEqual([0n, 2n, null]);
+    expect(outcome.recorded).toBe(3);
+  });
+
+  it("a before hook can refuse a publish, and is shown the head", async () => {
+    const chain = makeInMemoryChainStore();
+    const heads = makeInMemoryLeafStore(chain, { columns: ["title", "visibility", "draft"] });
+    const publication = makeInMemoryPublication({ chain, leaves: heads });
+    const shown: Array<string> = [];
+    const ops = defineSubtype<LeafRow, LeafRow, Following, never, never>({
+      type: "posts",
+      access: ownedAccess({ draft: true }),
+      chain,
+      leaves: publication.leaves,
+      viewer: Effect.succeed(as(member)),
+      policy: gardeneriaPolicy,
+      followers: follows,
+      toResource: (row) => row,
+      publication: { live: publication.live, facts: publication.facts },
+      hooks: Effect.succeed({
+        before: [
+          {
+            name: "approval",
+            run: (event) => {
+              shown.push(
+                `${event.action}:${Option.map(event.prior, (prior) => prior.version).pipe(Option.getOrNull)}`,
+              );
+              return event.action === "publish"
+                ? Effect.fail(
+                    new WriteRejected({
+                      type: event.type,
+                      id: event.id,
+                      action: event.action,
+                      reason: "unapproved",
+                    }),
+                  )
+                : Effect.succeed(event.patch);
+            },
+          },
+        ],
+        after: [],
+      }),
+    });
+    const tag = await atClock(
+      Effect.gen(function* () {
+        const { id } = yield* ops.create({
+          id: Option.none(),
+          state: { title: "t", visibility: "public", draft: false },
+        });
+        return (yield* Effect.flip(present(ops.publication).publish(id)))._tag;
+      }),
+    );
+    expect(tag).toBe("WriteRejected");
+    expect(shown).toEqual(["create:null", "publish:0"]);
+    expect(publication.recorded()).toEqual([]);
+  });
+
+  it("a leaf without the live pointer has no publication operations, and reads its head as before", async () => {
+    const { ops } = ownedPosts();
+    expect(Option.isNone(ops.publication)).toBe(true);
   });
 });

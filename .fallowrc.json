@@ -9,6 +9,7 @@
     "packages/pulpit/src/publication.ts",
     "packages/pulpit/src/documents.ts",
     "packages/pulpit/src/edges.ts",
+    "packages/pulpit/src/working-copy.ts",
     "packages/pulpit/src/blobs.ts",
     "packages/pulpit/src/paths.ts",
     "packages/pulpit/src/proposals.ts",

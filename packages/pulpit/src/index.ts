@@ -88,3 +88,10 @@ export * as Paths from "./paths.ts";
  * (`defineReports` over a `ReportStore` seam).
  */
 export * as Moderation from "./moderation.ts";
+
+/**
+ * The working copy: an editor's autosave buffer outside the version chain
+ * (`WorkingCopyStore`), committed as one ordinary version
+ * (`defineWorkingCopy`).
+ */
+export * as WorkingCopy from "./working-copy.ts";

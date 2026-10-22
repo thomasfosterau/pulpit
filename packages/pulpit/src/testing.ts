@@ -1,6 +1,6 @@
 /**
  * **In-memory fakes of the kernel's seams** — a store for each of the
- * version-chain, leaf, document, edge, proposal, path and report seams, an endpoint view, a
+ * version-chain, leaf, document, edge, proposal, path, report and publication seams, an endpoint view, a
  * follower seam and a resource cache, all held in memory with no SQL. They are the reference semantics of
  * each seam's contract in the package README → Seams, and the fakes the
  * kernel's own suites run against; an adapter's or an application's tests can
@@ -72,7 +72,17 @@ import { rowOrder } from "./internal/list-order.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
 import type { ReportRow, ReportStore } from "./moderation.ts";
 import type { ProposalListing, ProposalRow, ProposalStore } from "./proposals.ts";
-import type { FollowerSeam, LeafRow, LeafStore, ResourceCacheSeam } from "./subtype.ts";
+import type { WorkingCopy, WorkingCopyKey, WorkingCopyStore } from "./working-copy.ts";
+import type {
+  FollowerSeam,
+  LeafRow,
+  LeafStore,
+  ListOrder,
+  LiveView,
+  PublicationFact,
+  PublicationStore,
+  ResourceCacheSeam,
+} from "./subtype.ts";
 import {
   VersionConflict,
   type ColumnValue,
@@ -106,6 +116,27 @@ const contextAt = (now: Date): EvaluationContext<InMemoryFollowing> => ({
   now,
   contains: (set, value: ColumnValue) => Predicate.isString(value) && HashSet.has(set, value),
 });
+
+/** A view page: the rows matching `where` at `now`, in the list order contract's order. */
+const viewPage = (
+  rows: ReadonlyArray<LeafRow>,
+  query: {
+    readonly where: ListFilter<InMemoryFollowing>;
+    readonly orderBy: ReadonlyArray<ListOrder>;
+    readonly limit: number;
+    readonly offset: number;
+  },
+  now: Date,
+) => {
+  const matching = Arr.sort(
+    rows.filter((row) => evaluate(query.where, row, contextAt(now))),
+    rowOrder(query.orderBy),
+  );
+  return {
+    rows: matching.slice(query.offset, query.offset + query.limit),
+    total: matching.length,
+  };
+};
 
 /**
  * An in-memory {@link FollowerSeam} over an explicit table of who follows
@@ -286,14 +317,7 @@ export const makeInMemoryLeafStore = (
     columns: new Set(["id", "version", "action", "ownerId", ...options.columns]),
     get: (id) => Effect.sync(() => Arr.findFirst(view(), (row) => row.id === id)),
     getMany: (ids) => Effect.sync(() => view().filter((row) => ids.includes(row.id))),
-    list: ({ where, orderBy, limit, offset }) =>
-      Effect.map(instantOf(fixedNow), (now) => {
-        const matching = Arr.sort(
-          view().filter((row) => evaluate(where, row, contextAt(now))),
-          rowOrder(orderBy),
-        );
-        return { rows: matching.slice(offset, offset + limit), total: matching.length };
-      }),
+    list: (query) => Effect.map(instantOf(fixedNow), (now) => viewPage(view(), query, now)),
     ownerOf: (id) => Effect.sync(() => HashMap.get(owners, id)),
     stampOwner: (id, ownerId) =>
       Effect.sync(() => {
@@ -945,5 +969,179 @@ export const makeInMemoryBlobStore = (): InMemoryBlobStore => {
     failNextPut: () => {
       failing = true;
     },
+  };
+};
+
+// ── Publication ───────────────────────────────────────────────────────
+
+/**
+ * A publish-gated leaf's in-memory seams, over an in-memory chain and leaf
+ * store, plus the hook a test reads the log through. In memory only; not
+ * for production.
+ *
+ * @since 0.1.0
+ */
+export interface InMemoryPublication {
+  /** The publication log. */
+  readonly facts: PublicationStore<never, never>;
+  /** The live-version view. */
+  readonly live: LiveView<LeafRow, InMemoryFollowing, never, never>;
+  /** The leaf's current-version view, with `draft` computed from the log. */
+  readonly leaves: LeafStore<LeafRow, InMemoryFollowing, never, never>;
+  /** Every fact, in record order. */
+  readonly recorded: () => ReadonlyArray<PublicationFact>;
+}
+
+/**
+ * The in-memory seams of a publish-gated leaf: the seam contracts (README →
+ * Seams → `PublicationStore`, `LiveView`). The effective fact is the last
+ * recorded one whose `at` has arrived at `now` (the Effect `Clock`'s when
+ * absent, so `TestClock` steers a schedule). A live row is the state at the
+ * effective fact's version, with that version as its `version`, the
+ * head's `action` and owner, `draft: false` and the fact's `at` as
+ * `publishedAt`; a head row's `draft`
+ * is whether the node has no live version. In memory only; not for
+ * production.
+ *
+ * @since 0.1.0
+ */
+export const makeInMemoryPublication = (options: {
+  readonly chain: InMemoryChainStore;
+  readonly leaves: InMemoryLeafStore;
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is the Effect `Clock`
+  readonly now?: Date | undefined;
+}): InMemoryPublication => {
+  const fixedNow = Option.fromNullishOr(options.now);
+  let log: ReadonlyArray<PublicationFact> = [];
+  const effectiveAt = (id: string, now: Date) =>
+    Arr.findLast(log, (fact) => fact.id === id && fact.at.getTime() <= now.getTime());
+  const liveVersion = (id: string, now: Date) =>
+    Option.flatMap(effectiveAt(id, now), (fact) =>
+      Option.map(fact.version, (version) => ({ version, at: fact.at })),
+    );
+  const liveOf = (head: LeafRow, now: Date): Option.Option<LeafRow> =>
+    Option.flatMap(liveVersion(head.id, now), ({ version, at }) =>
+      Option.map(
+        Arr.findFirst(options.chain.rows(), (row) => row.id === head.id && row.version === version),
+        (row): LeafRow => {
+          const base: LeafRow = {
+            ...row.state,
+            id: head.id,
+            version,
+            action: head.action,
+            draft: false,
+            publishedAt: at,
+          };
+          return Option.match(Option.fromUndefinedOr(head["ownerId"]), {
+            onNone: () => base,
+            onSome: (ownerId): LeafRow => ({ ...base, ownerId }),
+          });
+        },
+      ),
+    );
+  const headOf = (head: LeafRow, now: Date): LeafRow => ({
+    ...head,
+    draft: Option.isNone(liveVersion(head.id, now)),
+  });
+  const atNow = <A>(read: (now: Date) => Effect.Effect<A>) =>
+    Effect.flatMap(instantOf(fixedNow), read);
+  const heads = () =>
+    options.leaves.getMany(Arr.dedupe(Arr.map(options.chain.rows(), (row) => row.id)));
+  const facts: PublicationStore<never, never> = {
+    record: (fact) =>
+      Effect.sync(() => {
+        log = [...log, fact];
+      }),
+    effective: (id) => Effect.map(instantOf(fixedNow), (now) => effectiveAt(id, now)),
+    facts: (id, limit) => Effect.sync(() => log.filter((fact) => fact.id === id).slice(0, limit)),
+  };
+  const live: LiveView<LeafRow, InMemoryFollowing, never, never> = {
+    get: (id) =>
+      atNow((now) =>
+        Effect.map(options.leaves.get(id), (head) =>
+          Option.flatMap(head, (row) => liveOf(row, now)),
+        ),
+      ),
+    getMany: (ids) =>
+      atNow((now) =>
+        Effect.map(options.leaves.getMany(ids), (rows) =>
+          Arr.getSomes(Arr.map(rows, (row) => liveOf(row, now))),
+        ),
+      ),
+    list: (query) =>
+      atNow((now) =>
+        Effect.map(heads(), (rows) =>
+          viewPage(
+            Arr.getSomes(
+              Arr.map(rows, (head) =>
+                evaluate(query.headFor, head, contextAt(now))
+                  ? Option.some(headOf(head, now))
+                  : liveOf(head, now),
+              ),
+            ),
+            query,
+            now,
+          ),
+        ),
+      ),
+  };
+  const leaves: LeafStore<LeafRow, InMemoryFollowing, never, never> = {
+    ...options.leaves,
+    get: (id) =>
+      atNow((now) =>
+        Effect.map(options.leaves.get(id), (head) => Option.map(head, (row) => headOf(row, now))),
+      ),
+    getMany: (ids) =>
+      atNow((now) =>
+        Effect.map(options.leaves.getMany(ids), (rows) => Arr.map(rows, (row) => headOf(row, now))),
+      ),
+    list: (query) =>
+      atNow((now) =>
+        Effect.map(heads(), (rows) =>
+          viewPage(
+            Arr.map(rows, (row) => headOf(row, now)),
+            query,
+            now,
+          ),
+        ),
+      ),
+  };
+  return { facts, live, leaves, recorded: () => log };
+};
+
+// ── Working copies ────────────────────────────────────────────────────
+
+/**
+ * An in-memory {@link WorkingCopyStore}, plus the hook a test reads it
+ * through. In memory only; not for production.
+ *
+ * @since 0.1.0
+ */
+export interface InMemoryWorkingCopyStore extends WorkingCopyStore<never, never> {
+  /** Every copy, keyed `id:userId`. */
+  readonly copies: () => HashMap.HashMap<string, WorkingCopy>;
+}
+
+/**
+ * An in-memory {@link WorkingCopyStore}: the seam's contract (README →
+ * Seams → `WorkingCopyStore`), one copy per `(id, userId)`. In memory only;
+ * not for production.
+ *
+ * @since 0.1.0
+ */
+export const makeInMemoryWorkingCopyStore = (): InMemoryWorkingCopyStore => {
+  let copies = HashMap.empty<string, WorkingCopy>();
+  const keyOf = (key: WorkingCopyKey) => `${key.id}:${key.userId}`;
+  return {
+    put: (key, copy) =>
+      Effect.sync(() => {
+        copies = HashMap.set(copies, keyOf(key), copy);
+      }),
+    get: (key) => Effect.sync(() => HashMap.get(copies, keyOf(key))),
+    discard: (key) =>
+      Effect.sync(() => {
+        copies = HashMap.remove(copies, keyOf(key));
+      }),
+    copies: () => copies,
   };
 };
