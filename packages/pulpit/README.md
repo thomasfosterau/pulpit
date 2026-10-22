@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`). |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`) and `validateRegistry`. |
 | `./version-chain` | The append-only node/version chain operations over a `VersionChainStore` seam, and the field-level version compare (`diffStates`, `compare`). |
@@ -28,7 +28,8 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./documents` | The content-addressed `DocumentStore` seam and its first-insert hook, the `DocumentHash` it is keyed by, the `documentRef` field spread, and the hash contract's `canonicalText`. |
 | `./edges` | `defineEdgeOps`, the edge operations factory over an `EdgeStore` seam: relations between nodes, readable only when every end is, with declared cardinality limits. |
 | `./proposals` | `defineProposals`, suggested edits over a `ProposalStore` seam: a contributor's patch against a base version, its two-tier stale / conflict classification, and accept (through the target's own update, recording `proposedBy`), reject and withdraw. |
-| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge and proposal stores, an endpoint view, a follower seam), for tests only. Not on the root export. |
+| `./blobs` | File and media leaves: the `BlobStore` seam keyed by content hash, the file field spread, the commit-ordered byte write (`defineFileWrites`, with its `bytesPending` marker) and the usage index's edge ends. |
+| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal and blob stores, an endpoint view, a follower seam), for tests only. Not on the root export. |
 
 The operations are written against seams that the application fills; their expected shapes are in [Seams](#seams).
 
@@ -454,6 +455,47 @@ Rate limiting, notifications and the wire shape (a JSON:API `proposals` resource
 | `validateProposalPatch`, `ValidatedPatch`, `PROPOSAL_FORBIDDEN_KEYS` | The patch rules, a patch that passed them, and the keys no proposal may carry. |
 | `ProposalNotFound`, `ProposalClosed`, `ProposalConflict`, `InvalidProposalPatch` | The failures: 404, 409 (already decided), 409 (the target changed underneath), 422. |
 
+## `./blobs`
+
+File and media leaves (pulpit#55). A file is an ordinary leaf (owned, like a member's image, or reference material) whose version row carries `fileResourceFields`: the `contentHash` of its bytes, their `byteSize` and `mediaType`, the original `filename`, and `bytesPending`. The bytes live behind a `BlobStore` the application supplies (R2, S3), under `blobKey(contentHash)`, so a version's bytes are immutable. New bytes are a new hash and a new version, `restoreVersion` restores the reference to the old bytes, and equal bytes are stored once.
+
+```ts
+import * as Option from "effect/Option";
+import { defineFileWrites, fileUrl } from "@thomasfosterau/pulpit/blobs";
+
+const files = defineFileWrites({ leaf: imageOps, blobs: r2, transact });
+const written =
+  yield *
+  files.create({
+    id: Option.none(),
+    state: { visibility: "public" },
+    upload: { bytes, mediaType: "image/png", filename: "fern.png" },
+  });
+// written.bytesPending: true when the post-commit byte write failed
+fileUrl(row, r2); // none while the row's bytesPending is anything but false
+```
+
+- **Bytes are written after the chain commits.** `create` and `replace`:
+  1. hash the upload (`sha256Hex`);
+  2. append the version through the leaf's own operations inside `transact`, with `bytesPending: true` unless the store already holds those bytes;
+  3. put the bytes once `transact` has returned;
+  4. append `bytesPending: false` over exactly that version.
+- **A failed byte write leaves the node pending.** If the put, or its confirmation, fails, the node stays `bytesPending` and the write still succeeds, reporting `bytesPending: true`. `fileUrl` gives no URL for it, so no reader is pointed at missing bytes.
+- **`confirmBytes({ id, version, contentHash })` finishes a pending version** once the bytes are there (a retry, or a client's signed upload). It never lands over a later version (`StaleVersion`).
+- **Nothing garbage-collects bytes.** They stay for as long as any version references them; purge (pulpit#58) is the one removal path, and `BlobStore.delete` is there for it.
+- **Usage is an edge family.** "Where is this file used" is answered by `./edges`, using `fileUsageEnds({ user, file })` as a family's ends, so `EDGE-001` hides every use whose content the viewer can't read. Maintaining the edges is the referencing leaf's job, or an after hook's. Key the edge table uniquely on `(user_id, file_id)` and declare `onConflict: "ignore"`.
+- **The writes bypass `subtypeHandlers`.** They go through the leaf's operations, so its gates, preconditions and before hooks apply, but not the handlers' cache write-through and after hooks.
+- **Stays in the app:** the adapters, image transforms, EXIF extraction and video streaming.
+
+| Export | What it is |
+| --- | --- |
+| `BlobStore`, `BlobHead` | The byte-store seam (see [Seams](#seams)) and what it knows of one object. |
+| `ContentHash`, `sha256Hex(bytes)`, `blobKey(hash)` | The content hash (SHA-256, 64 lowercase hex characters), its Web Crypto derivation, and the store key it gives. |
+| `fileResourceFields`, `FileColumns` | The file version's attribute spread (all read-only) and its columns. |
+| `defineFileWrites(definition)`, `FileWriteOps`, `Upload`, `FileWrite` | The commit-ordered writes (`create`, `replace`, `confirmBytes`), an upload, and what a write reports. |
+| `fileUrl(file, blobs)` | A version's URL, or none while its bytes are pending. |
+| `fileUsageEnds({ user, file })` | The usage index's edge ends (`userId`, `fileId`). |
+
 ## `./testing`
 
 In-memory fakes of the kernel's seams, for tests: an adapter's or an application's suite can run the real operations (`defineVersionChain`, `defineSubtype`, `defineEdgeOps`, …) over them without a database. Each fake implements its seam's contract as stated under [Seams](#seams), in memory and with no SQL, and enforces what the real table's schema enforces (a primary or unique key) and nothing the operations are responsible for. They are the fakes the kernel's own suites run against, so they are its reference semantics for each seam.
@@ -503,6 +545,7 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | `makeInMemoryEdgeStore({ ends, uniqueKey, now? })`, `InMemoryEdgeStore`, `InMemoryEdgeStoreOptions` | [`EdgeStore`](#edgestorerow-following-e-r-the-edge-table), with the unique key (`NULLS NOT DISTINCT`), the INNER JOIN of each end's view, and the window-column total. | `rows()` (every edge, hidden ones included), `raceNextInsert(winner)` (a concurrent writer). |
 | `makeInMemoryNodes(columns)`, `InMemoryNodes` | `EndpointView`, an end's view whose rows a test writes directly (an `InMemoryLeafStore` is one too). | `put(row)`. |
 | `makeInMemoryProposalStore({ chain, leaves })`, `InMemoryProposalStore` | [`ProposalStore`](#proposalstoree-r-the-proposal-table), reading each listing's head version from `chain` and its `targetOwnerId` from `leaves`' owner stamps; newest first, `id` descending on a tie. | `rows()` (every proposal as it now stands). |
+| `makeInMemoryBlobStore()`, `InMemoryBlobStore`, `InMemoryBlob`, `InMemoryBlobFailure` | [`BlobStore`](#blobstoree-r-the-byte-store), with `memory://<key>` URLs and no signed upload. | `objects()` (every stored object), `failNextPut()` (a byte write failing after the commit). |
 | `makeInMemoryFollowers(table)`, `InMemoryFollowing` | [`FollowerSeam`](#the-viewer-the-role-axes-and-the-follower-seam) over an explicit table of who follows whom; the `in` set is a `HashSet` of account ids, where SQL's is a subquery. |  |
 
 `now` is the instant the list filter's `published` / `notPublished` compare against (and, for the edge store, the base of the minted `createdAt`s). Pass a fixed `Date` for a deterministic suite; left out, each call reads the Effect `Clock`, so `TestClock` steers it. The role ladder and the `AccessPolicy` are the application's, so `./testing` ships none.
@@ -605,6 +648,21 @@ Method contract:
 Filled by the application over its own proposal table (gardeneria's `participation.proposal`); no library is expected to provide one. Expected schema: `id` (a UUID primary key), `target_node_id` (a foreign key to `core.node`), `author_id`, `patch` (`jsonb`, as submitted), `rationale` (nullable), `base_version` (`bigint`), `state` (`pending | accepted | rejected | withdrawn`), `submitted_at` (`timestamptz NOT NULL DEFAULT now()`), and the nullable `decided_at`, `decided_by`, `decision_note` and `applied_version` (with `(target_node_id, applied_version)` a foreign key to the root version table). Index `author_id`, `target_node_id`, and the pending rows.
 
 Method contract: `insert` inserts the row; `get(id)` is `id = $id LIMIT 1`, joined to `core.node` for `targetType`, with the target's head version as a correlated scalar subquery (`SELECT MAX(version) … WHERE id = target_node_id`: one indexed lookup per row, never a per-render aggregate over every node's versions); `lock(id)` is the row alone, `FOR UPDATE`, so two decisions on one proposal serialise; `close(id, decision)` updates the pending row's status, decider, timestamp, note and applied version; `list` renders `where` over the columns `authorId`, `targetId`, `targetType`, `status` and `targetOwnerId` (the target's owner, `core.node_owner`, `NULL` for none; a `LEFT JOIN`), orders by `submitted_at DESC, id DESC`, applies `LIMIT` / `OFFSET` and returns the unpaged total as a window column, each row with its target's head version as `get` reads it. `E` and `R` are as for the chain store, and the store never opens a transaction itself.
+
+### `BlobStore<E, R>`: the byte store
+
+Filled by the application over its object storage (R2 in gardeneria, S3 or a local directory elsewhere); no library is expected to provide one. Keys are `blobKey(contentHash)` (`sha256/<hash>`), never a node id.
+
+Method contract:
+
+- `put(key, bytes, head)` writes the object, with `head.mediaType` as its content type. It is idempotent: a key always holds the same bytes.
+- `get` returns the bytes or none.
+- `head` returns `{ byteSize, mediaType }` or none, without reading the body.
+- `delete` removes the object; only purge calls it.
+- `publicUrl(key)` is the URL a reader fetches, when the store serves one.
+- `signedUploadUrl`, when the store offers one, signs a direct client upload of `key`'s bytes. The node stays `bytesPending` until `confirmBytes` sees them.
+
+`E` is the store's own failure, and `R` whatever its client needs.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 

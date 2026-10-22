@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Resource } from "@thomasfosterau/effect-jsonapi";
-import { Content, Documents, Edges, Proposals, Registry } from "@thomasfosterau/pulpit";
+import { Blobs, Content, Documents, Edges, Proposals, Registry } from "@thomasfosterau/pulpit";
 import {
   ContentResource,
   contentVisibilityResourceFields,
@@ -104,6 +104,8 @@ import {
   type ProposalStatus,
 } from "@thomasfosterau/pulpit/proposals";
 import type { VersionRow } from "@thomasfosterau/pulpit/version-chain";
+
+import { defineFileWrites, fileUrl, type FileWrite } from "@thomasfosterau/pulpit/blobs";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -580,3 +582,10 @@ export type _Classify = Assert<
   >
 >;
 export type _ProposedBy = Assert<Equals<VersionRow["proposedBy"], Option.Option<string>>>;
+
+// ── blobs ────────────────────────────────────────────────────────────────
+
+export type _BlobsBarrel = Assert<Equals<typeof Blobs.defineFileWrites, typeof defineFileWrites>>;
+export type _FileUrl = Assert<Equals<ReturnType<typeof fileUrl>, Option.Option<string>>>;
+export type _FileWrite = Assert<Equals<FileWrite["bytesPending"], boolean>>;
+export type _FileWriteVersion = Assert<Equals<FileWrite["version"], bigint>>;

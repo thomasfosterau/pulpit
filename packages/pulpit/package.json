@@ -43,6 +43,7 @@
     "./documents": "./src/documents.ts",
     "./edges": "./src/edges.ts",
     "./proposals": "./src/proposals.ts",
+    "./blobs": "./src/blobs.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -86,6 +87,10 @@
       "./proposals": {
         "types": "./dist/proposals.d.ts",
         "default": "./dist/proposals.js"
+      },
+      "./blobs": {
+        "types": "./dist/blobs.d.ts",
+        "default": "./dist/blobs.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",

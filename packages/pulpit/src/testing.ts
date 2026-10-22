@@ -56,7 +56,8 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
-import type * as Schema from "effect/Schema";
+import * as Schema from "effect/Schema";
+import { sha256Hex, type BlobHead, type BlobStore } from "./blobs.ts";
 import { canonicalText, type DocumentHash, type DocumentStore } from "./documents.ts";
 import {
   endpointColumn,
@@ -309,17 +310,7 @@ const utf8 = new TextEncoder();
 
 /** SHA-256 over the canonical text's UTF-8 bytes, as 64 lowercase hex characters. */
 const hashOf = (document: Schema.Json): Effect.Effect<DocumentHash> =>
-  Effect.tryPromise(() =>
-    crypto.subtle.digest("SHA-256", utf8.encode(canonicalText(document))),
-  ).pipe(
-    // Web Crypto's SHA-256 over bytes has no failure a caller could act on.
-    Effect.orDie,
-    Effect.map((digest) =>
-      Arr.map(Arr.fromIterable(new Uint8Array(digest)), (byte) =>
-        byte.toString(16).padStart(2, "0"),
-      ).join(""),
-    ),
-  );
+  sha256Hex(utf8.encode(canonicalText(document)));
 
 /**
  * An in-memory {@link DocumentStore}, plus the hooks a test reads it through.
@@ -670,5 +661,78 @@ export const makeInMemoryProposalStore = (options: {
         );
       }),
     rows: () => rows,
+  };
+};
+
+// ── Blobs ─────────────────────────────────────────────────────────────
+
+/**
+ * The in-memory blob store's one failure: a simulated outage.
+ *
+ * @since 0.1.0
+ */
+export class InMemoryBlobFailure extends Schema.TaggedError<InMemoryBlobFailure>()(
+  "InMemoryBlobFailure",
+  { key: Schema.String },
+) {}
+
+/**
+ * One object in an {@link InMemoryBlobStore}.
+ *
+ * @since 0.1.0
+ */
+export interface InMemoryBlob {
+  readonly bytes: Uint8Array;
+  readonly head: BlobHead;
+}
+
+/**
+ * An in-memory {@link BlobStore}, plus the hooks a test reads and steers it
+ * through. In memory only; not for production.
+ *
+ * @since 0.1.0
+ */
+export interface InMemoryBlobStore extends BlobStore<InMemoryBlobFailure, never> {
+  /** Every stored object by key. */
+  readonly objects: () => HashMap.HashMap<string, InMemoryBlob>;
+  /** Simulate an outage: the next `put` fails with {@link InMemoryBlobFailure}. */
+  readonly failNextPut: () => void;
+}
+
+/**
+ * An in-memory {@link BlobStore}: the seam's contract (README → Seams →
+ * `BlobStore`). `publicUrl` is `memory://<key>`; there is no signed upload
+ * URL. `failNextPut` simulates the byte write failing after the commit. In
+ * memory only; not for production.
+ *
+ * @since 0.1.0
+ */
+export const makeInMemoryBlobStore = (): InMemoryBlobStore => {
+  let objects = HashMap.empty<string, InMemoryBlob>();
+  let failing = false;
+  return {
+    put: (key, bytes, head) =>
+      Effect.suspend(() => {
+        if (failing) {
+          failing = false;
+          return Effect.fail(new InMemoryBlobFailure({ key }));
+        }
+        objects = HashMap.set(objects, key, { bytes: Uint8Array.from(bytes), head });
+        return Effect.void;
+      }),
+    get: (key) =>
+      Effect.sync(() => Option.map(HashMap.get(objects, key), (object) => object.bytes)),
+    head: (key) =>
+      Effect.sync(() => Option.map(HashMap.get(objects, key), (object) => object.head)),
+    delete: (key) =>
+      Effect.sync(() => {
+        objects = HashMap.remove(objects, key);
+      }),
+    publicUrl: (key) => Option.some(`memory://${key}`),
+    signedUploadUrl: Option.none(),
+    objects: () => objects,
+    failNextPut: () => {
+      failing = true;
+    },
   };
 };

@@ -66,3 +66,10 @@ export * as Edges from "./edges.ts";
  * `ProposalStore` seam), with its two-tier stale / conflict classification.
  */
 export * as Proposals from "./proposals.ts";
+
+/**
+ * File and media leaves: the blob-store seam (`BlobStore`) keyed by the
+ * content hash, the file field spread, the commit-ordered byte write
+ * (`defineFileWrites`) and the usage index's edge ends.
+ */
+export * as Blobs from "./blobs.ts";
