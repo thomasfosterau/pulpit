@@ -2142,6 +2142,15 @@ export interface SubtypeHandlers<Resource, E, R> {
 export interface SubtypeHandlersConfig<Resource, R> {
   /** The write boundary — always-open: a nested call is a SAVEPOINT (website #1883). */
   readonly transact: <A, E2>(effect: Effect.Effect<A, E2, R>) => Effect.Effect<A, E2, R>;
+  /**
+   * Whether the caller is already inside a transaction, read once a write's
+   * `transact` has returned. When it is, that `transact` was a SAVEPOINT and
+   * nothing has committed yet, so the write refuses its cache write-through
+   * and evicts instead: a resource that may still roll back is never
+   * cached (`CACHE-AUTH-005`, pulpit#124). Over `effect/sql`, it is whether
+   * the fiber's context holds the client's `TransactionConnection`.
+   */
+  readonly inTransaction: Effect.Effect<boolean, never, R>;
   /** The leaf's cache, when it has one. */
   readonly cache: Option.Option<ResourceCacheSeam<Resource, R>>;
 }
@@ -2221,15 +2230,30 @@ export const subtypeHandlers = <Resource, E, R>(
         };
 
   /**
-   * The after hooks for one committed write: the cache write-through first
-   * (when the leaf has a cache), then the leaf's own, in order.
+   * The cache step inside an outer transaction: the write hasn't committed,
+   * so evict at its version and cache nothing (pulpit#124).
+   */
+  const evictHook = (
+    cache: ResourceCacheSeam<Resource, R>,
+  ): AfterWriteHook<Resource, never, R> => ({
+    name: "cache",
+    run: ({ write }) => cache.delete(write.id, write.version),
+  });
+
+  /**
+   * The after hooks for one write whose `transact` has returned: the cache
+   * step first (when the leaf has a cache; a write-through, or an eviction
+   * inside an outer transaction), then the leaf's own, in order.
    */
   const after = (event: AfterWriteEvent<Resource>) =>
-    Effect.flatMap(ops.hooks, (hooks) =>
+    Effect.flatMap(Effect.zip(ops.hooks, config.inTransaction), ([hooks, nested]) =>
       runAfter(
         {
           ...hooks,
-          after: [...Option.toArray(Option.map(config.cache, cacheHook)), ...hooks.after],
+          after: [
+            ...Option.toArray(Option.map(config.cache, nested ? evictHook : cacheHook)),
+            ...hooks.after,
+          ],
         },
         event,
       ),
