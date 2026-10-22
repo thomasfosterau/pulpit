@@ -957,6 +957,20 @@ export interface ListRequest {
 type Gate = Unauthorized | Forbidden;
 
 /**
+ * An update's input: the node, the tri-state patch, an optional expected
+ * version and, for an edit that applies an accepted proposal, the
+ * contributor the version records as `proposedBy` (`./proposals`).
+ *
+ * @since 0.1.0
+ */
+export interface UpdateRequest extends Precondition {
+  readonly id: string;
+  readonly patch: ChainPatch;
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no proposal", and a given value is itself an `Option`
+  readonly proposedBy?: Option.Option<string> | undefined;
+}
+
+/**
  * The operations {@link defineSubtype} produces for one leaf. Every write
  * also fails {@link WriteRejected} when one of the leaf's before hooks
  * refuses it, after the gate and with nothing appended.
@@ -997,7 +1011,7 @@ export interface SubtypeOps<Resource, E, R> {
    * head (checked after the gate, so only a writer learns the head).
    */
   readonly update: (
-    input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
+    input: UpdateRequest,
   ) => Effect.Effect<
     ChainWrite,
     Gate | WriteRejected | NodeNotFound | StaleVersion | VersionConflict | E,
@@ -1205,9 +1219,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     return written;
   });
 
-  const update = Effect.fn(`${type}.update`)(function* (
-    input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
-  ) {
+  const update = Effect.fn(`${type}.update`)(function* (input: UpdateRequest) {
     const account = yield* writer(yield* definition.viewer, input.id);
     return yield* chain.update({ ...input, actorId: actor(account) });
   });

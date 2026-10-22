@@ -9,6 +9,7 @@
     "packages/pulpit/src/publication.ts",
     "packages/pulpit/src/documents.ts",
     "packages/pulpit/src/edges.ts",
+    "packages/pulpit/src/proposals.ts",
     "packages/pulpit/src/testing.ts",
     "packages/pulpit/tests/**/*.test.ts",
     "packages/pulpit/tests/**/*.types.ts",

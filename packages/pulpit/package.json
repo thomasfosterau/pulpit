@@ -42,6 +42,7 @@
     "./publication": "./src/publication.ts",
     "./documents": "./src/documents.ts",
     "./edges": "./src/edges.ts",
+    "./proposals": "./src/proposals.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -81,6 +82,10 @@
       "./edges": {
         "types": "./dist/edges.d.ts",
         "default": "./dist/edges.js"
+      },
+      "./proposals": {
+        "types": "./dist/proposals.d.ts",
+        "default": "./dist/proposals.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",
