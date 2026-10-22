@@ -51,6 +51,16 @@ jobs:
         run: vp run --concurrency-limit 2 check
       - name: Unit tests
         run: vp run -r test:unit
+      # The same suites under one Istanbul map (the root task, the map
+      # `fallow audit` reads). Its point here is the coverage provider:
+      # vite-plus refuses to start a coverage run unless
+      # `@vitest/coverage-istanbul` equals the vitest it bundles exactly, so a
+      # toolchain bump that leaves the pin behind fails here, not on a
+      # contributor's machine (pulpit#119). Each package's own thresholds
+      # (`vp run -r test:coverage`) join this step once every package meets
+      # them (pulpit#166).
+      - name: Coverage (one merged map)
+        run: vp run test:coverage
       - name: Build
         run: vp run -r build
       # Type-checks AND runs every JSDoc @example, and generates the API docs.
