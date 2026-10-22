@@ -36,7 +36,10 @@
  *   the projection dropped the one attribute that decides who may see the
  *   row, and reading that as public is a fail-open (#1096, #1092);
  * - `publishGated` — a family gated by its stamp refuses a missing,
- *   unparseable or future `publishedAt`.
+ *   unparseable or future `publishedAt`. A leaf that declares `./subtype`'s
+ *   live pointer is one: its live view supplies the stamp, and its
+ *   handlers write the cache only from the anonymous (live) read
+ *   (pulpit#46).
  *
  * What the predicate structurally cannot express is a gate that depends on
  * state outside the cached resource (a comment's inherited target gate,

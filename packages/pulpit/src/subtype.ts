@@ -90,6 +90,8 @@
 
 import * as Array from "effect/Array";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
@@ -121,7 +123,14 @@ import {
   type NodeAlreadyExists,
   type WriteAction,
   type ChainAppendEvent,
+  MAX_HISTORY_LIMIT,
+  VersionNotFound as VersionNotFoundError,
 } from "./version-chain.ts";
+
+/** The write clock: the current instant, as the `Date` a fact stores. */
+const nowDate: Effect.Effect<Date> = Effect.map(Clock.currentTimeMillis, (millis) =>
+  DateTime.toDate(DateTime.makeUnsafe(millis)),
+);
 
 // ── The viewer seam ───────────────────────────────────────────────────
 
@@ -711,6 +720,196 @@ export interface LeafStore<Row extends LeafRow, Following, E, R> {
   readonly stampOwner: (id: string, ownerId: string) => Effect.Effect<void, E, R>;
 }
 
+// ── The publication lifecycle seam ────────────────────────────────────
+
+/**
+ * One publication fact, as a {@link PublicationStore} records it: the
+ * version made live (none for an unpublish), the instant it takes effect
+ * (now, or a future one: a schedule), who recorded it and when. Facts are
+ * appended, never rewritten, so a node's publication history is data
+ * beside its version chain (`VERSION-CHAIN-001/002` are untouched).
+ *
+ * @since 0.1.0
+ */
+export interface PublicationFact {
+  readonly id: string;
+  /** The version made live, or none for an unpublish. */
+  readonly version: Option.Option<bigint>;
+  /** When the fact takes effect; a future instant schedules it. */
+  readonly at: Date;
+  readonly actorId: Option.Option<string>;
+  readonly recordedAt: Date;
+}
+
+/**
+ * The append-only publication log an application supplies (README → Seams).
+ * The **effective** fact is the most recently recorded one whose `at` has
+ * arrived: a later record supersedes an earlier schedule, and a schedule
+ * takes effect at its stamp with no write (the read-time gate,
+ * `isPublishedAt`). Applies no policy and fails only with its `E`.
+ *
+ * @since 0.1.0
+ */
+export interface PublicationStore<E, R> {
+  /** Append one fact. */
+  readonly record: (fact: PublicationFact) => Effect.Effect<void, E, R>;
+  /** The node's effective fact at the store's clock (`now()`), or none. */
+  readonly effective: (id: string) => Effect.Effect<Option.Option<PublicationFact>, E, R>;
+  /** The node's facts, oldest first, at most `limit` of them. */
+  readonly facts: (
+    id: string,
+    limit: number,
+  ) => Effect.Effect<ReadonlyArray<PublicationFact>, E, R>;
+}
+
+/**
+ * A publish-gated leaf's live-version view, beside its current-version
+ * `LeafStore`: per node, the row at the version its effective publication
+ * fact names, carrying that version as its `version` (the representation
+ * it serves, so its `meta.version` and ETag change only when what readers
+ * see does, and never disclose an unpublished edit), the node's head
+ * `action` (so a tombstone hides it too), `draft: false`, and that fact's
+ * `at` as the row's publication stamp.
+ * A node with no live version (never published, or unpublished) has no
+ * row: `get` answers none and `getMany` omits it. Applies no visibility
+ * policy.
+ *
+ * @since 0.1.0
+ */
+export interface LiveView<Row extends LeafRow, Following, E, R> extends Pick<
+  LeafStore<Row, Following, E, R>,
+  "get" | "getMany"
+> {
+  /**
+   * The page under `where`, ordered as `LeafStore.list` orders, over one
+   * row per node chosen per viewer: the **head** row (as the current-version
+   * view has it, with `draft` = no live version) for a node whose head
+   * matches `headFor` (the viewer's own rows), else the live row, else
+   * none.
+   */
+  readonly list: (
+    query: Parameters<LeafStore<Row, Following, E, R>["list"]>[0] & {
+      readonly headFor: ListFilter<Following>;
+    },
+  ) => Effect.Effect<Page<Row>, E, R>;
+}
+
+/**
+ * A leaf's opt-in to the live pointer (`publishGated`, owner decision on
+ * pulpit#46): its live view, its publication log, and the request's
+ * preview grant. Without it, head and live are one.
+ *
+ * @since 0.1.0
+ */
+export interface PublicationDeclaration<Row extends LeafRow, Following, E, R> {
+  readonly live: LiveView<Row, Following, E, R>;
+  readonly facts: PublicationStore<E, R>;
+  /**
+   * The node id this request holds a preview grant for (a signed, expiring
+   * token the application or effect-web verified): `get` of exactly that
+   * node serves its head, whoever asks, unless it is tombstoned. Signing
+   * and verifying the token is the application's. Absent, no request
+   * previews.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no preview grants"
+  readonly preview?: Effect.Effect<Option.Option<string>, never, R> | undefined;
+}
+
+/**
+ * What `publish` / `unpublish` report: the fact recorded, and the node's
+ * head version when it was.
+ *
+ * @since 0.1.0
+ */
+export interface PublicationWrite {
+  readonly fact: PublicationFact;
+  readonly head: bigint;
+}
+
+/**
+ * A publication operation on a node with no live version (`discardDraft`
+ * with nothing published): the wire's 409.
+ *
+ * @since 0.1.0
+ */
+export class NotPublished extends Schema.TaggedError<NotPublished>()("NotPublished", {
+  type: Schema.String,
+  id: Schema.String,
+}) {}
+
+/**
+ * What `publish` makes live, and when.
+ *
+ * @since 0.1.0
+ */
+export interface PublishOptions {
+  /** The version to make live; the head when omitted. */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); omitted is the head
+  readonly version?: bigint | undefined;
+  /** When it takes effect; now when omitted, and a future instant schedules it. */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); omitted is now
+  readonly at?: Date | undefined;
+}
+
+/**
+ * A publish-gated leaf's publication operations. Each runs the leaf's write
+ * gate first, and its before hooks (with action `publish` / `unpublish`,
+ * an empty patch whose return is ignored: a publication writes no
+ * version) before recording; a refusing hook records nothing.
+ *
+ * @since 0.1.0
+ */
+export interface PublicationOps<E, R> {
+  /**
+   * Make `version` (the head when omitted) live at `at` (now when
+   * omitted; a future instant schedules it, and readers see it once it
+   * arrives). Fails as `update` does at the gate, `NodeNotFound` for a
+   * missing or tombstoned node, and `VersionNotFound` for a version that
+   * has no row or is a tombstone. Its lifecycle event fires now, not when
+   * `at` arrives.
+   */
+  readonly publish: (
+    id: string,
+    options?: PublishOptions,
+  ) => Effect.Effect<
+    PublicationWrite,
+    Gate | WriteRejected | NodeNotFound | VersionNotFound | E,
+    R
+  >;
+  /**
+   * Take the node's live version down, now. Fails as `update` does at the
+   * gate, and `NodeNotFound` for a node with no versions.
+   */
+  readonly unpublish: (
+    id: string,
+  ) => Effect.Effect<PublicationWrite, Gate | WriteRejected | NodeNotFound | E, R>;
+  /**
+   * Throw the unpublished head away: append the live version's state as a
+   * new version (`restoreVersion`, never a rewrite). A head that already is
+   * the live version writes nothing. Fails `NotPublished` without a live
+   * version, and as `restoreVersion` does.
+   */
+  readonly discardDraft: (
+    id: string,
+    precondition?: Precondition,
+  ) => Effect.Effect<
+    ChainWrite,
+    | Gate
+    | WriteRejected
+    | NodeNotFound
+    | NotPublished
+    | VersionNotFound
+    | StaleVersion
+    | VersionConflict
+    | E,
+    R
+  >;
+  /** The node's publication facts, oldest first; gated like `getVersion` (`READ-009`). */
+  readonly facts: (
+    id: string,
+  ) => Effect.Effect<ReadonlyArray<PublicationFact>, Gate | NodeNotFound | E, R>;
+}
+
 // ── The lifecycle hook seam ───────────────────────────────────────────
 
 /**
@@ -767,8 +966,16 @@ export interface BeforeWriteHook<E, R> {
 export interface AfterWriteEvent<Resource> {
   readonly type: string;
   readonly action: WriteAction;
+  /**
+   * The version the write landed at; for a `publish` or `unpublish`, which
+   * append no version, the node's head, so the resource cache's
+   * compare-on-set orders it after the writes before it (pulpit#121). The
+   * version a `publish` made live is the fact's.
+   */
   readonly write: ChainWrite;
   readonly resource: Option.Option<Resource>;
+  /** The fact a `publish` / `unpublish` recorded; none for a chain write. */
+  readonly publication: Option.Option<PublicationFact>;
 }
 
 /**
@@ -1022,6 +1229,15 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
    */
   // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "not searchable"
   readonly search?: SearchProjection | undefined;
+  /**
+   * The live pointer, opt-in (pulpit#46). With it, the view-private rung,
+   * the corpus-write rung on a reference leaf and a row's own owner read
+   * the head; everyone else reads the live version (a node with none is
+   * hidden from them, which is what `draft` means on such a leaf).
+   * Without it, head and live are one.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no live pointer"
+  readonly publication?: PublicationDeclaration<Row, Following, E, R> | undefined;
 }
 
 /**
@@ -1086,6 +1302,20 @@ export interface SubtypeOps<Resource, E, R> {
    * them; {@link subtypeHandlers} runs their after hooks.
    */
   readonly hooks: Effect.Effect<LifecycleHooks<Resource, E, R>, never, R>;
+  /** The publication operations, on a leaf that declares the live pointer. */
+  readonly publication: Option.Option<PublicationOps<E, R>>;
+  /**
+   * The resource as an anonymous reader gets it (the live version on a
+   * publish-gated leaf), or none when they can't read it. What a public
+   * cache may hold.
+   */
+  readonly publicResource: (id: string) => Effect.Effect<Option.Option<Resource>, E, R>;
+  /**
+   * The leaf's write gate on `id`, as `update` runs it: the acting account,
+   * or the gate's failure. For a surface outside the chain (a working copy)
+   * that must gate like a write.
+   */
+  readonly authorize: (id: string) => Effect.Effect<ViewerAccount, Gate | NodeNotFound | E, R>;
   /**
    * Create the node at version 0, stamping the viewer as owner on an owned
    * leaf. Fails `Unauthorized` when anonymous, `Forbidden` below the
@@ -1284,6 +1514,37 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
       ? Effect.succeed(false)
       : rowVisible(viewer, row);
 
+  const publication = Option.fromUndefinedOr(definition.publication);
+
+  /** Whether the viewer's rung reads every head: the view-private rung, or a reference leaf's corpus writers. */
+  const readsHeadByRung = (viewer: Viewer): boolean =>
+    Option.exists(
+      viewer,
+      (account) =>
+        policy.canViewPrivate(account) ||
+        (access.kind === "reference" && policy.canWriteCorpus(account)),
+    );
+
+  /** Whether the viewer reads this node's head: by rung, or as its owner. */
+  const readsHeadOf = (viewer: Viewer, head: Row): boolean =>
+    readsHeadByRung(viewer) ||
+    (access.kind === "owned" &&
+      Option.exists(viewer, (account) =>
+        Option.contains(ownedFacts(access, head).ownerId, account.id),
+      ));
+
+  /**
+   * The row the viewer reads for a node whose head is `head`: the head
+   * itself, or on a publish-gated leaf, for a viewer who doesn't read it,
+   * the live row (none without one).
+   */
+  const chosenRow = (viewer: Viewer, head: Row): Effect.Effect<Option.Option<Row>, E, R> =>
+    Option.match(publication, {
+      onNone: () => Effect.succeed(Option.some(head)),
+      onSome: ({ live }) =>
+        readsHeadOf(viewer, head) ? Effect.succeed(Option.some(head)) : live.get(head.id),
+    });
+
   /**
    * The row `get` serves the viewer: a missing or hidden row is the same
    * {@link NodeNotFound} (SEC-AUTH-ENUM-001). `get` and the reference write
@@ -1291,10 +1552,21 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
    */
   const visibleRow = (viewer: Viewer, id: string): Effect.Effect<Row, NodeNotFound | E, R> =>
     Effect.gen(function* () {
-      const row = yield* leaves.get(id);
+      const head = yield* leaves.get(id);
+      const row = Option.isSome(head) ? yield* chosenRow(viewer, head.value) : Option.none();
       if (Option.isSome(row) && (yield* visible(viewer, row.value))) return row.value;
       return yield* new NodeNotFound({ type, id });
     });
+
+  /** Whether this request holds a preview grant for `id` (a publish-gated leaf's alone). */
+  const previewing = (id: string): Effect.Effect<boolean, never, R> =>
+    Option.match(
+      Option.flatMapNullishOr(publication, (declared) => declared.preview),
+      {
+        onNone: () => Effect.succeed(false),
+        onSome: (grant) => Effect.map(grant, (granted) => Option.contains(granted, id)),
+      },
+    );
 
   /**
    * The gate for a write or history read to an existing row. On a reference
@@ -1341,17 +1613,47 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   });
 
   const get = Effect.fn(`${type}.get`)(function* (id: string) {
+    // A preview grant serves exactly its node's head, unless tombstoned.
+    if (yield* previewing(id)) {
+      const head = yield* leaves.get(id);
+      if (Option.isSome(head) && head.value.action !== "delete") return toResource(head.value);
+    }
     // Hidden and missing are the same answer (SEC-AUTH-ENUM-001).
     return toResource(yield* visibleRow(yield* definition.viewer, id));
   });
 
+  /** The rows a viewer reads for these heads: the heads they read, and one live read for the rest. */
+  const chosenRows = (viewer: Viewer, heads: ReadonlyArray<Row>) =>
+    Option.match(publication, {
+      onNone: () => Effect.succeed(heads),
+      onSome: ({ live }) => {
+        const own = Array.filter(heads, (head) => readsHeadOf(viewer, head));
+        const others = Array.filter(heads, (head) => !readsHeadOf(viewer, head));
+        return Array.isReadonlyArrayNonEmpty(others)
+          ? Effect.map(
+              live.getMany(Array.map(others, (head) => head.id)),
+              (lives): ReadonlyArray<Row> => [...own, ...lives],
+            )
+          : Effect.succeed(own);
+      },
+    });
+
   const getMany = Effect.fn(`${type}.getMany`)(function* (ids: ReadonlyArray<string>) {
     if (!Array.isReadonlyArrayNonEmpty(ids)) return HashMap.empty<string, Resource>();
     const viewer = yield* definition.viewer;
-    const rows = yield* leaves.getMany(Array.dedupe(ids));
+    const rows = yield* chosenRows(viewer, yield* leaves.getMany(Array.dedupe(ids)));
     const shown = yield* Effect.filter(rows, (row) => visible(viewer, row));
     return HashMap.fromIterable(Array.map(shown, (row) => [row.id, toResource(row)] as const));
   });
+
+  /** The heads a viewer below the head-reading rungs reads: their own, on an owned leaf. */
+  const ownHeads = (viewer: Viewer): ListFilter<Following> =>
+    access.kind === "owned"
+      ? Option.match(viewer, {
+          onNone: (): ListFilter<Following> => never,
+          onSome: (account) => eq(access.ownerColumn, account.id),
+        })
+      : never;
 
   const list = Effect.fn(`${type}.list`)(function* (request: ListRequest) {
     const orderBy = yield* checkedOrder(type, isSortable, request.orderBy ?? []);
@@ -1361,11 +1663,20 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
       viewer,
       request,
     );
-    const page = yield* leaves.list({
+    const query = {
       where,
       orderBy,
       limit: Math.max(1, Math.min(Math.trunc(request.limit), MAX_PAGE_LIMIT)),
       offset: Math.max(0, Math.trunc(request.offset)),
+    };
+    // On a publish-gated leaf, a viewer below the head-reading rungs lists
+    // live rows, and their own rows at the head, as `get` reads them.
+    const page = yield* Option.match(publication, {
+      onNone: () => leaves.list(query),
+      onSome: ({ live }) =>
+        readsHeadByRung(viewer)
+          ? leaves.list(query)
+          : live.list({ ...query, headFor: ownHeads(viewer) }),
     });
     return { rows: page.rows.map(toResource), total: page.total };
   });
@@ -1398,10 +1709,111 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     return yield* chain.restoreVersion(id, version, actor(account), precondition);
   });
 
+  const publicResource = Effect.fn(`${type}.publicResource`)(function* (id: string) {
+    return yield* visibleRow(Option.none(), id).pipe(
+      Effect.map((row) => Option.some(toResource(row))),
+      Effect.catchTag("NodeNotFound", () => Effect.succeed(Option.none<Resource>())),
+    );
+  });
+
+  const authorize = Effect.fn(`${type}.authorize`)(function* (id: string) {
+    return yield* writer(yield* definition.viewer, id);
+  });
+
+  /** A publication's before hooks: shown the head, an empty patch; the returned patch is ignored. */
+  const beforePublication = (
+    action: "publish" | "unpublish",
+    id: string,
+    viewer: Viewer,
+    account: ViewerAccount,
+  ) =>
+    definition.hooks === undefined
+      ? Effect.void
+      : Effect.gen(function* () {
+          const { before } = yield* hooks;
+          if (!Array.isReadonlyArrayNonEmpty(before)) return;
+          const head = yield* definition.chain.head(id);
+          const prior = Option.isSome(head)
+            ? yield* definition.chain.snapshot(id, head.value.version)
+            : Option.none();
+          yield* runBefore(before, {
+            action,
+            id,
+            prior,
+            patch: {},
+            actorId: actor(account),
+            type,
+            viewer,
+          });
+        });
+
+  const publicationOps = Option.map(publication, ({ facts }): PublicationOps<E, R> => ({
+    publish: Effect.fn(`${type}.publish`)(function* (id: string, options: PublishOptions = {}) {
+      const viewer = yield* definition.viewer;
+      const account = yield* writer(viewer, id);
+      const head = yield* definition.chain.head(id);
+      if (Option.isNone(head) || head.value.action === "delete") {
+        return yield* new NodeNotFound({ type, id });
+      }
+      const version = options.version ?? head.value.version;
+      const snapshot = yield* definition.chain.snapshot(id, version);
+      if (Option.isNone(snapshot) || snapshot.value.action === "delete") {
+        return yield* new VersionNotFoundError({ type, id, version });
+      }
+      yield* beforePublication("publish", id, viewer, account);
+      const now = yield* nowDate;
+      const fact: PublicationFact = {
+        id,
+        version: Option.some(version),
+        at: options.at ?? now,
+        actorId: actor(account),
+        recordedAt: now,
+      };
+      yield* facts.record(fact);
+      return { fact, head: head.value.version };
+    }),
+    unpublish: Effect.fn(`${type}.unpublish`)(function* (id: string) {
+      const viewer = yield* definition.viewer;
+      const account = yield* writer(viewer, id);
+      const head = yield* definition.chain.head(id);
+      if (Option.isNone(head)) return yield* new NodeNotFound({ type, id });
+      yield* beforePublication("unpublish", id, viewer, account);
+      const now = yield* nowDate;
+      const fact: PublicationFact = {
+        id,
+        version: Option.none(),
+        at: now,
+        actorId: actor(account),
+        recordedAt: now,
+      };
+      yield* facts.record(fact);
+      return { fact, head: head.value.version };
+    }),
+    discardDraft: Effect.fn(`${type}.discardDraft`)(function* (
+      id: string,
+      precondition: Precondition = {},
+    ) {
+      const account = yield* writer(yield* definition.viewer, id);
+      const live = Option.flatMap(yield* facts.effective(id), (fact) => fact.version);
+      if (Option.isNone(live)) return yield* new NotPublished({ type, id });
+      const head = yield* definition.chain.head(id);
+      if (Option.exists(head, (entry) => entry.version === live.value)) {
+        return { id, version: live.value };
+      }
+      return yield* chain.restoreVersion(id, live.value, actor(account), precondition);
+    }),
+    facts: Effect.fn(`${type}.publicationFacts`)(function* (id: string) {
+      return yield* historyRead(id, facts.facts(id, MAX_HISTORY_LIMIT));
+    }),
+  }));
+
   return {
     type,
     access,
     hooks,
+    publication: publicationOps,
+    publicResource,
+    authorize,
     create,
     update,
     restore,
@@ -1524,10 +1936,13 @@ export const defineSearchProjection = (declaration: {
  * filter {@link defineSubtype}'s `list` reads under (`list` calls this), the
  * soft-delete arm, the access kind's privacy arm (owned visibility and draft
  * through {@link ownedListFilter}; the reference privacy arm with its
- * followers, `PUB-009`) and the family's own `where` (a publication arm, for
- * a publish-gated leaf), so a search can never surface a row `list` hides
- * (`SEC-AUTH-ENUM-001`). The application renders it into its search query
- * as the list store renders it into the list's.
+ * followers, `PUB-009`) and the family's own `where`, so a search can never
+ * surface a row `list` hides (`SEC-AUTH-ENUM-001`). The application renders
+ * it into its search query as the list store renders it into the list's. On
+ * a leaf with the live pointer ({@link SubtypeDefinition.publication}) the
+ * search matches over the rows {@link LiveView}'s `list` reads (the viewer's
+ * own at the head, every other node's live row), never every head, so a
+ * match never scores text a reader cannot see.
  *
  * @since 0.1.0
  */
@@ -1711,6 +2126,12 @@ export interface SubtypeHandlers<Resource, E, R> {
     Gate | WriteRejected | NodeNotFound | VersionNotFound | StaleVersion | VersionConflict | E,
     R
   >;
+  /**
+   * On a publish-gated leaf, its publication operations, each run in
+   * `transact` and followed by the after hooks (`publish` / `unpublish`,
+   * or `restoreVersion` for `discardDraft`) and the cache refresh.
+   */
+  readonly publication: Option.Option<PublicationOps<E, R>>;
 }
 
 /**
@@ -1782,6 +2203,24 @@ export const subtypeHandlers = <Resource, E, R>(
     );
 
   /**
+   * The cache write-through. On a publish-gated leaf the writer's re-read
+   * is the head, which must never reach a public cache, so the cache is
+   * given the resource as an anonymous reader gets it (the live version),
+   * or evicts (`CACHE-AUTH-005`).
+   */
+  const cacheHook = (cache: ResourceCacheSeam<Resource, R>): AfterWriteHook<Resource, never, R> =>
+    Option.isNone(ops.publication)
+      ? cacheWriteThrough(cache)
+      : {
+          name: "cache",
+          run: (event) =>
+            ops.publicResource(event.write.id).pipe(
+              Effect.flatMap((resource) => cacheWriteThrough(cache).run({ ...event, resource })),
+              Effect.catchCause(() => cache.delete(event.write.id, event.write.version)),
+            ),
+        };
+
+  /**
    * The after hooks for one committed write: the cache write-through first
    * (when the leaf has a cache), then the leaf's own, in order.
    */
@@ -1790,9 +2229,31 @@ export const subtypeHandlers = <Resource, E, R>(
       runAfter(
         {
           ...hooks,
-          after: [...Option.toArray(Option.map(config.cache, cacheWriteThrough)), ...hooks.after],
+          after: [...Option.toArray(Option.map(config.cache, cacheHook)), ...hooks.after],
         },
         event,
+      ),
+    );
+
+  /**
+   * A publication fact, recorded in `transact`, then the after hooks with
+   * the resource as the writer now reads it.
+   */
+  const published = <E2>(
+    action: "publish" | "unpublish",
+    operation: Effect.Effect<PublicationWrite, E2, R>,
+  ) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.tap(restore(config.transact(operation)), ({ fact, head }) =>
+        Effect.flatMap(Effect.option(restore(ops.get(fact.id))), (resource) =>
+          after({
+            type: ops.type,
+            action,
+            write: { id: fact.id, version: head },
+            resource,
+            publication: Option.some(fact),
+          }),
+        ),
       ),
     );
 
@@ -1814,6 +2275,7 @@ export const subtypeHandlers = <Resource, E, R>(
               action,
               write: { id: written.id, version: written.version },
               resource: Exit.isSuccess(reread) ? Option.some(reread.value) : Option.none(),
+              publication: Option.none(),
             }),
             reread,
           ),
@@ -1839,6 +2301,7 @@ export const subtypeHandlers = <Resource, E, R>(
                 action: "delete",
                 write: { id: written.id, version: written.version },
                 resource: Option.none(),
+                publication: Option.none(),
               }),
         ),
       ),
@@ -1847,6 +2310,25 @@ export const subtypeHandlers = <Resource, E, R>(
         "restoreVersion",
         ops.restoreVersion(input.id, input.version, { expectedVersion: input.expectedVersion }),
       ),
+    publication: Option.map(ops.publication, (publication): PublicationOps<E, R> => ({
+      publish: (id, options) => published("publish", publication.publish(id, options)),
+      unpublish: (id) => published("unpublish", publication.unpublish(id)),
+      discardDraft: (id, precondition) =>
+        Effect.uninterruptibleMask((restore) =>
+          Effect.tap(committed(restore, publication.discardDraft(id, precondition)), (written) =>
+            Effect.flatMap(Effect.option(restore(ops.get(written.id))), (resource) =>
+              after({
+                type: ops.type,
+                action: "restoreVersion",
+                write: written,
+                resource,
+                publication: Option.none(),
+              }),
+            ),
+          ),
+        ),
+      facts: publication.facts,
+    })),
   };
 };
 

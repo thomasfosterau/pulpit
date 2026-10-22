@@ -46,6 +46,7 @@
     "./blobs": "./src/blobs.ts",
     "./paths": "./src/paths.ts",
     "./moderation": "./src/moderation.ts",
+    "./working-copy": "./src/working-copy.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -101,6 +102,10 @@
       "./moderation": {
         "types": "./dist/moderation.d.ts",
         "default": "./dist/moderation.js"
+      },
+      "./working-copy": {
+        "types": "./dist/working-copy.d.ts",
+        "default": "./dist/working-copy.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",

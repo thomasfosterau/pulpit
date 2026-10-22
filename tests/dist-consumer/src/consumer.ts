@@ -19,6 +19,7 @@ import {
   Moderation,
   Proposals,
   Registry,
+  WorkingCopy,
 } from "@thomasfosterau/pulpit";
 import {
   ContentResource,
@@ -166,6 +167,9 @@ import {
   type Resolution,
   type RoutableOps,
 } from "@thomasfosterau/pulpit/paths";
+
+import type { PublicationFact, PublicationOps, SubtypeOps } from "@thomasfosterau/pulpit/subtype";
+import { defineWorkingCopy } from "@thomasfosterau/pulpit/working-copy";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -549,14 +553,8 @@ export type _Evaluate = Assert<
 >;
 
 declare const leaves: LeafStore<LeafRow, Subquery, StoreFailure, Transaction>;
-interface PostDoc {
-  readonly id: string;
-}
-export const posts = defineSubtype({
-  type: "posts",
-  access: ownedAccess({ draft: true }),
-  chain: store,
-  leaves,
+/** The viewer seams both factories take: an anonymous viewer, no rung, nobody following. */
+const anonymousSeams = {
   viewer: Effect.succeed(Option.none()),
   policy: {
     canViewPrivate: () => false,
@@ -568,6 +566,16 @@ export const posts = defineSubtype({
     isFollower: () => Effect.succeed(false),
     following: (): Subquery => ({ _tag: "Subquery" }),
   },
+};
+interface PostDoc {
+  readonly id: string;
+}
+export const posts = defineSubtype({
+  type: "posts",
+  access: ownedAccess({ draft: true }),
+  chain: store,
+  leaves,
+  ...anonymousSeams,
   toResource: (row): PostDoc => ({ id: row.id }),
 });
 export type _Get = Assert<
@@ -778,7 +786,10 @@ export type _OnInsert = Assert<
 // ── lifecycle hooks ──────────────────────────────────────────────────────
 
 export type _WriteAction = Assert<
-  Equals<WriteAction, "create" | "update" | "delete" | "restore" | "restoreVersion">
+  Equals<
+    WriteAction,
+    "create" | "update" | "delete" | "restore" | "restoreVersion" | "publish" | "unpublish"
+  >
 >;
 export type _BeforeRun = Assert<
   Equals<
@@ -837,17 +848,7 @@ export const links = defineEdgeOps({
     term: { column: "termId", type: "terms", access: { kind: "reference" }, nodes: leaves },
   },
   edges: edgeStore,
-  viewer: Effect.succeed(Option.none()),
-  policy: {
-    canViewPrivate: () => false,
-    canViewDeleted: () => false,
-    canModerate: () => false,
-    canWriteCorpus: () => false,
-  },
-  followers: {
-    isFollower: () => Effect.succeed(false),
-    following: (): Subquery => ({ _tag: "Subquery" }),
-  },
+  ...anonymousSeams,
   values: (input: CreateLink) => ({ postId: input.postId, termId: input.termId }),
   toResource: (row): LinkDoc => ({ id: row.id }),
   onConflict: "ignore",
@@ -993,4 +994,23 @@ export type _GradePriority = Assert<
 export type _ReportStatus = Assert<Equals<ReportStatus, "open" | "resolved" | "dismissed">>;
 export type _ModerationHook = Assert<
   Equals<ReturnType<typeof moderationHook<StoreFailure, Transaction>>["name"], string>
+>;
+
+// ── publication lifecycle ────────────────────────────────────────────────
+
+export type _WorkingCopyBarrel = Assert<
+  Equals<typeof WorkingCopy.defineWorkingCopy, typeof defineWorkingCopy>
+>;
+export type _PublicationOps = Assert<
+  Equals<
+    SubtypeOps<string, StoreFailure, Transaction>["publication"],
+    Option.Option<PublicationOps<StoreFailure, Transaction>>
+  >
+>;
+export type _FactVersion = Assert<Equals<PublicationFact["version"], Option.Option<bigint>>>;
+export type _PublicResource = Assert<
+  Equals<
+    ReturnType<SubtypeOps<string, StoreFailure, Transaction>["publicResource"]>,
+    Effect.Effect<Option.Option<string>, StoreFailure, Transaction>
+  >
 >;

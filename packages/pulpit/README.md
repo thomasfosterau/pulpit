@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`). |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`) and `validateRegistry`. |
 | `./version-chain` | The append-only node/version chain operations over a `VersionChainStore` seam, and the field-level version compare (`diffStates`, `compare`). |
@@ -31,7 +31,8 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./blobs` | File and media leaves: the `BlobStore` seam keyed by content hash, the file field spread, the commit-ordered byte write (`defineFileWrites`, with its `bytesPending` marker) and the usage index's edge ends. |
 | `./paths` | Routable content: `routable`, a leaf's path claims tied to its chain over a `PathStore` seam, the aliases a path change leaves behind, and the gated `resolve`. |
 | `./moderation` | The moderation workflow: the transition rules as a before hook, the decision, the review-queue filter, threshold grading and member reports over a `ReportStore` seam. |
-| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path and report stores, an endpoint view, a follower seam), for tests only. Not on the root export. |
+| `./working-copy` | An editor's autosave buffer outside the version chain (`WorkingCopyStore`), committed as one ordinary version (`defineWorkingCopy`). |
+| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication and working-copy stores, an endpoint view, a follower seam), for tests only. Not on the root export. |
 
 The operations are written against seams that the application fills; their expected shapes are in [Seams](#seams).
 
@@ -222,8 +223,22 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
 **Search** (pulpit#54). The ranking engine (full text, trigram, vectors, their fusion) is the application's SQL; pulpit owns three things around it.
 
 - **The projection.** `defineSearchProjection({ fields, languageColumn? })` declares, once and beside the leaf's registry entry, which view columns the leaf's search view indexes, each with a PostgreSQL `setweight` label (`A`–`D`), and the column naming each row's text search configuration. It throws `SubtypeDeclarationError` at import for no field, a column named twice or a weight outside `A`–`D`. Passed to `defineSubtype` as `search`, each column it names must be a view column, or `defineSubtype` throws too. The application's search-view generator reads the same value.
-- **The scope.** `searchScopeFilter({ access, columns, policy, followers }, viewer, { includeDeleted, where })` is the `ListFilter` a search must apply to its hits, rendered into the search query as a list store renders it. It is the very filter `list` reads under (`list` calls it), so a search surfaces no row `list` would hide (`SEC-AUTH-ENUM-001`): a hidden, draft or tombstoned row, or one the family's `where` excludes (pass a publish-gated leaf's publication arm there, as its list does).
+- **The scope.** `searchScopeFilter({ access, columns, policy, followers }, viewer, { includeDeleted, where })` is the `ListFilter` a search must apply to its hits, rendered into the search query as a list store renders it. It is the very filter `list` reads under (`list` calls it), so a search surfaces no row `list` would hide (`SEC-AUTH-ENUM-001`): a hidden, draft or tombstoned row, or one the family's `where` excludes. On a leaf with the live pointer (pulpit#46, below), the search must also match over the rows its `LiveView.list` reads, not the head: the viewer's own rows (`headFor`) at the head and every other node's live row. Hydration re-reads the live version anyway, but a match scored against an unpublished head would still tell a reader that the draft contains the term.
 - **Hydration.** `hydrateSearchHits(ops, hits)` re-reads the ranked hits through the leaf's gated `getMany` in one read, so a stale or poisoned index can't leak a row: a hidden or missing hit is dropped, the rest keep their rank order (a repeated id keeps its first), and each comes back as `{ hit, resource }`.
+
+**The live pointer** (pulpit#46, opt-in per leaf). A leaf that declares `publication: { live, facts, preview? }` is publish-gated: what readers see is the version its publication log makes **live**, not the head editors work on. Without the declaration, head and live are one, as before.
+
+- **Facts, not rewrites.** `publication` (on the operations, an `Option`) is `publish(id, { version?, at? })`, `unpublish(id)`, `discardDraft(id, precondition?)` and `facts(id)`.
+  - `publish` and `unpublish` append a `PublicationFact` to the `PublicationStore` (`version`, or none for an unpublish, `at`, the actor, `recordedAt`). The live version is the version named by the most recently recorded fact whose `at` has arrived. So `publish(id, { at })` with a future `at` is a schedule: readers see the version at its stamp, with no write, and a later record supersedes it. `VERSION-CHAIN-001/002` are untouched.
+  - `discardDraft` appends the live version's state as a new version (a `restoreVersion`; it writes nothing when the head already is live, and fails `NotPublished` when nothing is).
+  - `facts` is the publication history, gated like `getVersion`.
+  - Each runs the write gate, then the leaf's before hooks with action `publish` / `unpublish` (the returned patch is ignored; a refusal records nothing). The lifecycle event fires when `publish` is called, not when `at` arrives (pulpit#45); `duePublications` drives an application's sweep.
+- **Who reads what.** The view-private rung, a reference leaf's corpus-write rung and a row's own owner read the **head**; everyone else reads the **live** version, and a node with none is hidden from them.
+  - `get` / `getMany` choose per row. `list` goes through the `LiveView`, whose `headFor` filter keeps the viewer's own rows at the head, so `get` and `list` never disagree.
+  - On a gated leaf, **`draft` means "no live version"**: both views compute it from the log, and the stored flag is ignored.
+- **Preview.** `preview` is the request's preview grant: the node id a signed, expiring token admits (signing and verifying it are the application's). `get` of exactly that node serves its head to whoever asks, unless it is tombstoned. `getMany`, `list` and every write ignore it.
+- **The cache only ever holds the live version** (`CACHE-AUTH-005`). On a gated leaf `subtypeHandlers` writes through `publicResource(id)`, the resource as an anonymous reader gets it, never the writer's re-read of the head. It evicts when there is none. `publication` on the handlers runs the operations in `transact`, then the after hooks and the cache refresh. A gated leaf's cache posture is `serveablePolicy({ publishGated: true })`: the live view supplies the stamp (`publishedAt`) the cache checks. A `publish` or `unpublish` appends no version, so its write-through and its event's `write.version` carry the node's head: the cache's compare-on-set (pulpit#121) then orders it after the edits before it, where the published version (often below the head) would be refused. Two publication operations racing on the same head compare equal, so their order isn't protected the way two chain writes' is (pulpit#164).
+- **Autosave** lives outside the chain, in [`./working-copy`](#working-copy).
 
 **Lifecycle hooks** (pulpit#45). A leaf's write side effects compose as `LifecycleHooks` on its definition, `hooks: Effect<LifecycleHooks<Resource, E, R>, never, R>`: an Effect, so the application holds them in a `Context` service, composes them per leaf type and provides them with a `Layer`. Omitted, a leaf has none, and a write reads nothing extra. Hooks run in array order (`composeHooks` concatenates sets), so the order is deterministic and the application's.
 
@@ -252,6 +267,9 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
 | `searchScopeFilter(leaf, viewer, request)`, `hydrateSearchHits(ops, hits)` | The read scope a search applies to its hits, the same filter `list` reads under; and the hits' gated re-read, in rank order. |
 | `LeafStore`, `LeafRow`, `Page`, `ListRequest`, `ListOrder`, `MAX_PAGE_LIMIT` | The current-version view seam, its row (with the head `version`) and page shapes, the list request and one key of its order, and the page cap (1000). |
 | `versionMeta(row)`, `VersionMeta`, `versionEtag(resource)`, `VersionedResource` | The resource object's `meta` for the row's head version (`{ version: "3" }`), and a single-resource response's `ETag` value read back from it (`Option.some('"3"')`, none without a decimal `meta.version`). |
+| `PublicationDeclaration`, `LiveView`, `PublicationStore`, `PublicationFact` | The live pointer's opt-in: the live-version view and the append-only publication log (see [Seams](#seams)), and one fact. |
+| `PublicationOps`, `PublishOptions`, `PublicationWrite`, `NotPublished` | The publication operations (`publish`, `unpublish`, `discardDraft`, `facts`), what `publish` takes and what both report, and `discardDraft`'s failure with nothing live (409). |
+| `SubtypeOps.publicResource`, `SubtypeOps.authorize` | The resource as an anonymous reader gets it (what a public cache may hold), and the write gate on its own, for a surface outside the chain. |
 
 ## `./publication`
 
@@ -474,18 +492,20 @@ Rate limiting, notifications and the wire shape (a JSON:API `proposals` resource
 File and media leaves (pulpit#55). A file is an ordinary leaf (owned, like a member's image, or reference material) whose version row carries `fileResourceFields`: the `contentHash` of its bytes, their `byteSize` and `mediaType`, the original `filename`, and `bytesPending`. The bytes live behind a `BlobStore` the application supplies (R2, S3), under `blobKey(contentHash)`, so a version's bytes are immutable. New bytes are a new hash and a new version, `restoreVersion` restores the reference to the old bytes, and equal bytes are stored once.
 
 ```ts
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { defineFileWrites, fileUrl } from "@thomasfosterau/pulpit/blobs";
 
 const files = defineFileWrites({ leaf: imageOps, blobs: r2, transact });
-const written =
-  yield *
-  files.create({
+const upload = Effect.gen(function* () {
+  const written = yield* files.create({
     id: Option.none(),
     state: { visibility: "public" },
     upload: { bytes, mediaType: "image/png", filename: "fern.png" },
   });
-// written.bytesPending: true when the post-commit byte write failed
+  // written.bytesPending: true when the post-commit byte write failed
+  return written;
+});
 fileUrl(row, r2); // none while the row's bytesPending is anything but false
 ```
 
@@ -588,6 +608,29 @@ Which rows a viewer below the moderate rung may _read_ in each state (gardeneria
 | `gradeScores`, `ModerationScores`, `ModerationGrade`, `ModerationPriority`, `DEFAULT_MODERATION_THRESHOLD` | Threshold grading and its shapes. |
 | `defineReports(definition)`, `ReportOps`, `ReportStore`, `ReportRow`, `ReportResolution`, `ReportStatus`, `ReportNotFound`, `ReportClosed` | Member reports: the operations, the table seam (see [Seams](#seams)), its row, the closing write, the status vocabulary and the failures (404, 409). |
 
+## `./working-copy`
+
+An editor's autosave buffer (pulpit#46). Nothing in it is a version, so a hundred autosaves leave no trace in history (`VERSION-CHAIN-001`); an explicit save appends one.
+
+```ts
+import { defineWorkingCopy } from "@thomasfosterau/pulpit/working-copy";
+
+const copies = defineWorkingCopy({ leaf: postOps, chain, store: workingCopies });
+// copies.save(id, { title: "Draft" })   — overwrites this editor's copy, no version
+// copies.commit(id)                     — one update, expecting the head the copy was based on
+```
+
+- **One copy per (node, editor)**, so two editors never overwrite each other's unsaved work.
+- **`save` merges tri-state** over the editor's copy. A new copy is based on the head.
+- **`commit` appends the copy** through the leaf's `update`, expecting that base, and clears it. If an edit landed in between, it fails `StaleVersion` and keeps the copy, so a commit never overwrites work its editor didn't see. With no copy it fails `WorkingCopyNotFound`.
+- **Every operation runs the leaf's write gate** (`authorize`), since a copy shows unpublished state.
+
+| Export | What it is |
+| --- | --- |
+| `defineWorkingCopy(definition)`, `WorkingCopyOps` | The operations (`save`, `get`, `discard`, `commit`). |
+| `WorkingCopyStore`, `WorkingCopy`, `WorkingCopyKey` | The buffer seam (see [Seams](#seams)), one copy, and its `(id, userId)` key. |
+| `WorkingCopyNotFound` | `commit` with no copy (404). |
+
 ## `./testing`
 
 In-memory fakes of the kernel's seams, for tests: an adapter's or an application's suite can run the real operations (`defineVersionChain`, `defineSubtype`, `defineEdgeOps`, …) over them without a database. Each fake implements its seam's contract as stated under [Seams](#seams), in memory and with no SQL, and enforces what the real table's schema enforces (a primary or unique key) and nothing the operations are responsible for. They are the fakes the kernel's own suites run against, so they are its reference semantics for each seam.
@@ -641,6 +684,8 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | `makeInMemoryPathStore()`, `InMemoryPathStore` | [`PathStore`](#pathstoree-r-the-path-table), one entry per path, with `claim`'s `PathTaken` and alias rules in one step. | `entries()` (every stored path and its entry). |
 | `makeInMemoryReportStore()`, `InMemoryReportStore` | [`ReportStore`](#reportstoree-r-the-member-report-table), evaluating the filter in memory, newest first with `id` descending on a tie. | `rows()` (every report as it now stands). |
 | `makeInMemoryResourceCache(serveable)`, `InMemoryResourceCache` | [`ResourceCacheSeam`](#resourcecacheseam-and-the-serveable-hook-the-resource-cache), with compare-on-set: a `set` below the highest version held for an id is a no-op, and a `delete` raises it. | `get(id)` (what it would serve), `versionOf(id)` (the version held, set or evicted). |
+| `makeInMemoryPublication({ chain, leaves, now? })`, `InMemoryPublication` | [`PublicationStore`](#publicationstoree-r-and-liveviewrow-following-e-r-the-live-pointer) and `LiveView` over an in-memory chain and leaf store, plus the gated leaf's current-version view with `draft` computed from the log. | `recorded()` (every fact). |
+| `makeInMemoryWorkingCopyStore()`, `InMemoryWorkingCopyStore` | [`WorkingCopyStore`](#workingcopystoree-r-the-autosave-buffer), one copy per `(id, userId)`. | `copies()`. |
 | `makeInMemoryFollowers(table)`, `InMemoryFollowing` | [`FollowerSeam`](#the-viewer-the-role-axes-and-the-follower-seam) over an explicit table of who follows whom; the `in` set is a `HashSet` of account ids, where SQL's is a subquery. |  |
 
 `now` is the instant the list filter's `published` / `notPublished` compare against (and, for the edge store, the base of the minted `createdAt`s). Pass a fixed `Date` for a deterministic suite; left out, each call reads the Effect `Clock`, so `TestClock` steers it. The role ladder and the `AccessPolicy` are the application's, so `./testing` ships none.
@@ -768,6 +813,40 @@ Filled by the application, over a path table per routable namespace (gardeneria'
 Filled by the application over its own report table (gardeneria's `user_reports`); no library is expected to provide one. Expected schema: `id` (a UUID primary key), `target_node_id` (a foreign key to `core.node`), `reporter_id`, `reason`, `details` (nullable), `status` (`open | resolved | dismissed`), `filed_at` (`timestamptz NOT NULL DEFAULT now()`), and the nullable `resolved_at`, `resolved_by` and `resolution_note`. Index `reporter_id`, `target_node_id`, and the open rows.
 
 Method contract: `insert` inserts the row; `get(id)` is `id = $id LIMIT 1`, joined to `core.node` for `targetType`; `lock(id)` is the same row `FOR UPDATE`, so two resolutions serialise; `close(id, resolution)` updates the open row's status, resolver, timestamp and note; `list` renders `where` over `reporterId`, `targetId`, `targetType` and `status`, orders by `filed_at DESC, id DESC`, applies `LIMIT` / `OFFSET` and returns the unpaged total as a window column. `E` and `R` are as for the chain store, and the store never opens a transaction itself.
+
+### `PublicationStore<E, R>` and `LiveView<Row, Following, E, R>`: the live pointer
+
+Filled by the application for a publish-gated leaf (pulpit#46).
+
+The publication log is an append-only table: `node_id`, `version` (`bigint`, `NULL` for an unpublish, with `(node_id, version)` a foreign key to the root version table), `at`, `actor_id`, `recorded_at`, plus a serial `seq` for record order. Its methods:
+
+- `record` inserts a fact.
+- `effective(id)` is the most recently recorded fact whose `at` has arrived: `SELECT … WHERE node_id = $id AND at <= now() ORDER BY seq DESC LIMIT 1`.
+- `facts(id, limit)` is `ORDER BY seq LIMIT $limit`.
+
+The live view is a view over the leaf's version tables. For each node it gives the row at the effective fact's version (joined through the same `DISTINCT ON (node_id) … ORDER BY node_id, seq DESC` over the facts with `at <= now()`), with:
+
+- `version` = the effective fact's version, the representation it serves, so its `meta.version` and ETag change only when what readers see does and never disclose an unpublished edit;
+- the node's head `action`, so a tombstone hides it too;
+- `draft` = `false`;
+- `publishedAt` = the fact's `at`;
+- the owner column.
+
+A node whose effective fact is an unpublish, or that has none, has no live row.
+
+`get` / `getMany` read it by id. `list` is `UNION ALL` of the current-version view's rows matching `headFor` (the viewer's own rows; `never` for the anonymous) and the live rows of every other node, then `where`, the order and the page, as `LeafStore.list` renders them.
+
+On a gated leaf the current-version view computes `draft` as `NOT EXISTS (a live row)` too, and a stored draft column is ignored.
+
+### `WorkingCopyStore<E, R>`: the autosave buffer
+
+Filled by the application: a table keyed `(node_id, user_id)` holding the patch (`jsonb`), `base_version` and `saved_at`, or a KV namespace. Methods:
+
+- `put` upserts the copy;
+- `get` reads it;
+- `discard` deletes it, idempotently.
+
+It is the one overwritable store in the kernel's seams, and nothing in it is ever a version.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 
