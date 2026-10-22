@@ -45,6 +45,7 @@
     "./proposals": "./src/proposals.ts",
     "./blobs": "./src/blobs.ts",
     "./paths": "./src/paths.ts",
+    "./moderation": "./src/moderation.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -96,6 +97,10 @@
       "./paths": {
         "types": "./dist/paths.d.ts",
         "default": "./dist/paths.js"
+      },
+      "./moderation": {
+        "types": "./dist/moderation.d.ts",
+        "default": "./dist/moderation.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",

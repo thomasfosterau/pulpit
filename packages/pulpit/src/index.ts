@@ -80,3 +80,11 @@ export * as Blobs from "./blobs.ts";
  * behind, and the gated resolution of a path.
  */
 export * as Paths from "./paths.ts";
+
+/**
+ * The moderation workflow: the transition rules as a before hook
+ * (`moderationHook`), the decision (`defineModeration`), the review-queue
+ * filter, threshold grading (`gradeScores`) and member reports
+ * (`defineReports` over a `ReportStore` seam).
+ */
+export * as Moderation from "./moderation.ts";
