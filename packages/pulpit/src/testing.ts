@@ -1,7 +1,7 @@
 /**
  * **In-memory fakes of the kernel's seams** — a store for each of the
- * version-chain, leaf, document, edge and proposal seams, an endpoint view and a follower
- * seam, all held in memory with no SQL. They are the reference semantics of
+ * version-chain, leaf, document, edge, proposal and path seams, an endpoint view and a
+ * follower seam, all held in memory with no SQL. They are the reference semantics of
  * each seam's contract in the package README → Seams, and the fakes the
  * kernel's own suites run against; an adapter's or an application's tests can
  * run the kernel's operations over them too.
@@ -69,6 +69,7 @@ import {
 } from "./edges.ts";
 import { evaluate, type EvaluationContext, type FilterRow, type ListFilter } from "./filter.ts";
 import { rowOrder } from "./internal/list-order.ts";
+import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
 import type { ProposalListing, ProposalRow, ProposalStore } from "./proposals.ts";
 import type { FollowerSeam, LeafRow, LeafStore } from "./subtype.ts";
 import {
@@ -301,6 +302,67 @@ export const makeInMemoryLeafStore = (
     dropOwner: (id) => {
       owners = HashMap.remove(owners, id);
     },
+  };
+};
+
+// ── Paths ─────────────────────────────────────────────────────────────
+
+/**
+ * An in-memory {@link PathStore}, plus the read a test checks it through. In
+ * memory only; not for production.
+ *
+ * @since 0.1.0
+ */
+export interface InMemoryPathStore extends PathStore<never, never> {
+  /** Every stored path and its entry, aliases included. */
+  readonly entries: () => HashMap.HashMap<string, PathEntry>;
+}
+
+/**
+ * An in-memory {@link PathStore}: the seam's contract (README → Seams →
+ * `PathStore`) as one map from path to entry, its key the path table's
+ * primary key, so each path is stored once. `claim` fails {@link PathTaken}
+ * for another node's canonical path, replaces an alias at the path, and
+ * demotes the node's previous canonical path to its alias, in one step;
+ * `release` drops the node's canonical path and keeps its aliases. In memory
+ * only; not for production.
+ *
+ * @since 0.1.0
+ */
+export const makeInMemoryPathStore = (): InMemoryPathStore => {
+  let entries = HashMap.empty<string, PathEntry>();
+  const canonicalOf = (nodeId: string) =>
+    Option.map(
+      Arr.findFirst(
+        HashMap.toEntries(entries),
+        ([, entry]) => entry.canonical && entry.nodeId === nodeId,
+      ),
+      ([path]) => path,
+    );
+  return {
+    lookup: (path) => Effect.sync(() => HashMap.get(entries, path)),
+    canonicalOf: (nodeId) => Effect.sync(() => canonicalOf(nodeId)),
+    claim: (nodeId, path) =>
+      Effect.suspend(() => {
+        const held = HashMap.get(entries, path);
+        if (Option.exists(held, (entry) => entry.canonical && entry.nodeId !== nodeId)) {
+          return Effect.fail(new PathTaken({ path }));
+        }
+        entries = Option.match(canonicalOf(nodeId), {
+          onNone: () => entries,
+          onSome: (previous) => HashMap.set(entries, previous, { nodeId, canonical: false }),
+        });
+        entries = HashMap.set(entries, path, { nodeId, canonical: true });
+        return Effect.void;
+      }),
+    release: (nodeId) =>
+      Effect.sync(() => {
+        entries = Option.match(canonicalOf(nodeId), {
+          onNone: () => entries,
+          onSome: (path) => HashMap.remove(entries, path),
+        });
+      }),
+    entries: () => entries,
   };
 };
 

@@ -81,6 +81,7 @@ const REGISTRY = [
     id: TaxonId,
     referenceData: true,
     pageable: true,
+    routable: true,
   },
   {
     key: "comments",
@@ -110,6 +111,7 @@ describe("registry — derived wire identity", () => {
     expect(wire.referenceData).toEqual(["taxa"]);
     expect(wire.pageable).toEqual(["gardens", "taxa"]);
     expect(wire.searchable).toEqual(["gardens"]);
+    expect(wire.routable).toEqual(["taxa"]);
     expect(wire.agent).toEqual([]);
   });
 

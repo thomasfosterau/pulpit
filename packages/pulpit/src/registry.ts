@@ -22,7 +22,8 @@
  *   the viewer predicate (`./subtype`);
  * - `referenceData` — corpus material: written directly at the corpus-write
  *   rung, proposed by anyone signed in, publicly readable;
- * - `searchable` — a search plane emits it.
+ * - `searchable` — a search plane emits it;
+ * - `routable` — addressed by a path claim on its root node (`./paths`).
  *
  * `owned` and `referenceData` are mutually exclusive — a leaf sits on one
  * side of the trust model or the other, and the subtype factory reads the
@@ -77,6 +78,7 @@ export const RESOURCE_FLAGS = [
   "owned",
   "referenceData",
   "searchable",
+  "routable",
 ] as const;
 
 /**
@@ -115,6 +117,8 @@ export interface RegistryEntry {
   readonly referenceData?: true | undefined;
   /** Searchable: a search plane emits it. */
   readonly searchable?: true | undefined;
+  /** Routable: addressed by a path claim on its root node (`./paths`). */
+  readonly routable?: true | undefined;
 }
 /* oxlint-enable effect/prefer-option-over-null */
 
@@ -467,6 +471,7 @@ export interface RegistryWireTypes<Root extends string> {
   readonly owned: ReadonlyArray<string>;
   readonly referenceData: ReadonlyArray<string>;
   readonly searchable: ReadonlyArray<string>;
+  readonly routable: ReadonlyArray<string>;
   readonly branches: { readonly [K in Root]: ReadonlyArray<string> };
 }
 
@@ -505,6 +510,7 @@ export const registryWireTypes = <Root extends string>(
     owned: flagged("owned"),
     referenceData: flagged("referenceData"),
     searchable: flagged("searchable"),
+    routable: flagged("routable"),
     branches,
   };
 };
