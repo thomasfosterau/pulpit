@@ -33,8 +33,9 @@ vp fmt                                     # format (Oxfmt)
 vp run check                               # the whole type gate (includes building dist/)
 vp run --filter ./packages/pulpit check    # one package's type check alone (or ./packages/pulpit-wordpress)
 vp run -r test:unit                        # unit tests
+vp run test:coverage                       # every suite under one coverage map (fallow audit reads it)
 vp test run tests/some.test.ts             # single file (from inside the package)
 vp run -r build                            # emit dist/
 vp run -r docgen                           # build, then type-check and run every JSDoc @example
-vp run fallow:audit                        # change-set review (not a CI gate)
+fallow audit --base origin/trunk           # change-set review (not a CI gate)
 ```

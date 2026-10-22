@@ -100,7 +100,6 @@ import {
   otherMember,
 } from "./fixtures.ts";
 
-// oxlint-disable-next-line effect/effect-run-in-body -- the test harness is the runtime boundary the rule asks for
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 const errorOf = async <A, E>(effect: Effect.Effect<A, E>): Promise<Option.Option<E>> =>
   Exit.findErrorOption(await Effect.runPromiseExit(effect));

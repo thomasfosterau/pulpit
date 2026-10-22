@@ -12,7 +12,7 @@
     "version": "changeset version && vp fmt && pnpm install --lockfile-only",
     "release": "pnpm -r --filter './packages/*' publish --access public --no-git-checks --ignore-scripts && changeset git-tag",
     "fallow": "fallow --summary",
-    "fallow:audit": "fallow audit",
+    "fallow:audit": "fallow audit --base origin/trunk",
     "prepare": "vp config && effect-tsgo patch --typescript --oxlint"
   },
   "devDependencies": {
@@ -24,7 +24,6 @@
     "@types/node": "catalog:",
     "@typescript/native": "catalog:",
     "effect": "catalog:",
-    "effect-solutions": "catalog:",
     "fallow": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",

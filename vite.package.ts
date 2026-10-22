@@ -69,8 +69,7 @@ export const packageConfig = (dir: string) => {
         // directives are the assertions.
         check: {
           command: "tsc -p tsconfig.json",
-          input: inputs,
-          output: [],
+          cache: { input: inputs, output: [] },
         },
         // Emits `dist/` (JavaScript + declarations) with the native, Effect-
         // patched `tsc`. `rm -rf` first so a renamed module leaves no stale
@@ -92,14 +91,11 @@ export const packageConfig = (dir: string) => {
         // hit to keep. `vp run -r --no-cache build` clears a stray.
         build: {
           command: "(rm -rf dist && tsc -p tsconfig.build.json)",
-          input: [...inputs, "!dist/**"],
-          output: ["dist/**"],
+          cache: { input: [...inputs, "!dist/**"], output: ["dist/**"] },
         },
         "test:unit": {
           command: "vp test run tests",
-          env: ["VITEST_MAX_WORKERS", "NODE_OPTIONS"],
-          input: inputs,
-          output: [],
+          cache: { env: ["VITEST_MAX_WORKERS", "NODE_OPTIONS"], input: inputs, output: [] },
         },
         // Type-checks AND executes every JSDoc `@example` (docgen.json), and
         // generates the API docs under docs/ (gitignored). Not part of
@@ -117,9 +113,11 @@ export const packageConfig = (dir: string) => {
         },
         "test:coverage": {
           command: "vp test run tests --coverage",
-          env: ["VITEST_MAX_WORKERS", "NODE_OPTIONS"],
-          input: inputs,
-          output: ["coverage/**"],
+          cache: {
+            env: ["VITEST_MAX_WORKERS", "NODE_OPTIONS"],
+            input: inputs,
+            output: ["coverage/**"],
+          },
         },
       },
     },
@@ -129,7 +127,9 @@ export const packageConfig = (dir: string) => {
       ...maxWorkers,
       coverage: {
         provider: "istanbul",
-        reporter: ["text-summary", "json-summary"],
+        // `json` writes coverage-final.json, the per-package Istanbul map;
+        // the root `test:coverage` writes the merged one `fallow audit` reads.
+        reporter: ["text-summary", "json-summary", "json"],
         reportsDirectory: "./coverage",
         include: ["src/**/*.ts"],
         exclude: ["**/*.d.ts"],

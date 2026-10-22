@@ -1,37 +1,51 @@
-# Dependabot version-update configuration (a subset of the consuming
-# applications', whose catalogs this workspace mirrors).
+# Dependabot version updates. The `npm` ecosystem at `/` reads the pnpm
+# workspace, its catalogs and pnpm-lock.yaml.
 #
-# `groups` collect dependencies that MUST move together: the Effect 4 release
-# line is a lockstep-versioned singleton set; the vitest toolchain is pinned to
-# vite-plus's exact versions.
+# Dependabot puts a dependency in the FIRST group that matches it, so the
+# groups run specific → general, and `exclude-patterns` keep each package out
+# of a broader group it would otherwise also match.
 #
-# vite / vitest / vite-plus move together (vite-plus pins the other two to
-# exact versions), so their *version* updates are ignored while SECURITY
-# updates stay enabled (the ignore is scoped to the `version-update:semver-*`
-# update types; a bare `dependency-name` ignore would block security updates
-# too).
+# Lockstep groups (every update type, majors included, because a partial move
+# breaks the build):
+# - `toolchain`: vite-plus pins the `vite` core, `vitest`, `oxlint`, `oxfmt`
+#   and `oxlint-tsgolint` it carries to exact versions; `@vitest/coverage-
+#   istanbul` must equal that vitest (vite-plus refuses a coverage run
+#   otherwise, pulpit#119); and `effect-tsgo patch` (the root `prepare`)
+#   matches the native `tsc` (`@typescript/native`) and that oxlint by gitHead
+#   and hard-errors (UnsupportedTargetPackageVersionError) on any pairing its
+#   components table lacks, failing `pnpm install` itself. The TS6 alias
+#   (`typescript`, published as `@typescript/typescript6`) and the Effect lint
+#   plugin ride along. When this group's PR goes red on install, pick the
+#   @effect/tsgo release whose `components` table (node_modules/@effect/tsgo/
+#   dist/effect-tsgo.cjs) covers the new oxlint / tsgolint / TypeScript, by
+#   hand on the same branch (see the catalog comments in pnpm-workspace.yaml).
+# - `effect`: the Effect 4 release line is one lockstep-versioned singleton
+#   set (the `effect` override forces one copy). Excludes @effect/tsgo
+#   (toolchain) and @effect/docgen (docgen).
+# - `docgen`: @effect/docgen executes every `@example` under `tsx` and parses
+#   `src/` with the ts-morph it bundles.
+# - `changesets`: the CLI and its changelog formatter.
+# - `fallow`: alone, because the PreToolUse gate (.claude/hooks/fallow-gate.sh)
+#   and the AGENTS.md fallow blocks are hand-maintained against a checked
+#   fallow version; check a bump against them (AGENTS.md → Fallow local gate)
+#   and never regenerate them with `fallow hooks install` / `setup-hooks` /
+#   `agent install`.
 #
-# @vitest/coverage-istanbul is ignored the same way: vite-plus refuses to start
-# a coverage run unless the provider's version EQUALS its bundled vitest, so
-# the provider moves BY HAND with vite-plus (to the `vitest` catalog entry),
-# never alone (pulpit#119); SECURITY updates stay enabled.
+# Everything else shares one `minor-and-patch` group; a major outside the
+# lockstep sets stays its own PR.
 #
-# @effect/tsgo, `typescript` (the TS6 alias) and `@typescript/native` (TS7) are
-# one set: `effect-tsgo patch` matches the native `tsc` and the `oxlint` that
-# vite-plus pulls in by gitHead / version and hard-errors
-# (UnsupportedTargetPackageVersionError) on any pairing it ships no artifact
-# for, so a PR moving one of them alone goes red. They move BY HAND, as a set
-# together with vite-plus, after checking the `components` table in
-# node_modules/@effect/tsgo/dist/effect-tsgo.cjs (see pnpm-workspace.yaml).
-# Their *version* updates are ignored the same way; SECURITY updates stay
-# enabled. @effect/tsgo is also excluded from the `effect` group, whose
-# `@effect/*` pattern would otherwise pull it in.
+# The security floors in pnpm-workspace.yaml's `overrides` (shell-quote,
+# source-map-js, launch-editor) are transitive pins Dependabot does not bump:
+# they move by hand, and are deleted once their parents' ranges carry the fix
+# (AGENTS.md → Common pitfalls).
 #
-# `cooldown` mirrors pnpm-workspace.yaml's `minimumReleaseAge`.
+# `cooldown` mirrors pnpm-workspace.yaml's `minimumReleaseAge` (1 day), with
+# the first-party `@thomasfosterau/*` exempt as `minimumReleaseAgeExclude` is.
 version: 2
 updates:
   - package-ecosystem: "npm"
     directory: "/"
+    target-branch: "trunk"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -40,75 +54,80 @@ updates:
       - "dependencies"
     commit-message:
       prefix: "chore"
-      prefix-development: "chore"
     cooldown:
       default-days: 1
       exclude:
         - "@thomasfosterau/*"
     groups:
+      toolchain:
+        applies-to: version-updates
+        patterns:
+          - "vite-plus"
+          - "vite"
+          - "vitest"
+          - "@vitest/*"
+          - "oxlint"
+          - "oxfmt"
+          - "oxlint-tsgolint"
+          - "@effect/tsgo"
+          - "@typescript/native"
+          - "typescript"
+          - "@typescript/typescript6"
+          - "@mpsuesser/oxlint-plugin-effect"
+        update-types: ["major", "minor", "patch"]
+      docgen:
+        applies-to: version-updates
+        patterns:
+          - "@effect/docgen"
+          - "tsx"
+          - "ts-morph"
+        update-types: ["major", "minor", "patch"]
       effect:
+        applies-to: version-updates
         patterns:
           - "effect"
           - "@effect/*"
         exclude-patterns:
           - "@effect/tsgo"
-      vitest-toolchain:
+          - "@effect/docgen"
+        update-types: ["major", "minor", "patch"]
+      changesets:
+        applies-to: version-updates
         patterns:
-          - "vitest"
-          - "@vitest/coverage-istanbul"
+          - "@changesets/*"
+        update-types: ["major", "minor", "patch"]
+      fallow:
+        applies-to: version-updates
+        patterns:
+          - "fallow"
+        update-types: ["major", "minor", "patch"]
+      minor-and-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        exclude-patterns:
           - "vite-plus"
-    ignore:
-      - dependency-name: "@effect/tsgo"
-        update-types:
-          [
-            "version-update:semver-major",
-            "version-update:semver-minor",
-            "version-update:semver-patch",
-          ]
-      - dependency-name: "typescript"
-        update-types:
-          [
-            "version-update:semver-major",
-            "version-update:semver-minor",
-            "version-update:semver-patch",
-          ]
-      - dependency-name: "@typescript/native"
-        update-types:
-          [
-            "version-update:semver-major",
-            "version-update:semver-minor",
-            "version-update:semver-patch",
-          ]
-      - dependency-name: "vite"
-        update-types:
-          [
-            "version-update:semver-major",
-            "version-update:semver-minor",
-            "version-update:semver-patch",
-          ]
-      - dependency-name: "vitest"
-        update-types:
-          [
-            "version-update:semver-major",
-            "version-update:semver-minor",
-            "version-update:semver-patch",
-          ]
-      - dependency-name: "@vitest/coverage-istanbul"
-        update-types:
-          [
-            "version-update:semver-major",
-            "version-update:semver-minor",
-            "version-update:semver-patch",
-          ]
-      - dependency-name: "vite-plus"
-        update-types:
-          [
-            "version-update:semver-major",
-            "version-update:semver-minor",
-            "version-update:semver-patch",
-          ]
+          - "vite"
+          - "vitest"
+          - "@vitest/*"
+          - "oxlint"
+          - "oxfmt"
+          - "oxlint-tsgolint"
+          - "@typescript/native"
+          - "typescript"
+          - "@typescript/typescript6"
+          - "@mpsuesser/oxlint-plugin-effect"
+          - "effect"
+          - "@effect/*"
+          - "tsx"
+          - "ts-morph"
+          - "@changesets/*"
+          - "fallow"
+        update-types: ["minor", "patch"]
+
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "trunk"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -116,5 +135,8 @@ updates:
     labels:
       - "dependencies"
     commit-message:
-      prefix: "ci"
-      include: "scope"
+      prefix: "chore"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

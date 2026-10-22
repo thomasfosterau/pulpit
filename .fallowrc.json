@@ -28,7 +28,6 @@
   ],
   "ignoreDependencies": [
     "@types/node",
-    "effect-solutions",
     "@effect/docgen",
     "@effect/tsgo",
     "@effect/language-service",
@@ -112,6 +111,7 @@
   "health": {
     "maxCyclomatic": 20,
     "maxCognitive": 15,
-    "maxCrap": 30
+    "maxCrap": 30,
+    "coverage": "coverage/coverage-final.json"
   }
 }

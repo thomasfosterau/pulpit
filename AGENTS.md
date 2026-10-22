@@ -10,6 +10,8 @@
 - **A `#NNN` citation inside a ported comment names an issue in the app it was ported from** (gardeneria unless stated): the evidence behind a decision, not a ticket in this tracker. An ID such as `VERSION-CHAIN-006` or `CACHE-AUTH-005` is a grep handle carried over from the apps' (deleted) specs; the rule it names is stated in [SECURITY.md → Invariant IDs](SECURITY.md#invariant-ids). Grep for it to find every site that honours it, and add a row there when you cite a new one.
 - **No application vocabulary.** No app tree (the registry's _flags_ are generic; its entries are the app's), no id brands beyond what an app injects, no Hyperdrive, no migrations tooling.
 - **Every external version lives in `pnpm-workspace.yaml`** (`catalogMode: strict` rejects anything else in a `package.json`). After editing the catalog, run `pnpm install` and commit the regenerated `pnpm-lock.yaml`; a stale lockfile fails CI with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`.
+- **Lockstep sets move together.** `.github/dependabot.yml` groups them (the toolchain: vite-plus / vitest / oxlint / `@effect/tsgo` / the TypeScript 6/7 pair / the Effect lint plugin; `effect` + `@effect/*`; docgen + `tsx`; `@changesets/*`; `fallow` alone, checked against the hand-maintained gate below). A toolchain PR that fails `pnpm install` needs the `@effect/tsgo` whose components table covers the new oxlint / tsgolint / TypeScript, chosen by hand on that branch. The security floors under `overrides` in `pnpm-workspace.yaml` are by-hand too: Dependabot does not bump them, and each comes out once its parents' ranges carry the fix.
+- **Node and pnpm only.** No bun, deno, npm or yarn: no other lockfile, no `npx` / `npm run` / `yarn` / `bun` in scripts, workflows, hooks or docs (`pnpm audit` and `pnpm publish` are pnpm's own).
 
 The kernel's own invariants, terms and import boundary, including the seams-before-dependencies rule, are in [`packages/pulpit/CLAUDE.md`](packages/pulpit/CLAUDE.md), and the adapter's boundary in [`packages/pulpit-wordpress/CLAUDE.md`](packages/pulpit-wordpress/CLAUDE.md); they are not restated here.
 
@@ -27,6 +29,7 @@ The kernel's own invariants, terms and import boundary, including the seams-befo
 - `pnpm install` — dependencies, the Vite+ git hooks (pre-commit runs `vp staged`: format + lint on staged files) and, through `prepare`, the Effect-patched `tsc` / `oxlint`. There is no pre-push hook.
 - `vp check` — format + lint (Oxfmt + Oxlint). `vp run check` — the type gate: each package's `check` (which also type-checks its `tests/**/*.types.ts`) plus the dist-consumer declaration check, which builds both packages' `dist/` and asserts the emitted types. They are different commands. The root `check` task in `vite.config.ts` lists each package's `check` by name, so a new package must be added there.
 - `vp run -r test:unit` — unit tests (pure code; no database), in every package.
+- `vp run test:coverage` — every package's unit suite under one Istanbul map at `coverage/coverage-final.json`, which `fallow audit` reads for exact per-function CRAP scores (`health.coverage` in `.fallowrc.json`). Without it fallow scores every function as uncovered, and any function with cyclomatic complexity ≥ 5 fails the gate on its own. Each package's own `vp run -r test:coverage` also enforces its thresholds.
 - `vp run -r build` — emit each package's `dist/`.
 - `vp run -r docgen` — build, then type-check and execute every JSDoc `@example` and generate the API docs under each package's `docs/` (gitignored).
 - `fallow audit --base origin/trunk` — the fallow gate over your change set.
@@ -44,9 +47,9 @@ Before you report work as done, run the gates below in order and quote each comm
 4. `vp run -r build`
 5. `vp run -r docgen`
 6. `pnpm audit --audit-level high`
-7. `fallow audit --base origin/trunk`
+7. `vp run test:coverage`, then `fallow audit --base origin/trunk`
 
-Steps 1–6 are what CI runs (`.github/workflows/ci.yml`); step 7 is the fallow gate the PreToolUse hook also runs on commit and push. For CI parity from a clean tree, first run `rm -rf node_modules packages/*/node_modules tests/*/node_modules && pnpm install --frozen-lockfile`: a warm tree hides a peer that a dependency requires but a package's `package.json` does not declare (declare it under `peerDependencies` via `catalog:peers`, or `workspace:^` for the kernel).
+Steps 1–6 are what CI runs (`.github/workflows/ci.yml`); step 7 is the fallow gate the PreToolUse hook also runs on commit and push. The hook reads the coverage map on disk and never refreshes it, so run `vp run test:coverage` first. For CI parity from a clean tree, first run `rm -rf node_modules packages/*/node_modules tests/*/node_modules && pnpm install --frozen-lockfile`: a warm tree hides a peer that a dependency requires but a package's `package.json` does not declare (declare it under `peerDependencies` via `catalog:peers`, or `workspace:^` for the kernel).
 
 ## Branches and pull requests
 
@@ -66,11 +69,11 @@ Steps 1–6 are what CI runs (`.github/workflows/ci.yml`); step 7 is the fallow 
 
 ## Effect
 
-Consult effect-solutions before writing Effect code (`vp exec effect-solutions list`, then `vp exec effect-solutions show <topic>…`); never guess at an Effect pattern. If a guide doesn't cover it, read `node_modules/effect/dist/*.d.ts`. The pinned version is the `effect` entry in `pnpm-workspace.yaml`. It spells the tagged-error constructor `Schema.TaggedError<Self>()(tag, fields)`; `Schema.TaggedErrorClass`, which older guides show, does not exist in it. HTTP modules are `effect/http/*`; there are no `effect/unstable/*` paths.
+Never guess at an Effect API: read the installed package. `node_modules/effect/AGENTS.md` and `node_modules/effect/ai-docs/` are the pinned release's own guides, `node_modules/effect/dist/*.d.ts` its signatures and `node_modules/effect/src` its source. The pinned version is the `effect` entry in `pnpm-workspace.yaml`. It spells the tagged-error constructor `Schema.TaggedError<Self>()(tag, fields)`; `Schema.TaggedErrorClass`, which older guides show, does not exist in it. HTTP modules are `effect/http/*`; there are no `effect/unstable/*` paths.
 
 ## Agent sessions
 
-`.claude/hooks/session-start.sh` (SessionStart) installs dependencies against the lockfile, puts `vp` and `fallow` on PATH for non-interactive shells, and repairs a broken bare `node`. It hydrates no secrets, and none are needed: every gate above runs offline. A PostToolUse hook runs `vp fmt <file> --write` after every Write / Edit, and a PreToolUse hook (`.claude/hooks/fallow-gate.sh`) runs `fallow audit --base origin/trunk` on every `git commit` / `git push` and blocks on a `fail` verdict. A worktree needs its own `pnpm install` before `vp` resolves the worktree's own vitest.
+`.claude/hooks/session-start.sh` (SessionStart) installs dependencies against the lockfile with pnpm (through corepack when available), puts `vp` (a re-exec shim), `fallow` and `tsx` (docgen's example runner) on PATH for non-interactive shells, and repairs a broken bare `node`. It hydrates no secrets, and none are needed: every gate above runs offline. A PostToolUse hook runs `vp fmt <file> --write` after every Write / Edit, and a PreToolUse hook (`.claude/hooks/fallow-gate.sh`) runs `fallow audit --base origin/trunk` on every `git commit` / `git push` and blocks on a `fail` verdict. A worktree needs its own `pnpm install` before `vp` resolves the worktree's own vitest.
 
 ## Documentation surfaces
 
@@ -88,7 +91,7 @@ Consult effect-solutions before writing Effect code (`vp exec effect-solutions l
 
 This block, the task map below and `.claude/hooks/fallow-gate.sh` are hand-maintained: do not regenerate them with `fallow setup-hooks`, `fallow hooks install --target agent` or `fallow agent install`. Checked against fallow 3.31.0: every form of these that targets Claude Code (the default auto-detection here, `--agent claude` or `--harness claude`) rewrites `.claude/hooks/fallow-gate.sh` without `--force`, dropping `--base origin/trunk` from its audit and this hook's header note; only the Codex-only forms (`--agent codex`, `--harness codex`) leave the hook alone. This block carries no `<!-- fallow:… -->` markers, so every form except `--agent claude` also appends a second, marked block to this file instead of replacing this one, and that block's commands omit `--base`. `fallow agent install` with Claude Code also appends `@AGENTS.md` to `CLAUDE.md`, which is a symlink to this file, so AGENTS.md would import itself.
 
-Before any `git commit` or `git push`, run `fallow audit --format json --quiet --explain --gate-marker agent --base origin/trunk`. The PreToolUse hook `.claude/hooks/fallow-gate.sh` runs this same audit on every `git commit` / `git push` and blocks the command on a `fail` verdict, so running it first just surfaces the findings sooner. If the verdict is `fail`, fix the reported findings before retrying. Treat JSON runtime errors like `{ "error": true, ... }` as non-blocking. Audit defaults to `gate=new-only`: only findings introduced by the current changeset affect the verdict.
+Before any `git commit` or `git push`, run `vp run test:coverage` (the audit reads `coverage/coverage-final.json`), then `fallow audit --format json --quiet --explain --gate-marker agent --base origin/trunk`. The PreToolUse hook `.claude/hooks/fallow-gate.sh` runs this same audit on every `git commit` / `git push` and blocks the command on a `fail` verdict, so running it first just surfaces the findings sooner. If the verdict is `fail`, fix the reported findings before retrying. Treat JSON runtime errors like `{ "error": true, ... }` as non-blocking. Audit defaults to `gate=new-only`: only findings introduced by the current changeset affect the verdict.
 
 ## Fallow task map
 

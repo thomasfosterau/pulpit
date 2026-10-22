@@ -2,8 +2,8 @@
  * @copyright Thomas Foster
  *
  * Root workspace config. Owns the repo-wide format/lint/staged passes (read
- * statically by `vp fmt` / `vp lint` / `vp staged`) and the root `check`
- * aggregate.
+ * statically by `vp fmt` / `vp lint` / `vp staged`), the root `check`
+ * aggregate and the root `test:coverage` map.
  *
  * Copied from the effect-drizzle-ext library (itself from the gardeneria
  * application's root config): every comment that explains a load-bearing
@@ -20,6 +20,7 @@ export default defineConfig({
     "*.{js,ts,css,json,md}": "vp check --fix",
   },
   fmt: {
+    ignorePatterns: ["**/dist/**", "**/docs/**", "**/coverage/**"],
     overrides: [
       {
         files: ["**/*.md"],
@@ -30,6 +31,7 @@ export default defineConfig({
     ],
   },
   lint: {
+    ignorePatterns: ["**/dist/**", "**/docs/**", "**/coverage/**", "**/node_modules/**"],
     extends: [recommended, effect.configs.recommended],
     categories: {
       correctness: "error",
@@ -63,31 +65,9 @@ export default defineConfig({
       // unsatisfiable under the full-name convention (`import * as Option from
       // "effect/Option"`) this library shares with its consumers.
       "effect/prefer-namespace-imports": "off",
-
-      // ---- Effect preset: ported-code allowances ---------------------------
-      // The modules under packages/*/src port behaviour the applications
-      // carry today, which predates the Effect oxlint preset. The rules below
-      // sit at `warn` so a faithful port stays committable while each site
-      // stays reported; a new site is a defect, not headroom.
-      "effect/imperative-loops": "warn",
-      "effect/avoid-native-object-helpers": "warn",
-      "effect/avoid-non-null-assertion": "warn",
-      "effect/avoid-any": "warn",
-      "effect/avoid-untagged-errors": "warn",
-      "effect/avoid-direct-json": "warn",
-      "effect/prefer-arr-match": "warn",
-      "effect/no-length-comparison": "warn",
-      "effect/prefer-arr-sort": "warn",
-      "effect/avoid-try-catch": "warn",
-      "effect/yield-in-for-loop": "warn",
-      "effect/prefer-effect-is": "warn",
-      "effect/avoid-expect-in-if": "warn",
-      "effect/effect-run-in-body": "warn",
-      "effect/prefer-effect-fn": "warn",
-      "effect/avoid-direct-tag-checks": "warn",
-      "effect/avoid-option-getorthrow": "warn",
-      "effect/no-barrel-imports": "warn",
-      "effect/throw-in-effect-gen": "warn",
+      // Every former ported-code allowance (the preset rules this workspace
+      // once held at `warn` while ported modules were paid down) is at zero
+      // and back at the preset's `error`; a new site is a defect.
       "typescript/no-explicit-any": "off",
       "typescript/no-empty-object-type": "off",
       "typescript/ban-ts-comment": "off",
@@ -102,6 +82,15 @@ export default defineConfig({
         files: ["**/tests/**/*.types.ts"],
         rules: {
           "effect/avoid-ts-ignore": "off",
+        },
+      },
+      // A test file IS the runtime boundary `effect-run-in-body` asks for
+      // ("entrypoint/test harness"): its `run` helper is where each case's
+      // Effect meets the Promise vitest awaits.
+      {
+        files: ["**/tests/**/*.test.ts"],
+        rules: {
+          "effect/effect-run-in-body": "off",
         },
       },
       // Build/test configs are evaluated by Vite and Vitest in bare Node,
@@ -154,6 +143,31 @@ export default defineConfig({
         ],
         cache: false,
       },
+      // Every package's unit suite under one Istanbul coverage map
+      // (`coverage/coverage-final.json`), which `fallow audit` reads for exact
+      // per-function CRAP scores (`health.coverage` in .fallowrc.json).
+      // Without it fallow estimates every function as uncovered, and any
+      // function with cyclomatic complexity ≥ 5 fails the gate on its own.
+      // Run this before `fallow audit` (the PreToolUse fallow gate runs the
+      // audit on `git commit` / `git push` but never refreshes this map). The
+      // per-package thresholds stay on each package's own `test:coverage`.
+      // Each package's `exports` point at `src/`, so no build edge is needed.
+      "test:coverage": {
+        command: "vp test run --coverage",
+        cache: false,
+      },
+    },
+  },
+  test: {
+    // One entry per package: each package's own vite.config.ts is a vitest
+    // project, so the root run and the root coverage map cover them all.
+    projects: ["packages/*/vite.config.ts"],
+    coverage: {
+      provider: "istanbul",
+      reporter: ["text-summary", "json-summary", "json"],
+      reportsDirectory: "./coverage",
+      include: ["packages/*/src/**/*.ts"],
+      exclude: ["**/*.d.ts"],
     },
   },
 });
