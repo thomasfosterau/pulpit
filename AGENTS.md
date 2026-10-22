@@ -49,7 +49,7 @@ Before you report work as done, run the gates below in order and quote each comm
 6. `pnpm audit --audit-level high`
 7. `vp run test:coverage`, then `fallow audit --base origin/trunk`
 
-Steps 1–6 are what CI runs (`.github/workflows/ci.yml`); step 7 is the fallow gate the PreToolUse hook also runs on commit and push. The hook reads the coverage map on disk and never refreshes it, so run `vp run test:coverage` first. For CI parity from a clean tree, first run `rm -rf node_modules packages/*/node_modules tests/*/node_modules && pnpm install --frozen-lockfile`: a warm tree hides a peer that a dependency requires but a package's `package.json` does not declare (declare it under `peerDependencies` via `catalog:peers`, or `workspace:^` for the kernel).
+Steps 1–6 are what CI runs (`.github/workflows/ci.yml`), and CI runs step 7's `vp run test:coverage` too, after the unit tests (pulpit#119); step 7's `fallow audit` is the fallow gate the PreToolUse hook also runs on commit and push. The hook reads the coverage map on disk and never refreshes it, so run `vp run test:coverage` first. For CI parity from a clean tree, first run `rm -rf node_modules packages/*/node_modules tests/*/node_modules && pnpm install --frozen-lockfile`: a warm tree hides a peer that a dependency requires but a package's `package.json` does not declare (declare it under `peerDependencies` via `catalog:peers`, or `workspace:^` for the kernel).
 
 ## Branches and pull requests
 
