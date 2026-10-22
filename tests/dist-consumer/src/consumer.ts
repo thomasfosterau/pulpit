@@ -94,6 +94,8 @@ import {
   versionMeta,
   type VersionedResource,
   type VersionMeta,
+  subtypeResourceHandlers,
+  type SubtypeResourceHandlersConfig,
 } from "@thomasfosterau/pulpit/subtype";
 import {
   duePublications,
@@ -599,6 +601,30 @@ export type _VersionEtag = Assert<
 export type _VersionedResource = Assert<
   Equals<VersionedResource, { readonly meta?: object | undefined }>
 >;
+// effect-jsonapi's ResourceHandlers over the handler record (pulpit#5).
+export type _ResourceHandlerNames = Assert<
+  Equals<
+    keyof ReturnType<typeof subtypeResourceHandlers>,
+    "list" | "get" | "create" | "update" | "delete"
+  >
+>;
+interface PostQuery {
+  readonly offset: number;
+  readonly limit: number;
+}
+type PostHandlersConfig = SubtypeResourceHandlersConfig<
+  PostQuery,
+  { readonly title: string },
+  { readonly id: string; readonly title?: string | undefined },
+  undefined,
+  never,
+  never,
+  never
+>;
+export type _ResourceHandlersListRequest = Assert<
+  Equals<PostHandlersConfig["listRequest"], (query: PostQuery) => ListRequest>
+>;
+export type _ResourceHandlersSegment = Assert<Equals<PostHandlersConfig["segment"], string>>;
 /* oxlint-enable effect/prefer-option-over-null */
 export type _SubtypeDeclarationError = Assert<
   Equals<SubtypeDeclarationError["_tag"], "SubtypeDeclarationError">

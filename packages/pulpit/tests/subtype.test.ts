@@ -55,6 +55,7 @@ import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import { FlatQuery, Group, Resource } from "@thomasfosterau/effect-jsonapi";
 import type { Visibility } from "../src/content.ts";
 import { always, and, eq, evaluate, isIn, ne, never, or, type ListFilter } from "../src/filter.ts";
 import {
@@ -86,6 +87,7 @@ import {
   composeHooks,
   noHooks,
   WriteRejected,
+  subtypeResourceHandlers,
   type AfterWriteHook,
   type BeforeWriteHook,
   type VersionedResource,
@@ -3291,5 +3293,125 @@ describe("the head version on the wire (pulpit#65)", () => {
     expect(versionMeta({ version: 9_007_199_254_740_993n })).toEqual({
       version: "9007199254740993",
     });
+  });
+});
+
+describe("subtypeResourceHandlers — effect-jsonapi's ResourceHandlers (pulpit#5)", () => {
+  const Post = Resource.make("posts", {
+    attributes: { title: Schema.String, visibility: Schema.String },
+  });
+  const CreatePost = Schema.Struct({ title: Schema.String, visibility: Schema.String });
+  const UpdatePost = Schema.Struct({ id: Schema.String, title: Schema.optionalKey(Schema.String) });
+  const { listQuery } = Group.flat({
+    resource: Post,
+    list: FlatQuery.listInput({ maxLimit: 100 }),
+    create: CreatePost,
+    update: UpdatePost,
+  });
+  const jsonapiLeaf = () => {
+    const chain = makeInMemoryChainStore();
+    const leaves = makeInMemoryLeafStore(chain, { columns: ["title", "visibility"], now: NOW });
+    let viewer: Viewer = as(member);
+    const ops = defineSubtype({
+      type: "posts",
+      access: ownedAccess({ draft: false }),
+      chain,
+      leaves,
+      viewer: Effect.sync(() => viewer),
+      policy: gardeneriaPolicy,
+      followers: follows,
+      toResource: (row: LeafRow) => ({
+        type: "posts",
+        id: row.id,
+        attributes: { title: row["title"], visibility: row["visibility"] },
+      }),
+    });
+    const cached = MutableHashMap.empty<string, unknown>();
+    const record = subtypeHandlers(ops, {
+      transact: (effect) => effect,
+      cache: Option.some({
+        set: (id, resource) => Effect.sync(() => void MutableHashMap.set(cached, id, resource)),
+        delete: (id) => Effect.sync(() => void MutableHashMap.remove(cached, id)),
+      }),
+    });
+    const handlers = subtypeResourceHandlers(record, {
+      segment: "posts",
+      listQuery,
+      linkBase: Effect.succeed("https://example.test"),
+      listRequest: (query) => ({
+        limit: query.limit,
+        offset: query.offset,
+        includeDeleted: false,
+        where: always,
+      }),
+      createInput: (payload: typeof CreatePost.Type) => ({
+        id: Option.none(),
+        state: { title: payload.title, visibility: payload.visibility },
+      }),
+      updateInput: ({ id, title }: typeof UpdatePost.Type) => ({ id, patch: { title } }),
+    });
+    const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+      Effect.suspend(() => {
+        viewer = who;
+        return effect;
+      });
+    return { handlers, cached, actAs };
+  };
+
+  it("serves the five endpoints through the record, which keeps the cache write-through", async () => {
+    const { handlers, cached } = jsonapiLeaf();
+    const created = await run(
+      handlers.create({ payload: { title: "Hello", visibility: "public" } }),
+    );
+    const id = created.data.id;
+    expect(created.data.attributes).toEqual({ title: "Hello", visibility: "public" });
+    expect(MutableHashMap.get(cached, id)).toEqual(
+      Option.some({ type: "posts", id, attributes: { title: "Hello", visibility: "public" } }),
+    );
+    const updated = await run(handlers.update({ params: { id }, payload: { id, title: "Again" } }));
+    expect(updated.data.attributes.title).toBe("Again");
+    expect((await run(handlers.get({ params: { id } }))).data.attributes.title).toBe("Again");
+    const list = await run(handlers.list({ query: { offset: 0, limit: 10 } }));
+    expect([list.data.map((post) => post.id), list.meta.totalCount]).toEqual([[id], 1]);
+    await run(handlers.delete({ params: { id } }));
+    expect(MutableHashMap.has(cached, id)).toBe(false);
+    expect(await tagOf(handlers.get({ params: { id } }))).toEqual(Option.some("NodeNotFound"));
+  });
+
+  it("refuses an update whose payload id is not the route's, before any write", async () => {
+    const { handlers } = jsonapiLeaf();
+    const created = await run(
+      handlers.create({ payload: { title: "Hello", visibility: "public" } }),
+    );
+    const id = created.data.id;
+    expect(
+      await tagOf(handlers.update({ params: { id }, payload: { id: "other", title: "x" } })),
+    ).toEqual(Option.some("Conflict"));
+    expect((await run(handlers.get({ params: { id } }))).data.attributes.title).toBe("Hello");
+  });
+
+  it("keeps the read rule (SEC-AUTH-ENUM-001): a hidden row is NodeNotFound and left out of the page and its total", async () => {
+    const { handlers, actAs } = jsonapiLeaf();
+    const hidden = await run(
+      handlers.create({ payload: { title: "Mine", visibility: "private" } }),
+    );
+    expect(
+      await tagOf(actAs(as(otherMember), handlers.get({ params: { id: hidden.data.id } }))),
+    ).toEqual(Option.some("NodeNotFound"));
+    const list = await run(
+      actAs(as(otherMember), handlers.list({ query: { offset: 0, limit: 10 } })),
+    );
+    expect([list.data, list.meta.totalCount]).toEqual([[], 0]);
+    expect(
+      await tagOf(
+        actAs(
+          as(otherMember),
+          handlers.update({
+            params: { id: hidden.data.id },
+            payload: { id: hidden.data.id, title: "x" },
+          }),
+        ),
+      ),
+    ).toEqual(Option.some("Forbidden"));
   });
 });
