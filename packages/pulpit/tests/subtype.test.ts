@@ -81,11 +81,14 @@ import {
   type Viewer,
   type ViewerAccount,
   cacheWriteThrough,
+  versionEtag,
+  versionMeta,
   composeHooks,
   noHooks,
   WriteRejected,
   type AfterWriteHook,
   type BeforeWriteHook,
+  type VersionedResource,
 } from "../src/subtype.ts";
 import {
   defineVersionChain,
@@ -117,10 +120,10 @@ import {
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 
-/** A view's column set, with the `id` and `action` every view carries. */
+/** A view's column set, with the `id`, `version` and `action` every view carries. */
 const viewOf = (...columns: ReadonlyArray<string>): ReadonlySet<string> =>
   // oxlint-disable-next-line effect/avoid-native-object-helpers -- a view's column set is the native `ReadonlySet` `LeafStore.columns` names
-  new Set(["id", "action", ...columns]);
+  new Set(["id", "version", "action", ...columns]);
 
 const tagOf = async <A, E extends { readonly _tag: string }>(
   effect: Effect.Effect<A, E>,
@@ -233,6 +236,7 @@ describe("ownedListFilter ≡ canViewOwned", () => {
     Arr.flatMap([false, true], (draft) =>
       Arr.map([member.id, otherMember.id], (ownerId) => ({
         id: `${visibility}-${draft}-${ownerId}`,
+        version: 0n,
         action: "create" as const,
         visibility,
         draft,
@@ -3167,5 +3171,125 @@ describe("lifecycle hooks — before and after every write (pulpit#45)", () => {
     expect(MutableHashMap.get(cached, "p")).toEqual(Option.some("r"));
     await run(hook.run({ ...event, resource: Option.none() }));
     expect(MutableHashMap.has(cached, "p")).toBe(false);
+  });
+});
+
+describe("the head version on the wire (pulpit#65)", () => {
+  const versionedLeaf = () => {
+    const chain = makeInMemoryChainStore();
+    const leaves = makeInMemoryLeafStore(chain, { columns: ["title", "visibility"], now: NOW });
+    let viewer: Viewer = anonymous;
+    const ops = defineSubtype({
+      type: "posts",
+      access: ownedAccess({ draft: false }),
+      chain,
+      leaves,
+      viewer: Effect.sync(() => viewer),
+      policy: gardeneriaPolicy,
+      followers: follows,
+      toResource: (row: LeafRow) => ({ type: "posts", id: row.id, meta: versionMeta(row) }),
+    });
+    const handlers = subtypeHandlers(ops, { transact: (effect) => effect, cache: Option.none() });
+    const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+      Effect.suspend(() => {
+        viewer = who;
+        return effect;
+      });
+    return { ops, handlers, actAs };
+  };
+
+  it("projects the head version: a mapper stamps it as meta.version, and it moves with each write", async () => {
+    const { ops, handlers, actAs } = versionedLeaf();
+    const created = await run(
+      actAs(
+        as(member),
+        handlers.create({ id: Option.none(), state: { title: "A", visibility: "public" } }),
+      ),
+    );
+    expect(created.meta).toEqual({ version: "0" });
+    const updated = await run(
+      actAs(as(member), handlers.update({ id: created.id, patch: { title: "B" } })),
+    );
+    expect(updated.meta).toEqual({ version: "1" });
+    expect((await run(actAs(anonymous, ops.get(created.id)))).meta).toEqual({ version: "1" });
+    const { rows } = await run(
+      actAs(
+        anonymous,
+        ops.list({ limit: 10, offset: 0, includeDeleted: false, where: { kind: "always" } }),
+      ),
+    );
+    expect(rows.map((row) => row.meta)).toEqual([{ version: "1" }]);
+  });
+
+  it("round-trips the ETag as the update's expected version: the head writes, a superseded tag is StaleVersion", async () => {
+    const { handlers, actAs } = versionedLeaf();
+    const created = await run(
+      actAs(
+        as(member),
+        handlers.create({ id: Option.none(), state: { title: "A", visibility: "public" } }),
+      ),
+    );
+    const read = versionEtag(created);
+    expect(read).toEqual(Option.some('"0"'));
+    // An If-Match echoes the tag; its value is the expected version.
+    const expectedVersion = BigInt(Option.getOrElse(read, () => "").slice(1, -1));
+    const updated = await run(
+      actAs(
+        as(member),
+        handlers.update({ id: created.id, patch: { title: "B" }, expectedVersion }),
+      ),
+    );
+    expect(versionEtag(updated)).toEqual(Option.some('"1"'));
+    expect(
+      await tagOf(
+        actAs(
+          as(member),
+          handlers.update({ id: created.id, patch: { title: "C" }, expectedVersion }),
+        ),
+      ),
+    ).toEqual(Option.some("StaleVersion"));
+  });
+
+  it("discloses no version of a hidden row (SEC-AUTH-ENUM-001): get is NodeNotFound and list omits it", async () => {
+    const { ops, handlers, actAs } = versionedLeaf();
+    const hidden = await run(
+      actAs(
+        as(member),
+        handlers.create({ id: Option.none(), state: { title: "A", visibility: "private" } }),
+      ),
+    );
+    expect(await tagOf(actAs(as(otherMember), ops.get(hidden.id)))).toEqual(
+      Option.some("NodeNotFound"),
+    );
+    const { rows, total } = await run(
+      actAs(
+        as(otherMember),
+        ops.list({ limit: 10, offset: 0, includeDeleted: false, where: { kind: "always" } }),
+      ),
+    );
+    expect([rows, total]).toEqual([[], 0]);
+  });
+
+  it("tags only a decimal meta.version", () => {
+    expect(versionEtag({ meta: { version: "12" } })).toEqual(Option.some('"12"'));
+    const unstamped: ReadonlyArray<VersionedResource> = [
+      { meta: undefined },
+      { meta: {} },
+      { meta: { version: 3 } },
+      { meta: { version: 3n } },
+      { meta: { version: "03" } },
+      { meta: { version: "-1" } },
+      { meta: { version: "1.5" } },
+      { meta: { version: '1"' } },
+      { meta: { version: "" } },
+    ];
+    expect(unstamped.map(versionEtag)).toEqual(unstamped.map(() => Option.none()));
+  });
+
+  it("stamps the version as a decimal string", () => {
+    expect(versionMeta({ version: 0n })).toEqual({ version: "0" });
+    expect(versionMeta({ version: 9_007_199_254_740_993n })).toEqual({
+      version: "9007199254740993",
+    });
   });
 });

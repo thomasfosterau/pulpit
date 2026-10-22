@@ -528,15 +528,104 @@ export const requireWriter = <E, R>(
 // ── The current-version view seam ─────────────────────────────────────
 
 /**
- * A current-version view row: its node id, its head `action`, and the leaf's columns.
+ * A current-version view row: its node id, its head `version` and `action`,
+ * and the leaf's columns. The view projects `version` from the head row
+ * (pulpit#65), so a read carries the version an `If-Match` must name: a
+ * mapper stamps it on the wire with {@link versionMeta}, and a
+ * single-resource response's `ETag` is {@link versionEtag}. `id`, `version`
+ * and `action` are the view's own, so no leaf column may take those names.
  *
  * @since 0.1.0
  */
 export interface LeafRow {
   readonly id: string;
+  /** The head version, the one an update's `expectedVersion` names. */
+  readonly version: bigint;
   readonly action: VersionAction;
   readonly [column: string]: ColumnValue;
 }
+
+/**
+ * The resource-object `meta` a {@link SubtypeDefinition.toResource} mapper
+ * stamps: the row's head version as a decimal string (`bigint` has no JSON
+ * form). It reaches only a resource the read already serves the viewer, so it
+ * discloses nothing about a hidden row (`SEC-AUTH-ENUM-001`); what it does
+ * disclose about a shown one is how many versions its chain holds.
+ *
+ * @example
+ * ```ts
+ * import { strictEqual } from "node:assert";
+ * import { versionMeta } from "@thomasfosterau/pulpit/subtype";
+ *
+ * const row = { id: "post-1", version: 3n, action: "update" as const, title: "Hello" };
+ * const resource = { type: "posts", id: row.id, meta: versionMeta(row) };
+ * strictEqual(resource.meta.version, "3");
+ * ```
+ *
+ * @since 0.1.0
+ */
+export const versionMeta = (row: Pick<LeafRow, "version">): VersionMeta => ({
+  version: String(row.version),
+});
+
+/**
+ * The resource-object `meta` {@link versionMeta} stamps: the head version as
+ * a decimal string.
+ *
+ * @since 0.1.0
+ */
+export interface VersionMeta {
+  readonly version: string;
+}
+
+/**
+ * What {@link versionEtag} reads: a resource object, by its optional `meta`.
+ *
+ * @since 0.1.0
+ */
+export interface VersionedResource {
+  // oxlint-disable-next-line effect/prefer-option-over-null -- a JSON:API resource object's optional member, `?: T | undefined` (AGENTS.md → Conventions)
+  readonly meta?: object | undefined;
+}
+
+// A version is a non-negative integer with no leading zero: anything else in
+// `meta.version` is not one this kernel stamped.
+const StampedVersion = Schema.Struct({
+  meta: Schema.Struct({
+    version: Schema.String.check(
+      Schema.isPattern(/^(?:0|[1-9][0-9]*)$/, { description: "a head version in decimal" }),
+    ),
+  }),
+});
+
+/**
+ * A single-resource response's `ETag` header value, read from the
+ * resource's `meta.version` ({@link versionMeta}): a strong tag (`"3"`)
+ * whose value is the head version, so the `If-Match` a client echoes names
+ * the version its write expects ({@link UpdateRequest.expectedVersion}; the
+ * header's mapping onto it is effect-jsonapi's, which 0.16.3 lacks). None when the value carries no
+ * decimal `meta.version`; a collection response takes none, having no single
+ * version to tag. Never fails.
+ *
+ * @example
+ * ```ts
+ * import { strictEqual } from "node:assert";
+ * import { Option } from "effect";
+ * import { versionEtag } from "@thomasfosterau/pulpit/subtype";
+ *
+ * const read = { type: "posts", id: "post-1", meta: { version: "3" } };
+ * strictEqual(Option.getOrElse(versionEtag(read), () => "none"), '"3"');
+ * const unstamped = { type: "posts", id: "post-1", meta: {} };
+ * strictEqual(Option.isNone(versionEtag(unstamped)), true);
+ * ```
+ *
+ * @since 0.1.0
+ */
+export const versionEtag = (resource: VersionedResource): Option.Option<string> =>
+  Option.map(
+    Schema.decodeUnknownOption(StampedVersion)(resource),
+    ({ meta }) => `"${meta.version}"`,
+  );
 
 /**
  * One list page and the unpaged total of rows matching the filter.

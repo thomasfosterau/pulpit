@@ -157,7 +157,7 @@ const node = (
   id: string,
   columns: { readonly [column: string]: ColumnValue },
   action: VersionAction = "create",
-): LeafRow => ({ ...columns, id, action });
+): LeafRow => ({ ...columns, id, version: 0n, action });
 
 /** An end over a reference leaf. */
 const referenceEnd = (column: string, nodes: InMemoryNodes): EdgeEnd<never, never> => ({

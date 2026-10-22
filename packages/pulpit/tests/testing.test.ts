@@ -118,7 +118,7 @@ describe("makeInMemoryEdgeStore", () => {
       uniqueKey: [],
       now: NOW,
     });
-    nodes.put({ id: "n-1", action: "create" });
+    nodes.put({ id: "n-1", version: 0n, action: "create" });
     // Sequential: each insert mints the next id and instant.
     await run(
       Effect.forEach(Arr.range(1, 6), () => edges.insert({ fromId: "n-1" }), { concurrency: 1 }),
