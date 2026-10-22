@@ -364,11 +364,12 @@ export const makeInMemoryDocumentStore = <
     put: (document) =>
       Effect.map(hashOf(document), (hash) => {
         // `ON CONFLICT DO NOTHING`: the first document at a hash is kept.
-        if (!HashMap.has(documents, hash)) {
+        const inserted = !HashMap.has(documents, hash);
+        if (inserted) {
           documents = HashMap.set(documents, hash, document);
           writes += 1;
         }
-        return hash;
+        return { hash, inserted };
       }),
     get: (hash) => Effect.sync(() => HashMap.get(documents, hash)),
     getMany: (hashes) =>

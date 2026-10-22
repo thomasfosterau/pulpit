@@ -127,7 +127,10 @@ export type _DocumentsSeam = Assert<
   Satisfies<InMemoryDocumentStore<Prose>, DocumentStore<Prose, never, never>>
 >;
 export type _DocumentsPut = Assert<
-  Equals<ReturnType<InMemoryDocumentStore<Prose>["put"]>, Effect.Effect<string>>
+  Equals<
+    ReturnType<InMemoryDocumentStore<Prose>["put"]>,
+    Effect.Effect<{ readonly hash: string; readonly inserted: boolean }>
+  >
 >;
 export type _DocumentsGet = Assert<
   Equals<ReturnType<InMemoryDocumentStore<Prose>["get"]>, Effect.Effect<Option.Option<Prose>>>

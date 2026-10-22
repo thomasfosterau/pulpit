@@ -538,6 +538,77 @@ export interface VersionChainOps<E, R> {
   ) => Effect.Effect<ReadonlyArray<VersionChainEntry>, E | NodeNotFound, R>;
 }
 
+// ── The before-append hook ────────────────────────────────────────────
+
+/**
+ * The write that is about to append: the chain's `action` vocabulary, with
+ * the two explicit restore surfaces named apart (`VERSION-CHAIN-006`), so a
+ * hook can tell a resurrection from an edit. `restore` and `restoreVersion`
+ * still append an `update` row.
+ *
+ * @since 0.1.0
+ */
+export const WriteAction = Schema.Literals([
+  "create",
+  "update",
+  "delete",
+  "restore",
+  "restoreVersion",
+]);
+/**
+ * The {@link WriteAction} literal union.
+ *
+ * @since 0.1.0
+ */
+export type WriteAction = typeof WriteAction.Type;
+
+/**
+ * What a {@link ChainHooks.beforeAppend} hook is shown: the write, the node,
+ * the head it extends, and the patch it is about to apply.
+ *
+ * - `create` — `prior` is none, and `patch` is the whole initial state;
+ * - `update` / `restore` — `prior` is the head, `patch` the caller's tri-state patch;
+ * - `delete` — `prior` is the live head, `patch` is `{}` (the tombstone
+ *   carries the head's state forward); an already tombstoned node writes
+ *   nothing and runs no hook;
+ * - `restoreVersion` — `prior` is the head, `patch` the whole state of the
+ *   version being restored.
+ *
+ * The version written is the hook's patch applied to `prior`'s state (to
+ * nothing for `create` and `restoreVersion`, whose patch is the whole state).
+ *
+ * @since 0.1.0
+ */
+export interface ChainAppendEvent {
+  readonly action: WriteAction;
+  readonly id: string;
+  /** The head the append extends (its full state), or none for a create. */
+  readonly prior: Option.Option<VersionSnapshot>;
+  readonly patch: ChainPatch;
+  /** The acting account the row will record. */
+  readonly actorId: Option.Option<string>;
+}
+
+/**
+ * The chain's hook point, bound once by {@link defineVersionChain}.
+ *
+ * @since 0.1.0
+ */
+export interface ChainHooks<E, R> {
+  /**
+   * Runs after the head is read and before the row is appended, in the
+   * caller's transaction: its patch replaces the event's, and a failure
+   * (its `E`) fails the write with nothing appended. It sees the very head
+   * the append extends, so the expected-version check (`appendNext`) still
+   * runs against that head after it. Absent, nothing extra is read.
+   */
+  /* oxlint-disable effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined`; the omitted key is "no hook", read as such by `defineVersionChain` */
+  readonly beforeAppend?:
+    | ((event: ChainAppendEvent) => Effect.Effect<ChainPatch, E, R>)
+    | undefined;
+  /* oxlint-enable effect/prefer-option-over-null */
+}
+
 const isVersionConflict = Schema.is(VersionConflict);
 
 /** The write clock: the current instant, as the `Date` a version row stores. */
@@ -547,14 +618,28 @@ const now: Effect.Effect<Date> = Effect.map(Clock.currentTimeMillis, (millis) =>
 
 /**
  * Bind the chain operations for one leaf `type` to a store. Every produced
- * operation is traced as `${type}.<operation>`.
+ * operation is traced as `${type}.<operation>`. `hooks.beforeAppend`, when
+ * given, runs before every append (see {@link ChainHooks}); its failure is
+ * each write's `E`.
  *
  * @since 0.1.0
  */
 export const defineVersionChain = <E, R>(
   type: string,
   store: VersionChainStore<E, R>,
+  hooks: ChainHooks<E, R> = {},
 ): VersionChainOps<E, R> => {
+  const { beforeAppend } = hooks;
+
+  /**
+   * The state a write stores: the hook's patch (or the caller's, without a
+   * hook) over `base`, the prior state or nothing.
+   */
+  const nextState = (event: ChainAppendEvent, base: ChainState): Effect.Effect<ChainState, E, R> =>
+    beforeAppend === undefined
+      ? Effect.succeed(applyPatch(base, event.patch))
+      : Effect.map(beforeAppend(event), (patch) => applyPatch(base, patch));
+
   /**
    * Append at `previous + 1`, after checking the precondition against that
    * same `previous`. The check and the append's version come from one read,
@@ -593,11 +678,22 @@ export const defineVersionChain = <E, R>(
       return Option.some(snapshot.value);
     });
 
+  /**
+   * The head's full state for a hook to see, read only when there is a hook
+   * (`restoreVersion` otherwise needs the head entry alone).
+   */
+  const hookPrior = (id: string) =>
+    beforeAppend === undefined ? Effect.succeed(Option.none<VersionSnapshot>()) : current(id);
+
   const create = Effect.fn(`${type}.create`)(function* (input: CreateInput) {
     const id = Option.isSome(input.id) ? input.id.value : yield* store.mintId;
     if (Option.isSome(input.id) && Option.isSome(yield* store.head(id))) {
       return yield* new NodeAlreadyExists({ type, id });
     }
+    const state = yield* nextState(
+      { action: "create", id, prior: Option.none(), patch: input.state, actorId: input.actorId },
+      {},
+    );
     const timestamp = yield* now;
     yield* store
       .append({
@@ -606,7 +702,7 @@ export const defineVersionChain = <E, R>(
         version: 0n,
         action: "create",
         timestamp,
-        state: input.state,
+        state,
         actorId: input.actorId,
       })
       .pipe(
@@ -627,14 +723,17 @@ export const defineVersionChain = <E, R>(
       if (Option.isNone(head) || (head.value.action === "delete" && !allowDeleted)) {
         return yield* new NodeNotFound({ type, id: input.id });
       }
-      return yield* appendNext(
-        input.id,
-        head.value,
-        "update",
-        applyPatch(head.value.state, input.patch),
-        input.actorId,
-        input,
+      const state = yield* nextState(
+        {
+          action: allowDeleted ? "restore" : "update",
+          id: input.id,
+          prior: head,
+          patch: input.patch,
+          actorId: input.actorId,
+        },
+        head.value.state,
       );
+      return yield* appendNext(input.id, head.value, "update", state, input.actorId, input);
     });
 
   const update = Effect.fn(`${type}.update`)(function* (input: UpdateInput) {
@@ -655,14 +754,11 @@ export const defineVersionChain = <E, R>(
     if (head.value.action === "delete") {
       return { id, version: head.value.version, alreadyDeleted: true };
     }
-    const written = yield* appendNext(
-      id,
-      head.value,
-      "delete",
+    const state = yield* nextState(
+      { action: "delete", id, prior: head, patch: {}, actorId },
       head.value.state,
-      actorId,
-      precondition,
     );
+    const written = yield* appendNext(id, head.value, "delete", state, actorId, precondition);
     return { ...written, alreadyDeleted: false };
   });
 
@@ -688,12 +784,17 @@ export const defineVersionChain = <E, R>(
     // fails before the chain is touched at all.
     const snapshot = yield* store.snapshot(id, version);
     if (Option.isNone(snapshot)) return yield* new VersionNotFound({ type, id, version });
-    const head = yield* store.head(id);
+    const prior = yield* hookPrior(id);
+    const head = Option.isSome(prior) ? prior : yield* store.head(id);
     if (Option.isNone(head)) return yield* new VersionNotFound({ type, id, version });
+    const state = yield* nextState(
+      { action: "restoreVersion", id, prior, patch: snapshot.value.state, actorId },
+      {},
+    );
     // `update`, not a fourth action: a restore is an ordinary edit whose
     // content came from history, and `action` stays the currency / tombstone
     // axis every fail-closed view reads (#864 A8).
-    return yield* appendNext(id, head.value, "update", snapshot.value.state, actorId, precondition);
+    return yield* appendNext(id, head.value, "update", state, actorId, precondition);
   });
 
   const history = Effect.fn(`${type}.history`)(function* (

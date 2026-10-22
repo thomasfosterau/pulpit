@@ -37,7 +37,7 @@
 
 import { Resource } from "@thomasfosterau/effect-jsonapi";
 import * as Arr from "effect/Array";
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
 import type * as HashMap from "effect/HashMap";
 import type * as Option from "effect/Option";
 import * as Order from "effect/Order";
@@ -71,6 +71,17 @@ export type DocumentHash = typeof DocumentHash.Type;
 // ── The seam ──────────────────────────────────────────────────────────
 
 /**
+ * What {@link DocumentStore.put} returns: the document's hash, and whether
+ * this call inserted it (`false` for a document already stored).
+ *
+ * @since 0.1.0
+ */
+export interface DocumentPut {
+  readonly hash: DocumentHash;
+  readonly inserted: boolean;
+}
+
+/**
  * The content-addressed document store an application supplies (in
  * production, a table per document family, keyed by the hash). `Document`
  * is the application's document type; `E` is the store's own failure and `R`
@@ -86,12 +97,14 @@ export type DocumentHash = typeof DocumentHash.Type;
 export interface DocumentStore<Document, E, R> {
   /**
    * Store `document` if its hash is unseen and return the hash either way
-   * (`INSERT … ON CONFLICT DO NOTHING`, then the hash). Idempotent: a
-   * document already stored, or one equal to it under the canonical
-   * serialisation, writes nothing and returns the same hash. The hash is the
-   * store's to derive (README → Seams).
+   * (`INSERT … ON CONFLICT DO NOTHING RETURNING`, then the hash), with
+   * `inserted: true` only when this call wrote the row (the `RETURNING`
+   * gave one back). Idempotent: a document already stored, or one equal to
+   * it under the canonical serialisation, writes nothing and returns the
+   * same hash with `inserted: false`. The hash is the store's to derive
+   * (README → Seams).
    */
-  readonly put: (document: Document) => Effect.Effect<DocumentHash, E, R>;
+  readonly put: (document: Document) => Effect.Effect<DocumentPut, E, R>;
   /** The document stored at `hash`, or none. */
   readonly get: (hash: DocumentHash) => Effect.Effect<Option.Option<Document>, E, R>;
   /**
@@ -103,6 +116,59 @@ export interface DocumentStore<Document, E, R> {
     hashes: ReadonlyArray<DocumentHash>,
   ) => Effect.Effect<HashMap.HashMap<DocumentHash, Document>, E, R>;
 }
+
+// ── The first-insert event ────────────────────────────────────────────
+
+/**
+ * What an {@link onDocumentInsert} hook is shown: a document this `put`
+ * stored for the first time, and its hash.
+ *
+ * @since 0.1.0
+ */
+export interface DocumentInserted<Document> {
+  readonly hash: DocumentHash;
+  readonly document: Document;
+}
+
+/**
+ * The document store with a first-insert hook: its `put` runs `hook` after
+ * a `put` that inserted (`inserted: true`), and never after one that found
+ * the document already stored, so the hook runs once per document (an
+ * embedding job, in the apps). The hook runs in the `put`'s own
+ * transaction, so a failure (the store's `E`) fails the `put` and rolls
+ * the insert back with the caller's transaction; enqueue durable work as a
+ * row the same transaction writes (an outbox). `get` and `getMany` are the
+ * store's own.
+ *
+ * @example
+ * ```ts
+ * import { deepStrictEqual } from "node:assert";
+ * import * as Effect from "effect/Effect";
+ * import { onDocumentInsert } from "@thomasfosterau/pulpit/documents";
+ * import { makeInMemoryDocumentStore } from "@thomasfosterau/pulpit/testing";
+ *
+ * const inserted: Array<string> = [];
+ * const store = onDocumentInsert(makeInMemoryDocumentStore<{ readonly text: string }>(), (event) =>
+ *   Effect.sync(() => {
+ *     inserted.push(event.document.text);
+ *   }),
+ * );
+ * await Effect.runPromise(Effect.andThen(store.put({ text: "hello" }), store.put({ text: "hello" })));
+ * deepStrictEqual(inserted, ["hello"]);
+ * ```
+ *
+ * @since 0.1.0
+ */
+export const onDocumentInsert = <Document, E, R>(
+  store: DocumentStore<Document, E, R>,
+  hook: (event: DocumentInserted<Document>) => Effect.Effect<void, E, R>,
+): DocumentStore<Document, E, R> => ({
+  ...store,
+  put: (document) =>
+    Effect.tap(store.put(document), ({ hash, inserted }) =>
+      inserted ? hook({ hash, document }) : Effect.void,
+    ),
+});
 
 // ── The hash contract ─────────────────────────────────────────────────
 
@@ -200,7 +266,7 @@ export const canonicalText = (value: Schema.Json): string => {
 
 /**
  * The attribute spread for a version row's document reference: `key` carries
- * the {@link DocumentHash} a {@link DocumentStore} returned from `put`.
+ * the {@link DocumentHash} a {@link DocumentStore} returned from `put` (its `hash`).
  * Required on the resource and at create; optional at update, where an absent
  * key carries the previous version's reference forward (the tri-state rule),
  * and never cleared. Spread into a leaf's `Resource.make({ attributes })`,

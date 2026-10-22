@@ -52,7 +52,7 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
-import { always, notPublished, published, type ListFilter } from "./filter.ts";
+import { always, and, gt, lte, notPublished, published, type ListFilter } from "./filter.ts";
 
 /**
  * A moderated family's review state (`PUB-005`): only `approved` is
@@ -101,6 +101,38 @@ export const publishedFilter = <Following = never>(
     onNone: (): ListFilter<Following> => always,
     onSome: (isWanted) => (isWanted ? published(column) : notPublished(column)),
   });
+
+/**
+ * The rows whose publication stamp arrived in the window `(since, now]`:
+ * `since < column AND column <= now`, as a list filter for an application's
+ * cron to drive a scheduled-publication sweep (pulpit#45). A write fires its
+ * lifecycle events when it is made, so a version stamped for the future
+ * emits nothing when its stamp arrives; a sweep that passes each run's `now`
+ * as the next run's `since` sees every such row exactly once, since the
+ * windows are half-open and abut. Pass it as a list request's `where`, read
+ * as a viewer who may see the rows the sweep is for (the list still applies
+ * the leaf's access and soft-delete arms). An unordered instant (an invalid
+ * `Date`) matches nothing. `column` defaults to `publishedAt`.
+ *
+ * @example
+ * ```ts
+ * import { strictEqual } from "node:assert";
+ * import { evaluate } from "@thomasfosterau/pulpit/filter";
+ * import { duePublications } from "@thomasfosterau/pulpit/publication";
+ *
+ * const due = duePublications(new Date("2026-10-22T00:00:00Z"), new Date("2026-10-22T01:00:00Z"));
+ * const context = { now: new Date("2026-10-22T01:00:00Z"), contains: () => false };
+ * strictEqual(evaluate(due, { publishedAt: new Date("2026-10-22T00:30:00Z") }, context), true);
+ * strictEqual(evaluate(due, { publishedAt: new Date("2026-10-22T00:00:00Z") }, context), false);
+ * ```
+ *
+ * @since 0.1.0
+ */
+export const duePublications = <Following = never>(
+  since: Date,
+  now: Date,
+  column: string = "publishedAt",
+): ListFilter<Following> => and<Following>(gt(column, since), lte(column, now));
 
 /* oxlint-disable effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option` */
 /**

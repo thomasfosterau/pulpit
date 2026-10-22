@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
+import * as Schema from "effect/Schema";
 import {
   applyPatch,
   defineVersionChain,
@@ -20,6 +21,8 @@ import {
   MAX_HISTORY_LIMIT,
   StaleVersion,
   VersionNotFound,
+  type ChainAppendEvent,
+  type ChainPatch,
   type ChainState,
   type ChainWrite,
   type Precondition,
@@ -668,5 +671,71 @@ describe("a store that breaks its own contract", () => {
     store.dropState(ID, 0n);
     const result = await exit(chain.update({ id: ID, patch: {}, actorId: ACTOR }));
     expect(Exit.hasDies(result)).toBe(true);
+  });
+});
+
+describe("beforeAppend — the chain's hook point (pulpit#45)", () => {
+  const hookedChain = (hook: (event: ChainAppendEvent) => Effect.Effect<ChainPatch, "refused">) => {
+    const store = makeInMemoryChainStore();
+    const events: Array<ChainAppendEvent> = [];
+    const chain = defineVersionChain("posts", store, {
+      beforeAppend: (event) =>
+        Effect.suspend(() => {
+          events.push(event);
+          return hook(event);
+        }),
+    });
+    return { store, chain, events };
+  };
+
+  it("shows each write its action, prior head and patch, and stores the hook's patch", async () => {
+    const { store, chain, events } = hookedChain((event) =>
+      Effect.succeed({ ...event.patch, stamped: event.action }),
+    );
+    const { id } = await Effect.runPromise(
+      chain.create({ id: Option.some(ID), state: { title: "a" }, actorId: ACTOR }),
+    );
+    await Effect.runPromise(chain.update({ id, patch: { title: "b" }, actorId: ACTOR }));
+    await Effect.runPromise(chain.delete(id, ACTOR));
+    await Effect.runPromise(chain.restore({ id, patch: {}, actorId: ACTOR }));
+    await Effect.runPromise(chain.restoreVersion(id, 0n, ACTOR));
+    expect(
+      events.map((event) => [
+        event.action,
+        Option.map(event.prior, (prior) => prior.version),
+        event.patch,
+      ]),
+    ).toEqual([
+      ["create", Option.none(), { title: "a" }],
+      ["update", Option.some(0n), { title: "b" }],
+      ["delete", Option.some(1n), {}],
+      ["restore", Option.some(2n), {}],
+      ["restoreVersion", Option.some(3n), { title: "a", stamped: "create" }],
+    ]);
+    expect(store.rows().map((row) => [row.action, row.state])).toEqual([
+      ["create", { title: "a", stamped: "create" }],
+      ["update", { title: "b", stamped: "update" }],
+      ["delete", { title: "b", stamped: "delete" }],
+      ["update", { title: "b", stamped: "restore" }],
+      ["update", { title: "a", stamped: "restoreVersion" }],
+    ]);
+  });
+
+  it("a refusing hook appends nothing, and the expected version is still checked after it", async () => {
+    const { store, chain } = hookedChain((event) =>
+      event.action === "update" ? Effect.fail("refused") : Effect.succeed(event.patch),
+    );
+    await Effect.runPromise(chain.create({ id: Option.some(ID), state: {}, actorId: ACTOR }));
+    const refused = await Effect.runPromiseExit(
+      chain.update({ id: ID, patch: {}, actorId: ACTOR }),
+    );
+    expect(Exit.isFailure(refused) && Exit.findErrorOption(refused)).toEqual(
+      Option.some("refused"),
+    );
+    const stale = await Effect.runPromiseExit(chain.delete(ID, ACTOR, { expectedVersion: 5n }));
+    expect(
+      Exit.isFailure(stale) && Option.exists(Exit.findErrorOption(stale), Schema.is(StaleVersion)),
+    ).toBe(true);
+    expect(store.rows()).toHaveLength(1);
   });
 });

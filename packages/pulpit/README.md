@@ -23,9 +23,9 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`) and `validateRegistry`. |
 | `./version-chain` | The append-only node/version chain operations over a `VersionChainStore` seam, and the field-level version compare (`diffStates`, `compare`). |
 | `./filter` | `ListFilter`, the read-predicate tree a store renders to SQL, and its in-memory `evaluate`. |
-| `./subtype` | `LeafAccess`, the read scope and viewer predicates, the write gates, `defineSubtype`, `subtypeHandlers`. |
-| `./publication` | The publication and moderation predicates and the cache serveability policy. |
-| `./documents` | The content-addressed `DocumentStore` seam, the `DocumentHash` it is keyed by, the `documentRef` field spread, and the hash contract's `canonicalText`. |
+| `./subtype` | `LeafAccess`, the read scope and viewer predicates, the write gates, `defineSubtype`, `subtypeHandlers`, and the lifecycle hook seam (before / after every write). |
+| `./publication` | The publication and moderation predicates, the scheduled-publication sweep window, and the cache serveability policy. |
+| `./documents` | The content-addressed `DocumentStore` seam and its first-insert hook, the `DocumentHash` it is keyed by, the `documentRef` field spread, and the hash contract's `canonicalText`. |
 | `./edges` | `defineEdgeOps`, the edge operations factory over an `EdgeStore` seam: relations between nodes, readable only when every end is, with declared cardinality limits. |
 | `./testing` | In-memory fakes of the seams (the chain, leaf, document and edge stores, an endpoint view, a follower seam), for tests only. Not on the root export. |
 
@@ -145,7 +145,8 @@ Every write lands at `N_max + 1`; nothing is rewritten. A plain `update` never r
 
 | Export | What it is |
 | --- | --- |
-| `defineVersionChain(type, store)` | The operations (`create`, `update`, `restore`, `delete`, `getVersion`, `compare`, `restoreVersion`, `history`) for one leaf type. |
+| `defineVersionChain(type, store, hooks?)` | The operations (`create`, `update`, `restore`, `delete`, `getVersion`, `compare`, `restoreVersion`, `history`) for one leaf type. |
+| `ChainHooks`, `ChainAppendEvent`, `WriteAction` | The chain's one hook point, `beforeAppend`: shown each write's action (`create`, `update`, `delete`, `restore`, `restoreVersion`), the head it extends and its patch, after the head read and before the append, and returning the patch to apply. `./subtype`'s before hooks run through it. |
 | `VersionChainStore<E, R>` | The persistence seam (see [Seams](#seams)). |
 | `ChainState`, `ChainPatch`, `applyPatch` | A leaf's state at one version, the tri-state patch over it (a value sets, `null` clears, `undefined` carries forward), and the merge. |
 | `Precondition` | The optional `expectedVersion` every write to an existing node takes. |
@@ -210,12 +211,21 @@ The version history is gated like a write (`READ-009`): `getVersion(id, version)
 
 It reveals no hidden row and changes no total. Declare `sortable` to sort only by what the resource exposes; an adapter mapping a wire parameter (WordPress's `orderby`) should still map onto its own names. Every `sortable` column must hold a scalar orderable type (see the [order contract](#leafstorerow-following-e-r-the-current-version-view)).
 
-`update`, `restore`, `delete` and `restoreVersion` (and the handlers' `update`, `delete` and `restoreVersion`) take the chain's optional `expectedVersion` and fail `StaleVersion` when it is not the head. The write gate runs first, so only a caller who may write learns the head version.
+`update`, `restore`, `delete` and `restoreVersion` (and the handlers' `update`, `restore`, `delete` and `restoreVersion`) take the chain's optional `expectedVersion` and fail `StaleVersion` when it is not the head. The write gate runs first, so only a caller who may write learns the head version.
+
+**Lifecycle hooks** (pulpit#45). A leaf's write side effects compose as `LifecycleHooks` on its definition, `hooks: Effect<LifecycleHooks<Resource, E, R>, never, R>`: an Effect, so the application holds them in a `Context` service, composes them per leaf type and provides them with a `Layer`. Omitted, a leaf has none, and a write reads nothing extra. Hooks run in array order (`composeHooks` concatenates sets), so the order is deterministic and the application's.
+
+- **Before hooks** run inside every write (`create`, `update`, `restore`, `delete`, `restoreVersion`), after its gate and the chain's head read and before the append, in the caller's transaction. Each is shown the leaf type, the action, the node, the head the write extends (`prior`, none for a create), the patch, and the viewer, and returns the patch the write applies (the event's, or a transformed one: a derived slug, a normalised field); the next hook sees that patch. One that fails, with `WriteRejected` or the store's `E`, fails the write with nothing appended. The expected-version check still runs after it, against the same head.
+- **After hooks** run in `subtypeHandlers`, once the write's `transact` has returned (the operations alone can't know when a write commits), and are shown the type, the action, the `{ id, version }` the write landed at, and the resource as the writer re-read it (none for a delete, or when the re-read failed). They never fail the write: a failure, a defect included, goes to `afterFailure`, `"log"` (the default: logged at error level, and the next hook still runs) or `"defect"` (the handler dies, though the write committed). They run uninterruptibly. The cache write-through is the first after hook (`cacheWriteThrough`), ahead of the leaf's own.
+- **Durable delivery is the application's.** An after hook runs once, in process, after the commit; a side effect that must not be lost (a queue message, a webhook) belongs in a before hook, as an outbox row the same transaction writes.
+- **Events fire on explicit writes only.** A delete of an already tombstoned node writes nothing and emits nothing. A version stamped to publish in the future emits nothing when its stamp arrives: drive a sweep from a cron with `./publication`'s `duePublications(since, now)` instead.
 
 | Export | What it is |
 | --- | --- |
 | `defineSubtype(definition)`, `SubtypeDefinition`, `SubtypeOps` | The factory, its declaration (type, access, stores, viewer seams, row → resource mapper) and the operations it produces. |
 | `subtypeHandlers(ops, config)`, `SubtypeHandlers`, `SubtypeHandlersConfig`, `ResourceCacheSeam` | The handler record with cache write-through, its `transact` boundary and the cache's write side. |
+| `LifecycleHooks`, `BeforeWriteHook`, `BeforeWriteEvent`, `AfterWriteHook`, `AfterWriteEvent`, `WriteRejected` | The lifecycle hook seam: a leaf's before hooks (inside the write; may transform the patch or refuse with `WriteRejected`) and after hooks (after the commit; never fail the write), and their events. |
+| `composeHooks(...sets)`, `noHooks()`, `cacheWriteThrough(cache)` | Concatenate hook sets in order; the empty set; the resource cache's write-through as an after hook. |
 | `LeafAccess`, `ownedAccess(options?)` | The gate selector (`reference`, with an optional `followersOfColumn`, / `owned` with its view columns), and the owned declaration with the conventional column names. |
 | `Viewer`, `ViewerAccount`, `AccessPolicy` | The viewer seam and the four role axes (`canViewPrivate`, `canViewDeleted`, `canModerate`, `canWriteCorpus`). |
 | `FollowerSeam`, `nobodyFollows(nobody)` | The follower seam and its fail-closed default. |
@@ -235,6 +245,7 @@ The publication axis (stamped AND arrived), the moderation state, and the KV cac
 | --- | --- |
 | `isPublishedAt(stamp, now)` / `isNotPublishedAt` | Stamped AND arrived, and its exact complement (a future stamp is scheduled, not out). |
 | `publishedFilter(column, wanted)` | The axis as a list-filter arm; none in, no predicate out. |
+| `duePublications(since, now, column?)` | The rows whose stamp arrived in `(since, now]`, as a list filter, for an application's cron to sweep scheduled publications: a write's events fire when it is made, never when a future stamp arrives. Abutting windows (each run's `now` the next run's `since`) see each row once. |
 | `ModerationState` | `pending \| approved \| rejected`. |
 | `isPubliclyServeable(resource, { owned?, publishGated?, now? })` | The KV cache's security gate (`CACHE-AUTH-005`): only what every viewer may read is serveable. |
 | `serveablePolicy(options)` | The same gate as a resource cache's `serveable` hook (see [Seams](#seams)). |
@@ -262,7 +273,10 @@ const program = <Document, E, R>(
 ) =>
   Effect.gen(function* () {
     const chain = defineVersionChain("notes", store);
-    const state = { title: yield* documents.put(title), body: yield* documents.put(body) };
+    const state = {
+      title: (yield* documents.put(title)).hash,
+      body: (yield* documents.put(body)).hash,
+    };
     const { id } = yield* chain.create({ id: Option.none(), state, actorId: Option.none() });
     return { id, body: yield* documents.get(state.body) }; // put is idempotent: the same document, the same hash
   });
@@ -272,7 +286,8 @@ The document type is a parameter: its schema and validation are the application'
 
 | Export | What it is |
 | --- | --- |
-| `DocumentStore<Document, E, R>` | The store seam: `put` (idempotent, returns the hash), `get`, `getMany` (see [Seams](#seams)). |
+| `DocumentStore<Document, E, R>`, `DocumentPut` | The store seam: `put` (idempotent, returns `{ hash, inserted }`, `inserted` only when it wrote the row), `get`, `getMany` (see [Seams](#seams)). |
+| `onDocumentInsert(store, hook)`, `DocumentInserted` | The store with a first-insert hook (both apps enqueue an embedding job): it runs after a `put` that inserted, never after one that found the document stored, inside the `put`'s transaction, and its failure fails the `put`. |
 | `DocumentHash` | A SHA-256 document hash as 64 lowercase hex characters. |
 | `documentRef(key)` | The attribute spread for a version row's document reference: the hash, required on the resource and at create, carried forward at update, never cleared. |
 | `canonicalText(json)` | The canonical text the hash contract takes SHA-256 over (Postgres's `jsonb` text output), for a store that doesn't run on Postgres. |
@@ -490,7 +505,7 @@ Expected to come from effect-auth once it publishes (pulpit#5). Its default bran
 
 ### `SubtypeHandlers`: the handler record
 
-The record a JSON:API server's resource handlers are expected to accept. effect-jsonapi's server skeleton has shipped as its `ResourceHandlers` namespace (`make`, `readOnly`, `related`; exported since 0.15.0, and pulpit's peer is `>=0.16.0`), but `subtypeHandlers` isn't wired to it yet (pulpit#5). One entry per endpoint (`list`, `get`, `create`, `update`, `delete`) returns the resource the document assembler wraps, plus `restoreVersion`, which has no JSON:API endpoint and is called directly. Each write runs inside the config's `transact` (always-open: a nested call opens a savepoint), re-reads the row outside it as the writer, and writes it through the cache. When that re-read fails, as it does for a write that hides the row from its own writer (a corpus writer below the view-private rung making a reference row `private`), the handler evicts the entry and then fails with the re-read's error (`NodeNotFound`), so the cache never keeps the superseded resource (`CACHE-AUTH-005`, pulpit#107). Any other re-read failure (a store error, a defect) evicts the same way and propagates unchanged. An interrupt can't come between a committed write and its write-through or eviction: once the operation has succeeded, a failure of `transact` (an interrupt included) evicts too, since the write may have committed, while a write the gate or the precondition refuses never touches the cache (should `transact` retry internally, only its last attempt counts). The writer of a committed write it can no longer read still gets that `NodeNotFound`; the decided `{ id, version }` response waits on effect-jsonapi's handler contract, which has no body-less success (pulpit#107). When it is wired, `subtypeHandlers` maps onto `ResourceHandlers`' real handler signatures (the request context, the query decode, the document assembly), and its error catalogue replaces the tags here.
+The record a JSON:API server's resource handlers are expected to accept. effect-jsonapi's server skeleton has shipped as its `ResourceHandlers` namespace (`make`, `readOnly`, `related`; exported since 0.15.0, and pulpit's peer is `>=0.16.0`), but `subtypeHandlers` isn't wired to it yet (pulpit#5). One entry per endpoint (`list`, `get`, `create`, `update`, `delete`) returns the resource the document assembler wraps, plus `restore` and `restoreVersion`, which have no JSON:API endpoint and are called directly. Each write runs inside the config's `transact` (always-open: a nested call opens a savepoint), re-reads the row outside it as the writer, and hands it to the leaf's after hooks, the cache write-through (`cacheWriteThrough`) first (see [`./subtype`](#subtype) → Lifecycle hooks). When that re-read fails, as it does for a write that hides the row from its own writer (a corpus writer below the view-private rung making a reference row `private`), the handler evicts the entry and then fails with the re-read's error (`NodeNotFound`), so the cache never keeps the superseded resource (`CACHE-AUTH-005`, pulpit#107). Any other re-read failure (a store error, a defect) evicts the same way and propagates unchanged. An interrupt can't come between a committed write and its write-through or eviction: once the operation has succeeded, a failure of `transact` (an interrupt included) evicts too, since the write may have committed, while a write the gate or the precondition refuses never touches the cache (should `transact` retry internally, only its last attempt counts). The writer of a committed write it can no longer read still gets that `NodeNotFound`; the decided `{ id, version }` response waits on effect-jsonapi's handler contract, which has no body-less success (pulpit#107). When it is wired, `subtypeHandlers` maps onto `ResourceHandlers`' real handler signatures (the request context, the query decode, the document assembly), and its error catalogue replaces the tags here.
 
 `update`, `delete` and `restoreVersion` take an optional `expectedVersion`. Mapping a request's `If-Match` onto it, and a `StaleVersion` failure onto `412 Precondition Failed`, is the HTTP layer's job, and so effect-jsonapi's: 0.16.3 has no such mapping. A resource doesn't yet carry its head version (`meta.version` or an ETag) for a client to send back; pulpit#65 tracks that.
 
@@ -512,7 +527,7 @@ document_jsonb jsonb NOT NULL
 
 So structurally equal documents share a hash whatever their member order, provided their numbers are spelled alike; that holds for documents serialised as `JSON.stringify` does (shortest round-trip digits, so `1.0` is written `1`). The hash is exchanged as a `DocumentHash`, the 32 bytes as 64 lowercase hex characters (`encode(hash_id, 'hex')`). A store that does not run on Postgres must reproduce these bytes exactly: `canonicalText(json)` in [`./documents`](#documents) produces the canonical text (pinned, with its hashes, to Postgres), and the store hashes its UTF-8 bytes. `makeInMemoryDocumentStore` in [`./testing`](#testing) is the reference store, for tests only.
 
-Method contract: `put` is `INSERT … ON CONFLICT DO NOTHING RETURNING hash_id`, and when the insert returns no row it reads the row that conflicted, `hash_id = digest($document::jsonb::text, 'sha256')`; it never updates a stored row (`DOC-001`). `get` is `hash_id = $hash`; `getMany` is one `hash_id = ANY($hashes)` read, returning the documents found keyed by hash. `E` and `R` are as for the chain store, and the store never opens a transaction itself. A first insert's side effects (both apps enqueue an embedding job) stay outside this seam until the lifecycle-events seam lands (pulpit#45).
+Method contract: `put` is `INSERT … ON CONFLICT DO NOTHING RETURNING hash_id`, and when the insert returns no row it reads the row that conflicted, `hash_id = digest($document::jsonb::text, 'sha256')`; it never updates a stored row (`DOC-001`). It returns `{ hash, inserted }`, `inserted` being whether the `RETURNING` gave a row back, so `onDocumentInsert` can tell a first insert from a no-op. `get` is `hash_id = $hash`; `getMany` is one `hash_id = ANY($hashes)` read, returning the documents found keyed by hash. `E` and `R` are as for the chain store, and the store never opens a transaction itself. A first insert's side effects (both apps enqueue an embedding job) go through `onDocumentInsert` (pulpit#45).
 
 **The apps' column differs.** Both apps generate the hash as `digest(document_jsonb::text::bytea, 'sha256')`. The `::bytea` cast parses the text as `bytea` escape-format input, so it agrees with the contract only on a document whose canonical text has no backslash. A document with a `"`, a newline, a tab or another escaped character in a string or key fails to insert (`invalid input syntax for type bytea`), and one with a literal backslash hashes different bytes (pulpit#71 tracks the apps' fix). Gardeneria's no-row lookup, `document_jsonb = $document`, also differs from the contract's: `jsonb` `=` ignores a number's scale, so it can match a row stored at another hash. The contract's spelling, `digest(document_jsonb::text, 'sha256')`, uses pgcrypto's `text` overload, which is immutable and therefore valid in a generated column; `convert_to(…, 'UTF8')` gives the same bytes but is only stable, so a generated column can't use it.
 
