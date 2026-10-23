@@ -55,6 +55,7 @@ import {
   gt,
   gte,
   isIn,
+  isNull,
   type ListFilter,
   lt,
   lte,
@@ -1866,11 +1867,12 @@ describe("qualifying a filter with an end's alias renames every node's column", 
     noneOf("i", ["x"]),
     published("j"),
     notPublished("k"),
+    isNull("l"),
   );
 
   it("renames the column of every node kind, the comparison and set arms included", () => {
     const columns = columnsOf(everyKind);
-    expect(columns).toEqual(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"]);
+    expect(columns).toEqual(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"]);
     expect(columnsOf(qualify("end", everyKind))).toEqual(
       Arr.map(columns, (column) => endpointColumn("end", column)),
     );

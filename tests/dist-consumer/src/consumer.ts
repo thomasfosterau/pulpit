@@ -71,6 +71,7 @@ import {
   ne,
   never,
   noneOf,
+  isNull,
   notPublished,
   or,
   published,
@@ -368,6 +369,7 @@ export type _ListFilterKind = Assert<
     | "lte"
     | "anyOf"
     | "noneOf"
+    | "isNull"
     | "published"
     | "notPublished"
     | "and"
@@ -403,6 +405,9 @@ export type _ListFilterNoneOf = Assert<
     Arm<"noneOf">,
     { readonly kind: "noneOf"; readonly column: string; readonly values: ReadonlyArray<Scalar> }
   >
+>;
+export type _ListFilterIsNull = Assert<
+  Equals<Arm<"isNull">, { readonly kind: "isNull"; readonly column: string }>
 >;
 export type _ListFilterPublished = Assert<
   Equals<Arm<"published">, { readonly kind: "published"; readonly column: string }>
@@ -500,6 +505,9 @@ export type _NoneOf = Assert<
       | Never
       | { readonly kind: "noneOf"; readonly column: string; readonly values: ReadonlyArray<Scalar> }
   >
+>;
+export type _IsNull = Assert<
+  Equals<typeof isNull, (column: string) => { readonly kind: "isNull"; readonly column: string }>
 >;
 export type _Published = Assert<
   Equals<

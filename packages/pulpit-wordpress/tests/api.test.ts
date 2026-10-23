@@ -810,8 +810,24 @@ describe("the wp/v2 read API — every filter and order", () => {
     expect(await of([["author_exclude", String(memberWire)]])).toEqual([theirs.wireId]);
     expect(await of([["author", String(strangerWire)]])).toEqual([theirs.wireId]);
     expect(await of([["parent", String(top.wireId)]])).toEqual([child.wireId]);
-    expect(await of([["parent_exclude", String(top.wireId)]])).toEqual([theirs.wireId]);
+    // `top` has no parent, which WordPress stores as `post_parent = 0` and keeps (pulpit#170).
+    expect(await of([["parent_exclude", String(top.wireId)]])).toEqual([theirs.wireId, top.wireId]);
     expect(await of([["menu_order", "2"]])).toEqual([child.wireId]);
+  });
+
+  it("keeps every top-level page under parent_exclude, as WordPress does (pulpit#170)", async () => {
+    const wp = site();
+    const top = await wp.create("pages", { slug: "top" });
+    const child = await wp.create("pages", { slug: "child", parentId: top.id });
+    const theirs = await wp.create("pages", { slug: "theirs" }, stranger);
+    const of = (query: ReadonlyArray<readonly [string, string]>) =>
+      wp.get("/wp/v2/pages", [["orderby", "slug"], ["order", "asc"], ...query]).then(listed);
+    expect(await of([["parent_exclude", String(top.wireId)]])).toEqual([theirs.wireId, top.wireId]);
+    expect(await of([["parent_exclude", String(child.wireId)]])).toEqual([
+      child.wireId,
+      theirs.wireId,
+      top.wireId,
+    ]);
   });
 
   it("filters by modified_after and modified_before, and skips offset rows", async () => {

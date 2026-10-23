@@ -33,6 +33,7 @@ export const renameColumns = <Following>(
       lte: (node): ListFilter<Following> => ({ ...node, column: rename(node.column) }),
       anyOf: (node): ListFilter<Following> => ({ ...node, column: rename(node.column) }),
       noneOf: (node): ListFilter<Following> => ({ ...node, column: rename(node.column) }),
+      isNull: (node): ListFilter<Following> => ({ ...node, column: rename(node.column) }),
       published: (node): ListFilter<Following> => ({ ...node, column: rename(node.column) }),
       notPublished: (node): ListFilter<Following> => ({ ...node, column: rename(node.column) }),
       and: (node): ListFilter<Following> => ({
