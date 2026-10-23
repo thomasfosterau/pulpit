@@ -102,3 +102,10 @@ export * as WorkingCopy from "./working-copy.ts";
  * moderation gate.
  */
 export * as Comments from "./comments.ts";
+
+/**
+ * Purge: erasure, the one destructive path through a node's history. It
+ * hard-deletes a node's chain and the rows kept for it, then the documents
+ * and bytes nothing else references (`definePurge` over a `PurgeStore`).
+ */
+export * as Purge from "./purge.ts";

@@ -18,6 +18,8 @@
  * - **Append-only** (`VERSION-CHAIN-001/002`). Every write lands at
  *   `N_max + 1`; no existing version row is ever updated, deleted or
  *   reordered. A restore is a new version whose content came from history.
+ *   The one exception is erasure (`./purge`), which deletes a node's whole
+ *   chain, never part of one.
  * - **Create is never an upsert.** A caller-supplied id that already belongs
  *   to a node fails {@link NodeAlreadyExists} (F-OP-02) rather than minting a
  *   version onto it.

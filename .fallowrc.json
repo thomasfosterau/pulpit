@@ -11,6 +11,7 @@
     "packages/pulpit/src/edges.ts",
     "packages/pulpit/src/working-copy.ts",
     "packages/pulpit/src/comments.ts",
+    "packages/pulpit/src/purge.ts",
     "packages/pulpit/src/blobs.ts",
     "packages/pulpit/src/paths.ts",
     "packages/pulpit/src/proposals.ts",
