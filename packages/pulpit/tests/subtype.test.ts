@@ -168,6 +168,7 @@ describe("canViewOwned (the owned-material read predicate)", () => {
     /* oxlint-disable effect/prefer-option-over-null -- the workspace's optional-field convention (AGENTS.md → Conventions), as in the options types under test */
     options: {
       readonly draft?: boolean | undefined;
+      readonly unapproved?: boolean | undefined;
       readonly followers?: typeof follows | undefined;
     } = {},
     /* oxlint-enable effect/prefer-option-over-null */
@@ -177,6 +178,7 @@ describe("canViewOwned (the owned-material read predicate)", () => {
         ownerId: member.id,
         visibility,
         draft: options.draft ?? false,
+        unapproved: options.unapproved ?? false,
       }),
     );
 
@@ -221,6 +223,14 @@ describe("canViewOwned (the owned-material read predicate)", () => {
     expect(await view("public", as(member), { draft: true })).toBe(true);
     expect(await view("private", as(moderator), { draft: true })).toBe(true);
   });
+
+  it("an unapproved row narrows even public to the owner and moderator+ (pulpit#154)", async () => {
+    expect(await view("public", anonymous, { unapproved: true })).toBe(false);
+    expect(await view("public", as(otherMember), { unapproved: true })).toBe(false);
+    expect(await view("followers", as(follower), { unapproved: true })).toBe(false);
+    expect(await view("public", as(member), { unapproved: true })).toBe(true);
+    expect(await view("private", as(moderator), { unapproved: true })).toBe(true);
+  });
 });
 
 describe("readScopeFor", () => {
@@ -248,32 +258,46 @@ describe("ownedListFilter ≡ canViewOwned", () => {
     ["a contributor", as(contributor)],
     ["a moderator", as(moderator)],
   ];
+  // `moderationState` covers every state, a NULL and a value outside the enum (fail closed).
+  const states: ReadonlyArray<ColumnValue> = ["pending", "approved", "rejected", null, "Approved"];
   const rows: ReadonlyArray<
-    LeafRow & { readonly visibility: Visibility; readonly draft: boolean; readonly ownerId: string }
+    LeafRow & {
+      readonly visibility: Visibility;
+      readonly draft: boolean;
+      readonly ownerId: string;
+      readonly moderationState: ColumnValue;
+    }
   > = Arr.flatMap(["public", "followers", "private"] as const, (visibility) =>
     Arr.flatMap([false, true], (draft) =>
-      Arr.map([member.id, otherMember.id], (ownerId) => ({
-        id: `${visibility}-${draft}-${ownerId}`,
-        version: 0n,
-        action: "create" as const,
-        visibility,
-        draft,
-        ownerId,
+      Arr.flatMap(states, (moderationState) =>
+        Arr.map([member.id, otherMember.id], (ownerId) => ({
+          id: `${visibility}-${draft}-${String(moderationState)}-${ownerId}`,
+          version: 0n,
+          action: "create" as const,
+          visibility,
+          draft,
+          moderationState,
+          ownerId,
+        })),
+      ),
+    ),
+  );
+  const columns = viewOf("ownerId", "visibility", "draft", "moderationState");
+  const cases = Arr.flatMap([true, false], (withDraft) =>
+    Arr.flatMap([true, false], (withModeration) =>
+      Arr.map(viewers, ([name, viewer]) => ({
+        label: `${withDraft ? "with" : "without"} a draft column, ${withModeration ? "with" : "without"} a moderation column, for ${name}`,
+        withDraft,
+        withModeration,
+        viewer,
       })),
     ),
   );
-  const columns = viewOf("ownerId", "visibility", "draft");
-  const cases = Arr.flatMap([true, false], (withDraft) =>
-    Arr.map(viewers, ([name, viewer]) => ({
-      label: `${withDraft ? "with" : "without"} a draft column, for ${name}`,
-      withDraft,
-      viewer,
-    })),
-  );
 
-  it.each(cases)("$label", async ({ withDraft, viewer }) => {
+  it.each(cases)("$label", async ({ withDraft, withModeration, viewer }) => {
+    const access = ownedAccess({ draft: withDraft, moderation: withModeration });
     const filter = ownedListFilter(
-      ownedAccess({ draft: withDraft }),
+      access,
       columns,
       readScopeFor(viewer, gardeneriaPolicy, follows),
     );
@@ -294,6 +318,8 @@ describe("ownedListFilter ≡ canViewOwned", () => {
               visibility: row.visibility,
               // A leaf without the axis reads every row as not-a-draft.
               draft: withDraft && row.draft,
+              // …and every row as approved; with it, only exactly `approved` is.
+              unapproved: withModeration && row.moderationState !== "approved",
             }),
             (visible) => [row.id, visible],
           ),
@@ -306,6 +332,22 @@ describe("ownedListFilter ≡ canViewOwned", () => {
   it("reads an explicitly undefined draft option as no draft column", () => {
     expect(ownedAccess({ draft: undefined })).toEqual(ownedAccess());
     expect(ownedAccess({ draft: undefined }).draftColumn).toEqual(Option.none());
+  });
+
+  it("declares the moderation column only when asked, by its conventional name", () => {
+    expect(ownedAccess({ moderation: undefined }).moderationColumn).toEqual(Option.none());
+    expect(ownedAccess({ moderation: true }).moderationColumn).toEqual(
+      Option.some("moderationState"),
+    );
+  });
+
+  it("fails closed when a declared moderation column is missing from the view", () => {
+    const filter = ownedListFilter(
+      ownedAccess({ moderation: true }),
+      viewOf("ownerId", "visibility"),
+      { kind: "all" },
+    );
+    expect(filter).toEqual(never);
   });
 
   it("fails closed when the declaration names a column the view lacks", () => {
@@ -586,6 +628,65 @@ describe("defineSubtype — an owned leaf", () => {
     expect(await listed(anonymous)).toEqual([]);
     expect(await listed(as(moderator))).not.toContain(open);
     expect(await listed(as(moderator), true)).toContain(open);
+  });
+
+  it("a moderated leaf shows an unapproved row only to its owner and moderator+ (pulpit#154)", async () => {
+    const chain = makeInMemoryChainStore();
+    const leaves = makeInMemoryLeafStore(chain, {
+      columns: ["title", "visibility", "moderationState"],
+      now: NOW,
+    });
+    let viewer: Viewer = anonymous;
+    const ops = defineSubtype({
+      type: "comments",
+      access: ownedAccess({ moderation: true }),
+      chain,
+      leaves,
+      viewer: Effect.sync(() => viewer),
+      policy: gardeneriaPolicy,
+      followers: follows,
+      toResource: (row: LeafRow) => row.id,
+    });
+    const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+      Effect.suspend(() => {
+        viewer = who;
+        return effect;
+      });
+    const create = (moderationState: string) =>
+      run(
+        actAs(
+          as(member),
+          ops.create({
+            id: Option.none(),
+            state: { title: "t", visibility: "public", moderationState },
+          }),
+        ),
+      ).then((written) => written.id);
+    const approved = await create("approved");
+    const pending = await create("pending");
+    const rejected = await create("rejected");
+    const listed = async (who: Viewer) =>
+      Arr.sort(
+        (
+          await run(
+            actAs(who, ops.list({ limit: 50, offset: 0, includeDeleted: false, where: always })),
+          )
+        ).rows,
+        Order.String,
+      );
+    const all = Arr.sort([approved, pending, rejected], Order.String);
+    expect(await listed(anonymous)).toEqual([approved]);
+    expect(await listed(as(otherMember))).toEqual([approved]);
+    expect(await listed(as(member))).toEqual(all);
+    expect(await listed(as(moderator))).toEqual(all);
+    expect(await tagOf(actAs(anonymous, ops.get(pending)))).toEqual(Option.some("NodeNotFound"));
+    expect(await tagOf(actAs(as(otherMember), ops.get(rejected)))).toEqual(
+      Option.some("NodeNotFound"),
+    );
+    expect(await tagOf(actAs(as(member), ops.get(pending)))).toEqual(Option.none());
+    expect(await tagOf(actAs(as(moderator), ops.get(rejected)))).toEqual(Option.none());
+    const many = await run(actAs(as(otherMember), ops.getMany([approved, pending, rejected])));
+    expect([...HashMap.keys(many)]).toEqual([approved]);
   });
 
   it("list clamps the page to the cap and reports the unpaged total", async () => {

@@ -295,6 +295,11 @@ export interface OwnedFacts {
   readonly ownerId: string;
   readonly visibility: Visibility;
   readonly draft: boolean;
+  /**
+   * A moderated row whose state is not exactly `approved` (pulpit#154);
+   * `false` for a leaf without the axis.
+   */
+  readonly unapproved: boolean;
 }
 
 /**
@@ -308,14 +313,16 @@ export interface OwnedFacts {
  * | `private`   | the owner; the view-private rung                               |
  *
  * `draft: true` narrows whatever `visibility` allows down to the owner and
- * the rung — a `public` draft is exactly as hidden as a `private` one. Never
+ * the rung — a `public` draft is exactly as hidden as a `private` one — and
+ * so does `unapproved: true` on a moderated leaf (a `pending` or `rejected`
+ * row reads only to its author and the rung, pulpit#154). Never
  * fails; callers turn `false` into {@link NodeNotFound}.
  *
  * `defineSubtype`'s `get` / `getMany` and `./edges`' `canViewEndpoint`
  * apply the same predicate to the row they read. There, an owner column
  * holding no string (a `NULL`, an absent key) reads as no owner: no viewer
  * is its owner and the follower seam is never asked, so the row shows only
- * when `public` and not a draft, or to the rung, as {@link ownedListFilter}
+ * when `public`, not a draft and not unapproved, or to the rung, as {@link ownedListFilter}
  * lists it (`SEC-AUTH-ENUM-001`).
  *
  * @since 0.1.0
@@ -332,8 +339,10 @@ export const canViewOwned = <R>(
 
 /**
  * The gate selector, mirroring the registry's `referenceData` ⊕ `owned`
- * flags: an `owned` leaf names the VIEW columns its read paths consult, and
- * `draftColumn` only when the leaf actually writes the flag. A `reference`
+ * flags: an `owned` leaf names the VIEW columns its read paths consult,
+ * `draftColumn` only when the leaf actually writes the flag, and
+ * `moderationColumn` only when it is a moderated family (`./moderation`)
+ * whose unapproved rows its readers must not see (pulpit#154). A `reference`
  * leaf names `followersOfColumn` only when its rows may be `followers`-visible
  * (pulpit#92).
  *
@@ -363,6 +372,16 @@ export type LeafAccess =
       readonly ownerColumn: string;
       readonly visibilityColumn: string;
       readonly draftColumn: Option.Option<string>;
+      /**
+       * The moderation state column (`ModerationState`). Declared, a row
+       * whose state is not exactly `approved` reads only to its owner and
+       * the view-private rung, as a draft does; absent, the leaf's reads
+       * ignore moderation and the rule is the application's (`PUB-005`).
+       * Owned leaves only: a reference leaf has no such axis.
+       *
+       * @since 0.1.0
+       */
+      readonly moderationColumn: Option.Option<string>;
     };
 
 /**
@@ -371,20 +390,26 @@ export type LeafAccess =
  * @since 0.1.0
  */
 export const ownedAccess = (
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option`
-  options: { readonly draft?: boolean | undefined } = {},
+  options: {
+    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option`
+    readonly draft?: boolean | undefined;
+    // oxlint-disable-next-line effect/prefer-option-over-null -- as `draft`: the omitted key is "no moderation column"
+    readonly moderation?: boolean | undefined;
+  } = {},
 ): Extract<LeafAccess, { kind: "owned" }> => ({
   kind: "owned",
   ownerColumn: "ownerId",
   visibilityColumn: "visibility",
   draftColumn: options.draft === true ? Option.some("draft") : Option.none(),
+  moderationColumn: options.moderation === true ? Option.some("moderationState") : Option.none(),
 });
 
 /**
  * The owned-leaf LIST filter — {@link ReadScope} rendered over the leaf's
  * declared view columns. When the leaf carries a draft column, every
- * non-owner arm additionally requires `draft = false`; the owner's own arm
- * never does, so a member lists their own drafts. Columns the view lacks
+ * non-owner arm additionally requires `draft = false`, and when it carries a
+ * moderation column, `moderation = 'approved'`; the owner's own arm never
+ * does, so a member lists their own drafts and unapproved rows. Columns the view lacks
  * fail closed.
  *
  * @since 0.1.0
@@ -396,10 +421,13 @@ export const ownedListFilter = <Following>(
 ): ListFilter<Following> => {
   if (!declaresColumns(access, viewColumns)) return never;
   const published = (filter: ListFilter<Following>): ListFilter<Following> =>
-    Option.match(access.draftColumn, {
-      onNone: () => filter,
-      onSome: (draft) => and(filter, eq(draft, false)),
-    });
+    and(
+      filter,
+      ...Option.toArray(Option.map(access.draftColumn, (draft) => eq(draft, false))),
+      ...Option.toArray(
+        Option.map(access.moderationColumn, (moderation) => eq(moderation, "approved")),
+      ),
+    );
   return Match.value(scope).pipe(
     Match.discriminatorsExhaustive("kind")({
       all: (): ListFilter<Following> => always,

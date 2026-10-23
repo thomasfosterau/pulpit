@@ -136,7 +136,12 @@ export const canViewReferenceRow = <A extends Account, R>(
     onSome: (column) =>
       Option.match(
         ownedFacts(
-          { ownerColumn: column, visibilityColumn: VISIBILITY, draftColumn: Option.none() },
+          {
+            ownerColumn: column,
+            visibilityColumn: VISIBILITY,
+            draftColumn: Option.none(),
+            moderationColumn: Option.none(),
+          },
           row,
         ).ownerId,
         {
