@@ -13,8 +13,10 @@
  * {@link evaluate} runs it against an in-memory row — which is what lets the
  * unit suite prove the list filter and the row predicate never disagree.
  *
- * `Following` is whatever the follower seam hands the `in` node: a subquery
- * (`SQLWrapper`) for SQL, a set for the in-memory evaluator.
+ * `Following` is whatever a seam hands the `in` node: the follower seam's
+ * set of followed accounts, or an edge family's members
+ * (`EdgeStore.members`, pulpit#113); a subquery (`SQLWrapper`) for SQL, a
+ * set for the in-memory evaluator.
  *
  * Rendering contract a SQL renderer must honour:
  *
@@ -23,7 +25,7 @@
  * | `always` | no predicate (`undefined` to Drizzle's `.where`) |
  * | `never` | a predicate no row satisfies (the apps: `id = '00000000-…'`) |
  * | `eq` / `ne` | `col = $v` / `col <> $v` — a `NULL` column satisfies neither |
- * | `in` | `col IN (<following subquery>)` — a subquery, never a materialised array (#1107); a `NULL` column satisfies none |
+ * | `in` | `col IN (<seam subquery>)` — a subquery, never a materialised array (#1107); a `NULL` column satisfies none |
  * | `gt` / `gte` / `lt` / `lte` | `col > $v` / `col >= $v` / `col < $v` / `col <= $v` — a string compared with `COLLATE "C"` (code-point order), a `Date` as a timestamp, a number numerically (`±Infinity` included); a `NULL` column satisfies none |
  * | `anyOf` | `col = ANY($values)` — a `NULL` column satisfies none; empty is `never`; never a `NULL` element |
  * | `noneOf` | `col <> ALL($values)` — a `NULL` column satisfies none; empty is `always` (`<> ALL` over no values is true); never a `NULL` element (`<> ALL('{1,NULL}')` is `NULL` for every row outside the set) |

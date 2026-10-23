@@ -59,7 +59,9 @@ import {
   type ListFilter,
   lt,
   lte,
+  MAX_SET_VALUES,
   ne,
+  never,
   noneOf,
   notPublished,
   or,
@@ -1896,5 +1898,176 @@ describe("qualifying a filter with an end's alias renames every node's column", 
         evaluate(qualify("end", filter), bare, evaluationContext),
       ]),
     ).toEqual(Arr.map(filters, () => [true, false]));
+  });
+});
+
+// ── Edge membership (pulpit#113) ──────────────────────────────────────
+
+describe("memberFilter: edge membership never disagrees with EDGE-001's per-edge predicate", () => {
+  /** Posts (owned, with drafts) × terms (reference, with a followers column), every pair linked. */
+  const taxonomy = (policy: AccessPolicy = gardeneriaPolicy) => {
+    const posts = makeInMemoryNodes(["ownerId", "visibility", "draft"]);
+    const terms = makeInMemoryNodes(["visibility", "curatorId"]);
+    const postRows = [
+      node("p-public", { ownerId: member.id, visibility: "public", draft: false }),
+      node("p-private", { ownerId: member.id, visibility: "private", draft: false }),
+      node("p-followers", { ownerId: member.id, visibility: "followers", draft: false }),
+      node("p-draft", { ownerId: otherMember.id, visibility: "public", draft: true }),
+      node("p-dead", { ownerId: member.id, visibility: "public", draft: false }, "delete"),
+    ];
+    const termRows = [
+      node("t-public", { visibility: "public", curatorId: null }),
+      node("t-private", { visibility: "private", curatorId: null }),
+      node("t-followers", { visibility: "followers", curatorId: member.id }),
+      node("t-dead", { visibility: "public", curatorId: null }, "delete"),
+    ];
+    Arr.forEach(postRows, posts.put);
+    Arr.forEach(termRows, terms.put);
+    const ends = {
+      post: ownedEnd("postId", posts),
+      term: {
+        column: "termId",
+        type: "terms",
+        access: { kind: "reference", followersOfColumn: "curatorId" },
+        nodes: terms,
+      } satisfies EdgeEnd<never, never>,
+    };
+    const links = family({ ends }, [], policy);
+    const pairs = Arr.flatMap(postRows, (post) =>
+      Arr.map(termRows, (term) => ({ postId: post.id, termId: term.id })),
+    );
+    return { ...links, postRows, termRows, pairs };
+  };
+
+  const policies = [
+    ["gardeneria's rungs", gardeneriaPolicy],
+    ["split rungs (pulpit#93)", splitPolicy],
+  ] as const;
+  const cases = Arr.flatMap(policies, ([policyName, policy]) =>
+    Arr.map([...viewers, ["an admin", as(admin)] as const], ([name, viewer]) => ({
+      label: `${name}, ${policyName}`,
+      policy,
+      viewer,
+    })),
+  );
+
+  it.each(cases)("for $label", async ({ policy, viewer }) => {
+    const { edges, ops, actAs, postRows, termRows, pairs } = taxonomy(policy);
+    const ids = await run(
+      Effect.forEach(pairs, (pair) => Effect.flatMap(edges.insert(pair), Effect.fromOption), {
+        concurrency: 1,
+      }),
+    );
+    // One term at a time, and every term at once.
+    const asked = [...termRows.map((term) => [term.id]), termRows.map((term) => term.id)];
+    const answers = await run(
+      actAs(
+        viewer,
+        Effect.forEach(
+          asked,
+          (termIds) =>
+            Effect.gen(function* () {
+              const filter = yield* ops.memberFilter("post", termIds);
+              const listed = postRows.filter((post) =>
+                evaluate(filter, post, {
+                  now: NOW,
+                  contains: (set: Following, value) =>
+                    Predicate.isString(value) && HashSet.has(set, value),
+                }),
+              );
+              // The per-edge reading: a post is a member when some edge to a
+              // named term is one the viewer can `get` (EDGE-001).
+              const readable = yield* Effect.filter(
+                Arr.zip(pairs, ids),
+                ([pair, id]) =>
+                  termIds.includes(pair.termId)
+                    ? Effect.map(Effect.exit(ops.get(id)), Exit.isSuccess)
+                    : Effect.succeed(false),
+                { concurrency: 1 },
+              );
+              const expected = Arr.dedupe(readable.map(([pair]) => pair.postId));
+              return [listed.map((post) => post.id), expected] as const;
+            }),
+          { concurrency: 1 },
+        ),
+      ),
+    );
+    Arr.forEach(answers, ([listed, expected]) => expect(listed).toEqual(expected));
+    // Not vacuous: every viewer reads `p-public` through `t-public`.
+    expect(answers.some(([listed]) => listed.includes("p-public"))).toBe(true);
+  });
+
+  it("a post reached only through a hidden edge is not a member", async () => {
+    const { edges, ops, actAs, postRows } = taxonomy();
+    await run(edges.insert({ postId: "p-public", termId: "t-private" }));
+    await run(edges.insert({ postId: "p-private", termId: "t-public" }));
+    const members = async (who: Viewer, termIds: ReadonlyArray<string>) => {
+      const filter = await run(actAs(who, ops.memberFilter("post", termIds)));
+      return postRows
+        .filter((post) =>
+          evaluate(filter, post, {
+            now: NOW,
+            contains: (set: Following, value) =>
+              Predicate.isString(value) && HashSet.has(set, value),
+          }),
+        )
+        .map((post) => post.id);
+    };
+    // The hidden term confirms nothing: its edge makes no member.
+    expect(await members(anonymous, ["t-private", "t-public"])).toEqual([]);
+    expect(await members(as(member), ["t-private", "t-public"])).toEqual(["p-private"]);
+    expect(await members(as(admin), ["t-private", "t-public"])).toEqual(["p-public", "p-private"]);
+  });
+
+  it("a NULL or absent id is never a member", async () => {
+    const { edges, ops, actAs } = taxonomy();
+    await run(edges.insert({ postId: "p-public", termId: "t-public" }));
+    const filter = await run(actAs(anonymous, ops.memberFilter("post", ["t-public"])));
+    const context = {
+      now: NOW,
+      contains: () => true,
+    };
+    expect(evaluate(filter, { id: null }, context)).toBe(false);
+    expect(evaluate(filter, {}, context)).toBe(false);
+  });
+
+  it("fails closed as never, without asking the store, for no ids, too many, or a misnamed end", async () => {
+    const { edges, postRows } = taxonomy();
+    let asked = 0;
+    const counting: InMemoryEdgeStore = {
+      ...edges,
+      members: (query) =>
+        Effect.suspend(() => {
+          asked += 1;
+          return edges.members(query);
+        }),
+    };
+    const posts = makeInMemoryNodes(["ownerId", "visibility", "draft"]);
+    Arr.forEach(postRows, posts.put);
+    const over = (
+      ends: EdgeDefinition<EdgeValues, EdgeRow, EdgeRow, Following, never, never>["ends"],
+    ) =>
+      defineEdgeOps({
+        type: "links",
+        ends,
+        edges: counting,
+        viewer: Effect.succeed(anonymous),
+        policy: gardeneriaPolicy,
+        followers: follows,
+        values: (input: EdgeValues) => input,
+        toResource: (row: EdgeRow) => row,
+      });
+    const pair = over({ post: ownedEnd("postId", posts), term: referenceEnd("termId", posts) });
+    const lone = over({ post: ownedEnd("postId", posts) });
+    const tooMany = Arr.makeBy(MAX_SET_VALUES + 1, (i) => `t-${i}`);
+    expect(await run(pair.memberFilter("post", []))).toEqual(never);
+    expect(await run(pair.memberFilter("post", tooMany))).toEqual(never);
+    expect(await run(pair.memberFilter("nope", ["t-public"]))).toEqual(never);
+    // A family without exactly two ends has no "other" end.
+    expect(await run(lone.memberFilter("post", ["t-public"]))).toEqual(never);
+    expect(asked).toBe(0);
+    // Not vacuous: a well-formed request does ask.
+    await run(pair.memberFilter("post", ["t-public"]));
+    expect(asked).toBe(1);
   });
 });

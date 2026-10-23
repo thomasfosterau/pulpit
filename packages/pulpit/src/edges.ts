@@ -84,7 +84,7 @@ import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
-import { always, and, eq, or, type ListFilter } from "./filter.ts";
+import { always, and, anyOf, eq, isIn, never, or, type ListFilter } from "./filter.ts";
 import { renameColumns } from "./internal/filter-columns.ts";
 import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
 import { canViewReferenceRow, referenceListFilter } from "./internal/reference-columns.ts";
@@ -459,6 +459,22 @@ export interface EdgeStore<Row extends EdgeRow, Following, E, R> {
   readonly insert: (values: EdgeValues) => Effect.Effect<Option.Option<string>, E, R>;
   /** Hard-delete the edge; whether a row went. */
   readonly delete: (id: string) => Effect.Effect<boolean, E, R>;
+  /**
+   * The node ids at `column` of the stored edges whose `otherColumn` is one
+   * of `ids` and that satisfy `where`, over the same joins as
+   * {@link EdgeStore.list}, as the follower seam's `Following` (pulpit#113):
+   * the subquery `SELECT e.<column> FROM <edge> e JOIN <each end's view> …
+   * WHERE e.<otherColumn> = ANY($ids) AND <where>` in SQL, never a
+   * materialised array, and the set itself in memory. `ids` is never empty
+   * and never longer than `MAX_SET_VALUES`: {@link EdgeOps.memberFilter}
+   * answers `never` without asking.
+   */
+  readonly members: (query: {
+    readonly column: string;
+    readonly otherColumn: string;
+    readonly ids: ReadonlyArray<string>;
+    readonly where: ListFilter<Following>;
+  }) => Effect.Effect<Following, E, R>;
 }
 
 // ── The factory ───────────────────────────────────────────────────────
@@ -527,7 +543,7 @@ export interface EdgeWrite {
  *
  * @since 0.1.0
  */
-export interface EdgeOps<Create, Resource, E, R> {
+export interface EdgeOps<Create, Resource, E, R, Following = never> {
   /**
    * One page of the edges the viewer may read, with the unpaged total as the
    * store reports it (`EDGE-001`: an edge with a hidden or tombstoned end is
@@ -576,6 +592,27 @@ export interface EdgeOps<Create, Resource, E, R> {
     Unauthorized | Forbidden | NodeNotFound | EdgeNotFound | E,
     R
   >;
+  /**
+   * Edge membership as a list filter for the leaf at `end` (pulpit#113):
+   * `id IN (<the end's node ids of the edges whose other end is one of
+   * otherIds>)`, so `?categories=1,2` lists the posts holding a
+   * `post_category` edge to one of those terms. Only edges the viewer can
+   * read count (`EDGE-001`, the same `endpointFilter` as {@link list}): an
+   * edge with a hidden end, or a tombstoned end below the view-deleted
+   * rung, never makes a row a member, so a hidden term's edges are never
+   * confirmed. The filter is the store's `members` subquery under
+   * `./filter`'s `in` node, so a `NULL` id is never a member.
+   *
+   * `end` names the member end by alias, and the family's one other end is
+   * the end `otherIds` name. Fails closed, as `never`, without reading the
+   * store: no `otherIds`, more than `MAX_SET_VALUES` of them
+   * (`SEC-INPUT-003`), an `end` the family doesn't declare, or a family
+   * without exactly two ends. Fails only with the store's `E`.
+   */
+  readonly memberFilter: (
+    end: string,
+    otherIds: ReadonlyArray<string>,
+  ) => Effect.Effect<ListFilter<Following>, E, R>;
 }
 
 /** What is wrong with one end's declaration: an alias with a `.`, or a `maxEdges` that is not a positive safe integer. */
@@ -623,7 +660,7 @@ const byNodeId = Order.mapInput(Order.String, (at: { readonly nodeId: string }) 
  */
 export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, E, R>(
   definition: EdgeDefinition<Create, Row, Resource, Following, E, R>,
-): EdgeOps<Create, Resource, E, R> => {
+): EdgeOps<Create, Resource, E, R, Following> => {
   const { type, ends, edges, policy, followers, toResource } = definition;
   validateEnds(type, ends);
   const endEntries = Record.toEntries(ends);
@@ -774,5 +811,29 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     return { id };
   });
 
-  return { list, get, create, delete: remove };
+  const memberFilter = Effect.fn(`${type}.memberFilter`)(function* (
+    end: string,
+    otherIds: ReadonlyArray<string>,
+  ) {
+    const member = Record.get(ends, end);
+    const others = endEntries.filter(([alias]) => alias !== end);
+    const [other] = others;
+    const closed: ListFilter<Following> = never;
+    // A misnamed end, or a family of other than two ends, fails closed.
+    if (Option.isNone(member) || other === undefined || others.length !== 1) return closed;
+    const otherColumn = other[1].column;
+    const named = anyOf(otherColumn, otherIds);
+    // No ids, or past MAX_SET_VALUES: `anyOf` is `never`, and so is the arm.
+    if (named.kind === "never") return closed;
+    const viewer = yield* definition.viewer;
+    const following = yield* edges.members({
+      column: member.value.column,
+      otherColumn,
+      ids: otherIds,
+      where: and<Following>(endpointFilter(ends, viewer, policy, followers), named),
+    });
+    return isIn("id", following);
+  });
+
+  return { list, get, create, delete: remove, memberFilter };
 };

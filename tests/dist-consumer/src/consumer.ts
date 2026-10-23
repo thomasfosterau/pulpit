@@ -887,6 +887,13 @@ export type _EdgeCreate = Assert<
     >
   >
 >;
+// Edge membership (pulpit#113): the filter is over the family's `Following`.
+export type _EdgeMemberFilter = Assert<
+  Equals<
+    ReturnType<typeof links.memberFilter>,
+    Effect.Effect<ListFilter<Subquery>, StoreFailure, Transaction>
+  >
+>;
 export type _EdgeGet = Assert<
   Equals<
     ReturnType<typeof links.get>,
