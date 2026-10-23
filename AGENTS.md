@@ -29,7 +29,8 @@ The kernel's own invariants, terms and import boundary, including the seams-befo
 - `pnpm install` — dependencies, the Vite+ git hooks (pre-commit runs `vp staged`: format + lint on staged files) and, through `prepare`, the Effect-patched `tsc` / `oxlint`. There is no pre-push hook.
 - `vp check` — format + lint (Oxfmt + Oxlint). `vp run check` — the type gate: each package's `check` (which also type-checks its `tests/**/*.types.ts`) plus the dist-consumer declaration check, which builds both packages' `dist/` and asserts the emitted types. They are different commands. The root `check` task in `vite.config.ts` lists each package's `check` by name, so a new package must be added there.
 - `vp run -r test:unit` — unit tests (pure code; no database), in every package.
-- `vp run test:coverage` — every package's unit suite under one Istanbul map at `coverage/coverage-final.json`, which `fallow audit` reads for exact per-function CRAP scores (`health.coverage` in `.fallowrc.json`). Without it fallow scores every function as uncovered, and any function with cyclomatic complexity ≥ 5 fails the gate on its own. Each package's own `vp run -r test:coverage` also enforces its thresholds.
+- `vp run test:coverage` — every package's unit suite under one Istanbul map at `coverage/coverage-final.json`, which `fallow audit` reads for exact per-function CRAP scores (`health.coverage` in `.fallowrc.json`). Without it fallow scores every function as uncovered, and any function with cyclomatic complexity ≥ 5 fails the gate on its own. It enforces no thresholds.
+- `vp run -r test:coverage` — the coverage gate: each package's suite under its own thresholds (90 / 85 / 90 / 90 for statements / branches / functions / lines, `vite.package.ts`), plus the root's merged map above. Never lower a threshold to pass it; add the tests.
 - `vp run -r build` — emit each package's `dist/`.
 - `vp run -r docgen` — build, then type-check and execute every JSDoc `@example` and generate the API docs under each package's `docs/` (gitignored).
 - `fallow audit --base origin/trunk` — the fallow gate over your change set.
@@ -47,9 +48,9 @@ Before you report work as done, run the gates below in order and quote each comm
 4. `vp run -r build`
 5. `vp run -r docgen`
 6. `pnpm audit --audit-level high`
-7. `vp run test:coverage`, then `fallow audit --base origin/trunk`
+7. `vp run -r test:coverage`, then `fallow audit --base origin/trunk`
 
-Steps 1–6 are what CI runs (`.github/workflows/ci.yml`), and CI runs step 7's `vp run test:coverage` too, after the unit tests (pulpit#119); step 7's `fallow audit` is the fallow gate the PreToolUse hook also runs on commit and push. The hook reads the coverage map on disk and never refreshes it, so run `vp run test:coverage` first. For CI parity from a clean tree, first run `rm -rf node_modules packages/*/node_modules tests/*/node_modules && pnpm install --frozen-lockfile`: a warm tree hides a peer that a dependency requires but a package's `package.json` does not declare (declare it under `peerDependencies` via `catalog:peers`, or `workspace:^` for the kernel).
+Steps 1–6 are what CI runs (`.github/workflows/ci.yml`), and CI runs step 7's `vp run -r test:coverage` too, after the unit tests, so each package's coverage thresholds are enforced (pulpit#119, pulpit#166); step 7's `fallow audit` is the fallow gate the PreToolUse hook also runs on commit and push. The hook reads the merged coverage map on disk and never refreshes it, so run `vp run -r test:coverage` (or `vp run test:coverage`, the map alone) first. For CI parity from a clean tree, first run `rm -rf node_modules packages/*/node_modules tests/*/node_modules && pnpm install --frozen-lockfile`: a warm tree hides a peer that a dependency requires but a package's `package.json` does not declare (declare it under `peerDependencies` via `catalog:peers`, or `workspace:^` for the kernel).
 
 ## Branches and pull requests
 
