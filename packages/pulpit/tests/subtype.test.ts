@@ -55,6 +55,7 @@ import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as TestClock from "effect/testing/TestClock";
 import { FlatQuery, Group, Resource } from "@thomasfosterau/effect-jsonapi";
 import type { Visibility } from "../src/content.ts";
@@ -4287,6 +4288,76 @@ describe("defineSubtype — the live pointer (pulpit#46)", () => {
     expect(outcome.cachedAfterUnpublish).toEqual([Option.none(), Option.some(2n)]);
     expect(outcome.facts).toEqual([0n, 2n, null]);
     expect(outcome.recorded).toBe(3);
+  });
+
+  /**
+   * A publish whose cache write-through is held until released, and an
+   * unpublish on the same head, through one leaf: what pulpit#164's race
+   * needs. `serialised` runs each handler call under one per-node lock, the
+   * serialisation the README asks the application for.
+   */
+  const publicationRace = (serialised: boolean) =>
+    Effect.gen(function* () {
+      const { ops, cache, actAs } = gatedPosts();
+      const arrived = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const held = subtypeHandlers(ops, {
+        inTransaction: Effect.succeed(false),
+        transact: (effect) => effect,
+        cache: Option.some({
+          set: (id, resource, version) =>
+            Effect.andThen(
+              Effect.andThen(Deferred.succeed(arrived, undefined), Deferred.await(release)),
+              cache.set(id, resource, version),
+            ),
+          delete: cache.delete,
+        }),
+      });
+      const direct = subtypeHandlers(ops, {
+        inTransaction: Effect.succeed(false),
+        transact: (effect) => effect,
+        cache: Option.some(cache),
+      });
+      const lock = yield* Semaphore.make(1);
+      const perNode = <A, E>(effect: Effect.Effect<A, E>) =>
+        serialised ? Semaphore.withPermit(lock, effect) : effect;
+      const { id } = yield* actAs(
+        as(member),
+        ops.create({
+          id: Option.none(),
+          state: { title: "v0", visibility: "public", draft: false },
+        }),
+      );
+      // The publish commits, reads the live resource and holds its write-through.
+      const publishing = yield* Effect.forkChild(
+        actAs(as(member), perNode(present(held.publication).publish(id))),
+      );
+      yield* Deferred.await(arrived);
+      // The unpublish on the same head: queued behind the lock, or racing past it.
+      const unpublishing = yield* Effect.forkChild(
+        actAs(as(member), perNode(present(direct.publication).unpublish(id))),
+      );
+      if (!serialised) yield* Fiber.join(unpublishing);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(publishing);
+      if (serialised) yield* Fiber.join(unpublishing);
+      const live = yield* actAs(anonymous, Effect.option(ops.get(id)));
+      return { live, cached: cache.get(id), version: cache.versionOf(id) };
+    });
+
+  it("a publish and an unpublish on one head, serialised per node, leave the cache as the live state (pulpit#164)", async () => {
+    const outcome = await atClock(publicationRace(true));
+    // The unpublish ran after the publish's write-through: nothing live, nothing cached.
+    expect(outcome.live).toEqual(Option.none());
+    expect([outcome.cached, outcome.version]).toEqual([Option.none(), Option.some(0n)]);
+  });
+
+  it("unserialised, the publish's late write-through re-caches past the unpublish: the gap pulpit#164 accepts", async () => {
+    const outcome = await atClock(publicationRace(false));
+    // Both stamp the same head, so compare-on-set admits the late `set`. The
+    // README → Seams makes serialising publication per node the store's job.
+    expect(outcome.live).toEqual(Option.none());
+    expect(outcome.cached).toEqual(Option.some(expect.objectContaining({ title: "v0" })));
   });
 
   it("a before hook can refuse a publish, and is shown the head", async () => {
