@@ -72,6 +72,7 @@ import {
   lt,
   ne,
   never,
+  isNull,
   noneOf,
   notPublished,
   or,
@@ -1397,6 +1398,13 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
         Option.match(columnOf(columns, key), { onNone: () => never, onSome: filter });
       const when = <A>(value: Option.Option<A>, filter: (value: A) => ListFilter<never>) =>
         Option.match(value, { onNone: () => always, onSome: filter });
+      /**
+       * `column NOT IN values` as WordPress reads it: an unset column is core's
+       * `0` (a top-level page's `post_parent`), which no exclusion names, so the
+       * row stays; a bare `noneOf` drops it, as SQL's `NULL <> ALL(…)` does (pulpit#170).
+       */
+      const excluding = (column: string, values: ReadonlyArray<string>) =>
+        or<never>(isNull(column), noneOf(column, values));
       const unless = (values: ReadonlyArray<string>, filter: () => ListFilter<never>) =>
         Arr.isReadonlyArrayNonEmpty(values) ? filter() : always;
       const where = and<never>(
@@ -1405,9 +1413,13 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
         unless(exclude, () => noneOf("id", exclude)),
         when(params.slug, (slugs) => anyOf(columns.slug, slugs)),
         when(params.author, () => onColumn("author", (column) => anyOf(column, author))),
-        unless(authorExclude, () => onColumn("author", (column) => noneOf(column, authorExclude))),
+        unless(authorExclude, () =>
+          onColumn("author", (column) => excluding(column, authorExclude)),
+        ),
         when(params.parent, () => onColumn("parent", (column) => anyOf(column, parent))),
-        unless(parentExclude, () => onColumn("parent", (column) => noneOf(column, parentExclude))),
+        unless(parentExclude, () =>
+          onColumn("parent", (column) => excluding(column, parentExclude)),
+        ),
         when(params.menuOrder, (value) => onColumn("menuOrder", (column) => eq(column, value))),
         when(params.mimeType, (value) => onColumn("mimeType", (column) => eq(column, value))),
         when(params.mediaType, (types) => onColumn("mediaType", (column) => anyOf(column, types))),

@@ -27,6 +27,7 @@
  * | `gt` / `gte` / `lt` / `lte` | `col > $v` / `col >= $v` / `col < $v` / `col <= $v` — a string compared with `COLLATE "C"` (code-point order), a `Date` as a timestamp, a number numerically (`±Infinity` included); a `NULL` column satisfies none |
  * | `anyOf` | `col = ANY($values)` — a `NULL` column satisfies none; empty is `never`; never a `NULL` element |
  * | `noneOf` | `col <> ALL($values)` — a `NULL` column satisfies none; empty is `always` (`<> ALL` over no values is true); never a `NULL` element (`<> ALL('{1,NULL}')` is `NULL` for every row outside the set) |
+ * | `isNull` | `col IS NULL` — the one node a `NULL` column satisfies by itself |
  * | `published` | `(col IS NOT NULL AND col <= now())` — the database's clock, one per query |
  * | `notPublished` | `(col IS NULL OR col > now())` — parenthesised, so it cannot bind to a surrounding `AND` |
  * | `and` / `or` | `AND` / `OR` over the parts |
@@ -120,6 +121,7 @@ export type ListFilter<Following> =
   | { readonly kind: "lte"; readonly column: string; readonly value: Comparable }
   | { readonly kind: "anyOf"; readonly column: string; readonly values: ReadonlyArray<Scalar> }
   | { readonly kind: "noneOf"; readonly column: string; readonly values: ReadonlyArray<Scalar> }
+  | { readonly kind: "isNull"; readonly column: string }
   | { readonly kind: "published"; readonly column: string }
   | { readonly kind: "notPublished"; readonly column: string }
   | { readonly kind: "and"; readonly filters: ReadonlyArray<ListFilter<Following>> }
@@ -252,6 +254,16 @@ export const noneOf = (column: string, values: ReadonlyArray<Scalar>) =>
       : ({ kind: "noneOf", column, values: [...values] } as const);
 
 /**
+ * `column IS NULL`: the column holds no value (`evaluate` reads an absent
+ * column so, too). The one node a `NULL` column satisfies on its own, so
+ * `or(isNull(column), noneOf(column, values))` is the exclusion that keeps an
+ * unset column, which a bare {@link noneOf} drops (pulpit#170).
+ *
+ * @since 0.1.0
+ */
+export const isNull = (column: string) => ({ kind: "isNull", column }) as const;
+
+/**
  * Stamped, and the stamp has arrived.
  *
  * @since 0.1.0
@@ -382,7 +394,7 @@ const instantOf = (value: ColumnValue): number =>
  * and is unpublished: SQL reads `NULL = $v`, `NULL <> $v`, `NULL IN (…)`,
  * `NULL > $v` and `NULL <> ALL(…)` as `NULL`, which a `WHERE` drops, so `ne`
  * is not the complement of `eq`, nor `noneOf` of `anyOf`, over a nullable
- * column. Such a row fails an `in` without `context.contains` being asked, so
+ * column; {@link isNull} is the one node such a row satisfies. Such a row fails an `in` without `context.contains` being asked, so
  * the answer never depends on the seam (pulpit#94). A set past
  * {@link MAX_SET_VALUES} is `never`. Outside the contract it fails closed: a
  * column of another type than the comparand (or than any of a set's values),
@@ -423,6 +435,7 @@ export const evaluate = <Following>(
         const value = row[node.column] ?? null;
         return node.values.every((excluded) => differs(value, excluded));
       },
+      isNull: (node) => (row[node.column] ?? null) === null,
       published: (node) => arrived(node.column),
       notPublished: (node) => !arrived(node.column),
       and: (node) => node.filters.every((part) => evaluate(part, row, context)),

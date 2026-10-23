@@ -30,6 +30,7 @@ import {
   gt,
   gte,
   isIn,
+  isNull,
   type EvaluationContext,
   type FilterRow,
   type ListFilter,
@@ -459,5 +460,28 @@ describe("evaluate — anyOf / noneOf against `= ANY(…)` / `<> ALL(…)`", () 
     expect(run(filter, { c: null })).toBe(false);
     expect(run(filter, {})).toBe(false);
     expect(run(filter, { c: "q" })).toBe(true);
+  });
+});
+
+describe("evaluate — isNull against `col IS NULL` (pulpit#170)", () => {
+  it("a NULL or absent column satisfies it; any value, falsy ones included, does not", () => {
+    expect(run(isNull("parent"), { parent: null })).toBe(true);
+    expect(run(isNull("parent"), { other: "x" })).toBe(true);
+    const values: ReadonlyArray<ColumnValue> = ["", "p", 0, false, NOW];
+    expect(Array.map(values, (value) => run(isNull("parent"), { parent: value }))).toEqual(
+      Array.map(values, () => false),
+    );
+  });
+
+  it("or(isNull, noneOf) keeps an unset column that a bare noneOf drops", () => {
+    const excluding = or<Following>(isNull("parent"), noneOf("parent", ["a"]));
+    const rows: ReadonlyArray<FilterRow> = [{ parent: null }, {}, { parent: "a" }, { parent: "b" }];
+    expect(Array.map(rows, (row) => run(noneOf("parent", ["a"]), row))).toEqual([
+      false,
+      false,
+      false,
+      true,
+    ]);
+    expect(Array.map(rows, (row) => run(excluding, row))).toEqual([true, true, false, true]);
   });
 });

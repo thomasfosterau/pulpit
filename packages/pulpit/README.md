@@ -170,6 +170,7 @@ The kernel's read predicates as data: a store renders a `ListFilter` to SQL, and
 | `eq`, `ne`, `isIn` | `col = v`, `col <> v`, `col IN (following)`. |
 | `gt`, `gte`, `lt`, `lte`, `Comparable` | `col > v`, `col >= v`, `col < v`, `col <= v`, over a `Comparable` (`string`, `number` or `Date`). |
 | `anyOf`, `noneOf`, `MAX_SET_VALUES` | `col = ANY(values)`, `col <> ALL(values)` over a literal set of `Scalar`s; an empty `anyOf` is `never`, an empty `noneOf` is `always`, and a set of more than `MAX_SET_VALUES` (1000) values, duplicates counted, is `never` (`SEC-INPUT-003`). |
+| `isNull` | `col IS NULL`: the one node a `NULL` column satisfies on its own, so `or(isNull(col), noneOf(col, values))` is an exclusion that keeps an unset column. |
 | `published`, `notPublished` | Stamped and arrived; its exact complement (unstamped, or stamped in the future). |
 | `and`, `or` | Combinators that drop identity parts, short-circuit on the absorbing part, and return a single part bare. |
 | `evaluate(filter, row, context)` | The in-memory reading, against `context.now` and `context.contains`. |
@@ -185,6 +186,7 @@ A SQL renderer must honour this contract:
 | `gt` / `gte` / `lt` / `lte` | `col > $v` / `col >= $v` / `col < $v` / `col <= $v`. A string compares with `COLLATE "C"` (code-point order; `evaluate` does not use JavaScript's UTF-16 `<`), a `Date` as a timestamp, a number numerically, `Infinity` and `-Infinity` each equal to itself. A `NULL` column satisfies none |
 | `anyOf` | `col = ANY($values)`: a bound array, each value tested as `eq` tests it. A `NULL` column satisfies none. The array never holds a `NULL` element |
 | `noneOf` | `col <> ALL($values)`, each value tested as `ne` tests it. A `NULL` column satisfies none (`NULL <> ALL(…)` is `NULL`), so `noneOf` is not the complement of `anyOf` over a nullable column. Over no values it is true for every row, `NULL` included, which the constructor folds to `always`. The array never holds a `NULL` element: `2 <> ALL('{1,NULL}')` is `NULL`, so one would drop every row |
+| `isNull` | `col IS NULL`; `evaluate` reads a column that is `null` or absent as satisfying it |
 | `published` | `(col IS NOT NULL AND col <= now())`: the database's clock, one per query |
 | `notPublished` | `(col IS NULL OR col > now())`, parenthesised so it cannot bind to a surrounding `AND` |
 | `and` / `or` | `AND` / `OR` over the parts |
