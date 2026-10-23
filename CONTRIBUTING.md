@@ -16,7 +16,7 @@ Hooks are managed by Vite+; the editable [.vite-hooks/pre-commit](.vite-hooks/pr
 
 ## CI expectations
 
-[ci.yml](.github/workflows/ci.yml) runs steps 1–6 of the gates in [AGENTS.md → Verification](AGENTS.md#verification) in one job, plus step 7's `vp run test:coverage` (not `fallow audit`). [release.yml](.github/workflows/release.yml) runs changesets/action on `trunk`: it opens the version PR while unreleased changesets exist and publishes each package with a new version once it merges, via npm trusted publishing (see [PUBLISHING.md](PUBLISHING.md)).
+[ci.yml](.github/workflows/ci.yml) runs steps 1–6 of the gates in [AGENTS.md → Verification](AGENTS.md#verification) in one job, plus step 7's `vp run -r test:coverage` (not `fallow audit`), which fails when any package drops below its coverage thresholds. [release.yml](.github/workflows/release.yml) runs changesets/action on `trunk`: it opens the version PR while unreleased changesets exist and publishes each package with a new version once it merges, via npm trusted publishing (see [PUBLISHING.md](PUBLISHING.md)).
 
 ## Pre-PR checklist
 
@@ -34,6 +34,7 @@ vp run check                               # the whole type gate (includes build
 vp run --filter ./packages/pulpit check    # one package's type check alone (or ./packages/pulpit-wordpress)
 vp run -r test:unit                        # unit tests
 vp run test:coverage                       # every suite under one coverage map (fallow audit reads it)
+vp run -r test:coverage                    # each package's coverage thresholds, plus that map (the CI gate)
 vp test run tests/some.test.ts             # single file (from inside the package)
 vp run -r build                            # emit dist/
 vp run -r docgen                           # build, then type-check and run every JSDoc @example
