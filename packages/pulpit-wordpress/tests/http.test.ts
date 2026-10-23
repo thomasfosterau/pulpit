@@ -66,4 +66,13 @@ describe("wordPressHttp", () => {
     const missing = await serve("https://example.org/wp-json/wp/v2/posts", "POST");
     expect(missing.status).toBe(404);
   });
+
+  it("answers HEAD with the status and headers and an empty body", async () => {
+    const head = await serve("https://example.org/wp-json/", "HEAD");
+    expect([head.status, head.headers["link"], head.body._tag]).toEqual([
+      200,
+      '<https://example.org/wp-json/>; rel="https://api.w.org/"',
+      "Empty",
+    ]);
+  });
 });

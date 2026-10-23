@@ -37,7 +37,9 @@ import {
   defineWordPress,
   MAX_LIST_PARAMETER,
   type Author,
+  type PostColumns,
   type PostFields,
+  type PostType,
   type RenderRequest,
   type WordPressResponse,
 } from "../src/api.ts";
@@ -132,8 +134,15 @@ const serveable = (row: LeafRow) =>
 
 type Target = "posts" | "pages" | "media";
 
+/** What a test may vary about {@link site}: the bound columns, which types are bound, a failing seam. */
+interface SiteOptions {
+  readonly columns?: PostColumns;
+  readonly bound?: ReadonlyArray<PostType>;
+  readonly failing?: "render" | "list";
+}
+
 /** A site over three in-memory leaves (posts, pages, media), all owned, with a draft column. */
-const site = () => {
+const site = (options: SiteOptions = {}) => {
   let viewer: Viewer = Option.none();
   const leaf = (type: string) => {
     const chain = makeInMemoryChainStore();
@@ -155,7 +164,7 @@ const site = () => {
   const renders: Array<ReadonlyArray<RenderRequest>> = [];
   const authorReads: Array<ReadonlyArray<string>> = [];
   const mediaReads: Array<ReadonlyArray<string>> = [];
-  const columns = {
+  const columns = options.columns ?? {
     slug: "slug",
     date: "publishedAt",
     modified: "updatedAt",
@@ -178,29 +187,43 @@ const site = () => {
     viewer: Effect.sync(() => viewer),
     policy,
     render: (requests) =>
-      Effect.sync(() => {
-        renders.push(requests);
-        return requests.map(
-          ({ field, value }) => `<${field}>${Predicate.isString(value) ? value : ""}</${field}>`,
-        );
-      }),
+      options.failing === "render"
+        ? Effect.fail("the renderer is down")
+        : Effect.sync(() => {
+            renders.push(requests);
+            return requests.map(
+              ({ field, value }) =>
+                `<${field}>${Predicate.isString(value) ? value : ""}</${field}>`,
+            );
+          }),
     link: (type, fields) => `https://example.org/${type}/${fields.slug}`,
-    types: {
-      post: bind({ ops: ops.posts, columns, fields: fieldsOf, serveable }),
-      page: bind({ ops: ops.pages, columns, fields: fieldsOf, serveable }),
-      attachment: bind({
-        ops: {
-          ...ops.media,
-          getMany: (ids) => {
-            mediaReads.push(ids);
-            return ops.media.getMany(ids);
+    types: Record.filter(
+      {
+        post: bind({
+          ops:
+            options.failing === "list"
+              ? { ...ops.posts, list: () => Effect.fail("the store is down") }
+              : ops.posts,
+          columns,
+          fields: fieldsOf,
+          serveable,
+        }),
+        page: bind({ ops: ops.pages, columns, fields: fieldsOf, serveable }),
+        attachment: bind({
+          ops: {
+            ...ops.media,
+            getMany: (ids) => {
+              mediaReads.push(ids);
+              return ops.media.getMany(ids);
+            },
           },
-        },
-        columns,
-        fields: fieldsOf,
-        serveable,
-      }),
-    },
+          columns,
+          fields: fieldsOf,
+          serveable,
+        }),
+      },
+      (_, type) => options.bound === undefined || Arr.contains(options.bound, type),
+    ),
     authors: {
       ids: integerIds(accounts),
       getMany: (accountIds) =>
@@ -257,7 +280,7 @@ const site = () => {
     who: Viewer = Option.none(),
     method = "GET",
   ) => run(as(who, api.handle({ method, path: `/wp-json${path}`, query })));
-  return { ops, nodes, create, get, renders, authorReads, mediaReads, as };
+  return { api, ops, nodes, create, get, renders, authorReads, mediaReads, as };
 };
 
 // ── Reading a response ──────────────────────────────────────────────────
@@ -649,6 +672,323 @@ describe("the wp/v2 read API — routes", () => {
       get.headers,
       Option.none(),
     ]);
+  });
+});
+
+describe("the wp/v2 read API — every parameter's check", () => {
+  /** The names `rest_invalid_param` lists for a query, or none for another answer. */
+  const refused = async (
+    path: string,
+    query: ReadonlyArray<readonly [string, string]>,
+    wp = site(),
+  ) => {
+    const body = decodeBody(ErrorBody)(await wp.get(path, query));
+    return [body.code, Record.keys(body.data.params ?? {})];
+  };
+
+  it("names each bad value: a non-integer, an out-of-range one, an unknown enum, a bad date, context and status", async () => {
+    expect(
+      await refused("/wp/v2/posts", [
+        ["page", "two"],
+        ["per_page", "0"],
+        ["offset", "-1"],
+        ["order", "sideways"],
+        ["orderby", "parent"],
+        ["after", "yesterday"],
+        ["modified_before", "2026-13-45T99:00:00"],
+        ["context", "print"],
+        ["status", "publish,unknown"],
+      ]),
+    ).toEqual([
+      "rest_invalid_param",
+      [
+        "context",
+        "status",
+        "page",
+        "per_page",
+        "offset",
+        "order",
+        "orderby",
+        "after",
+        "modified_before",
+      ],
+    ]);
+    const bounds = decodeBody(ErrorBody)(
+      await site().get("/wp/v2/posts", [
+        ["page", "0"],
+        ["per_page", "500"],
+      ]),
+    );
+    expect(bounds.data.params).toEqual({
+      page: "page must be greater than or equal to 1",
+      per_page: "per_page must be between 1 (inclusive) and 100 (inclusive)",
+    });
+  });
+
+  it("refuses a parameter the post type doesn't take, or whose column the binding leaves out", async () => {
+    expect(await refused("/wp/v2/posts", [["parent", "1"]])).toEqual([
+      "rest_invalid_param",
+      ["parent"],
+    ]);
+    expect(
+      await refused("/wp/v2/media", [
+        ["media_type", "hologram"],
+        ["menu_order", "1"],
+      ]),
+    ).toEqual(["rest_invalid_param", ["menu_order", "media_type"]]);
+    const narrow = site({ columns: { slug: "slug", date: "publishedAt", modified: "updatedAt" } });
+    expect(
+      await refused(
+        "/wp/v2/pages",
+        [
+          ["author", "1"],
+          ["parent", "1"],
+        ],
+        narrow,
+      ),
+    ).toEqual(["rest_invalid_param", ["author", "parent"]]);
+  });
+
+  it("refuses context=edit on a collection, as core does for a caller who can't edit", async () => {
+    const wp = site();
+    const anonymous = await wp.get("/wp/v2/posts", [["context", "edit"]]);
+    expect([anonymous.status, codeOf(anonymous)]).toEqual([401, "rest_forbidden_context"]);
+    const member_ = await wp.get("/wp/v2/posts", [["context", "edit"]], Option.some(member));
+    expect([member_.status, codeOf(member_)]).toEqual([403, "rest_forbidden_context"]);
+  });
+
+  it("answers an orderby whose column is unbound or unsortable as rest_invalid_param", async () => {
+    const narrow = site({ columns: { slug: "slug", date: "publishedAt", modified: "updatedAt" } });
+    expect(
+      decodeBody(ErrorBody)(await narrow.get("/wp/v2/posts", [["orderby", "title"]])).data.params,
+    ).toEqual({ orderby: "orderby title is not supported for this post type." });
+    const unsortable = site({
+      columns: { slug: "slug", date: "publishedAt", modified: "updatedAt", title: "subtitle" },
+    });
+    expect(
+      decodeBody(ErrorBody)(await unsortable.get("/wp/v2/posts", [["orderby", "title"]])).data
+        .params,
+    ).toEqual({ orderby: "orderby title is not sortable for this post type." });
+  });
+});
+
+describe("the wp/v2 read API — every filter and order", () => {
+  it("lists media under the inherit default, and filters it by mime_type and media_type", async () => {
+    const wp = site();
+    const jpeg = await wp.create("media", { mimeType: "image/jpeg" });
+    await wp.create("media", { mimeType: "image/png" });
+    expect(listed(await wp.get("/wp/v2/media", [["mime_type", "image/jpeg"]]))).toEqual([
+      jpeg.wireId,
+    ]);
+    // The in-memory leaf has no media-type column; a binding that names one filters on it.
+    const typed = site({
+      columns: { slug: "slug", date: "publishedAt", modified: "updatedAt", mediaType: "mimeType" },
+    });
+    const image = await typed.create("media", { mimeType: "image" });
+    expect(listed(await typed.get("/wp/v2/media", [["media_type", "image"]]))).toEqual([
+      image.wireId,
+    ]);
+    // An attachment is never `publish` or `future`, and a post is never `inherit`.
+    expect(
+      listed(await wp.get("/wp/v2/media", [["status", "publish,future"]], Option.some(member))),
+    ).toEqual([]);
+    expect(
+      listed(await wp.get("/wp/v2/posts", [["status", "inherit"]], Option.some(member))),
+    ).toEqual([]);
+  });
+
+  it("filters pages by author, author_exclude, parent, parent_exclude and menu_order", async () => {
+    const wp = site();
+    const top = await wp.create("pages", { slug: "top", menuOrder: 1 });
+    const child = await wp.create("pages", { slug: "child", parentId: top.id, menuOrder: 2 });
+    const theirs = await wp.create("pages", { slug: "theirs", parentId: child.id }, stranger);
+    const memberWire = 1;
+    const strangerWire = 2;
+    const of = (query: ReadonlyArray<readonly [string, string]>) =>
+      wp.get("/wp/v2/pages", [["orderby", "slug"], ["order", "asc"], ...query]).then(listed);
+    expect(await of([["author", String(memberWire)]])).toEqual([child.wireId, top.wireId]);
+    expect(await of([["author_exclude", String(memberWire)]])).toEqual([theirs.wireId]);
+    expect(await of([["author", String(strangerWire)]])).toEqual([theirs.wireId]);
+    expect(await of([["parent", String(top.wireId)]])).toEqual([child.wireId]);
+    expect(await of([["parent_exclude", String(top.wireId)]])).toEqual([theirs.wireId]);
+    expect(await of([["menu_order", "2"]])).toEqual([child.wireId]);
+  });
+
+  it("filters by modified_after and modified_before, and skips offset rows", async () => {
+    const wp = site();
+    const old = await wp.create("posts", { slug: "old", updatedAt: PAST });
+    const recent = await wp.create("posts", { slug: "recent", updatedAt: NOW });
+    expect(
+      listed(await wp.get("/wp/v2/posts", [["modified_after", "2026-06-01T00:00:00Z"]])),
+    ).toEqual([recent.wireId]);
+    expect(
+      listed(await wp.get("/wp/v2/posts", [["modified_before", "2026-06-01T00:00:00Z"]])),
+    ).toEqual([old.wireId]);
+    expect(
+      listed(
+        await wp.get("/wp/v2/posts", [
+          ["orderby", "slug"],
+          ["offset", "1"],
+        ]),
+      ),
+    ).toEqual([old.wireId]);
+  });
+
+  it("orders by author, id, modified, title, parent and menu_order", async () => {
+    const wp = site();
+    const first = await wp.create("pages", {
+      slug: "b",
+      title: "Beta",
+      menuOrder: 2,
+      updatedAt: NOW,
+    });
+    const second = await wp.create("pages", {
+      slug: "a",
+      title: "Alpha",
+      menuOrder: 1,
+      parentId: first.id,
+      updatedAt: PAST,
+    });
+    const orderedBy = (orderby: string) =>
+      wp
+        .get("/wp/v2/pages", [
+          ["orderby", orderby],
+          ["order", "asc"],
+        ])
+        .then(listed);
+    const sorted = await inSequence(
+      ["author", "id", "modified", "title", "parent", "menu_order"],
+      async (orderby) => [orderby, (await orderedBy(orderby)).length],
+    );
+    expect(sorted).toEqual([
+      ["author", 2],
+      ["id", 2],
+      ["modified", 2],
+      ["title", 2],
+      ["parent", 2],
+      ["menu_order", 2],
+    ]);
+    expect(await orderedBy("title")).toEqual([second.wireId, first.wireId]);
+    expect(await orderedBy("menu_order")).toEqual([second.wireId, first.wireId]);
+    expect(await orderedBy("modified")).toEqual([second.wireId, first.wireId]);
+  });
+
+  it("lists status=any and status=private for the owner, and pending as nothing", async () => {
+    const wp = site();
+    const shown = await wp.create("posts", { slug: "shown" });
+    const drafted = await wp.create("posts", { slug: "drafted", draft: true });
+    const hidden = await wp.create("posts", { slug: "hidden", visibility: "private" });
+    const owner = Option.some(member);
+    const asc = [
+      ["orderby", "slug"],
+      ["order", "asc"],
+    ] as const;
+    expect(listed(await wp.get("/wp/v2/posts", [...asc, ["status", "any"]], owner))).toEqual([
+      drafted.wireId,
+      hidden.wireId,
+      shown.wireId,
+    ]);
+    expect(listed(await wp.get("/wp/v2/posts", [["status", "private"]], owner))).toEqual([
+      hidden.wireId,
+    ]);
+    expect(listed(await wp.get("/wp/v2/posts", [["status", "pending"]], owner))).toEqual([]);
+  });
+
+  it("selects nothing by draft or private, and everything live by publish, without those columns", async () => {
+    const wp = site({ columns: { slug: "slug", date: "publishedAt", modified: "updatedAt" } });
+    const post = await wp.create("posts", {});
+    const owner = Option.some(member);
+    expect(listed(await wp.get("/wp/v2/posts", [["status", "draft,private"]], owner))).toEqual([]);
+    expect(listed(await wp.get("/wp/v2/posts", [], owner))).toEqual([post.wireId]);
+  });
+});
+
+describe("the wp/v2 read API — item forms and failures", () => {
+  it("answers context=embed for an item and a list, with an attachment's media fields only when it has media", async () => {
+    const wp = site();
+    const bare = await wp.create("media", { slug: "bare" });
+    const withMedia = await wp.create("media", { mimeType: "image/jpeg", slug: "photo" });
+    const embedOf = async (wireId: number) =>
+      Record.keys(objectOf(await wp.get(`/wp/v2/media/${wireId}`, [["context", "embed"]])));
+    expect(await embedOf(bare.wireId)).not.toContain("source_url");
+    expect(await embedOf(withMedia.wireId)).toContain("source_url");
+    const embedded = decodeBody(Schema.Array(Schema.Record(Schema.String, Schema.Json)))(
+      await wp.get("/wp/v2/media", [["context", "embed"]]),
+    );
+    expect(embedded.map((item) => Record.has(item, "description"))).toEqual([false, false]);
+    const post = await wp.create("posts", {});
+    expect(
+      Record.keys(objectOf(await wp.get(`/wp/v2/posts/${post.wireId}`, [["context", "embed"]]))),
+    ).not.toContain("content");
+  });
+
+  it("answers an attachment without media with empty file fields, and its post as post", async () => {
+    const wp = site();
+    const post = await wp.create("posts", {});
+    const media = await wp.create("media", { slug: "bare", parentId: post.id });
+    const body = objectOf(await wp.get(`/wp/v2/media/${media.wireId}`));
+    expect([body["source_url"], body["filename"], body["filesize"], body["post"]]).toEqual([
+      "",
+      "",
+      null,
+      post.wireId,
+    ]);
+  });
+
+  it("falls back to the modified date for an item with no published date", async () => {
+    const wp = site();
+    const post = await wp.create("posts", { publishedAt: null, updatedAt: NOW });
+    expect(objectOf(await wp.get(`/wp/v2/posts/${post.wireId}`))["date"]).toBe(
+      "2026-10-22T11:00:00",
+    );
+  });
+
+  it("keeps a whole field asked for twice, a scalar asked for by a sub-field, and skips a missing one", async () => {
+    const wp = site();
+    const post = await wp.create("posts", {});
+    expect(
+      objectOf(
+        await wp.get(`/wp/v2/posts/${post.wireId}`, [
+          ["_fields", "title,title.rendered,slug.part,nothing"],
+        ]),
+      ),
+    ).toEqual({ title: { rendered: "<title>A title</title>" }, slug: "a-slug" });
+  });
+
+  it("is public for the anonymous when an embedded parent is serveable", async () => {
+    const wp = site();
+    const parent = await wp.create("pages", { slug: "parent" });
+    const child = await wp.create("pages", { slug: "child", parentId: parent.id });
+    const response = await wp.get(`/wp/v2/pages/${child.wireId}`, [["_embed", "up"]]);
+    expect(response.headers["cache-control"]).toBe("public");
+  });
+
+  it("reads no related node of an unbound type", async () => {
+    const wp = site({ bound: ["post"] });
+    const media = await wp.create("media", { mimeType: "image/jpeg" });
+    const post = await wp.create("posts", { featuredMediaId: media.id });
+    expect(itemOf(await wp.get(`/wp/v2/posts/${post.wireId}`)).featured_media).toBe(0);
+    expect(codeOf(await wp.get(`/wp/v2/media/${media.wireId}`))).toBe("rest_no_route");
+  });
+
+  it("answers a failing renderer, store or codec as 500 internal_server_error", async () => {
+    const rendering = site({ failing: "render" });
+    const post = await rendering.create("posts", {});
+    const failed = await rendering.get(`/wp/v2/posts/${post.wireId}`);
+    expect([failed.status, codeOf(failed)]).toEqual([500, "internal_server_error"]);
+    const listing = await site({ failing: "list" }).get("/wp/v2/posts");
+    expect([listing.status, codeOf(listing)]).toEqual([500, "internal_server_error"]);
+    // The author codec knows only the accounts assigned it, as a real codec's table does.
+    const wp = site();
+    const outsider: ViewerAccount = { id: "u-outsider", role: "user" };
+    const theirs = await wp.create("posts", {}, outsider);
+    expect(codeOf(await wp.get(`/wp/v2/posts/${theirs.wireId}`))).toBe("internal_server_error");
+  });
+
+  it("answers a path outside the prefix as rest_no_route", async () => {
+    const wp = site();
+    const response = await run(wp.api.handle({ method: "GET", path: "/elsewhere", query: [] }));
+    expect(codeOf(response)).toBe("rest_no_route");
   });
 });
 
