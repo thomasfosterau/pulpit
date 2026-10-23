@@ -175,7 +175,7 @@ export const ownedContentLeafResourceFields = {
  * Note that effect-jsonapi lists a `one` relationship as **required** in
  * the generated `createPayload`; an application serving the generated payload
  * strips the linkage at its handler seam. effect-jsonapi has no read-only
- * linkage descriptor (effect-jsonapi#172 closed without one; 0.16.3 has
+ * linkage descriptor (effect-jsonapi#172 closed without one; 0.17.0 has
  * none), and `tests/content.test.ts` pins the required linkage so the day one
  * ships is visible.
  *

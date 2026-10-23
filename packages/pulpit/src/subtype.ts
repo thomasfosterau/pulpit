@@ -613,7 +613,7 @@ const StampedVersion = Schema.Struct({
  * resource's `meta.version` ({@link versionMeta}): a strong tag (`"3"`)
  * whose value is the head version, so the `If-Match` a client echoes names
  * the version its write expects ({@link UpdateRequest.expectedVersion}; the
- * header's mapping onto it is effect-jsonapi's, which 0.16.3 lacks). None when the value carries no
+ * header's mapping onto it is effect-jsonapi's, which 0.17.0 lacks). None when the value carries no
  * decimal `meta.version`; a collection response takes none, having no single
  * version to tag. Never fails.
  *
@@ -2049,10 +2049,25 @@ export const cacheWriteThrough = <Resource, R>(
 });
 
 /**
+ * What a handler-record write answers: the committed `{ id, version }`, and
+ * the resource as its writer re-read it after the commit. `resource` is
+ * none when the write hid the row from its own writer (the re-read failed
+ * `NodeNotFound`): the write still committed, so it answers the write
+ * rather than a 404 that would invite a duplicating retry (pulpit#107).
+ *
+ * @since 0.1.0
+ */
+export interface CommittedWrite<Resource> extends ChainWrite {
+  /** The resource as the writer now reads it; none when the write hid it from them. */
+  readonly resource: Option.Option<Resource>;
+}
+
+/**
  * The handler record a leaf contributes to a JSON:API server's resource
- * handlers — one entry per endpoint, each returning the resource the document
- * assembler wraps — plus the version-restore command, which has no JSON:API
- * endpoint and is run SSR-direct.
+ * handlers — one entry per endpoint, the writes answering the committed
+ * write and the resource the document assembler wraps
+ * ({@link CommittedWrite}) — plus the version-restore command, which has no
+ * JSON:API endpoint and is run SSR-direct.
  *
  * {@link subtypeResourceHandlers} turns the record into effect-jsonapi's
  * `ResourceHandlers.make` CRUD handlers (pulpit#5).
@@ -2066,9 +2081,11 @@ export const cacheWriteThrough = <Resource, R>(
  * superseded content until the TTL expired. The re-read runs as the writer,
  * so a write that hides the row from its own writer fails it
  * (`NodeNotFound`) after the write committed; the handler then evicts the
- * entry before failing with the re-read's own error, as it does for any
- * re-read failure (a store error, a defect, an interrupt), so the cache
- * never keeps the superseded resource (`CACHE-AUTH-005`, pulpit#107). The
+ * entry, as it does for any re-read failure, so the cache never keeps the
+ * superseded resource (`CACHE-AUTH-005`, pulpit#107). A hidden write
+ * answers its {@link CommittedWrite} with no resource, not the
+ * `NodeNotFound`: the write committed. Any other re-read failure (a store
+ * error, a defect, an interrupt) fails the write with its own cause. The
  * chain write runs inside `transact` (the handler seam's boundary, website
  * #1883); the re-read stays outside it. An interrupt can't separate a
  * committed write from its write-through or eviction: a failure of the
@@ -2093,21 +2110,21 @@ export interface SubtypeHandlers<Resource, E, R> {
     readonly id: Option.Option<string>;
     readonly state: ChainState;
   }) => Effect.Effect<
-    Resource,
+    CommittedWrite<Resource>,
     Gate | WriteRejected | NodeAlreadyExists | NodeNotFound | VersionConflict | E,
     R
   >;
   readonly update: (
     input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
   ) => Effect.Effect<
-    Resource,
+    CommittedWrite<Resource>,
     Gate | WriteRejected | NodeNotFound | StaleVersion | VersionConflict | E,
     R
   >;
   readonly restore: (
     input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
   ) => Effect.Effect<
-    Resource,
+    CommittedWrite<Resource>,
     Gate | WriteRejected | NodeNotFound | StaleVersion | VersionConflict | E,
     R
   >;
@@ -2122,7 +2139,7 @@ export interface SubtypeHandlers<Resource, E, R> {
   readonly restoreVersion: (
     input: { readonly id: string; readonly version: bigint } & Precondition,
   ) => Effect.Effect<
-    Resource,
+    CommittedWrite<Resource>,
     Gate | WriteRejected | NodeNotFound | VersionNotFound | StaleVersion | VersionConflict | E,
     R
   >;
@@ -2162,7 +2179,8 @@ export interface SubtypeHandlersConfig<Resource, R> {
  * only ever holds its public rows, and by the handlers' own eviction when a
  * committed write can't be re-read or written through (see
  * {@link SubtypeHandlers}). Each write fails with its operation's error, or
- * with the re-read's.
+ * with the re-read's unless that is `NodeNotFound` (a write hidden from its
+ * writer, answered as a {@link CommittedWrite} with no resource).
  *
  * @since 0.1.0
  */
@@ -2287,9 +2305,14 @@ export const subtypeHandlers = <Resource, E, R>(
   // rung making a reference row `private`; a store error; an interrupt),
   // the resource is none and the cache hook evicts: the cache must never go
   // on serving the superseded resource, whatever the writer may read now
-  // (`CACHE-AUTH-005`, pulpit#107). The handler then fails with the
-  // re-read's own error.
-  const write = <E2>(action: WriteAction, operation: Effect.Effect<ChainWrite, E2, R>) =>
+  // (`CACHE-AUTH-005`, pulpit#107). A `NodeNotFound` re-read is a write
+  // hidden from its writer: it answers the committed write with no resource,
+  // not a 404 for a write that committed. Any other failure fails the
+  // handler with the re-read's own cause.
+  const write = <E2>(
+    action: WriteAction,
+    operation: Effect.Effect<ChainWrite, E2, R>,
+  ): Effect.Effect<CommittedWrite<Resource>, E2 | E, R> =>
     Effect.uninterruptibleMask((restore) =>
       Effect.flatMap(committed(restore, operation), (written) =>
         Effect.flatMap(Effect.exit(restore(ops.get(written.id))), (reread) =>
@@ -2301,7 +2324,15 @@ export const subtypeHandlers = <Resource, E, R>(
               resource: Exit.isSuccess(reread) ? Option.some(reread.value) : Option.none(),
               publication: Option.none(),
             }),
-            reread,
+            reread.pipe(
+              Effect.map(Option.some),
+              Effect.catchTag("NodeNotFound", () => Effect.succeedNone),
+              Effect.map((resource): CommittedWrite<Resource> => ({
+                id: written.id,
+                version: written.version,
+                resource,
+              })),
+            ),
           ),
         ),
       ),
@@ -2375,6 +2406,7 @@ export interface SubtypeResourceHandlersConfig<
   RV,
   RL,
   Targets extends Handlers.IncludeTargets,
+  Type extends string = string,
 > extends Omit<
   ResourceHandlers.ReadOnlyConfig<
     TQuery,
@@ -2390,6 +2422,11 @@ export interface SubtypeResourceHandlersConfig<
   >,
   "ops" | "cache"
 > {
+  /**
+   * The resource's JSON:API type, which a hidden write's identifier
+   * document names (`data.type`): effect-jsonapi's `hiddenWrite.type`.
+   */
+  readonly type: Type;
   /** The decoded list query as a {@link ListRequest}: its page, `includeDeleted`, `where` and order. */
   readonly listRequest: (query: TQuery) => ListRequest;
   /** The decoded create payload as the operation's input: the client id, if any, and the state. */
@@ -2420,6 +2457,13 @@ export interface SubtypeResourceHandlersConfig<
  * payload id is not the route's, before any operation runs); mapping them to
  * the wire is the application's `ServerErrors`.
  *
+ * A `create` / `update` whose committed write hides the row from its writer
+ * (the re-read fails `NodeNotFound`) answers effect-jsonapi's committed
+ * identifier document, `{ data: { type, id, meta: { version } } }` at the
+ * endpoint's own status, not a 404 (effect-jsonapi's `hiddenWrite`,
+ * pulpit#107). Declare the group with `Group.flat({ …, hiddenWrites: true })`
+ * so its `create` / `update` success admits that document.
+ *
  * @since 0.1.0
  */
 export const subtypeResourceHandlers = <
@@ -2435,9 +2479,18 @@ export const subtypeResourceHandlers = <
   Targets extends Handlers.IncludeTargets = never,
 >(
   handlers: SubtypeHandlers<Resource, E, R>,
-  config: SubtypeResourceHandlersConfig<TQuery, TCreate, TUpdate, V, RV, RL, Targets>,
+  config: SubtypeResourceHandlersConfig<
+    TQuery,
+    TCreate,
+    TUpdate,
+    V,
+    RV,
+    RL,
+    Targets,
+    Resource["type"]
+  >,
 ) => {
-  const { listRequest, createInput, updateInput, ...rest } = config;
+  const { type, listRequest, createInput, updateInput, ...rest } = config;
   return ResourceHandlers.make<
     TQuery,
     TCreate,
@@ -2458,9 +2511,14 @@ export const subtypeResourceHandlers = <
     RV,
     RL,
     never,
-    Targets
+    Targets,
+    never,
+    never,
+    never,
+    Resource["type"]
   >({
     ...rest,
+    hiddenWrite: { type, when: (error) => Predicate.isTagged(error, "NodeNotFound") },
     ops: {
       list: (query) =>
         Effect.map(handlers.list(listRequest(query)), (page) => ({
@@ -2468,8 +2526,12 @@ export const subtypeResourceHandlers = <
           totalCount: page.total,
         })),
       get: handlers.get,
-      create: (payload) => Effect.map(handlers.create(createInput(payload)), ({ id }) => ({ id })),
-      update: (payload) => Effect.map(handlers.update(updateInput(payload)), ({ id }) => ({ id })),
+      // The committed version rides along: a write hidden from its writer
+      // answers it as `data.meta.version` (pulpit#107).
+      create: (payload) =>
+        Effect.map(handlers.create(createInput(payload)), ({ id, version }) => ({ id, version })),
+      update: (payload) =>
+        Effect.map(handlers.update(updateInput(payload)), ({ id, version }) => ({ id, version })),
       delete: (id) => handlers.delete(id),
     },
   });

@@ -53,7 +53,7 @@ catalog:
   "@effect/tsgo": 0.55.0
   "@mpsuesser/oxlint-plugin-effect": ^0.6.0
   # The JSON:API model layer the `./content` and `./registry` subpaths build on.
-  "@thomasfosterau/effect-jsonapi": ^0.16.3
+  "@thomasfosterau/effect-jsonapi": ^0.17.0
   "@types/node": ^26.6.5
   # The coverage provider for `vp run -r test:coverage`. vite-plus bundles its
   # own vitest and refuses to start a coverage run unless the provider's
@@ -95,7 +95,7 @@ catalog:
 # replaces `catalog:peers` with these ranges in each published manifest.
 catalogs:
   peers:
-    "@thomasfosterau/effect-jsonapi": ">=0.16.0"
+    "@thomasfosterau/effect-jsonapi": ">=0.17.0"
     effect: ">=4.0.0-rc.118"
 
 overrides:

@@ -93,6 +93,7 @@ import {
   hydrateSearchHits,
   searchScopeFilter,
   type AfterWriteHook,
+  type CommittedWrite,
   type BeforeWriteHook,
   type ResourceCacheSeam,
   type SubtypeOps,
@@ -129,6 +130,13 @@ import {
 } from "./fixtures.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
+
+/** The resource a handler write's writer read back, failing the test when it can't. */
+const readBack = <Resource>(write: CommittedWrite<Resource>): Resource =>
+  Option.match(write.resource, {
+    onNone: () => expect.fail(`the writer can't read ${write.id} back`),
+    onSome: (resource) => resource,
+  });
 
 /** A view's column set, with the `id`, `version` and `action` every view carries. */
 const viewOf = (...columns: ReadonlyArray<string>): ReadonlySet<string> =>
@@ -950,7 +958,7 @@ describe("defineSubtype — the expected-version precondition", () => {
     const updated = await run(
       actAs(as(member), handlers.update({ id, patch: { title: "Third" }, expectedVersion: 1n })),
     );
-    expect(MutableHashMap.get(cached, id)).toEqual(Option.some(updated));
+    expect(MutableHashMap.get(cached, id)).toEqual(updated.resource);
     await run(actAs(as(member), handlers.restoreVersion({ id, version: 0n, expectedVersion: 2n })));
     await run(actAs(as(member), handlers.delete(id, { expectedVersion: 3n })));
     expect(MutableHashMap.has(cached, id)).toBe(false);
@@ -2618,13 +2626,13 @@ describe("subtypeHandlers — the handlers seam", () => {
     const updated = await run(
       actAs(as(member), handlers.update({ id, patch: { title: "Cached" } })),
     );
-    expect(updated).toMatchObject({ id, title: "Cached" });
-    expect(MutableHashMap.get(cached, id)).toEqual(Option.some(updated));
+    expect(readBack(updated)).toMatchObject({ id, title: "Cached" });
+    expect(MutableHashMap.get(cached, id)).toEqual(updated.resource);
     const restored = await run(actAs(as(member), handlers.restoreVersion({ id, version: 0n })));
     expect(Option.getOrUndefined(MutableHashMap.get(cached, id))).toMatchObject({
       title: "A post",
     });
-    expect(MutableHashMap.get(cached, id)).toEqual(Option.some(restored));
+    expect(MutableHashMap.get(cached, id)).toEqual(restored.resource);
     await run(actAs(as(member), handlers.delete(id)));
     expect(MutableHashMap.has(cached, id)).toBe(false);
     expect(log).toEqual(["transact", "transact", "transact"]);
@@ -2759,16 +2767,29 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
       ),
     );
     expect(MutableHashMap.has(cached, id)).toBe(true);
-    // The writer still gets the re-read's `NodeNotFound` for a committed
-    // write it can no longer read: the decided `{ id, version }` response
-    // waits on effect-jsonapi's handler contract (pulpit#107).
+    // The writer gets the committed write, without the resource it can no
+    // longer read, not a 404 for a write that committed (pulpit#107).
     expect(
-      await tagOf(
-        actAs(as(contributor), handlers.update({ id, patch: { visibility: "private" } })),
-      ),
-    ).toEqual(Option.some("NodeNotFound"));
+      await run(actAs(as(contributor), handlers.update({ id, patch: { visibility: "private" } }))),
+    ).toEqual({ id, version: 1n, resource: Option.none() });
     expect(chain.rows()).toHaveLength(2);
     expect(MutableHashMap.has(cached, id)).toBe(false);
+  });
+
+  it("create: a corpus writer creating a private row gets the committed write, and nothing is cached", async () => {
+    const { chain, handlers, actAs, cached } = cachedReference();
+    const created = await run(
+      actAs(
+        as(contributor),
+        handlers.create({
+          id: Option.some("t-1"),
+          state: { name: "Quercus", visibility: "private" },
+        }),
+      ),
+    );
+    expect(created).toEqual({ id: "t-1", version: 0n, resource: Option.none() });
+    expect(chain.rows()).toHaveLength(1);
+    expect(MutableHashMap.has(cached, "t-1")).toBe(false);
   });
 
   it("restoreVersion: a corpus writer restoring a private version", async () => {
@@ -2782,9 +2803,9 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
     expect(MutableHashMap.has(cached, id)).toBe(false);
     await run(actAs(as(admin), handlers.update({ id, patch: { visibility: "public" } })));
     expect(MutableHashMap.has(cached, id)).toBe(true);
-    expect(
-      await tagOf(actAs(as(contributor), handlers.restoreVersion({ id, version: 0n }))),
-    ).toEqual(Option.some("NodeNotFound"));
+    expect(await run(actAs(as(contributor), handlers.restoreVersion({ id, version: 0n })))).toEqual(
+      { id, version: 2n, resource: Option.none() },
+    );
     expect(chain.rows()).toHaveLength(3);
     expect(MutableHashMap.has(cached, id)).toBe(false);
   });
@@ -2800,12 +2821,12 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
     const hidden = await run(
       actAs(as(moderator), handlers.update({ id, patch: { visibility: "private" } })),
     );
-    expect(hidden).toMatchObject({ id, attributes: { visibility: "private" } });
+    expect(readBack(hidden)).toMatchObject({ id, attributes: { visibility: "private" } });
     expect(MutableHashMap.has(cached, id)).toBe(false);
     const shown = await run(
       actAs(as(moderator), handlers.update({ id, patch: { visibility: "public" } })),
     );
-    expect(MutableHashMap.get(cached, id)).toEqual(Option.some(shown));
+    expect(MutableHashMap.get(cached, id)).toEqual(shown.resource);
   });
 
   it("an interrupt after the chain write still evicts, on update and on delete", async () => {
@@ -3142,7 +3163,7 @@ describe("lifecycle hooks — before and after every write (pulpit#45)", () => {
     expect(chain.rows()).toHaveLength(1);
     expect(seen).toEqual([["next", "create", "0:true"]]);
     // The cache write-through is the first after hook, and still ran.
-    expect(MutableHashMap.get(cached, created.id)).toEqual(Option.some(created));
+    expect(MutableHashMap.get(cached, created.id)).toEqual(created.resource);
   });
 
   it("under afterFailure: defect, an after hook's failure is a defect after the commit", async () => {
@@ -3257,11 +3278,11 @@ describe("the head version on the wire (pulpit#65)", () => {
         handlers.create({ id: Option.none(), state: { title: "A", visibility: "public" } }),
       ),
     );
-    expect(created.meta).toEqual({ version: "0" });
+    expect(readBack(created).meta).toEqual({ version: "0" });
     const updated = await run(
       actAs(as(member), handlers.update({ id: created.id, patch: { title: "B" } })),
     );
-    expect(updated.meta).toEqual({ version: "1" });
+    expect(readBack(updated).meta).toEqual({ version: "1" });
     expect((await run(actAs(anonymous, ops.get(created.id)))).meta).toEqual({ version: "1" });
     const { rows } = await run(
       actAs(
@@ -3280,7 +3301,7 @@ describe("the head version on the wire (pulpit#65)", () => {
         handlers.create({ id: Option.none(), state: { title: "A", visibility: "public" } }),
       ),
     );
-    const read = versionEtag(created);
+    const read = versionEtag(readBack(created));
     expect(read).toEqual(Option.some('"0"'));
     // An If-Match echoes the tag; its value is the expected version.
     const expectedVersion = BigInt(Option.getOrElse(read, () => "").slice(1, -1));
@@ -3290,7 +3311,7 @@ describe("the head version on the wire (pulpit#65)", () => {
         handlers.update({ id: created.id, patch: { title: "B" }, expectedVersion }),
       ),
     );
-    expect(versionEtag(updated)).toEqual(Option.some('"1"'));
+    expect(versionEtag(readBack(updated))).toEqual(Option.some('"1"'));
     expect(
       await tagOf(
         actAs(
@@ -3350,20 +3371,30 @@ describe("subtypeResourceHandlers — effect-jsonapi's ResourceHandlers (pulpit#
     attributes: { title: Schema.String, visibility: Schema.String },
   });
   const CreatePost = Schema.Struct({ title: Schema.String, visibility: Schema.String });
-  const UpdatePost = Schema.Struct({ id: Schema.String, title: Schema.optionalKey(Schema.String) });
+  const UpdatePost = Schema.Struct({
+    id: Schema.String,
+    title: Schema.optionalKey(Schema.String),
+    visibility: Schema.optionalKey(Schema.String),
+  });
   const { listQuery } = Group.flat({
     resource: Post,
     list: FlatQuery.listInput({ maxLimit: 100 }),
     create: CreatePost,
     update: UpdatePost,
+    hiddenWrites: true,
   });
-  const jsonapiLeaf = () => {
+  /**
+   * The posts leaf behind effect-jsonapi's handlers: owned by default, or a
+   * reference leaf with a `visibility` column, whose corpus writer below the
+   * view-private rung can't read a `private` row back.
+   */
+  const jsonapiLeaf = (access: LeafAccess = ownedAccess({ draft: false })) => {
     const chain = makeInMemoryChainStore();
     const leaves = makeInMemoryLeafStore(chain, { columns: ["title", "visibility"], now: NOW });
     let viewer: Viewer = as(member);
     const ops = defineSubtype({
       type: "posts",
-      access: ownedAccess({ draft: false }),
+      access,
       chain,
       leaves,
       viewer: Effect.sync(() => viewer),
@@ -3385,6 +3416,7 @@ describe("subtypeResourceHandlers — effect-jsonapi's ResourceHandlers (pulpit#
       }),
     });
     const handlers = subtypeResourceHandlers(record, {
+      type: "posts",
       segment: "posts",
       listQuery,
       linkBase: Effect.succeed("https://example.test"),
@@ -3398,7 +3430,10 @@ describe("subtypeResourceHandlers — effect-jsonapi's ResourceHandlers (pulpit#
         id: Option.none(),
         state: { title: payload.title, visibility: payload.visibility },
       }),
-      updateInput: ({ id, title }: typeof UpdatePost.Type) => ({ id, patch: { title } }),
+      updateInput: ({ id, title, visibility }: typeof UpdatePost.Type) => ({
+        id,
+        patch: { title, visibility },
+      }),
     });
     const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
       Effect.suspend(() => {
@@ -3414,12 +3449,12 @@ describe("subtypeResourceHandlers — effect-jsonapi's ResourceHandlers (pulpit#
       handlers.create({ payload: { title: "Hello", visibility: "public" } }),
     );
     const id = created.data.id;
-    expect(created.data.attributes).toEqual({ title: "Hello", visibility: "public" });
+    expect(created.data).toHaveProperty("attributes", { title: "Hello", visibility: "public" });
     expect(MutableHashMap.get(cached, id)).toEqual(
       Option.some({ type: "posts", id, attributes: { title: "Hello", visibility: "public" } }),
     );
     const updated = await run(handlers.update({ params: { id }, payload: { id, title: "Again" } }));
-    expect(updated.data.attributes.title).toBe("Again");
+    expect(updated.data).toHaveProperty("attributes.title", "Again");
     expect((await run(handlers.get({ params: { id } }))).data.attributes.title).toBe("Again");
     const list = await run(handlers.list({ query: { offset: 0, limit: 10 } }));
     expect([list.data.map((post) => post.id), list.meta.totalCount]).toEqual([[id], 1]);
@@ -3438,6 +3473,45 @@ describe("subtypeResourceHandlers — effect-jsonapi's ResourceHandlers (pulpit#
       await tagOf(handlers.update({ params: { id }, payload: { id: "other", title: "x" } })),
     ).toEqual(Option.some("Conflict"));
     expect((await run(handlers.get({ params: { id } }))).data.attributes.title).toBe("Hello");
+  });
+
+  it("answers a write hidden from its writer with the committed identifier, not a 404, and evicts (pulpit#107)", async () => {
+    const { handlers, cached, actAs } = jsonapiLeaf({ kind: "reference" });
+    // A corpus writer below the view-private rung creating a private row:
+    // the create committed, so it answers the row's identifier and version.
+    const created = await run(
+      actAs(
+        as(contributor),
+        handlers.create({ payload: { title: "Draft", visibility: "private" } }),
+      ),
+    );
+    expect(created.data).toEqual({ type: "posts", id: created.data.id, meta: { version: "0" } });
+    expect(MutableHashMap.has(cached, created.data.id)).toBe(false);
+    // The same writer flipping a cached public row private: the stale public
+    // resource is evicted, and the update answers the committed version.
+    const shown = await run(
+      actAs(
+        as(contributor),
+        handlers.create({ payload: { title: "Quercus", visibility: "public" } }),
+      ),
+    );
+    const id = shown.data.id;
+    expect(MutableHashMap.has(cached, id)).toBe(true);
+    const hidden = await run(
+      actAs(
+        as(contributor),
+        handlers.update({ params: { id }, payload: { id, visibility: "private" } }),
+      ),
+    );
+    expect(hidden).toEqual({
+      data: { type: "posts", id, meta: { version: "1" } },
+      jsonapi: { version: "1.1" },
+    });
+    expect(MutableHashMap.has(cached, id)).toBe(false);
+    // A reader who still can read it gets the full resource from `get`.
+    expect((await run(actAs(as(admin), handlers.get({ params: { id } })))).data.attributes).toEqual(
+      { title: "Quercus", visibility: "private" },
+    );
   });
 
   it("keeps the read rule (SEC-AUTH-ENUM-001): a hidden row is NodeNotFound and left out of the page and its total", async () => {
@@ -3692,7 +3766,7 @@ describe("the resource cache's compare-on-set (pulpit#121)", () => {
     expect(outcome.rollback).toBe("rolled back");
     expect(outcome.afterRollback).toEqual([Option.none(), Option.some(1n)]);
     expect([outcome.nestedCreate, outcome.nested]).toEqual(["rolled back", Option.none()]);
-    expect(cache.get(outcome.next.id)).toEqual(Option.some(outcome.next));
+    expect(cache.get(outcome.next.id)).toEqual(outcome.next.resource);
   });
 
   it("a delete nested in an outer transaction evicts as any delete does (pulpit#124)", async () => {
@@ -3736,7 +3810,7 @@ describe("the resource cache's compare-on-set (pulpit#121)", () => {
           id: Option.none(),
           state: { title: "v0", visibility: "public" },
         });
-        expect(cache.get(created.id)).toEqual(Option.some(created));
+        expect(cache.get(created.id)).toEqual(created.resource);
         const writerA = yield* Effect.forkChild(
           held.update({ id: created.id, patch: { title: "v1" } }),
         );
