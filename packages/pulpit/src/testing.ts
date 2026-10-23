@@ -618,7 +618,7 @@ const byCreation = Order.combine(
  * `EdgeStore`) over one edge family's rows. It enforces what an edge table's
  * schema enforces, the family's unique key (with `NULLS NOT DISTINCT`, as
  * gardeneria's `page_slugs_unique_variant`), and nothing the operations are
- * responsible for. `list` and `countAt` join each end's view the way the SQL
+ * responsible for. `list`, `countAt` and `members` join each end's view the way the SQL
  * store's INNER JOIN does: under the end's alias, dropping an edge whose end
  * has no row. `list` orders by `createdAt` then `id` and reports the unpaged
  * total as the SQL store's window column does (`0` for an empty page).
@@ -719,6 +719,21 @@ export const makeInMemoryEdgeStore = (options: InMemoryEdgeStoreOptions): InMemo
         stored = stored.filter((row) => row.id !== id);
         return stored.length < before;
       }),
+    // The SQL store's subquery, computed eagerly over the list's joins: the
+    // member end's ids of the edges whose other end is named and that
+    // satisfy `where`. A non-string member id is never in the set.
+    members: ({ column, otherColumn, ids, where }) =>
+      Effect.map(matching(where), (rows) =>
+        HashSet.fromIterable(
+          Arr.flatMap(rows, (row) => {
+            const member = row[column];
+            const other = row[otherColumn];
+            return Predicate.isString(member) && Predicate.isString(other) && ids.includes(other)
+              ? [member]
+              : [];
+          }),
+        ),
+      ),
     rows: () => stored,
     raceNextInsert: (winner) => {
       race = Option.some(winner);

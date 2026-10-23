@@ -168,7 +168,7 @@ The kernel's read predicates as data: a store renders a `ListFilter` to SQL, and
 | --- | --- |
 | `ListFilter<Following>` | The predicate tree. `Following` is whatever the follower seam hands the `in` node: a subquery for SQL, a set in memory. |
 | `always`, `never` | No predicate; a predicate no row satisfies (fail closed). |
-| `eq`, `ne`, `isIn` | `col = v`, `col <> v`, `col IN (following)`. |
+| `eq`, `ne`, `isIn` | `col = v`, `col <> v`, `col IN (<seam subquery>)`: the follower seam's followed accounts, or an edge family's members (`EdgeOps.memberFilter`). |
 | `gt`, `gte`, `lt`, `lte`, `Comparable` | `col > v`, `col >= v`, `col < v`, `col <= v`, over a `Comparable` (`string`, `number` or `Date`). |
 | `anyOf`, `noneOf`, `MAX_SET_VALUES` | `col = ANY(values)`, `col <> ALL(values)` over a literal set of `Scalar`s; an empty `anyOf` is `never`, an empty `noneOf` is `always`, and a set of more than `MAX_SET_VALUES` (1000) values, duplicates counted, is `never` (`SEC-INPUT-003`). |
 | `isNull` | `col IS NULL`: the one node a `NULL` column satisfies on its own, so `or(isNull(col), noneOf(col, values))` is an exclusion that keeps an unset column. |
@@ -183,7 +183,7 @@ A SQL renderer must honour this contract:
 | `always` | no predicate (`undefined` to Drizzle's `.where`) |
 | `never` | a predicate no row satisfies |
 | `eq` / `ne` | `col = $v` / `col <> $v`: a `NULL` column satisfies neither, so `evaluate` drops a row whose column is `null` or absent from both |
-| `in` | `col IN (<following subquery>)`: a subquery, never a materialised array. A `NULL` column satisfies none, so `evaluate` drops a row whose column is `null` or absent without asking `context.contains` |
+| `in` | `col IN (<seam subquery>)`: the subquery a seam hands over (the follower seam's `following`, or `EdgeStore.members`), never a materialised array. A `NULL` column satisfies none, so `evaluate` drops a row whose column is `null` or absent without asking `context.contains` |
 | `gt` / `gte` / `lt` / `lte` | `col > $v` / `col >= $v` / `col < $v` / `col <= $v`. A string compares with `COLLATE "C"` (code-point order; `evaluate` does not use JavaScript's UTF-16 `<`), a `Date` as a timestamp, a number numerically, `Infinity` and `-Infinity` each equal to itself. A `NULL` column satisfies none |
 | `anyOf` | `col = ANY($values)`: a bound array, each value tested as `eq` tests it. A `NULL` column satisfies none. The array never holds a `NULL` element |
 | `noneOf` | `col <> ALL($values)`, each value tested as `ne` tests it. A `NULL` column satisfies none (`NULL <> ALL(…)` is `NULL`), so `noneOf` is not the complement of `anyOf` over a nullable column. Over no values it is true for every row, `NULL` included, which the constructor folds to `always`. The array never holds a `NULL` element: `2 <> ALL('{1,NULL}')` is `NULL`, so one would drop every row |
@@ -338,6 +338,7 @@ The document type is a parameter: its schema and validation are the application'
 - `get`: one edge by id.
 - `create`: asserts the edge. On a collision with a stored edge on the family's unique key, `onConflict: "ignore"` returns the stored edge's id with `created: false` when the caller can read that edge and its every end is live (a re-assertion is idempotent, and never rewrites the stored qualifiers); `"fail"`, the default, fails `EdgeConflict`, and so does `"ignore"` when the stored edge is hidden from the caller or has a tombstoned end (the view-deleted rung reads such an edge but can't link to a tombstone, so it can't resolve to one either).
 - `delete`: a hard `DELETE`. There is no update: correcting an edge is deleting it and asserting the right one.
+- `memberFilter(end, otherIds)`: edge membership as a list filter for the leaf at `end` ([#113](https://github.com/thomasfosterau/pulpit/issues/113)). It is `id IN (<the end's node ids of the edges whose other end is one of otherIds>)`, so `memberFilter("post", termIds)` passed to the posts' `list` as `where` answers `?categories=1,2`. It counts only edges the viewer can read (`EDGE-001`, the same `endpointFilter` as `list`), so a hidden term, a hidden post or a tombstoned end below the view-deleted rung never makes a row a member. No ids, more than `MAX_SET_VALUES` (`SEC-INPUT-003`), an `end` the family doesn't declare, or a family without exactly two ends all give `never` without reading the store.
 
 Writes gate on the declaration's `writeGate`. The default, `corpusWriteGate`, is the corpus-write rung, right for an edge between two reference leaves. `rungGate((policy) => policy.canModerate)` puts a family on another rung. An owned-child edge (gardeneria's observation → disorder) passes a gate that reads its owned end's owner, typically `requireWriter` from `./subtype`.
 
@@ -858,6 +859,7 @@ Method contract:
 - `existing(values)` is the id of the stored edge whose unique-key columns match `values` (`IS NOT DISTINCT FROM`), `LIMIT 1`; always none for a family without a unique key.
 - `insert(values)` is `INSERT … ON CONFLICT DO NOTHING RETURNING id`: the new id, or none when the key was taken (a racing writer, which the create then resolves through `existing`).
 - `delete(id)` is `DELETE … WHERE id = $id RETURNING id`: whether a row went.
+- `members({ column, otherColumn, ids, where })` returns, as the `Following` the list filter's `in` node takes, the subquery `SELECT e.<column> FROM <edge> e` over the same INNER JOINs as `list`, `WHERE e.<otherColumn> = ANY($ids) AND <where>` (rendered as `list` renders it). In SQL it builds the subquery and reads nothing (a Drizzle `SQLWrapper`, the same type the follower seam's `following` returns, so the edge store and the leaf store share one `Following`). The in-memory fake computes the id set through its own list path. `memberFilter` passes the viewer's `EDGE-001` filter and the named ids, and never calls it with no ids or more than `MAX_SET_VALUES`.
 
 `E` and `R` are as for the chain store, and the store never opens a transaction itself. Each end's `EndpointView` is the endpoint leaf's own `LeafStore` (its `columns` and `get`).
 
