@@ -22,6 +22,7 @@ interface OwnedColumns {
   readonly ownerColumn: string;
   readonly visibilityColumn: string;
   readonly draftColumn: Option.Option<string>;
+  readonly moderationColumn: Option.Option<string>;
 }
 
 /**
@@ -33,6 +34,8 @@ interface OwnedRowFacts {
   readonly ownerId: Option.Option<string>;
   readonly visibility: Visibility;
   readonly draft: boolean;
+  /** Under review or rejected: a moderated row whose state is not exactly `approved` (pulpit#154). */
+  readonly unapproved: boolean;
 }
 
 /** The parts of `./subtype`'s viewer, policy and follower seam the predicate reads, structurally. */
@@ -50,7 +53,7 @@ const isVisibility = Schema.is(Visibility);
 
 /**
  * Whether the view carries every column an owned leaf declares (owner,
- * visibility and, when declared, draft). An owned leaf whose view lacks one
+ * visibility and, when declared, draft and moderation state). An owned leaf whose view lacks one
  * reads no row: `ownedListFilter` lists nothing, and `defineSubtype`'s
  * `get` / `getMany` and `./edges`' `canViewEndpoint` show nothing. Fail
  * closed (`SEC-AUTH-ENUM-001`). Never throws.
@@ -58,9 +61,12 @@ const isVisibility = Schema.is(Visibility);
  * @internal
  */
 export const declaresColumns = (access: OwnedColumns, viewColumns: ReadonlySet<string>): boolean =>
-  [access.ownerColumn, access.visibilityColumn, ...Option.toArray(access.draftColumn)].every(
-    (column) => viewColumns.has(column),
-  );
+  [
+    access.ownerColumn,
+    access.visibilityColumn,
+    ...Option.toArray(access.draftColumn),
+    ...Option.toArray(access.moderationColumn),
+  ].every((column) => viewColumns.has(column));
 
 /**
  * Read an owned row's facts for `canViewOwned`, in `defineSubtype`'s
@@ -71,7 +77,10 @@ export const declaresColumns = (access: OwnedColumns, viewColumns: ReadonlySet<s
  * `public`; a draft column holding anything but an explicit `false` (a
  * `NULL`, an absent key, a value outside the type) reads as a draft, since
  * its `eq(draft, false)` arms list only `false`. A leaf without the draft
- * axis reads `draft: false`. An owner column holding anything but a string
+ * axis reads `draft: false`. A moderation column holding anything but
+ * exactly `"approved"` reads as unapproved, since the filter's
+ * `eq(moderation, "approved")` arms list only `approved`; a leaf without the
+ * axis reads `unapproved: false`. An owner column holding anything but a string
  * (a `NULL`, an absent key, a value outside the type) reads as no owner,
  * never as its `String` form (pulpit#85; see pulpit#75): its `eq(owner, …)`
  * and `in(owner, following)` arms match no `NULL`. Callers check
@@ -92,6 +101,10 @@ export const ownedFacts = (
     onNone: () => false,
     onSome: (column) => row[column] !== false,
   }),
+  unapproved: Option.match(access.moderationColumn, {
+    onNone: () => false,
+    onSome: (column) => row[column] !== "approved",
+  }),
 });
 
 /**
@@ -100,7 +113,7 @@ export const ownedFacts = (
  * `get` / `getMany` and `./edges`' `canViewEndpoint` call it directly. A
  * row with no owner skips the owner arm and the follower check, so no
  * viewer's id matches it and the follower seam is never asked about it:
- * it is visible only when it is `public` and not a draft, or to the
+ * it is visible only when it is `public`, not a draft and not unapproved, or to the
  * view-private rung, as `ownedListFilter` lists it (`SEC-AUTH-ENUM-001`).
  * Never fails.
  *
@@ -112,13 +125,13 @@ export const canViewOwnedRow = <A extends Account, R>(
   followers: IsFollower<R>,
   row: OwnedRowFacts,
 ): Effect.Effect<boolean, never, R> => {
-  if (!row.draft && row.visibility === "public") return Effect.succeed(true);
+  if (!row.draft && !row.unapproved && row.visibility === "public") return Effect.succeed(true);
   if (Option.isNone(viewer)) return Effect.succeed(false);
   const account = viewer.value;
   if (Option.contains(row.ownerId, account.id)) return Effect.succeed(true);
   if (policy.canViewPrivate(account)) return Effect.succeed(true);
-  // Not the owner, not privileged: a draft is hidden whatever its visibility.
-  if (row.draft) return Effect.succeed(false);
+  // Not the owner, not privileged: a draft, or a row not approved, is hidden whatever its visibility.
+  if (row.draft || row.unapproved) return Effect.succeed(false);
   if (row.visibility === "private") return Effect.succeed(false);
   return Option.match(row.ownerId, {
     onNone: () => Effect.succeed(false),

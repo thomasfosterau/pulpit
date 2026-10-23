@@ -737,6 +737,10 @@ export type _SubtypeCompareParameters = Assert<
 // optional `Option`.
 export const curatedTerms: LeafAccess = { kind: "reference", followersOfColumn: "curatorId" };
 export const bareTerms: LeafAccess = { kind: "reference" };
+// The moderated owned leaf (pulpit#154): the column is an `Option`, as the draft column is.
+export const moderatedComments: Option.Option<string> = ownedAccess({
+  moderation: true,
+}).moderationColumn;
 // A caller forwarding its own `undefined` (`exactOptionalPropertyTypes`).
 export const forwardedTerms: LeafAccess = { kind: "reference", followersOfColumn: undefined };
 const closedPolicy = {
