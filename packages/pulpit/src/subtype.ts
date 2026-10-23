@@ -2174,7 +2174,10 @@ export interface SubtypeHandlers<Resource, E, R> {
   /**
    * On a publish-gated leaf, its publication operations, each run in
    * `transact` and followed by the after hooks (`publish` / `unpublish`,
-   * or `restoreVersion` for `discardDraft`) and the cache refresh.
+   * or `restoreVersion` for `discardDraft`) and the cache refresh. Their
+   * cache stamps are the node's head, so two of them on one node compare
+   * equal: the application runs them one at a time per node, the whole
+   * call under one lock (README → Seams → the live pointer, pulpit#164).
    */
   readonly publication: Option.Option<PublicationOps<E, R>>;
 }
