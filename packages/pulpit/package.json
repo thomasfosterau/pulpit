@@ -48,6 +48,7 @@
     "./moderation": "./src/moderation.ts",
     "./working-copy": "./src/working-copy.ts",
     "./comments": "./src/comments.ts",
+    "./purge": "./src/purge.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -111,6 +112,10 @@
       "./comments": {
         "types": "./dist/comments.d.ts",
         "default": "./dist/comments.js"
+      },
+      "./purge": {
+        "types": "./dist/purge.d.ts",
+        "default": "./dist/purge.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",

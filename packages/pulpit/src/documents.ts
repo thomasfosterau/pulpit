@@ -18,7 +18,8 @@
  *   document only when its hash is unseen and otherwise writes nothing; a
  *   changed document is a new hash. So a hash a version row recorded always
  *   reads back the exact document it was written with, and `restoreVersion`
- *   restores the reference, never a copy.
+ *   restores the reference, never a copy. Only erasure (`./purge`) deletes a
+ *   document, once no version of any node references its hash.
  *
  * ## The seam
  *

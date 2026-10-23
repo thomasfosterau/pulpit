@@ -1,6 +1,6 @@
 /**
  * **In-memory fakes of the kernel's seams** — a store for each of the
- * version-chain, leaf, document, edge, proposal, path, report and publication seams, an endpoint view, a
+ * version-chain, leaf, document, edge, proposal, path, report, publication and purge seams, an endpoint view, a
  * follower seam and a resource cache, all held in memory with no SQL. They are the reference semantics of
  * each seam's contract in the package README → Seams, and the fakes the
  * kernel's own suites run against; an adapter's or an application's tests can
@@ -69,6 +69,7 @@ import {
 } from "./edges.ts";
 import { evaluate, type EvaluationContext, type FilterRow, type ListFilter } from "./filter.ts";
 import { rowOrder } from "./internal/list-order.ts";
+import type { ErasedReferences, PurgeStore } from "./purge.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
 import type { ReportRow, ReportStore } from "./moderation.ts";
 import type { ProposalListing, ProposalRow, ProposalStore } from "./proposals.ts";
@@ -175,6 +176,12 @@ export interface InMemoryChainStore extends VersionChainStore<never, never> {
   readonly dropState: (id: string, version: bigint) => void;
   /** Simulate a concurrent writer: the next append for `id` finds its version taken. */
   readonly raceNextAppend: (id: string) => void;
+  /**
+   * Hard-delete every row of `id` and return them: what
+   * {@link makeInMemoryPurgeStore} erases a node through, and nothing else
+   * may call (`VERSION-CHAIN-001/002`).
+   */
+  readonly erase: (id: string) => ReadonlyArray<VersionRow>;
 }
 
 /**
@@ -242,6 +249,11 @@ export const makeInMemoryChainStore = (): InMemoryChainStore => {
     },
     raceNextAppend: (id) => {
       raced = HashSet.add(raced, id);
+    },
+    erase: (id) => {
+      const erased = chain(id);
+      log = log.filter((row) => row.id !== id);
+      return erased;
     },
   };
 };
@@ -474,6 +486,12 @@ export interface InMemoryDocumentStore<Document extends Schema.Json> extends Doc
    * write in {@link InMemoryDocumentStore.stored}.
    */
   readonly writes: () => number;
+  /**
+   * Delete the documents at `hashes`: what {@link makeInMemoryPurgeStore}
+   * deletes an unreferenced document through, and nothing else may call
+   * (`DOC-001`).
+   */
+  readonly remove: (hashes: ReadonlyArray<DocumentHash>) => void;
 }
 
 /**
@@ -510,6 +528,9 @@ export const makeInMemoryDocumentStore = <
       Effect.sync(() => HashMap.filter(documents, (_document, hash) => hashes.includes(hash))),
     stored: () => documents,
     writes: () => writes,
+    remove: (hashes) => {
+      documents = HashMap.filter(documents, (_document, hash) => !hashes.includes(hash));
+    },
   };
 };
 
@@ -1143,5 +1164,94 @@ export const makeInMemoryWorkingCopyStore = (): InMemoryWorkingCopyStore => {
         copies = HashMap.remove(copies, keyOf(key));
       }),
     copies: () => copies,
+  };
+};
+
+// ── Purge ─────────────────────────────────────────────────────────────
+
+/**
+ * Options for {@link makeInMemoryPurgeStore}.
+ *
+ * @since 0.1.0
+ */
+export interface InMemoryPurgeStoreOptions {
+  /**
+   * Every chain whose version rows may reference a document or bytes: the
+   * purged node's rows are erased from each, and a hash is unreferenced when
+   * no row left in any of them carries it.
+   */
+  readonly chains: ReadonlyArray<InMemoryChainStore>;
+  /** The documents an unreferenced hash is deleted from; omitted, none is deleted (or reported). */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no document store"
+  readonly documents?: Pick<InMemoryDocumentStore<Schema.Json>, "remove"> | undefined;
+  /** The state columns that carry a `DocumentHash`; omitted, none do. */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no document columns"
+  readonly documentColumns?: ReadonlyArray<string> | undefined;
+  /** The state columns that carry a `ContentHash` (a file leaf's `contentHash`); omitted, none do. */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no content columns"
+  readonly blobColumns?: ReadonlyArray<string> | undefined;
+  /**
+   * What else `eraseNode` deletes for the node: the rows other fakes keep
+   * for it (an owner stamp through `InMemoryLeafStore.dropOwner`, working
+   * copies, edges, …), as a real store's `ON DELETE CASCADE` would.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "nothing else"
+  readonly dependents?: ReadonlyArray<(id: string) => void> | undefined;
+}
+
+/** The string values `columns` hold across `rows`, each once. */
+const hashesIn = (
+  rows: ReadonlyArray<VersionRow>,
+  columns: ReadonlyArray<string>,
+): ReadonlyArray<string> =>
+  Arr.dedupe(
+    Arr.flatMap(rows, (row) =>
+      Arr.flatMap(columns, (column) => {
+        const value = row.state[column];
+        return Predicate.isString(value) ? [value] : [];
+      }),
+    ),
+  );
+
+/**
+ * An in-memory {@link PurgeStore} over in-memory chains and a document
+ * store: the seam's contract (README → Seams → `PurgeStore`). `eraseNode`
+ * erases the node's rows from every chain and runs the `dependents`;
+ * a hash is referenced while any row left in any chain carries it in a
+ * declared column. In memory only; not for production.
+ *
+ * @since 0.1.0
+ */
+export const makeInMemoryPurgeStore = (
+  options: InMemoryPurgeStoreOptions,
+): PurgeStore<never, never> => {
+  const documentColumns = options.documentColumns ?? [];
+  const blobColumns = options.blobColumns ?? [];
+  const remaining = () => Arr.flatMap(options.chains, (chain) => chain.rows());
+  const unreferenced = <A extends string>(
+    hashes: ReadonlyArray<A>,
+    columns: ReadonlyArray<string>,
+  ) => {
+    const referenced = hashesIn(remaining(), columns);
+    return hashes.filter((hash) => !referenced.includes(hash));
+  };
+  return {
+    eraseNode: (id) =>
+      Effect.sync((): ErasedReferences => {
+        const erased = Arr.flatMap(options.chains, (chain) => chain.erase(id));
+        Arr.forEach(options.dependents ?? [], (dependent) => dependent(id));
+        return {
+          documents: hashesIn(erased, documentColumns),
+          blobs: hashesIn(erased, blobColumns),
+        };
+      }),
+    deleteUnreferencedDocuments: (hashes) =>
+      Effect.sync(() => {
+        if (options.documents === undefined) return [];
+        const deleted = unreferenced(hashes, documentColumns);
+        options.documents.remove(deleted);
+        return deleted;
+      }),
+    unreferencedBlobs: (hashes) => Effect.sync(() => unreferenced(hashes, blobColumns)),
   };
 };

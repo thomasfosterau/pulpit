@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`, `Comments`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`). |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`) and `validateRegistry`. |
 | `./version-chain` | The append-only node/version chain operations over a `VersionChainStore` seam, and the field-level version compare (`diffStates`, `compare`). |
@@ -33,7 +33,8 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./moderation` | The moderation workflow: the transition rules as a before hook, the decision, the review-queue filter, threshold grading and member reports over a `ReportStore` seam. |
 | `./working-copy` | An editor's autosave buffer outside the version chain (`WorkingCopyStore`), committed as one ordinary version (`defineWorkingCopy`). |
 | `./comments` | The comments family: threaded comments on any node as versioned owned leaves (`defineComments`), behind the target's read gate and the moderation gate, with a configurable reply depth. |
-| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication and working-copy stores, an endpoint view, a follower seam), for tests only. Not on the root export. |
+| `./purge` | Erasure (`definePurge` over a `PurgeStore` seam): the one destructive path, which hard-deletes a node's chain and the rows kept for it, then the documents and bytes no other version references. |
+| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy and purge stores, an endpoint view, a follower seam), for tests only. Not on the root export. |
 
 The operations are written against seams that the application fills; their expected shapes are in [Seams](#seams).
 
@@ -674,6 +675,38 @@ const comments = defineComments({
 | `canViewModerated`, `moderationListFilter`, `ModeratedColumns` | The moderation gate as a row predicate and as a list filter, and the columns it reads. |
 | `CommentDepthExceeded`, `CommentDeclarationError` | A reply past `maxDepth` (422); a malformed `maxDepth`, thrown at declaration. |
 
+## `./purge`
+
+Erasure (pulpit#58). A tombstone hides a node and keeps every version of its content. Where that content is personal data that must be erased rather than hidden, `purge` hard-deletes it. It is the one sanctioned exception to the append-only chain (`VERSION-CHAIN-001/002`) and to `DOC-001`.
+
+```ts
+import { definePurge } from "@thomasfosterau/pulpit/purge";
+
+const posts = definePurge({
+  type: "posts",
+  chain,
+  store: purgeStore, // the application's erasure (see Seams)
+  viewer,
+  canPurge: (account) => account.role === "admin",
+  transact,
+  blobs: r2, // optional: where unreferenced bytes are deleted from
+  cache, // optional: evicted past the purged head
+});
+// posts.purge(id) → { id, documents, blobs, bytesLeft }
+```
+
+- **The whole chain goes.** Every version row on every level, a live node's or a tombstone's, with the node's identity and owner rows. So do the rows the other seams keep for it: working copies, proposals, publication facts, path claims and aliases, reports, and every edge with the node at an end. A purged id is `NodeNotFound`, and so is its history.
+- **Shared content survives.** Documents and bytes are shared by hash. A purge drops the node's references, and deletes a document or bytes only when no version of any other node still references the hash.
+- **Bytes go after the commit.** The erasure and the document deletes run inside `transact`. The bytes are deleted once it has returned, as `./blobs` writes them. A failed delete is logged and listed in the report's `bytesLeft` rather than failing a purge that has committed. Without a `blobs` store every unreferenced content hash is listed there. A file written with the same bytes between the commit and the delete loses them, so a deployment that can race that way confirms its `bytesLeft` and pending files after a purge.
+- **A dedicated rung.** `canPurge` is checked before anything is read, so a caller below it gets `Unauthorized` or `Forbidden` for every id alike. Erasure is one step: a live node purges as a tombstoned one does.
+- **The writes bypass `subtypeHandlers`** and the leaf's lifecycle hooks. Pass the leaf's `cache` so no cached copy outlives the erasure (`CACHE-AUTH-005`).
+
+| Export | What it is |
+| --- | --- |
+| `definePurge(definition)`, `PurgeDefinition`, `PurgeOps` | The operation (`purge`) and what it binds. |
+| `PurgeStore`, `ErasedReferences` | The erasure seam (see [Seams](#seams)) and the hashes an erased node referenced. |
+| `PurgeReport` | What a purge did: the documents and bytes deleted, and the bytes left behind. |
+
 ## `./testing`
 
 In-memory fakes of the kernel's seams, for tests: an adapter's or an application's suite can run the real operations (`defineVersionChain`, `defineSubtype`, `defineEdgeOps`, …) over them without a database. Each fake implements its seam's contract as stated under [Seams](#seams), in memory and with no SQL, and enforces what the real table's schema enforces (a primary or unique key) and nothing the operations are responsible for. They are the fakes the kernel's own suites run against, so they are its reference semantics for each seam.
@@ -717,9 +750,9 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 
 | Export | Fakes | Test hooks |
 | --- | --- | --- |
-| `makeInMemoryChainStore()`, `InMemoryChainStore` | [`VersionChainStore`](#versionchainstoree-r-the-version-chain-persistence), with the `(id, version)` key (`VersionConflict`) and sequential UUID-shaped `mintId`s. | `rows()` (every appended row), `dropState(id, version)` (a partial chain), `raceNextAppend(id)` (a concurrent writer). |
+| `makeInMemoryChainStore()`, `InMemoryChainStore` | [`VersionChainStore`](#versionchainstoree-r-the-version-chain-persistence), with the `(id, version)` key (`VersionConflict`) and sequential UUID-shaped `mintId`s. | `rows()` (every appended row), `dropState(id, version)` (a partial chain), `raceNextAppend(id)` (a concurrent writer), `erase(id)` (the purge fake's hard delete). |
 | `makeInMemoryLeafStore(chain, { columns, now? })`, `InMemoryLeafStore`, `InMemoryLeafStoreOptions` | [`LeafStore`](#leafstorerow-following-e-r-the-current-version-view), as the current-version view over an in-memory chain plus the owner stamps; `list` evaluates the `ListFilter` in memory and sorts by the list order contract (`NULLS LAST`, code-point strings, `id` last). | `owners()` (the stamps), `dropOwner(id)` (an ownerless owned node). |
-| `makeInMemoryDocumentStore()`, `InMemoryDocumentStore` | [`DocumentStore`](#documentstoredocument-e-r-the-content-addressed-document-store), hashing exactly as the hash contract says (SHA-256 over `./documents`' `canonicalText`, pinned to hashes taken from Postgres). | `stored()` (every document by hash), `writes()` (how many `put`s inserted). |
+| `makeInMemoryDocumentStore()`, `InMemoryDocumentStore` | [`DocumentStore`](#documentstoredocument-e-r-the-content-addressed-document-store), hashing exactly as the hash contract says (SHA-256 over `./documents`' `canonicalText`, pinned to hashes taken from Postgres). | `stored()` (every document by hash), `writes()` (how many `put`s inserted), `remove(hashes)` (the purge fake's delete). |
 | `makeInMemoryEdgeStore({ ends, uniqueKey, now? })`, `InMemoryEdgeStore`, `InMemoryEdgeStoreOptions` | [`EdgeStore`](#edgestorerow-following-e-r-the-edge-table), with the unique key (`NULLS NOT DISTINCT`), the INNER JOIN of each end's view, and the window-column total. | `rows()` (every edge, hidden ones included), `raceNextInsert(winner)` (a concurrent writer). |
 | `makeInMemoryNodes(columns)`, `InMemoryNodes` | `EndpointView`, an end's view whose rows a test writes directly (an `InMemoryLeafStore` is one too). | `put(row)`. |
 | `makeInMemoryProposalStore({ chain, leaves })`, `InMemoryProposalStore` | [`ProposalStore`](#proposalstoree-r-the-proposal-table), reading each listing's head version from `chain` and its `targetOwnerId` from `leaves`' owner stamps; newest first, `id` descending on a tie. | `rows()` (every proposal as it now stands). |
@@ -729,6 +762,7 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | `makeInMemoryResourceCache(serveable)`, `InMemoryResourceCache` | [`ResourceCacheSeam`](#resourcecacheseam-and-the-serveable-hook-the-resource-cache), with compare-on-set: a `set` below the highest version held for an id is a no-op, and a `delete` raises it. | `get(id)` (what it would serve), `versionOf(id)` (the version held, set or evicted). |
 | `makeInMemoryPublication({ chain, leaves, now? })`, `InMemoryPublication` | [`PublicationStore`](#publicationstoree-r-and-liveviewrow-following-e-r-the-live-pointer) and `LiveView` over an in-memory chain and leaf store, plus the gated leaf's current-version view with `draft` computed from the log. | `recorded()` (every fact). |
 | `makeInMemoryWorkingCopyStore()`, `InMemoryWorkingCopyStore` | [`WorkingCopyStore`](#workingcopystoree-r-the-autosave-buffer), one copy per `(id, userId)`. | `copies()`. |
+| `makeInMemoryPurgeStore({ chains, documents?, documentColumns?, blobColumns?, dependents? })`, `InMemoryPurgeStoreOptions` | [`PurgeStore`](#purgestoree-r-erasure), erasing a node's rows from every chain (and, through `dependents`, from other fakes) and reading a hash as referenced while any remaining row carries it in a declared column. |  |
 | `makeInMemoryFollowers(table)`, `InMemoryFollowing` | [`FollowerSeam`](#the-viewer-the-role-axes-and-the-follower-seam) over an explicit table of who follows whom; the `in` set is a `HashSet` of account ids, where SQL's is a subquery. |  |
 
 `now` is the instant the list filter's `published` / `notPublished` compare against (and, for the edge store, the base of the minted `createdAt`s). Pass a fixed `Date` for a deterministic suite; left out, each call reads the Effect `Clock`, so `TestClock` steers it. The role ladder and the `AccessPolicy` are the application's, so `./testing` ships none.
@@ -890,6 +924,16 @@ Filled by the application: a table keyed `(node_id, user_id)` holding the patch 
 - `discard` deletes it, idempotently.
 
 It is the one overwritable store in the kernel's seams, and nothing in it is ever a version.
+
+### `PurgeStore<E, R>`: erasure
+
+Filled by the application, over the same tables as its other stores. Like them it applies no policy, runs in the caller's transaction and never opens one. `definePurge` calls its three methods in order:
+
+- `eraseNode(id)` deletes every row of the node: each chain level's version rows, the root version rows and the identity row (`core.node`), the owner row, and every row keyed to the node in the other seams' tables (working copies, proposals, publication facts, path claims and aliases, reports, and edges with the node at either end). An `ON DELETE CASCADE` from the identity row does most of it. It returns the `DocumentHash`es and `ContentHash`es the deleted version rows carried, each once (`DELETE … RETURNING` over the columns that carry them). An id with no rows deletes nothing and returns none.
+- `deleteUnreferencedDocuments(hashes)` deletes each of `hashes` that no remaining version row of any leaf references, and returns those it deleted: `DELETE FROM documents WHERE hash = ANY($1) AND NOT EXISTS (…)` over every column that carries a document reference.
+- `unreferencedBlobs(hashes)` returns those of `hashes` that no remaining version row references, for `definePurge` to delete from the `BlobStore` once the transaction has returned.
+
+Erasure is the only path that deletes a version row, a document or bytes (`VERSION-CHAIN-001/002`, `DOC-001`): nothing else may call these methods' SQL.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 

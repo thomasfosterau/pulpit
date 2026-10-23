@@ -17,6 +17,7 @@ import {
   Documents,
   Edges,
   Paths,
+  Purge,
   Moderation,
   Proposals,
   Registry,
@@ -173,6 +174,7 @@ import {
 import type { PublicationFact, PublicationOps, SubtypeOps } from "@thomasfosterau/pulpit/subtype";
 import { defineWorkingCopy } from "@thomasfosterau/pulpit/working-copy";
 import { CommentDepthExceeded, defineComments } from "@thomasfosterau/pulpit/comments";
+import { definePurge, type PurgeOps, type PurgeReport } from "@thomasfosterau/pulpit/purge";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -1029,3 +1031,14 @@ export type _PublicResource = Assert<
 
 export type _CommentsBarrel = Assert<Equals<typeof Comments.defineComments, typeof defineComments>>;
 export type _DepthError = Assert<Equals<CommentDepthExceeded["maxDepth"], number>>;
+
+// ── purge ────────────────────────────────────────────────────────────────
+
+export type _PurgeBarrel = Assert<Equals<typeof Purge.definePurge, typeof definePurge>>;
+export type _PurgeOp = Assert<
+  Equals<
+    ReturnType<PurgeOps<StoreFailure, Transaction>["purge"]>,
+    Effect.Effect<PurgeReport, Unauthorized | Forbidden | NodeNotFound | StoreFailure, Transaction>
+  >
+>;
+export type _PurgeReportBytes = Assert<Equals<PurgeReport["bytesLeft"], ReadonlyArray<string>>>;
