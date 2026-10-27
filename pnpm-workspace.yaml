@@ -50,7 +50,7 @@ catalog:
   # (oxlint 1.83.0) is no longer supported. Read the `components` table in
   # node_modules/@effect/tsgo/dist/effect-tsgo.cjs before bumping any of the
   # three.
-  "@effect/tsgo": 0.55.0
+  "@effect/tsgo": 0.57.0
   "@mpsuesser/oxlint-plugin-effect": ^0.6.0
   # The JSON:API model layer the `./content` and `./registry` subpaths build on.
   "@thomasfosterau/effect-jsonapi": ^0.17.0
@@ -84,7 +84,7 @@ catalog:
   # because the
   # `vitest: "catalog:"` override forces every resolution to the catalog
   # singleton, as must `@vitest/coverage-istanbul` (above).
-  vite-plus: 1.3.0
+  vite-plus: 1.4.0
   vite: npm:@voidzero-dev/vite-plus-core@1.3.0
   vitest: 5.0.5
 
