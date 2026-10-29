@@ -1375,12 +1375,16 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
  *
  * @since 0.1.0
  */
-export interface ListRequest {
+export interface ListRequest<Following = never> {
   readonly limit: number;
   readonly offset: number;
   readonly includeDeleted: boolean;
-  /** The family's own extra predicate (a `?filter[published]=`), or `always`. */
-  readonly where: ListFilter<never>;
+  /**
+   * The family's own extra predicate (a `?filter[published]=`), or `always`.
+   * It may read the follower seam's `Following`, as an edge family's
+   * `memberFilter` does (pulpit#189), when the leaf's `SubtypeOps` carries it.
+   */
+  readonly where: ListFilter<Following>;
   /**
    * The order, its keys in turn, closed by `id` ascending with `NULL`s last
    * in both directions (see {@link ListOrder}); absent, empty or `null` (as
@@ -1463,7 +1467,7 @@ export interface CreateRequest {
  *
  * @since 0.1.0
  */
-export interface SubtypeOps<Resource, E, R> {
+export interface SubtypeOps<Resource, E, R, Following = never> {
   /** The leaf's wire type, as declared. */
   readonly type: string;
   /** The access declaration the operations gate by. */
@@ -1598,7 +1602,9 @@ export interface SubtypeOps<Resource, E, R> {
    * order never changes which rows are listed, nor the total
    * (`SEC-AUTH-ENUM-001`).
    */
-  readonly list: (request: ListRequest) => Effect.Effect<Page<Resource>, InvalidListOrder | E, R>;
+  readonly list: (
+    request: ListRequest<Following>,
+  ) => Effect.Effect<Page<Resource>, InvalidListOrder | E, R>;
   /**
    * Gated like a write (`READ-009`): the history exposes every state,
    * private and deleted included. Fails as `update` does at the gate (on a
@@ -1658,7 +1664,7 @@ export interface SubtypeOps<Resource, E, R> {
  */
 export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   definition: SubtypeDefinition<Row, Resource, Following, E, R>,
-): SubtypeOps<Resource, E, R> => {
+): SubtypeOps<Resource, E, R, Following> => {
   const { type, access, leaves, policy, followers, toResource } = definition;
   const hooks = definition.hooks ?? Effect.succeed(noHooks<Resource, E, R>());
   // The history reads run no hook, so they read through a chain bound without one.
@@ -1966,7 +1972,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
         })
       : never;
 
-  const list = Effect.fn(`${type}.list`)(function* (request: ListRequest) {
+  const list = Effect.fn(`${type}.list`)(function* (request: ListRequest<Following>) {
     const orderBy = yield* checkedOrder(type, isSortable, request.orderBy ?? []);
     const viewer = yield* definition.viewer;
     const where = searchScopeFilter(
@@ -2267,7 +2273,7 @@ export const searchScopeFilter = <Following>(
     readonly followers: FollowerSeam<Following, unknown>;
   },
   viewer: Viewer,
-  request: Pick<ListRequest, "includeDeleted" | "where">,
+  request: Pick<ListRequest<Following>, "includeDeleted" | "where">,
 ): ListFilter<Following> => {
   const { access, columns, policy, followers } = leaf;
   const privacy =

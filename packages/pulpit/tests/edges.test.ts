@@ -2164,3 +2164,90 @@ describe("memberFilter and countBy: membership and counts never disagree with ED
     expect(HashMap.get(one, "t-none")).toEqual(Option.some(0));
   });
 });
+
+describe("memberFilter through the member leaf's own list (pulpit#189)", () => {
+  it.each(viewers)("lists the members %s may read, and only them", async (_, viewer) => {
+    const chain = makeInMemoryChainStore();
+    const leaves = makeInMemoryLeafStore(chain, {
+      columns: ["title", "visibility", "draft"],
+      now: NOW,
+    });
+    let who: Viewer = as(member);
+    const posts = defineSubtype({
+      type: "entries",
+      access: ownedAccess({ draft: true }),
+      chain,
+      leaves,
+      viewer: Effect.sync(() => who),
+      policy: gardeneriaPolicy,
+      followers: follows,
+      toResource: (row: LeafRow) => row.id,
+    });
+    const terms = makeInMemoryNodes(["visibility"]);
+    terms.put(node("t-public", { visibility: "public" }));
+    terms.put(node("t-private", { visibility: "private" }));
+    const links = defineEdgeOps({
+      type: "links",
+      ends: {
+        post: { ...ownedEnd("postId", makeInMemoryNodes([])), nodes: leaves },
+        term: referenceEnd("termId", terms),
+      },
+      edges: makeInMemoryEdgeStore({
+        ends: {
+          post: { ...ownedEnd("postId", makeInMemoryNodes([])), nodes: leaves },
+          term: referenceEnd("termId", terms),
+        },
+        uniqueKey: [],
+        now: NOW,
+      }),
+      viewer: Effect.sync(() => who),
+      policy: gardeneriaPolicy,
+      followers: follows,
+      values: (input: EdgeValues) => input,
+      toResource: (row: EdgeRow) => row,
+      writeGate: () => Effect.void,
+    });
+    const listed = await run(
+      Effect.gen(function* () {
+        const seeded = yield* Effect.forEach(
+          [
+            ["public", false, "t-public"],
+            ["private", false, "t-public"],
+            ["followers", false, "t-public"],
+            ["public", true, "t-public"],
+            ["public", false, "t-public"],
+          ] as const,
+          ([visibility, draft, termId]) =>
+            Effect.gen(function* () {
+              const { id } = yield* posts.create({
+                id: Option.none(),
+                state: { title: "t", visibility, draft },
+              });
+              yield* links.create({ postId: id, termId });
+              return id;
+            }),
+          { concurrency: 1 },
+        );
+        who = viewer;
+        // The member leaf's own list takes the edge family's filter (it type-checks: pulpit#189).
+        const where = yield* links.memberFilter("post", ["t-public", "t-private"]);
+        const page = yield* posts.list({ limit: 100, offset: 0, includeDeleted: false, where });
+        // The per-edge reading: a post is a member when the viewer can read it and an edge to a named term.
+        const readable = yield* Effect.filter(
+          seeded,
+          (id) =>
+            Effect.gen(function* () {
+              const shown = yield* Effect.exit(posts.get(id));
+              const edges = yield* links.list({ limit: 100, offset: 0, where: eq("postId", id) });
+              return Exit.isSuccess(shown) && Arr.isReadonlyArrayNonEmpty(edges.rows);
+            }),
+          { concurrency: 1 },
+        );
+        return [page.rows, readable] as const;
+      }),
+    );
+    const [rows, readable] = listed;
+    expect(Arr.sort(rows, Order.String)).toEqual(Arr.sort(readable, Order.String));
+    expect(Arr.isReadonlyArrayNonEmpty(rows)).toBe(true);
+  });
+});

@@ -662,6 +662,16 @@ export type _OwnersRequest = Assert<
   >
 >;
 /* oxlint-enable effect/prefer-option-over-null */
+// A list filter over the follower seam (pulpit#189): the member leaf's list takes memberFilter's output.
+export type _ListRequestFollowing = Assert<
+  Equals<ListRequest<Subquery>["where"], ListFilter<Subquery>>
+>;
+export type _SubtypeOpsListFollowing = Assert<
+  Equals<
+    Parameters<SubtypeOps<unknown, StoreFailure, Transaction, Subquery>["list"]>[0],
+    ListRequest<Subquery>
+  >
+>;
 // The gated compare (pulpit#82): the chain's comparison behind `getVersion`'s gate.
 export type _SubtypeCompare = Assert<
   Equals<
@@ -746,7 +756,10 @@ export type _SearchScope = Assert<
   Equals<ReturnType<typeof searchScopeFilter<Subquery>>, ListFilter<Subquery>>
 >;
 export type _SearchScopeRequest = Assert<
-  Equals<Parameters<typeof searchScopeFilter>[2], Pick<ListRequest, "includeDeleted" | "where">>
+  Equals<
+    Parameters<typeof searchScopeFilter<Subquery>>[2],
+    Pick<ListRequest<Subquery>, "includeDeleted" | "where">
+  >
 >;
 export type _HydrateSearchHits = Assert<
   Equals<
