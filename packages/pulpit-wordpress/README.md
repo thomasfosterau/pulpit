@@ -10,7 +10,7 @@ A WordPress-compatible (`wp/v2`), read-only REST API over the chains of [`@thoma
 
 - **Landed:** the `IdCodec` seam and the id modes ([`./ids`](#ids), [pulpit#114](https://github.com/thomasfosterau/pulpit/issues/114)), with an in-memory codec in [`./testing`](#testing).
 - **Phase 1 (landed):** posts, pages and media (list and get), the discovery index, `_links`, `_embed`, `_fields`, the headers and the errors ([`./api`](#api), [`./http`](#http)).
-- **Phase 2:** categories, tags and `/users`.
+- **Phase 2:** categories, tags and `/users` ([`./api`](#api); `categories_exclude` / `tags_exclude` wait for [pulpit#191](https://github.com/thomasfosterau/pulpit/issues/191)).
 - **Phase 3:** each later kernel slice as it lands.
 
 ## Install
@@ -30,7 +30,7 @@ Every module is a namespace on the root export (`import { Ids } from "@thomasfos
 | Subpath | Contents |
 | --- | --- |
 | `.` | Every module below as a namespace (`Ids`, `Api`, `Http`). |
-| `./api` | The `wp/v2` read API: `defineWordPress`, the post-type binding (`bind`) and the seams it reads (`render`, the author seam, the site). |
+| `./api` | The `wp/v2` read API: `defineWordPress`, the post-type and taxonomy bindings (`bind`, `bindTaxonomy`) and the seams it reads (`render`, the author seam, the site). |
 | `./http` | `wordPressHttp(api)`, the read API as an `effect/http` request handler. |
 | `./ids` | The `IdCodec` seam an application fills, the integer-id mode over it (`integerIds`) and the opt-in string-id mode (`stringIds`). |
 | `./testing` | In-memory fakes of the adapter's seams (`makeInMemoryIdCodec`), for tests only. Not on the root export. |
@@ -73,7 +73,7 @@ deepStrictEqual(Effect.runSync(ids.decode(["1", "7", "0", "1.5"])), [
 `defineWordPress(config)` declares a `wp/v2` read API over the leaves an application binds to WordPress's post types, and returns `{ handle }`, which answers one request (its method, its path from the site root, and its query pairs in order) with a status, headers and a JSON body. `handle` never fails: a WordPress error is its envelope (`{ code, message, data: { status } }`), and a failure of a store, the codec or the renderer is `500 internal_server_error`. It is framework-free; [`./http`](#http) mounts it on `effect/http`.
 
 ```ts
-import { bind, defineWordPress } from "@thomasfosterau/pulpit-wordpress/api";
+import { bind, bindTaxonomy, defineWordPress } from "@thomasfosterau/pulpit-wordpress/api";
 import { integerIds } from "@thomasfosterau/pulpit-wordpress/ids";
 
 const wp = defineWordPress({
@@ -98,15 +98,40 @@ const wp = defineWordPress({
     page: bind({ ops: pageOps, columns, fields: pageFields, serveable }),
     attachment: bind({ ops: imageOps, columns, fields: imageFields, serveable }),
   },
+  taxonomies: {
+    category: bindTaxonomy({
+      terms: categoryOps, // a reference leaf's defineSubtype operations
+      columns: { name: "name", slug: "slug", parent: "parentId" },
+      fields: categoryFields,
+      serveable: () => true,
+      link: (fields) => `https://example.org/category/${fields.slug}`,
+      assignments: postCategoryOps, // the post_category edge family's defineEdgeOps operations
+      ends: {
+        post: { alias: "post", column: "postId" },
+        term: { alias: "term", column: "termId" },
+      },
+      assignment: (edge) => ({ post: edge.postId, term: edge.termId }),
+    }),
+    post_tag: bindTaxonomy({/* … */}),
+  },
   authors: { ids: integerIds(accountCodec), getMany: readProfiles },
 });
 ```
 
-**Routes.** Under the prefix (`/wp-json`, by default): the discovery index `/` (`namespaces`, `routes`, `gmt_offset`, `timezone_string`), the namespace `/wp/v2`, and for each bound type its collection and item routes (`/posts`, `/pages`, `/media`, each with `/{id}`). `GET` and `HEAD` only; any other method, an unbound type, and any other route answer `404 rest_no_route`. Every response carries `Link: <…/wp-json/>; rel="https://api.w.org/"`.
+**Routes.** Under the prefix (`/wp-json`, by default): the discovery index `/` (`namespaces`, `routes`, `gmt_offset`, `timezone_string`), the namespace `/wp/v2`, for each bound type its collection and item routes (`/posts`, `/pages`, `/media`, each with `/{id}`), for each bound taxonomy its own (`/categories`, `/tags`), and `/users` and `/users/{id}` once any type is bound. `GET` and `HEAD` only; any other method, an unbound type, and any other route answer `404 rest_no_route`. Every response carries `Link: <…/wp-json/>; rel="https://api.w.org/"`.
 
-**Collections** take `context` (`view` | `embed`), `page`, `per_page` (1–100, default 10), `offset`, `order`, `orderby` (`date` by default; `author`, `id`, `include`, `modified`, `slug`, `title`, plus `parent` and `menu_order` where they apply), `include`, `exclude`, `slug`, `status`, `author`, `author_exclude`, `after`, `before`, `modified_after`, `modified_before`, `_fields` and `_embed`; pages and media add `parent` / `parent_exclude`, pages `menu_order`, media `mime_type` / `media_type`. A list is a bare JSON array with `X-WP-Total`, `X-WP-TotalPages` and the `Link` `prev` / `next` WordPress builds; a page past the end of a non-empty list is `400 rest_post_invalid_page_number`. Bad parameters are one `400 rest_invalid_param` naming each in `data.params`. A parameter phase 1 can't honour (`search`, `categories`, `tags`, `sticky`, `format`, …), or one whose column the binding doesn't declare, is `rest_invalid_param` too, never silently ignored.
+**Collections** take `context` (`view` | `embed`), `page`, `per_page` (1–100, default 10), `offset`, `order`, `orderby` (`date` by default; `author`, `id`, `include`, `modified`, `slug`, `title`, plus `parent` and `menu_order` where they apply), `include`, `exclude`, `slug`, `status`, `author`, `author_exclude`, `after`, `before`, `modified_after`, `modified_before`, `_fields` and `_embed`; pages and media add `parent` / `parent_exclude`, pages `menu_order`, media `mime_type` / `media_type`. A list is a bare JSON array with `X-WP-Total`, `X-WP-TotalPages` and the `Link` `prev` / `next` WordPress builds; a page past the end of a non-empty list is `400 rest_post_invalid_page_number`. Bad parameters are one `400 rest_invalid_param` naming each in `data.params`. A post type a taxonomy applies to also takes `categories` / `tags` (lists of term ids; the items holding a readable assignment to one of them, through the edge family's `memberFilter`) and `tax_relation` (`AND`, the default, or `OR`). A parameter the adapter can't honour (`search`, `categories_exclude`, `tags_exclude`, `sticky`, `format`, …), or one whose column the binding doesn't declare, is `rest_invalid_param` too, never silently ignored.
 
-**Items** carry WordPress's fields in core's wire form (pinned to the fixture core generates from its REST API): `title` / `content` / `excerpt` as `{ rendered }` through `render`, `date` in the site's time zone and `date_gmt` in UTC (`null` for an item never stamped), `status` derived from the binding's facts (`trash` for a tombstone, `draft`, `private` for any visibility but `public`, `future` for an unarrived stamp, else `publish`; media are `inherit`), `_links` (`self`, `collection`, `about`, `author`, `wp:featuredmedia`, `up`, `wp:attachment`, `curies`), and, with `_embed` (all, or a list of rels), `_embedded.author`, `wp:featuredmedia` and `up`. Fields pulpit doesn't model are constants: `comment_status` and `ping_status` `"closed"`, `sticky: false`, `format: "standard"`, `template: ""`, `meta: []`, and, until phase 2, `categories: []` and `tags: []`.
+**Items** carry WordPress's fields in core's wire form (pinned to the fixture core generates from its REST API): `title` / `content` / `excerpt` as `{ rendered }` through `render`, `date` in the site's time zone and `date_gmt` in UTC (`null` for an item never stamped), `status` derived from the binding's facts (`trash` for a tombstone, `draft`, `private` for any visibility but `public`, `future` for an unarrived stamp, else `publish`; media are `inherit`), `_links` (`self`, `collection`, `about`, `author`, `wp:featuredmedia`, `up`, `wp:attachment`, `curies`), and, with `_embed` (all, or a list of rels), `_embedded.author`, `wp:featuredmedia` and `up`. Fields pulpit doesn't model are constants: `comment_status` and `ping_status` `"closed"`, `sticky: false`, `format: "standard"`, `template: ""` and `meta: []`. An item of a type a taxonomy applies to carries its readable terms (`categories`, `tags`; a post always has both, empty when unbound), a `wp:term` link per taxonomy (`/categories?post={id}`), and, with `_embed=wp:term`, `_embedded["wp:term"]`: one array of terms per taxonomy, in link order, each read through its taxonomy's own `getMany`.
+
+**Terms** (`/categories`, `/tags`, each with `/{id}`) carry core's term form: `id`, `count`, `description`, `link`, `name`, `slug`, `taxonomy`, `parent` (categories only), `meta: []` and `_links` (`self`, `collection`, `about`, `up` for a readable parent, `wp:post_type`, `curies`). A collection takes `context`, `page`, `per_page`, `offset`, `order` (`asc` by default), `orderby` (`name` by default; `id`, `include`, `slug`, `count`), `include`, `exclude`, `slug`, `hide_empty`, `parent` (categories; `0` for the top level) and `post`. As in core, a page past the end is an empty list, not an error.
+
+- **`count`** is the number of assignments the viewer can read (the edge family's `countBy`, one grouped read per page), so it differs by viewer, where WordPress's is a stored total over published posts.
+- **`hide_empty` and `orderby=count`** need every matching term's count, so they read the matching terms at once, at most `MAX_SET_VALUES` (1000), and page in memory; a larger match is `400 rest_invalid_param` rather than a short answer.
+- **`post=`** names an item through the post types the taxonomy applies to; one the viewer can't read answers `400 rest_post_invalid_id`, exactly as an unknown one. WordPress answers `rest_forbidden_context` for a post it can't show terms for.
+- **An unknown or hidden term** is `404 rest_term_invalid`. `orderby` `include_slugs`, `term_group` and `description`, and `search`, are `400 rest_invalid_param`.
+
+**Authors** (`/users`, `/users/{id}`) are the accounts owning at least one item the viewer can read, across every bound post type (the kernel's `readableOwners`), with core's user form (`id`, `name`, `url`, `description`, `link`, `slug`, `avatar_urls`, `meta: []`, `_links`). Any other account answers `404 rest_user_invalid_id`, exactly as an unknown one, where WordPress answers `rest_user_cannot_view` (401) for an account it won't list. A collection takes `context`, `page`, `per_page`, `offset`, `order`, `orderby` (`name` by default; `id`, `include`, `slug`), `include`, `exclude`, `slug` and `who=authors`; it reads every readable author with their profile and pages in memory. A bound post type with more than `MAX_PAGE_LIMIT` (1000) readable authors, or a union of them past one page, is `500 internal_server_error` rather than a short list (the kernel's `OwnerSetTooLarge`). `orderby` `email` or `registered_date` is `rest_forbidden_orderby` (401 / 403), as core answers a caller without `list_users`; `search`, `roles`, `capabilities` and `has_published_posts` are `400 rest_invalid_param`. Every `/users` response is `Cache-Control: private, no-store`.
 
 **The read rule, and where it differs from WordPress.**
 
@@ -121,7 +146,8 @@ const wp = defineWordPress({
 | Export | What it is |
 | --- | --- |
 | `defineWordPress(config)`, `WordPressConfig`, `WordPressApi`, `WordPressRequest`, `WordPressResponse` | The API, its declaration, and one request and response. |
-| `bind(binding)`, `PostTypeBinding`, `BoundPostType`, `ShownItem` | One leaf bound to a post type: its gated operations, view columns, field mapper and serveability. |
+| `bind(binding)`, `PostTypeBinding`, `BoundPostType`, `ShownItem` | One leaf bound to a post type: its gated operations (`get`, `getMany`, `list`, `owners`), view columns, field mapper and serveability. |
+| `bindTaxonomy(binding)`, `TaxonomyBinding`, `BoundTaxonomy`, `ShownTerm`, `TermFields`, `TermColumns`, `AssignmentEnd`, `Taxonomy` | One term leaf and its assignment edge family bound to a taxonomy (`category`, `post_tag`): the leaf's gated operations, the family's `list` / `memberFilter` / `countBy`, its two ends, and the mappers. |
 | `PostFields`, `MediaFields`, `PostColumns` | What a binding reads off its resource, and the view columns its parameters filter and sort by. |
 | `RenderRequest`, `Author`, `AuthorSeam`, `Site` | The render seam's request, the author seam and its profile, and the site. |
 | `PostType`, `PostStatus`, `MAX_LIST_PARAMETER` | The served post types, the statuses, and the list-parameter cap (100). |
@@ -140,7 +166,7 @@ In-memory fakes of the adapter's seams, for tests, mirroring the kernel's [`@tho
 
 ## Seams
 
-The adapter is written against interfaces the application fills. Besides the codec below: each **post-type binding** is a kernel leaf's `defineSubtype` operations (`get`, `getMany`, `list`, so the kernel's gates hold), the view columns its parameters read (`slug`, `date`, `modified`, and optionally `id`, `title`, `author`, `parent`, `menuOrder`, `draft`, `visibility`, `mimeType`, `mediaType`), a `fields` mapper from its resource to `PostFields`, and a `serveable` predicate (typically the kernel's `serveablePolicy`); **`render`** turns a response's `title` / `content` / `excerpt` / `caption` / `description` values into HTML in one batch, in order (resolving a `documentRef` hash through the kernel's `DocumentStore.getMany`, say); the **author seam** is an account id mode (`integerIds` over an account codec, typically) and a batched profile read. Each states the shape its implementation must have; [`./testing`](#testing) has an in-memory fake of each, which implements the contract stated here.
+The adapter is written against interfaces the application fills. Besides the codec below: each **post-type binding** is a kernel leaf's `defineSubtype` operations (`get`, `getMany`, `list`, so the kernel's gates hold), the view columns its parameters read (`slug`, `date`, `modified`, and optionally `id`, `title`, `author`, `parent`, `menuOrder`, `draft`, `visibility`, `mimeType`, `mediaType`), a `fields` mapper from its resource to `PostFields`, and a `serveable` predicate (typically the kernel's `serveablePolicy`); each **taxonomy binding** is a term leaf's `defineSubtype` operations (`get`, `getMany`, `list`), its view columns (`name`, `slug`, optionally `id` and `parent`), the assignment family's `defineEdgeOps` operations (`list`, `memberFilter`, `countBy`, so `EDGE-001` holds), the family's `post` and `term` ends (each an alias and an edge column), and mappers from the term to `TermFields` and from an edge to its item and term ids; **`render`** turns a response's `title` / `content` / `excerpt` / `caption` / `description` values into HTML in one batch, in order (resolving a `documentRef` hash through the kernel's `DocumentStore.getMany`, say); the **author seam** is an account id mode (`integerIds` over an account codec, typically) and a batched profile read. Each states the shape its implementation must have; [`./testing`](#testing) has an in-memory fake of each, which implements the contract stated here.
 
 ### `IdCodec<E, R>`: node ids to WordPress integers
 

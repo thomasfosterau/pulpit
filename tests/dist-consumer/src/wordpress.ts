@@ -28,12 +28,17 @@ import {
   type BoundPostType,
   type PostFields,
   type PostTypeBinding,
+  bindTaxonomy,
+  type BoundTaxonomy,
+  type TaxonomyBinding,
+  type Taxonomy,
   type WordPressApi,
   type WordPressConfig,
   type WordPressRequest,
   type WordPressResponse,
 } from "@thomasfosterau/pulpit-wordpress/api";
 import { wordPressHttp } from "@thomasfosterau/pulpit-wordpress/http";
+import type { ListFilter } from "@thomasfosterau/pulpit/filter";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import type * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as Schema from "effect/Schema";
@@ -156,7 +161,10 @@ export type _RootApi = Assert<Equals<typeof WordPress.Api.defineWordPress, typeo
 export type _RootHttp = Assert<Equals<typeof WordPress.Http.wordPressHttp, typeof wordPressHttp>>;
 export type _MaxListParameter = Assert<Equals<typeof MAX_LIST_PARAMETER, 100>>;
 export type _DefineWordPress = Assert<
-  Equals<typeof defineWordPress, <R>(config: WordPressConfig<R>) => WordPressApi<R>>
+  Equals<
+    typeof defineWordPress,
+    <R, Following = never>(config: WordPressConfig<R, Following>) => WordPressApi<R>
+  >
 >;
 export type _Handle = Assert<
   Equals<
@@ -187,7 +195,26 @@ export type _Response = Assert<
 export type _Bind = Assert<
   Equals<
     typeof bind,
-    <Resource, E, R>(binding: PostTypeBinding<Resource, E, R>) => BoundPostType<R>
+    <Resource, E, R, Following = never>(
+      binding: PostTypeBinding<Resource, E, R, Following>,
+    ) => BoundPostType<R, Following>
+  >
+>;
+// ── phase 2: taxonomies and authors ─────────────────────────────────────
+
+export type _Taxonomy = Assert<Equals<Taxonomy, "category" | "post_tag">>;
+export type _BindTaxonomy = Assert<
+  Equals<
+    typeof bindTaxonomy,
+    <Term, Edge, E, R, Following = never>(
+      binding: TaxonomyBinding<Term, Edge, E, R, Following>,
+    ) => BoundTaxonomy<R, Following>
+  >
+>;
+export type _TaxonomyMembers = Assert<
+  Equals<
+    BoundTaxonomy<CodecDb, CodecError>["members"],
+    (termIds: ReadonlyArray<string>) => Effect.Effect<ListFilter<CodecError>, unknown, CodecDb>
   >
 >;
 export type _PostFieldsAuthor = Assert<Equals<PostFields["author"], Option.Option<string>>>;

@@ -1,7 +1,8 @@
 /**
- * **The `wp/v2` read API** — posts, pages and media as WordPress's REST API
- * serves them, over the leaves an application binds to those types, plus the
- * discovery index (pulpit#86, phase 1).
+ * **The `wp/v2` read API** — posts, pages and media, categories and tags,
+ * and their authors, as WordPress's REST API serves them, over the leaves
+ * an application binds to those types and taxonomies, plus the discovery
+ * index (pulpit#86, phases 1 and 2).
  *
  * The behavioural spec is WordPress core's REST API
  * (`WordPress/wordpress-develop` trunk at `9063498`:
@@ -37,15 +38,24 @@
  * - **Caching** (`CACHE-AUTH-005`). A response is `Cache-Control: public`
  *   only when its viewer is anonymous and every item in it, embeds included,
  *   is serveable by its binding's `serveable`; anything else is
- *   `private, no-store`.
+ *   `private, no-store`. A `/users` response is always `private, no-store`:
+ *   which accounts it lists depends on what the viewer can read.
+ * - **Assignments are read through the edge family** (`EDGE-001`). An
+ *   item's `categories` / `tags`, a term's `count`, `?categories=` /
+ *   `?tags=` and `post=` all count only edges whose both ends the viewer
+ *   can read, so a hidden item or term is never confirmed through one.
+ * - **Authors are the accounts owning a readable item** (pulpit#86,
+ *   decision 5, through the kernel's `readableOwners`). Any other account,
+ *   unknown or not, answers `404 rest_user_invalid_id`.
  *
- * ## What phase 1 leaves out
+ * ## What it leaves out
  *
  * No writes (`POST` / `PUT` / `PATCH` / `DELETE` are `rest_no_route`), no
  * `context=edit` (`rest_forbidden_context`, after the 404 check), no
- * revisions, no `search`, no categories or tags, no `/users` route. A
- * parameter phase 1 can't honour (`search`, `categories`, `tags`, `sticky`,
- * …) is `400 rest_invalid_param`, never silently ignored, so a client never
+ * revisions, no `search`, no `categories_exclude` / `tags_exclude` (they
+ * wait for a non-membership filter, pulpit#191). A parameter the adapter
+ * can't honour (`search`, `sticky`, `orderby=term_group`, `roles`, …) is
+ * `400 rest_invalid_param`, never silently ignored, so a client never
  * mistakes an unfiltered list for a filtered one.
  *
  * @copyright Thomas Foster
@@ -60,6 +70,7 @@ import * as HashMap from "effect/HashMap";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
+import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import type { Visibility } from "@thomasfosterau/pulpit/content";
@@ -73,17 +84,23 @@ import {
   ne,
   never,
   isNull,
+  MAX_SET_VALUES,
   noneOf,
   notPublished,
   or,
   published,
   type ListFilter,
 } from "@thomasfosterau/pulpit/filter";
+import type { EdgeOps } from "@thomasfosterau/pulpit/edges";
 import {
   InvalidListOrder,
+  MAX_PAGE_LIMIT,
+  readableOwners,
   type AccessPolicy,
   type ListOrder,
   type ListRequest,
+  type OwnersRequest,
+  type Page,
   type SubtypeOps,
   type Viewer,
 } from "@thomasfosterau/pulpit/subtype";
@@ -224,8 +241,8 @@ export interface PostColumns {
  *
  * @since 0.1.0
  */
-export interface PostTypeBinding<Resource, E, R> {
-  readonly ops: Pick<SubtypeOps<Resource, E, R>, "get" | "getMany" | "list">;
+export interface PostTypeBinding<Resource, E, R, Following = never> {
+  readonly ops: Pick<SubtypeOps<Resource, E, R, Following>, "get" | "getMany" | "list" | "owners">;
   readonly columns: PostColumns;
   readonly fields: (resource: Resource) => PostFields;
   readonly serveable: (resource: Resource) => boolean;
@@ -248,7 +265,7 @@ export interface ShownItem {
  *
  * @since 0.1.0
  */
-export interface BoundPostType<R> {
+export interface BoundPostType<R, Following = never> {
   readonly columns: PostColumns;
   /** The item, or none when the read gate hides it or it is missing (`SEC-AUTH-ENUM-001`). */
   readonly get: (id: string) => Effect.Effect<Option.Option<ShownItem>, unknown, R>;
@@ -257,12 +274,14 @@ export interface BoundPostType<R> {
   ) => Effect.Effect<HashMap.HashMap<string, ShownItem>, unknown, R>;
   /** One page and its total; fails `InvalidListOrder` for an order the leaf doesn't sort by. */
   readonly list: (
-    request: ListRequest,
+    request: ListRequest<Following>,
   ) => Effect.Effect<
     { readonly rows: ReadonlyArray<ShownItem>; readonly total: number },
     unknown,
     R
   >;
+  /** The accounts owning a row the viewer may list, as `/users` reads them (`SubtypeOps.owners`). */
+  readonly owners: (request: OwnersRequest) => Effect.Effect<Page<string>, unknown, R>;
 }
 
 /**
@@ -272,9 +291,9 @@ export interface BoundPostType<R> {
  *
  * @since 0.1.0
  */
-export const bind = <Resource, E, R>(
-  binding: PostTypeBinding<Resource, E, R>,
-): BoundPostType<R> => {
+export const bind = <Resource, E, R, Following = never>(
+  binding: PostTypeBinding<Resource, E, R, Following>,
+): BoundPostType<R, Following> => {
   const shown = (resource: Resource): ShownItem => ({
     fields: binding.fields(resource),
     serveable: binding.serveable(resource),
@@ -292,6 +311,205 @@ export const bind = <Resource, E, R>(
         rows: page.rows.map(shown),
         total: page.total,
       })),
+    owners: binding.ops.owners,
+  };
+};
+
+// ── Taxonomies ────────────────────────────────────────────────────────
+
+/**
+ * The WordPress taxonomies phase 2 serves: `category` at `/categories`
+ * (hierarchical: its terms take `parent`) and `post_tag` at `/tags`.
+ *
+ * @since 0.1.0
+ */
+export type Taxonomy = "category" | "post_tag";
+
+/**
+ * The fields of one term, read off the application's own resource by its
+ * binding's `fields`. `count`, `taxonomy`, `link` and `_links` are derived.
+ *
+ * @since 0.1.0
+ */
+export interface TermFields {
+  /** The node id (never on the wire: the id codec encodes it). */
+  readonly id: string;
+  readonly name: string;
+  readonly slug: string;
+  readonly description: string;
+  /** A `category` term's parent term, read through the same binding; ignored for `post_tag`. */
+  readonly parent: Option.Option<string>;
+}
+
+/* oxlint-disable effect/prefer-option-over-null -- optional fields are `?: T | undefined` (AGENTS.md → Conventions); an absent column has its documented default */
+
+/**
+ * The term leaf's view columns the term parameters filter and sort by.
+ * `orderby=id` sorts by the node id unless `id` names a column holding the
+ * wire integer; `parent` without a `parent` column is `400 rest_invalid_param`.
+ *
+ * @since 0.1.0
+ */
+export interface TermColumns {
+  readonly name: string;
+  readonly slug: string;
+  readonly id?: string | undefined;
+  readonly parent?: string | undefined;
+}
+
+/**
+ * One end of the assignment family: its alias (as `memberFilter` and
+ * `countBy` name it) and its edge column (as an edge list's `where` reads it).
+ *
+ * @since 0.1.0
+ */
+export interface AssignmentEnd {
+  readonly alias: string;
+  readonly column: string;
+}
+
+/**
+ * One application leaf bound to a WordPress taxonomy: the term leaf's read
+ * operations, the edge family assigning its terms to items, and the mappers
+ * from both resources. The terms are the edge family's `term` end and the
+ * items its `post` end; `postTypes` names the post types the taxonomy
+ * applies to (`["post"]` by default), whose items gain `categories` / `tags`,
+ * the matching filter parameters and a `wp:term` link.
+ *
+ * Every assignment read goes through the edge family's own gated operations
+ * (`EDGE-001`): `list` for an item's terms, `memberFilter` for
+ * `?categories=`, `countBy` for a term's `count`, so a hidden item or term
+ * never shows through an assignment.
+ *
+ * @since 0.1.0
+ */
+export interface TaxonomyBinding<Term, Edge, E, R, Following = never> {
+  readonly terms: Pick<SubtypeOps<Term, E, R>, "get" | "getMany" | "list">;
+  readonly columns: TermColumns;
+  readonly fields: (term: Term) => TermFields;
+  /** A term's `CACHE-AUTH-005` serveability. */
+  readonly serveable: (term: Term) => boolean;
+  /** A term's public URL. */
+  readonly link: (fields: TermFields) => string;
+  readonly assignments: Pick<
+    EdgeOps<unknown, Edge, E, R, Following>,
+    "list" | "memberFilter" | "countBy"
+  >;
+  readonly ends: { readonly post: AssignmentEnd; readonly term: AssignmentEnd };
+  /** One assignment's item and term node ids. */
+  readonly assignment: (edge: Edge) => { readonly post: string; readonly term: string };
+  readonly postTypes?: ReadonlyArray<PostType> | undefined;
+}
+
+/* oxlint-enable effect/prefer-option-over-null */
+
+/**
+ * One term the read gate let through, as the adapter holds it.
+ *
+ * @since 0.1.0
+ */
+export interface ShownTerm {
+  readonly fields: TermFields;
+  readonly serveable: boolean;
+}
+
+/**
+ * A {@link TaxonomyBinding} with its resource types closed over, as
+ * {@link bindTaxonomy} returns it. Its failures are the stores', which the
+ * API answers as a 500.
+ *
+ * @since 0.1.0
+ */
+export interface BoundTaxonomy<R, Following = never> {
+  readonly columns: TermColumns;
+  readonly postTypes: ReadonlyArray<PostType>;
+  readonly link: (fields: TermFields) => string;
+  /** The term, or none when the read gate hides it or it is missing (`SEC-AUTH-ENUM-001`). */
+  readonly get: (id: string) => Effect.Effect<Option.Option<ShownTerm>, unknown, R>;
+  readonly getMany: (
+    ids: ReadonlyArray<string>,
+  ) => Effect.Effect<HashMap.HashMap<string, ShownTerm>, unknown, R>;
+  /** One page of terms and its total; fails `InvalidListOrder` for an order the leaf doesn't sort by. */
+  readonly list: (
+    request: ListRequest,
+  ) => Effect.Effect<
+    { readonly rows: ReadonlyArray<ShownTerm>; readonly total: number },
+    unknown,
+    R
+  >;
+  /** The items holding a readable assignment to one of `termIds`, as a filter over the item leaf. */
+  readonly members: (
+    termIds: ReadonlyArray<string>,
+  ) => Effect.Effect<ListFilter<Following>, unknown, R>;
+  /** The readable assignments of each of `termIds`: its `count`. */
+  readonly counts: (
+    termIds: ReadonlyArray<string>,
+  ) => Effect.Effect<HashMap.HashMap<string, number>, unknown, R>;
+  /** The terms of each of `postIds` the viewer can read, in the edge family's list order. */
+  readonly termsOf: (
+    postIds: ReadonlyArray<string>,
+  ) => Effect.Effect<HashMap.HashMap<string, ReadonlyArray<string>>, unknown, R>;
+}
+
+/**
+ * Bind an application leaf and its assignment family to a WordPress
+ * taxonomy. Its `get`'s `NodeNotFound` (a missing or hidden term,
+ * `SEC-AUTH-ENUM-001`) becomes none; every other failure stays the store's.
+ * `termsOf` pages through the family's `list` ({@link MAX_PAGE_LIMIT} edges
+ * per read) until it has every readable assignment of the items asked for.
+ *
+ * @since 0.1.0
+ */
+export const bindTaxonomy = <Term, Edge, E, R, Following = never>(
+  binding: TaxonomyBinding<Term, Edge, E, R, Following>,
+): BoundTaxonomy<R, Following> => {
+  const shown = (term: Term): ShownTerm => ({
+    fields: binding.fields(term),
+    serveable: binding.serveable(term),
+  });
+  const where = (postIds: ReadonlyArray<string>) => anyOf(binding.ends.post.column, postIds);
+  const edgesFrom = (
+    postIds: ReadonlyArray<string>,
+    offset: number,
+  ): Effect.Effect<ReadonlyArray<Edge>, E, R> =>
+    Effect.flatMap(
+      binding.assignments.list({ where: where(postIds), limit: MAX_PAGE_LIMIT, offset }),
+      (page) =>
+        Arr.match(page.rows, {
+          onEmpty: () => Effect.succeed(page.rows),
+          onNonEmpty: (rows) =>
+            offset + rows.length < page.total
+              ? Effect.map(edgesFrom(postIds, offset + rows.length), (rest) => [...rows, ...rest])
+              : Effect.succeed(rows),
+        }),
+    );
+  return {
+    columns: binding.columns,
+    postTypes: binding.postTypes ?? ["post"],
+    link: binding.link,
+    get: (id) =>
+      binding.terms.get(id).pipe(
+        Effect.map((term) => Option.some(shown(term))),
+        Effect.catchIf(Schema.is(NodeNotFound), () => Effect.succeedNone),
+      ),
+    getMany: (ids) => Effect.map(binding.terms.getMany(ids), HashMap.map(shown)),
+    list: (request) =>
+      Effect.map(binding.terms.list(request), (page) => ({
+        rows: page.rows.map(shown),
+        total: page.total,
+      })),
+    members: (termIds) => binding.assignments.memberFilter(binding.ends.post.alias, termIds),
+    counts: (termIds) => binding.assignments.countBy(binding.ends.term.alias, termIds),
+    termsOf: (postIds) =>
+      Arr.isReadonlyArrayNonEmpty(postIds)
+        ? Effect.map(edgesFrom(postIds, 0), (edges) =>
+            Arr.reduce(edges, HashMap.empty<string, ReadonlyArray<string>>(), (byPost, edge) => {
+              const { post, term } = binding.assignment(edge);
+              const held = Option.getOrElse(HashMap.get(byPost, post), () => []);
+              return Arr.contains(held, term) ? byPost : HashMap.set(byPost, post, [...held, term]);
+            }),
+          )
+        : Effect.succeed(HashMap.empty()),
   };
 };
 
@@ -354,7 +572,7 @@ export interface Site {
  *
  * @since 0.1.0
  */
-export interface WordPressConfig<R> {
+export interface WordPressConfig<R, Following = never> {
   readonly site: Site;
   /** The REST prefix (`/wp-json`, the default). */
   readonly prefix?: string | undefined;
@@ -371,7 +589,11 @@ export interface WordPressConfig<R> {
   /** An item's public URL. */
   readonly link: (type: PostType, fields: PostFields) => string;
   /** The leaves bound to each post type; an unbound type has no route. */
-  readonly types: { readonly [Type in PostType]?: BoundPostType<R> | undefined };
+  readonly types: { readonly [Type in PostType]?: BoundPostType<R, Following> | undefined };
+  /** The leaves bound to each taxonomy (phase 2); an unbound taxonomy has no route. */
+  readonly taxonomies?:
+    | { readonly [Tax in Taxonomy]?: BoundTaxonomy<R, Following> | undefined }
+    | undefined;
   readonly authors: AuthorSeam<R>;
 }
 
@@ -454,16 +676,17 @@ const internalError = () =>
 const internal = <A, R>(effect: Effect.Effect<A, unknown, R>): Effect.Effect<A, WpRestError, R> =>
   Effect.mapError(effect, () => internalError());
 
-/** The parameters phase 1 refuses rather than silently ignores. */
+/**
+ * The parameters the adapter refuses rather than silently ignores.
+ * `categories_exclude` / `tags_exclude` wait for a non-membership filter in
+ * the kernel (pulpit#191).
+ */
 const UNSUPPORTED = [
   "search",
   "search_columns",
   "search_semantics",
-  "categories",
   "categories_exclude",
-  "tags",
   "tags_exclude",
-  "tax_relation",
   "sticky",
   "ignore_sticky",
   "format",
@@ -493,7 +716,20 @@ interface CollectionParams {
   readonly before: Option.Option<Date>;
   readonly modifiedAfter: Option.Option<Date>;
   readonly modifiedBefore: Option.Option<Date>;
+  /** Each taxonomy's term list (`categories`, `tags`), as given. */
+  readonly terms: ReadonlyArray<readonly [Taxonomy, ReadonlyArray<string>]>;
+  readonly taxRelation: "AND" | "OR";
 }
+
+/** Each taxonomy's route base, which is also its item filter parameter. */
+const TAXONOMIES: ReadonlyArray<readonly [base: string, taxonomy: Taxonomy]> = [
+  ["categories", "category"],
+  ["tags", "post_tag"],
+];
+
+/** A taxonomy's route base: `categories` or `tags`. */
+const taxonomyBase = (taxonomy: Taxonomy): string =>
+  taxonomy === "category" ? "categories" : "tags";
 
 const integerSyntax = /^-?\d+$/;
 
@@ -538,6 +774,112 @@ const typedParameters = (
 const TYPED = ["parent", "parent_exclude", "menu_order", "mime_type", "media_type"] as const;
 
 /**
+ * The parameter readers every collection shares: each records a bad value
+ * in `bad` (one `rest_invalid_param` collects them all, as WordPress's
+ * argument validation does) and answers its fallback.
+ */
+const readerOf = (query: Query, timeZone: string) => {
+  const bad: Array<readonly [string, string]> = [];
+  const refuse = (name: string, message: string) => {
+    bad.push([name, message]);
+  };
+  const present = (name: string) => Arr.contains(query.names, name);
+  const integer = (name: string, min: number, max: number, fallback: number): number =>
+    Option.match(query.scalar(name), {
+      onNone: () => fallback,
+      onSome: (raw) => {
+        const value = integerSyntax.test(raw) ? Number(raw) : Number.NaN;
+        if (!Number.isSafeInteger(value)) {
+          refuse(name, `${name} is not of type integer.`);
+          return fallback;
+        }
+        if (value < min || value > max) {
+          refuse(
+            name,
+            max === Number.MAX_SAFE_INTEGER
+              ? `${name} must be greater than or equal to ${min}`
+              : `${name} must be between ${min} (inclusive) and ${max} (inclusive)`,
+          );
+          return fallback;
+        }
+        return value;
+      },
+    });
+  const oneOf = <A extends string>(name: string, allowed: ReadonlyArray<A>, fallback: A): A =>
+    Option.match(query.scalar(name), {
+      onNone: () => fallback,
+      onSome: (raw) => {
+        const found = Arr.findFirst(allowed, (value) => value === raw);
+        if (Option.isNone(found)) refuse(name, `${name} is not one of ${allowed.join(", ")}.`);
+        return Option.getOrElse(found, () => fallback);
+      },
+    });
+  const list = (name: string): Option.Option<ReadonlyArray<string>> =>
+    Option.map(query.list(name), (values) => {
+      if (values.length > MAX_LIST_PARAMETER) {
+        refuse(name, `${name} must contain at most ${MAX_LIST_PARAMETER} items.`);
+        return [];
+      }
+      return values;
+    });
+  const date = (name: string): Option.Option<Date> =>
+    Option.flatMap(query.scalar(name), (raw) => {
+      const parsed = parseDateTime(raw, timeZone);
+      if (Option.isNone(parsed)) refuse(name, "Invalid date.");
+      return parsed;
+    });
+  const boolean = (name: string, fallback: boolean): boolean =>
+    Option.match(query.scalar(name), {
+      onNone: () => fallback,
+      onSome: (raw) => {
+        // rest_sanitize_boolean: "1", "true" and "0", "false", "" (any case).
+        const value = raw.toLowerCase();
+        if (value === "1" || value === "true") return true;
+        if (value === "0" || value === "false" || value === "") return false;
+        refuse(name, `${name} is not of type boolean.`);
+        return fallback;
+      },
+    });
+  /** The paging, order and id-list parameters every collection takes. */
+  const paging = (defaultOrder: "asc" | "desc") => ({
+    page: integer("page", 1, Number.MAX_SAFE_INTEGER, 1),
+    perPage: integer("per_page", 1, 100, 10),
+    offset: Option.map(query.scalar("offset"), () =>
+      integer("offset", 0, Number.MAX_SAFE_INTEGER, 0),
+    ),
+    order: oneOf("order", ["asc", "desc"] as const, defaultOrder),
+    include: list("include"),
+    exclude: Option.getOrElse(list("exclude"), () => []),
+    slug: list("slug"),
+  });
+  /** `context`, as `/terms` and `/users` read it (`edit` is refused by the handler). */
+  const context = (): "view" | "embed" =>
+    oneOf("context", ["view", "embed", "edit"] as const, "view") === "embed" ? "embed" : "view";
+  return { bad, refuse, present, integer, oneOf, list, date, boolean, paging, context };
+};
+
+/**
+ * A collection's parsed parameters, or the one `rest_invalid_param` naming
+ * every bad one, or core's error for `orderby=include` without `include`.
+ */
+const checked = <P extends { readonly orderby: string; readonly include: Option.Option<unknown> }>(
+  bad: ReadonlyArray<readonly [string, string]>,
+  params: P,
+): Effect.Effect<P, WpRestError> => {
+  if (Arr.isReadonlyArrayNonEmpty(bad)) return Effect.fail(invalidParams(Record.fromEntries(bad)));
+  if (params.orderby === "include" && Option.isNone(params.include)) {
+    return Effect.fail(
+      new WpRestError({
+        code: "rest_orderby_include_missing_include",
+        message: "You need to define an include parameter to order by include.",
+        status: 400,
+      }),
+    );
+  }
+  return Effect.succeed(params);
+};
+
+/**
  * Parse and check a collection's parameters, collecting every bad one into
  * one `rest_invalid_param`, as WordPress's argument validation does.
  */
@@ -546,57 +888,10 @@ const collectionParams = (
   query: Query,
   columns: PostColumns,
   timeZone: string,
+  taxonomies: ReadonlyArray<Taxonomy>,
 ): Effect.Effect<CollectionParams, WpRestError> =>
   Effect.suspend(() => {
-    const bad: Array<readonly [string, string]> = [];
-    const refuse = (name: string, message: string) => {
-      bad.push([name, message]);
-    };
-    const present = (name: string) => Arr.contains(query.names, name);
-    const integer = (name: string, min: number, max: number, fallback: number): number =>
-      Option.match(query.scalar(name), {
-        onNone: () => fallback,
-        onSome: (raw) => {
-          const value = integerSyntax.test(raw) ? Number(raw) : Number.NaN;
-          if (!Number.isSafeInteger(value)) {
-            refuse(name, `${name} is not of type integer.`);
-            return fallback;
-          }
-          if (value < min || value > max) {
-            refuse(
-              name,
-              max === Number.MAX_SAFE_INTEGER
-                ? `${name} must be greater than or equal to ${min}`
-                : `${name} must be between ${min} (inclusive) and ${max} (inclusive)`,
-            );
-            return fallback;
-          }
-          return value;
-        },
-      });
-    const oneOf = <A extends string>(name: string, allowed: ReadonlyArray<A>, fallback: A): A =>
-      Option.match(query.scalar(name), {
-        onNone: () => fallback,
-        onSome: (raw) => {
-          const found = Arr.findFirst(allowed, (value) => value === raw);
-          if (Option.isNone(found)) refuse(name, `${name} is not one of ${allowed.join(", ")}.`);
-          return Option.getOrElse(found, () => fallback);
-        },
-      });
-    const list = (name: string): Option.Option<ReadonlyArray<string>> =>
-      Option.map(query.list(name), (values) => {
-        if (values.length > MAX_LIST_PARAMETER) {
-          refuse(name, `${name} must contain at most ${MAX_LIST_PARAMETER} items.`);
-          return [];
-        }
-        return values;
-      });
-    const date = (name: string): Option.Option<Date> =>
-      Option.flatMap(query.scalar(name), (raw) => {
-        const parsed = parseDateTime(raw, timeZone);
-        if (Option.isNone(parsed)) refuse(name, "Invalid date.");
-        return parsed;
-      });
+    const { bad, refuse, present, integer, oneOf, list, date, paging } = readerOf(query, timeZone);
 
     Arr.filter(UNSUPPORTED, present).forEach((name) =>
       refuse(name, `${name} is not supported by this API.`),
@@ -610,6 +905,16 @@ const collectionParams = (
       typed,
       ([name, column]) => present(name) && Option.isNone(columnOf(columns, column)),
     ).forEach(([name]) => refuse(name, `${name} is not supported for this post type.`));
+
+    Arr.filter(
+      TAXONOMIES,
+      ([base, taxonomy]) => present(base) && !Arr.contains(taxonomies, taxonomy),
+    ).forEach(([base]) => refuse(base, `${base} is not supported for this post type.`));
+    const terms = Arr.getSomes(
+      taxonomies.map((taxonomy) =>
+        Option.map(list(taxonomyBase(taxonomy)), (values) => [taxonomy, values] as const),
+      ),
+    );
 
     const orderbys = [
       "author",
@@ -645,16 +950,8 @@ const collectionParams = (
     );
     const params: CollectionParams = {
       context,
-      page: integer("page", 1, Number.MAX_SAFE_INTEGER, 1),
-      perPage: integer("per_page", 1, 100, 10),
-      offset: Option.map(query.scalar("offset"), () =>
-        integer("offset", 0, Number.MAX_SAFE_INTEGER, 0),
-      ),
-      order: oneOf("order", ["asc", "desc"] as const, "desc"),
+      ...paging("desc"),
       orderby: oneOf("orderby", orderbys, "date"),
-      include: list("include"),
-      exclude: Option.getOrElse(list("exclude"), () => []),
-      slug: list("slug"),
       statuses,
       author: list("author"),
       authorExclude: Option.getOrElse(list("author_exclude"), () => []),
@@ -669,19 +966,131 @@ const collectionParams = (
       before: date("before"),
       modifiedAfter: date("modified_after"),
       modifiedBefore: date("modified_before"),
+      terms,
+      taxRelation: oneOf("tax_relation", ["AND", "OR"] as const, "AND"),
     };
-    if (Arr.isReadonlyArrayNonEmpty(bad))
-      return Effect.fail(invalidParams(Record.fromEntries(bad)));
-    if (params.orderby === "include" && Option.isNone(params.include)) {
-      return Effect.fail(
-        new WpRestError({
-          code: "rest_orderby_include_missing_include",
-          message: "You need to define an include parameter to order by include.",
-          status: 400,
-        }),
-      );
+    return checked(bad, params);
+  });
+
+interface TermParams {
+  readonly context: "view" | "embed";
+  readonly page: number;
+  readonly perPage: number;
+  readonly offset: Option.Option<number>;
+  readonly order: "asc" | "desc";
+  readonly orderby: "id" | "include" | "name" | "slug" | "count";
+  readonly include: Option.Option<ReadonlyArray<string>>;
+  readonly exclude: ReadonlyArray<string>;
+  readonly slug: Option.Option<ReadonlyArray<string>>;
+  readonly hideEmpty: boolean;
+  readonly parent: Option.Option<number>;
+  readonly post: Option.Option<number>;
+}
+
+/** The term orders the adapter serves. */
+const TERM_ORDERS = ["id", "include", "name", "slug", "count"] as const;
+/** The term orders core takes that the adapter has no column for (`400 rest_invalid_param`). */
+const UNSUPPORTED_TERM_ORDERS = ["include_slugs", "term_group", "description"] as const;
+
+/**
+ * Parse and check a taxonomy's collection parameters, as core's terms
+ * controller registers them: `parent` only on a hierarchical taxonomy, and
+ * `search` refused (no search yet, pulpit#54).
+ */
+const termParams = (
+  taxonomy: Taxonomy,
+  query: Query,
+  columns: TermColumns,
+  timeZone: string,
+): Effect.Effect<TermParams, WpRestError> =>
+  Effect.suspend(() => {
+    const { bad, refuse, present, integer, oneOf, boolean, paging, context } = readerOf(
+      query,
+      timeZone,
+    );
+    if (present("search")) refuse("search", "search is not supported by this API.");
+    if (present("parent") && (taxonomy !== "category" || columns.parent === undefined)) {
+      refuse("parent", "parent is not supported for this taxonomy.");
     }
-    return Effect.succeed(params);
+    const requested = oneOf("orderby", [...TERM_ORDERS, ...UNSUPPORTED_TERM_ORDERS], "name");
+    const orderby = Option.getOrElse(
+      Arr.findFirst(TERM_ORDERS, (order) => order === requested),
+      () => {
+        refuse("orderby", `orderby ${requested} is not supported for this taxonomy.`);
+        return "name" as const;
+      },
+    );
+    const params: TermParams = {
+      context: context(),
+      ...paging("asc"),
+      orderby,
+      hideEmpty: boolean("hide_empty", false),
+      parent: Option.map(query.scalar("parent"), () =>
+        integer("parent", 0, Number.MAX_SAFE_INTEGER, 0),
+      ),
+      post: Option.map(query.scalar("post"), () => integer("post", 0, Number.MAX_SAFE_INTEGER, 0)),
+    };
+    return checked(bad, params);
+  });
+
+interface UserParams {
+  readonly context: "view" | "embed";
+  readonly page: number;
+  readonly perPage: number;
+  readonly offset: Option.Option<number>;
+  readonly order: "asc" | "desc";
+  readonly orderby: (typeof USER_ORDERS)[number];
+  /** An order core reserves for `list_users` (`rest_forbidden_orderby`, 401 / 403). */
+  readonly forbiddenOrderby: Option.Option<string>;
+  readonly include: Option.Option<ReadonlyArray<string>>;
+  readonly exclude: ReadonlyArray<string>;
+  readonly slug: Option.Option<ReadonlyArray<string>>;
+}
+
+/** The user orders the adapter serves, the ones core reserves, and the ones it has no field for. */
+const USER_ORDERS = ["id", "include", "name", "slug"] as const;
+const FORBIDDEN_USER_ORDERS = ["registered_date", "email"] as const;
+const UNSUPPORTED_USER_ORDERS = ["include_slugs", "url"] as const;
+/** The user parameters the adapter refuses: no search yet, and no roles or capabilities to filter by. */
+const UNSUPPORTED_USER_PARAMS = [
+  "search",
+  "search_columns",
+  "roles",
+  "capabilities",
+  "has_published_posts",
+] as const;
+
+/**
+ * Parse and check `/users`' parameters, as core's users controller registers
+ * them. `who` takes only `authors`, which every listed account already is.
+ */
+const userParams = (query: Query, timeZone: string): Effect.Effect<UserParams, WpRestError> =>
+  Effect.suspend(() => {
+    const { bad, refuse, present, oneOf, paging, context } = readerOf(query, timeZone);
+    Arr.filter(UNSUPPORTED_USER_PARAMS, present).forEach((name) =>
+      refuse(name, `${name} is not supported by this API.`),
+    );
+    oneOf("who", ["authors"] as const, "authors");
+    const requested = oneOf(
+      "orderby",
+      [...USER_ORDERS, ...FORBIDDEN_USER_ORDERS, ...UNSUPPORTED_USER_ORDERS],
+      "name",
+    );
+    if (Arr.contains<string>(UNSUPPORTED_USER_ORDERS, requested)) {
+      refuse("orderby", `orderby ${requested} is not supported by this API.`);
+    }
+    const params: UserParams = {
+      context: context(),
+      ...paging("asc"),
+      orderby: Option.getOrElse(
+        Arr.findFirst(USER_ORDERS, (order) => order === requested),
+        () => "name" as const,
+      ),
+      forbiddenOrderby: Option.liftPredicate(requested, (order) =>
+        Arr.contains<string>(FORBIDDEN_USER_ORDERS, order),
+      ),
+    };
+    return checked(bad, params);
   });
 
 // ── Status ────────────────────────────────────────────────────────────
@@ -784,6 +1193,12 @@ interface Related {
   readonly profiles: HashMap.HashMap<string, Author>;
   readonly rendered: HashMap.HashMap<string, string>;
   readonly now: Date;
+  /** Each taxonomy applying to the response's type: its readable terms by item (`EDGE-001`). */
+  readonly terms: ReadonlyArray<
+    readonly [Taxonomy, HashMap.HashMap<string, ReadonlyArray<string>>]
+  >;
+  /** The terms `_embed=wp:term` shows, read through their own binding's `getMany`. */
+  readonly termItems: HashMap.HashMap<string, ShownTerm>;
 }
 
 const renderKey = (id: string, field: string) => `${id}\u0000${field}`;
@@ -878,7 +1293,9 @@ type LinkEntry = readonly [rel: string, links: Schema.Json];
  *
  * @since 0.1.0
  */
-export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> => {
+export const defineWordPress = <R, Following = never>(
+  config: WordPressConfig<R, Following>,
+): WordPressApi<R> => {
   const prefix = (config.prefix ?? "/wp-json").replace(/\/+$/, "");
   const { site, ids, authors, policy } = config;
   const root = `${site.url}${prefix}`;
@@ -886,8 +1303,47 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
   const restUrl = (route: string) => `${root}${route}`;
   const idPattern = ids.mode === "integer" ? "(?P<id>[\\d]+)" : "(?P<id>[^/]+)";
 
-  const bound = (type: PostType): Option.Option<BoundPostType<R>> =>
+  const bound = (type: PostType): Option.Option<BoundPostType<R, Following>> =>
     Option.fromNullishOr(config.types[type]);
+
+  /** The bound taxonomies applying to `type`, in route order. */
+  const taxonomiesOf = (
+    type: PostType,
+  ): ReadonlyArray<readonly [Taxonomy, BoundTaxonomy<R, Following>]> =>
+    Arr.getSomes(
+      TAXONOMIES.map(([, taxonomy]) =>
+        Option.filter(
+          Option.map(
+            Option.fromNullishOr(config.taxonomies?.[taxonomy]),
+            (binding) => [taxonomy, binding] as const,
+          ),
+          ([, binding]) => Arr.contains(binding.postTypes, type),
+        ),
+      ),
+    );
+
+  /**
+   * The `categories` / `tags` filter: each taxonomy's readable members
+   * (`EDGE-001`, through `memberFilter`), joined by `tax_relation`. A list
+   * whose ids all decode to none fails closed, as `memberFilter` does.
+   */
+  const termMembership = (
+    params: CollectionParams,
+    decoded: ReadonlyArray<ReadonlyArray<string>>,
+  ): Effect.Effect<ListFilter<Following>, WpRestError, R> =>
+    Effect.gen(function* () {
+      if (!Arr.isReadonlyArrayNonEmpty(params.terms)) return always;
+      const filters = yield* Effect.forEach(
+        Arr.zip(params.terms, decoded),
+        ([[taxonomy], termIds]) =>
+          Option.match(Option.fromNullishOr(config.taxonomies?.[taxonomy]), {
+            onNone: () => Effect.succeed<ListFilter<Following>>(never),
+            onSome: (binding) => internal(binding.members(termIds)),
+          }),
+        { concurrency: 1 },
+      );
+      return params.taxRelation === "OR" ? or(...filters) : and(...filters);
+    });
 
   /** The bound type's `getMany`, skipped for no ids. */
   const readable = (type: PostType, nodeIds: ReadonlyArray<string>) =>
@@ -899,23 +1355,55 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
           : Effect.succeed(HashMap.empty<string, ShownItem>()),
     });
 
-  const routesBody = (): Schema.JsonObject =>
-    Record.fromEntries(
-      Arr.flatMap(ROUTES, ([base, type]) =>
-        Option.isSome(bound(type))
-          ? [`/wp/v2/${base}`, `/wp/v2/${base}/${idPattern}`].map(
-              (route) =>
-                [
-                  route,
-                  {
-                    namespace: "wp/v2",
-                    methods: ["GET"],
-                    endpoints: [{ methods: ["GET"], args: {} }],
-                  },
-                ] as const,
-            )
-          : [],
+  const routesBody = (): Schema.JsonObject => {
+    const userPattern = authors.ids.mode === "integer" ? "(?P<id>[\\d]+)" : "(?P<id>[^/]+)";
+    const routed: ReadonlyArray<readonly [base: string, pattern: string]> = [
+      ...Arr.filter(ROUTES, ([, type]) => Option.isSome(bound(type))).map(
+        ([base]) => [base, idPattern] as const,
       ),
+      ...Arr.filter(TAXONOMIES, ([, taxonomy]) => config.taxonomies?.[taxonomy] !== undefined).map(
+        ([base]) => [base, idPattern] as const,
+      ),
+      ...(servesUsers() ? [["users", userPattern] as const] : []),
+    ];
+    return Record.fromEntries(
+      Arr.flatMap(routed, ([base, pattern]) =>
+        [`/wp/v2/${base}`, `/wp/v2/${base}/${pattern}`].map(
+          (route) =>
+            [
+              route,
+              {
+                namespace: "wp/v2",
+                methods: ["GET"],
+                endpoints: [{ methods: ["GET"], args: {} }],
+              },
+            ] as const,
+        ),
+      ),
+    );
+  };
+
+  /** The terms of each taxonomy's items, through that taxonomy's `getMany` (one read each). */
+  const readTerms = (
+    terms: ReadonlyArray<readonly [Taxonomy, HashMap.HashMap<string, ReadonlyArray<string>>]>,
+  ) =>
+    Effect.map(
+      Effect.forEach(
+        terms,
+        ([taxonomy, byItem]) => {
+          const termIds = Arr.dedupe(Arr.flatten(HashMap.toValues(byItem)));
+          return Option.match(Option.fromNullishOr(config.taxonomies?.[taxonomy]), {
+            onNone: () => Effect.succeed(HashMap.empty<string, ShownTerm>()),
+            onSome: (binding) =>
+              Arr.isReadonlyArrayNonEmpty(termIds)
+                ? internal(binding.getMany(termIds))
+                : Effect.succeed(HashMap.empty<string, ShownTerm>()),
+          });
+        },
+        { concurrency: 1 },
+      ),
+      (maps) =>
+        Arr.reduce(maps, HashMap.empty<string, ShownTerm>(), (all, map) => HashMap.union(all, map)),
     );
 
   /** Read everything a set of items points at, each kind in one batch. */
@@ -935,12 +1423,28 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
         parentType,
         Arr.dedupe(Arr.getSomes(items.map(({ fields }) => fields.parent))),
       );
+      const terms = yield* Effect.forEach(
+        taxonomiesOf(type),
+        ([taxonomy, binding]) =>
+          Effect.map(
+            internal(binding.termsOf(items.map(({ fields }) => fields.id))),
+            (byItem) => [taxonomy, byItem] as const,
+          ),
+        { concurrency: 1 },
+      );
+      const termIds = Arr.dedupe(
+        Arr.flatMap(terms, ([, byItem]) => Arr.flatten(HashMap.toValues(byItem))),
+      );
+      const termItems = embed("wp:term")
+        ? yield* readTerms(terms.map(([taxonomy, byItem]) => [taxonomy, byItem] as const))
+        : HashMap.empty<string, ShownTerm>();
       const embeddedMedia = embed("wp:featuredmedia") ? HashMap.toValues(media) : [];
       const embeddedParents = embed("up") ? HashMap.toValues(parents) : [];
       const nodeIds = Arr.dedupe([
         ...items.map(({ fields }) => fields.id),
         ...HashMap.keys(media),
         ...HashMap.keys(parents),
+        ...termIds,
       ]);
       const encoded = Arr.isReadonlyArrayNonEmpty(nodeIds)
         ? yield* internal(ids.encode(nodeIds))
@@ -981,6 +1485,8 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
           ),
         ),
         now,
+        terms,
+        termItems,
       } satisfies Related;
     });
 
@@ -990,6 +1496,18 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
       Option.flatMap(id, (node) => HashMap.get(related.wire, node)),
       () => 0,
     );
+
+  /** An item's terms in one taxonomy, as wire ids (none when the taxonomy doesn't apply). */
+  const termIdsOf = (related: Related, taxonomy: Taxonomy, itemId: string) =>
+    Option.getOrElse(
+      Option.flatMap(
+        Arr.findFirst(related.terms, ([held]) => held === taxonomy),
+        ([, byItem]) => HashMap.get(byItem, itemId),
+      ),
+      () => [],
+    );
+  const termWires = (related: Related, taxonomy: Taxonomy, itemId: string) =>
+    Arr.getSomes(termIdsOf(related, taxonomy, itemId).map((id) => HashMap.get(related.wire, id)));
 
   const rendered = (related: Related, id: string, field: string): string =>
     Option.getOrElse(HashMap.get(related.rendered, renderKey(id, field)), () => "");
@@ -1046,9 +1564,31 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
             ] as const,
           ]
         : []),
+      ...termLinks(type, wireId),
       ["curies", [{ name: "wp", href: "https://api.w.org/{rel}", templated: true }]],
     ];
     return Record.fromEntries(entries);
+  };
+
+  /** An item's `wp:term` link: one entry per taxonomy applying to its type. */
+  const termLinks = (type: PostType, wireId: WireId): ReadonlyArray<LinkEntry> => {
+    const taxonomies = taxonomiesOf(type);
+    return Arr.isReadonlyArrayNonEmpty(taxonomies)
+      ? [
+          [
+            "wp:term",
+            taxonomies.map(([taxonomy]) => ({
+              taxonomy,
+              embeddable: true,
+              href: withQuery(
+                restUrl(`/wp/v2/${taxonomyBase(taxonomy)}`),
+                [["post", String(wireId)]],
+                Option.none(),
+              ),
+            })),
+          ],
+        ]
+      : [];
   };
 
   /** One item on the wire, in `view` or `embed` context. */
@@ -1090,6 +1630,13 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
       media_details: mediaOf.mediaDetails,
     });
     const _links = linksOf(type, item, related);
+    /** The term fields of a page or attachment a taxonomy is bound to (a post always has both). */
+    const termFields: Schema.JsonObject = Record.fromEntries(
+      related.terms.map(([taxonomy]) => [
+        taxonomyBase(taxonomy),
+        termWires(related, taxonomy, fields.id),
+      ]),
+    );
     if (context === "embed") {
       return type === "attachment"
         ? {
@@ -1161,8 +1708,8 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
         template: "",
         format: "standard",
         meta: [],
-        categories: [],
-        tags: [],
+        categories: termWires(related, "category", fields.id),
+        tags: termWires(related, "post_tag", fields.id),
         class_list: classList,
         _links,
       })),
@@ -1178,6 +1725,7 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
         ping_status: "closed",
         template: "",
         meta: [],
+        ...termFields,
         class_list: classList,
         _links,
       })),
@@ -1200,6 +1748,7 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
           () => "",
         ),
         filesize: Option.getOrNull(Option.flatMap(media, (m) => m.fileSize)),
+        ...termFields,
         _links,
       })),
       Match.exhaustive,
@@ -1219,6 +1768,67 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
       collection: [{ href: restUrl("/wp/v2/users") }],
     },
   });
+
+  /**
+   * One term on the wire, in `view` or `embed` context. `parent` is the
+   * readable parent's wire id, or `0` (none, or one the viewer can't read).
+   */
+  const termBody = (
+    taxonomy: Taxonomy,
+    term: ShownTerm,
+    wireId: WireId,
+    context: "view" | "embed",
+    count: number,
+    parent: WireId,
+  ): Schema.JsonObject => {
+    const { fields } = term;
+    const base = taxonomyBase(taxonomy);
+    const binding = Option.fromNullishOr(config.taxonomies?.[taxonomy]);
+    const link = Option.match(binding, { onNone: () => "", onSome: (b) => b.link(fields) });
+    const postTypes = Option.match(binding, { onNone: () => [], onSome: (b) => b.postTypes });
+    const entries: ReadonlyArray<LinkEntry> = [
+      ["self", [{ href: restUrl(`/wp/v2/${base}/${wireId}`), targetHints: { allow: ["GET"] } }]],
+      ["collection", [{ href: restUrl(`/wp/v2/${base}`) }]],
+      ["about", [{ href: restUrl(`/wp/v2/taxonomies/${taxonomy}`) }]],
+      ...(taxonomy === "category" && parent !== 0
+        ? [["up", [{ embeddable: true, href: restUrl(`/wp/v2/${base}/${parent}`) }]] as const]
+        : []),
+      [
+        "wp:post_type",
+        Arr.filter(postTypes, (type) => Option.isSome(bound(type))).map((type) => ({
+          href: withQuery(
+            restUrl(`/wp/v2/${baseOf(type)}`),
+            [[base, String(wireId)]],
+            Option.none(),
+          ),
+        })),
+      ],
+      ["curies", [{ name: "wp", href: "https://api.w.org/{rel}", templated: true }]],
+    ];
+    const _links = Record.fromEntries(entries);
+    if (context === "embed") {
+      return { id: wireId, link, name: fields.name, slug: fields.slug, taxonomy, _links };
+    }
+    const shown = {
+      id: wireId,
+      count,
+      description: fields.description,
+      link,
+      name: fields.name,
+      slug: fields.slug,
+      taxonomy,
+    };
+    // Only a hierarchical taxonomy's terms carry `parent`, as core's do.
+    return taxonomy === "category"
+      ? { ...shown, parent, meta: [], _links }
+      : { ...shown, meta: [], _links };
+  };
+
+  /** A user in `view` context: the embed form plus `meta`. */
+  const userBody = (wireId: WireId, profile: Author): Schema.JsonObject => {
+    const { _links, ...shown } = authorBody(wireId, profile);
+    return { ...shown, meta: [], _links };
+  };
 
   /** An item's `_embedded`, only the rels asked for and only targets the viewer may read. */
   const embeddedOf = (
@@ -1261,6 +1871,26 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
             ),
           )
         : []),
+      ...(embed("wp:term") && Arr.isReadonlyArrayNonEmpty(related.terms)
+        ? [
+            [
+              "wp:term",
+              related.terms.map(([taxonomy]) =>
+                Arr.getSomes(
+                  termIdsOf(related, taxonomy, fields.id).map((id) =>
+                    Option.map(
+                      Option.all([
+                        HashMap.get(related.termItems, id),
+                        HashMap.get(related.wire, id),
+                      ]),
+                      ([term, wireId]) => termBody(taxonomy, term, wireId, "embed", 0, 0),
+                    ),
+                  ),
+                ),
+              ),
+            ] as const,
+          ]
+        : []),
     ];
     return Arr.isReadonlyArrayNonEmpty(members) ? [["_embedded", Record.fromEntries(members)]] : [];
   };
@@ -1291,7 +1921,8 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
     Arr.every(items, (item) => item.serveable) &&
     (!embed("wp:featuredmedia") ||
       Arr.every(HashMap.toValues(related.media), (item) => item.serveable)) &&
-    (!embed("up") || Arr.every(HashMap.toValues(related.parents), (item) => item.serveable));
+    (!embed("up") || Arr.every(HashMap.toValues(related.parents), (item) => item.serveable)) &&
+    (!embed("wp:term") || Arr.every(HashMap.toValues(related.termItems), (term) => term.serveable));
 
   const respond = (
     status: number,
@@ -1324,15 +1955,34 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
 
   // ── Handlers ────────────────────────────────────────────────────────
 
-  const getItem = (type: PostType, binding: BoundPostType<R>, rawId: string, query: Query) =>
+  /** One path id decoded, or `missing` (unknown to the codec, or no id at all: `SEC-AUTH-ENUM-001`). */
+  const decodeOne = (
+    wireIds: WireIds<WireId, unknown, unknown, R>,
+    rawId: string,
+    missing: () => WpRestError,
+  ) =>
+    Effect.flatMap(internal(wireIds.decode([rawId])), (decoded) =>
+      Effect.fromOption(Option.flatten(Arr.head(decoded))).pipe(Effect.mapError(missing)),
+    );
+
+  /** The row the read gate lets through, or `missing` exactly as for an unknown id. */
+  const shownOr = <A>(
+    read: Effect.Effect<Option.Option<A>, unknown, R>,
+    missing: () => WpRestError,
+  ) =>
+    Effect.flatMap(internal(read), (shown) =>
+      Effect.fromOption(shown).pipe(Effect.mapError(missing)),
+    );
+
+  const getItem = (
+    type: PostType,
+    binding: BoundPostType<R, Following>,
+    rawId: string,
+    query: Query,
+  ) =>
     Effect.gen(function* () {
-      const decodedIds = yield* internal(ids.decode([rawId]));
-      const id = yield* Effect.fromOption(Option.flatten(Arr.head(decodedIds))).pipe(
-        Effect.mapError(invalidId),
-      );
-      const item = yield* Effect.fromOption(yield* internal(binding.get(id))).pipe(
-        Effect.mapError(invalidId),
-      );
+      const id = yield* decodeOne(ids, rawId, invalidId);
+      const item = yield* shownOr(binding.get(id), invalidId);
       const viewer = yield* config.viewer;
       // The 404 comes first, so a refused context never confirms the row.
       if (Option.contains(query.scalar("context"), "edit")) {
@@ -1362,10 +2012,17 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
       );
     });
 
-  const listItems = (type: PostType, binding: BoundPostType<R>, query: Query) =>
+  const listItems = (type: PostType, binding: BoundPostType<R, Following>, query: Query) =>
     Effect.gen(function* () {
       const { columns } = binding;
-      const params = yield* collectionParams(type, query, columns, site.timezone);
+      const taxonomies = taxonomiesOf(type);
+      const params = yield* collectionParams(
+        type,
+        query,
+        columns,
+        site.timezone,
+        taxonomies.map(([taxonomy]) => taxonomy),
+      );
       const viewer = yield* config.viewer;
       if (Option.contains(query.scalar("context"), "edit")) {
         return yield* editRefused(
@@ -1376,15 +2033,15 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
       yield* checkStatuses(type, params.statuses, viewer, policy);
 
       // Every node id parameter decodes in one batch, every author id in another.
-      const [include = [], exclude = [], parent = [], parentExclude = []] = yield* decodeLists(
-        ids,
-        [
+      const [include = [], exclude = [], parent = [], parentExclude = [], ...termIds] =
+        yield* decodeLists(ids, [
           Option.getOrElse(params.include, () => []),
           params.exclude,
           Option.getOrElse(params.parent, () => []),
           params.parentExclude,
-        ],
-      );
+          ...params.terms.map(([, values]) => values),
+        ]);
+      const membership = yield* termMembership(params, termIds);
       const [author = [], authorExclude = []] = yield* decodeLists(authors.ids, [
         Option.getOrElse(params.author, () => []),
         params.authorExclude,
@@ -1407,7 +2064,7 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
         or<never>(isNull(column), noneOf(column, values));
       const unless = (values: ReadonlyArray<string>, filter: () => ListFilter<never>) =>
         Arr.isReadonlyArrayNonEmpty(values) ? filter() : always;
-      const where = and<never>(
+      const where = and<Following>(
         or<never>(...params.statuses.map((status) => statusFilter(type, columns, status))),
         when(params.include, () => anyOf("id", include)),
         unless(exclude, () => noneOf("id", exclude)),
@@ -1427,6 +2084,7 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
         when(params.before, (at) => lt(columns.date, at)),
         when(params.modifiedAfter, (at) => gt(columns.modified, at)),
         when(params.modifiedBefore, (at) => lt(columns.modified, at)),
+        membership,
       );
       const sortBy = Match.value(params.orderby).pipe(
         Match.when("author", () => columnOf(columns, "author")),
@@ -1503,6 +2161,381 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
       );
     });
 
+  // ── Terms ───────────────────────────────────────────────────────────
+
+  const invalidTerm = () =>
+    new WpRestError({ code: "rest_term_invalid", message: "Term does not exist.", status: 404 });
+
+  /** The readable parents of `terms` (one `getMany`), so a hidden parent is `0`. */
+  const readableParents = (
+    binding: BoundTaxonomy<R, Following>,
+    terms: ReadonlyArray<ShownTerm>,
+  ) => {
+    const parentIds = Arr.dedupe(Arr.getSomes(terms.map(({ fields }) => fields.parent)));
+    return Arr.isReadonlyArrayNonEmpty(parentIds)
+      ? internal(binding.getMany(parentIds))
+      : Effect.succeed(HashMap.empty<string, ShownTerm>());
+  };
+
+  /** Terms on the wire: their ids and readable parents encoded in one batch. */
+  const termBodies = (
+    taxonomy: Taxonomy,
+    binding: BoundTaxonomy<R, Following>,
+    terms: ReadonlyArray<ShownTerm>,
+    counts: HashMap.HashMap<string, number>,
+    context: "view" | "embed",
+  ) =>
+    Effect.gen(function* () {
+      const parents = yield* readableParents(binding, terms);
+      const nodeIds = Arr.dedupe([
+        ...terms.map(({ fields }) => fields.id),
+        ...HashMap.keys(parents),
+      ]);
+      const encoded = Arr.isReadonlyArrayNonEmpty(nodeIds)
+        ? yield* internal(ids.encode(nodeIds))
+        : [];
+      const wire = HashMap.fromIterable(Arr.zip(nodeIds, encoded));
+      const wireOfNode = (id: Option.Option<string>): WireId =>
+        Option.getOrElse(
+          Option.flatMap(id, (node) => HashMap.get(wire, node)),
+          () => 0,
+        );
+      return terms.map((term) =>
+        termBody(
+          taxonomy,
+          term,
+          wireOfNode(Option.some(term.fields.id)),
+          context,
+          Option.getOrElse(HashMap.get(counts, term.fields.id), () => 0),
+          wireOfNode(Option.filter(term.fields.parent, (parent) => HashMap.has(parents, parent))),
+        ),
+      );
+    });
+
+  const getTerm = (
+    taxonomy: Taxonomy,
+    binding: BoundTaxonomy<R, Following>,
+    rawId: string,
+    query: Query,
+  ) =>
+    Effect.gen(function* () {
+      const id = yield* decodeOne(ids, rawId, invalidTerm);
+      const term = yield* shownOr(binding.get(id), invalidTerm);
+      const viewer = yield* config.viewer;
+      if (Option.contains(query.scalar("context"), "edit")) {
+        return yield* editRefused(viewer, "Sorry, you are not allowed to edit this term.");
+      }
+      const context = Option.contains(query.scalar("context"), "embed") ? "embed" : "view";
+      const counts = yield* internal(binding.counts([id]));
+      const [body = {}] = yield* termBodies(taxonomy, binding, [term], counts, context);
+      return respond(200, fieldsFilterOf(query)(body), [
+        cacheControl(Option.isNone(viewer) && term.serveable),
+      ]);
+    });
+
+  /** The item `post=` names, read through the post types the taxonomy applies to; a hidden one is unknown. */
+  const termsOfPost = (binding: BoundTaxonomy<R, Following>, postId: string) =>
+    Effect.gen(function* () {
+      const found = yield* Effect.forEach(
+        Arr.getSomes(binding.postTypes.map(bound)),
+        (postBinding) => internal(postBinding.get(postId)),
+        { concurrency: 1 },
+      );
+      if (!Arr.some(found, Option.isSome)) {
+        return yield* new WpRestError({
+          code: "rest_post_invalid_id",
+          message: "Invalid post ID.",
+          status: 400,
+        });
+      }
+      const byPost = yield* internal(binding.termsOf([postId]));
+      return Option.getOrElse(HashMap.get(byPost, postId), () => []);
+    });
+
+  /**
+   * Every matching term at once (at most `MAX_SET_VALUES`), with its count:
+   * what `hide_empty` and `orderby=count` read, since neither is a column.
+   * A larger match is `400 rest_invalid_param` rather than a short answer.
+   */
+  const everyTerm = (
+    binding: BoundTaxonomy<R, Following>,
+    params: TermParams,
+    request: ListRequest,
+  ) =>
+    Effect.gen(function* () {
+      const all = yield* termPage(binding, { ...request, limit: MAX_SET_VALUES, offset: 0 });
+      if (all.total > all.rows.length) {
+        const name = params.hideEmpty ? "hide_empty" : "orderby";
+        return yield* invalidParams({
+          [name]: `${name} is not supported for more than ${MAX_SET_VALUES} matching terms.`,
+        });
+      }
+      const counts = yield* internal(binding.counts(all.rows.map(({ fields }) => fields.id)));
+      const countOf = (term: ShownTerm) =>
+        Option.getOrElse(HashMap.get(counts, term.fields.id), () => 0);
+      const kept = params.hideEmpty ? Arr.filter(all.rows, (term) => countOf(term) > 0) : all.rows;
+      const byCount = Order.mapInput(Order.Number, countOf);
+      const sorted =
+        params.orderby === "count"
+          ? Arr.sort(kept, params.order === "desc" ? Order.flip(byCount) : byCount)
+          : kept;
+      return { rows: sorted, total: sorted.length, counts };
+    });
+
+  /** One page of terms, an undeclared order answering `400 rest_invalid_param`. */
+  const termPage = (binding: BoundTaxonomy<R, Following>, request: ListRequest) =>
+    binding.list(request).pipe(
+      Effect.catchIf(Schema.is(InvalidListOrder), () =>
+        Effect.fail(invalidParams({ orderby: "orderby is not sortable for this taxonomy." })),
+      ),
+      Effect.mapError((error) => (Schema.is(WpRestError)(error) ? error : internalError())),
+    );
+
+  /** The paging headers WordPress sets on a collection, with no past-the-end error (as core's terms and users). */
+  const pagingHeaders = (
+    route: string,
+    query: Query,
+    total: number,
+    page: number,
+    perPage: number,
+  ): ReadonlyArray<readonly [string, string]> => {
+    const maxPages = Math.ceil(total / perPage);
+    const pageLink = (to: number, rel: string): readonly [string, string] => [
+      "link",
+      linkValue(withQuery(restUrl(route), query.pairs, Option.some(to)), rel),
+    ];
+    return [
+      ["x-wp-total", String(total)],
+      ["x-wp-totalpages", String(maxPages)],
+      ...(page > 1 ? [pageLink(Math.min(page - 1, maxPages), "prev")] : []),
+      ...(maxPages > page ? [pageLink(page + 1, "next")] : []),
+    ];
+  };
+
+  const listTerms = (taxonomy: Taxonomy, binding: BoundTaxonomy<R, Following>, query: Query) =>
+    Effect.gen(function* () {
+      const { columns } = binding;
+      const params = yield* termParams(taxonomy, query, columns, site.timezone);
+      const viewer = yield* config.viewer;
+      if (Option.contains(query.scalar("context"), "edit")) {
+        return yield* editRefused(
+          viewer,
+          "Sorry, you are not allowed to edit terms in this taxonomy.",
+        );
+      }
+      const parentWire = Option.filter(params.parent, (parent) => parent > 0);
+      const postWire = Option.filter(params.post, (post) => post > 0);
+      const [include = [], exclude = [], parent = [], post = []] = yield* decodeLists(ids, [
+        Option.getOrElse(params.include, () => []),
+        params.exclude,
+        Option.toArray(Option.map(parentWire, String)),
+        Option.toArray(Option.map(postWire, String)),
+      ]);
+      const ofPost = Option.isSome(postWire)
+        ? Option.some(
+            yield* Option.match(Arr.head(post), {
+              onNone: () =>
+                Effect.fail(
+                  new WpRestError({
+                    code: "rest_post_invalid_id",
+                    message: "Invalid post ID.",
+                    status: 400,
+                  }),
+                ),
+              onSome: (postId) => termsOfPost(binding, postId),
+            }),
+          )
+        : Option.none<ReadonlyArray<string>>();
+      const when = <A>(value: Option.Option<A>, filter: (value: A) => ListFilter<never>) =>
+        Option.match(value, { onNone: () => always, onSome: filter });
+      const where = and<never>(
+        when(params.include, () => anyOf("id", include)),
+        Arr.isReadonlyArrayNonEmpty(exclude) ? noneOf("id", exclude) : always,
+        when(params.slug, (slugs) => anyOf(columns.slug, slugs)),
+        when(params.parent, (wire) =>
+          Option.match(Option.fromNullishOr(columns.parent), {
+            onNone: () => never,
+            onSome: (column) => (wire === 0 ? isNull(column) : anyOf(column, parent)),
+          }),
+        ),
+        when(ofPost, (termIds) => anyOf("id", termIds)),
+      );
+      const column = Match.value(params.orderby).pipe(
+        Match.when("id", () => columns.id ?? "id"),
+        Match.when("slug", () => columns.slug),
+        Match.orElse(() => columns.name),
+      );
+      const request: ListRequest = {
+        where,
+        orderBy: [{ column, direction: params.orderby === "count" ? "asc" : params.order }],
+        includeDeleted: false,
+        limit: params.perPage,
+        offset: Option.getOrElse(params.offset, () => (params.page - 1) * params.perPage),
+      };
+      const inMemory =
+        params.hideEmpty || params.orderby === "count" || params.orderby === "include";
+      const { rows, total, counts } = inMemory
+        ? yield* Effect.map(everyTerm(binding, params, request), (all) => {
+            const ordered =
+              params.orderby === "include"
+                ? Arr.sort(
+                    all.rows,
+                    Order.mapInput(Order.Number, (term: ShownTerm) =>
+                      include.indexOf(term.fields.id),
+                    ),
+                  )
+                : all.rows;
+            return {
+              rows: ordered.slice(request.offset, request.offset + request.limit),
+              total: all.total,
+              counts: all.counts,
+            };
+          })
+        : yield* Effect.flatMap(termPage(binding, request), (page) =>
+            Effect.map(
+              internal(binding.counts(page.rows.map(({ fields }) => fields.id))),
+              (counts) => ({ ...page, counts }),
+            ),
+          );
+      const bodies = yield* termBodies(taxonomy, binding, rows, counts, params.context);
+      return respond(200, bodies.map(fieldsFilterOf(query)), [
+        ...pagingHeaders(
+          `/wp/v2/${taxonomyBase(taxonomy)}`,
+          query,
+          total,
+          params.page,
+          params.perPage,
+        ),
+        cacheControl(Option.isNone(viewer) && Arr.every(rows, (term) => term.serveable)),
+      ]);
+    });
+
+  // ── Users ───────────────────────────────────────────────────────────
+
+  const invalidUser = () =>
+    new WpRestError({ code: "rest_user_invalid_id", message: "Invalid user ID.", status: 404 });
+
+  /**
+   * The accounts owning a row the viewer may list, across every bound post
+   * type (`readableOwners`, `SEC-AUTH-ENUM-001`), narrowed to `among`.
+   */
+  const readableAuthors = (among: Option.Option<ReadonlyArray<string>>) =>
+    Effect.gen(function* () {
+      const leaves = Arr.getSomes(
+        ROUTES.map(([, type]) =>
+          Option.map(bound(type), (binding) => ({ type, owners: binding.owners })),
+        ),
+      );
+      const page = yield* internal(
+        readableOwners(leaves, {
+          limit: MAX_PAGE_LIMIT,
+          offset: 0,
+          includeDeleted: false,
+          among: Option.getOrUndefined(among),
+        }),
+      );
+      // The union of several leaves can pass one page; answering a short list would hide authors.
+      if (page.total > page.rows.length) return yield* internalError();
+      return page.rows;
+    });
+
+  const getUser = (rawId: string, query: Query) =>
+    Effect.gen(function* () {
+      const id = yield* decodeOne(authors.ids, rawId, invalidUser);
+      const owners = yield* readableAuthors(Option.some([id]));
+      if (!Arr.contains(owners, id)) return yield* invalidUser();
+      const profile = yield* Effect.fromOption(
+        HashMap.get(yield* internal(authors.getMany([id])), id),
+      ).pipe(Effect.mapError(invalidUser));
+      const viewer = yield* config.viewer;
+      if (Option.contains(query.scalar("context"), "edit")) {
+        return yield* editRefused(viewer, "Sorry, you are not allowed to edit this user.");
+      }
+      const [wireId = 0] = yield* internal(authors.ids.encode([id]));
+      const body = Option.contains(query.scalar("context"), "embed")
+        ? authorBody(wireId, profile)
+        : userBody(wireId, profile);
+      return respond(200, fieldsFilterOf(query)(body), [cacheControl(false)]);
+    });
+
+  const listUsers = (query: Query) =>
+    Effect.gen(function* () {
+      const params = yield* userParams(query, site.timezone);
+      const viewer = yield* config.viewer;
+      if (Option.contains(query.scalar("context"), "edit")) {
+        return yield* editRefused(viewer, "Sorry, you are not allowed to list users.");
+      }
+      if (Option.isSome(params.forbiddenOrderby)) {
+        return yield* new WpRestError({
+          code: "rest_forbidden_orderby",
+          message: "Sorry, you are not allowed to order users by this parameter.",
+          status: authorizationStatus(Option.isSome(viewer)),
+        });
+      }
+      const [include = [], exclude = []] = yield* decodeLists(authors.ids, [
+        Option.getOrElse(params.include, () => []),
+        params.exclude,
+      ]);
+      const owners = Arr.filter(
+        yield* readableAuthors(Option.map(params.include, () => include)),
+        (owner) => !Arr.contains(exclude, owner),
+      );
+      const profiles = Arr.isReadonlyArrayNonEmpty(owners)
+        ? yield* internal(authors.getMany(owners))
+        : HashMap.empty<string, Author>();
+      const shown = Arr.filter(
+        Arr.getSomes(
+          owners.map((owner) =>
+            Option.map(HashMap.get(profiles, owner), (profile) => [owner, profile] as const),
+          ),
+        ),
+        ([, profile]) =>
+          Option.match(params.slug, {
+            onNone: () => true,
+            onSome: (slugs) => Arr.contains(slugs, profile.slug),
+          }),
+      );
+      const encoded = Arr.isReadonlyArrayNonEmpty(shown)
+        ? yield* internal(authors.ids.encode(shown.map(([owner]) => owner)))
+        : [];
+      const users = Arr.zip(shown, encoded).map(([[owner, profile], wireId]) => ({
+        owner,
+        profile,
+        wireId,
+      }));
+      type User = (typeof users)[number];
+      // An integer id sorts by value (zero-padded past any safe integer), a string id by code point.
+      const byWireId = Order.mapInput(Order.String, (user: User) =>
+        Predicate.isNumber(user.wireId) ? String(user.wireId).padStart(20, "0") : user.wireId,
+      );
+      const ascending = Match.value(params.orderby).pipe(
+        Match.when("id", () => byWireId),
+        Match.when("slug", () => Order.mapInput(Order.String, (user: User) => user.profile.slug)),
+        Match.when("include", () =>
+          Order.mapInput(Order.Number, (user: User) => include.indexOf(user.owner)),
+        ),
+        Match.orElse(() => Order.mapInput(Order.String, (user: User) => user.profile.name)),
+      );
+      const sorted = Arr.sort(
+        users,
+        params.order === "desc" && params.orderby !== "include" ? Order.flip(ascending) : ascending,
+      );
+      const offset = Option.getOrElse(params.offset, () => (params.page - 1) * params.perPage);
+      const rows = sorted.slice(offset, offset + params.perPage);
+      return respond(
+        200,
+        rows.map(({ wireId, profile }) =>
+          fieldsFilterOf(query)(
+            params.context === "embed" ? authorBody(wireId, profile) : userBody(wireId, profile),
+          ),
+        ),
+        [
+          ...pagingHeaders("/wp/v2/users", query, sorted.length, params.page, params.perPage),
+          cacheControl(false),
+        ],
+      );
+    });
+
   const indexBody = () =>
     Effect.map(DateTime.now, (now): Schema.JsonObject => ({
       name: site.name,
@@ -1516,6 +2549,45 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
       routes: routesBody(),
     }));
 
+  /** A taxonomy or `/users` route, or none for a post type's. */
+  const routeOther = (
+    base: Option.Option<string>,
+    id: Option.Option<string>,
+    query: Query,
+  ): Effect.Effect<Option.Option<WordPressResponse>, WpRestError, R> => {
+    const taxonomy = Option.flatMap(
+      Arr.findFirst(TAXONOMIES, ([routed]) => Option.contains(base, routed)),
+      ([, found]) =>
+        Option.map(
+          Option.fromNullishOr(config.taxonomies?.[found]),
+          (binding) => [found, binding] as const,
+        ),
+    );
+    if (Option.isSome(taxonomy)) {
+      const [found, binding] = taxonomy.value;
+      return Option.match(id, {
+        onNone: () => Effect.map(listTerms(found, binding, query), Option.some),
+        onSome: (rawId) =>
+          ids.mode === "integer" && !/^\d+$/.test(rawId)
+            ? Effect.fail(noRoute())
+            : Effect.map(getTerm(found, binding, decodeURIComponent(rawId), query), Option.some),
+      });
+    }
+    if (Option.contains(base, "users") && servesUsers()) {
+      return Option.match(id, {
+        onNone: () => Effect.map(listUsers(query), Option.some),
+        onSome: (rawId) =>
+          authors.ids.mode === "integer" && !/^\d+$/.test(rawId)
+            ? Effect.fail(noRoute())
+            : Effect.map(getUser(decodeURIComponent(rawId), query), Option.some),
+      });
+    }
+    return Effect.succeed(Option.none());
+  };
+
+  /** `/users` is routed when any post type is bound: its authors are the only accounts it lists. */
+  const servesUsers = () => Arr.some(ROUTES, ([, type]) => Option.isSome(bound(type)));
+
   const route = (request: WordPressRequest) =>
     Effect.gen(function* () {
       if (request.method !== "GET" && request.method !== "HEAD") return yield* noRoute();
@@ -1527,6 +2599,12 @@ export const defineWordPress = <R>(config: WordPressConfig<R>): WordPressApi<R> 
         return respond(200, { namespace: "wp/v2", routes: routesBody() }, [cacheControl(true)]);
       }
       const [, base, rawId] = /^\/wp\/v2\/([a-z]+)(?:\/([^/]+))?$/.exec(rest) ?? [];
+      const routed = yield* routeOther(
+        Option.fromNullishOr(base),
+        Option.fromNullishOr(rawId),
+        query,
+      );
+      if (Option.isSome(routed)) return routed.value;
       const type = yield* Effect.fromOption(
         Option.flatMap(Option.fromNullishOr(base), typeOf),
       ).pipe(Effect.mapError(noRoute));

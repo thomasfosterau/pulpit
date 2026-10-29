@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
+import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
@@ -26,14 +27,17 @@ import {
   type Viewer,
   type ViewerAccount,
 } from "@thomasfosterau/pulpit/subtype";
+import { defineEdgeOps, type EdgeRow, type EdgeValues } from "@thomasfosterau/pulpit/edges";
 import {
   makeInMemoryChainStore,
+  makeInMemoryEdgeStore,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
 } from "@thomasfosterau/pulpit/testing";
 import type { ColumnValue } from "@thomasfosterau/pulpit/version-chain";
 import {
   bind,
+  bindTaxonomy,
   defineWordPress,
   MAX_LIST_PARAMETER,
   type Author,
@@ -41,15 +45,22 @@ import {
   type PostFields,
   type PostType,
   type RenderRequest,
+  type Taxonomy,
+  type TermFields,
   type WordPressResponse,
 } from "../src/api.ts";
 import { integerIds } from "../src/ids.ts";
 import { makeInMemoryIdCodec } from "../src/testing.ts";
 import {
   ATTACHMENT_FORM,
+  CATEGORY_FORM,
   LINKS_FORM,
   PAGE_FORM,
   POST_FORM,
+  TAG_FORM,
+  TERM_LINKS_FORM,
+  USER_FORM,
+  WP_TERM_LINK_FORM,
   type WireForm,
 } from "./fixtures/wordpress-forms.ts";
 
@@ -139,26 +150,117 @@ interface SiteOptions {
   readonly columns?: PostColumns;
   readonly bound?: ReadonlyArray<PostType>;
   readonly failing?: "render" | "list";
+  /** Bind `category` and `post_tag` over two term leaves and their assignment families (phase 2). */
+  readonly terms?: boolean;
 }
+
+const TERM_COLUMNS = ["name", "slug", "description", "parentId"];
+
+const termFieldsOf = (row: LeafRow): TermFields => ({
+  id: row.id,
+  name: textOf(row, "name"),
+  slug: textOf(row, "slug"),
+  description: textOf(row, "description"),
+  parent: stringOf(row, "parentId"),
+});
 
 /** A site over three in-memory leaves (posts, pages, media), all owned, with a draft column. */
 const site = (options: SiteOptions = {}) => {
   let viewer: Viewer = Option.none();
-  const leaf = (type: string) => {
+  const followers = makeInMemoryFollowers([]);
+  const viewerSeam = Effect.sync(() => viewer);
+  /** A chain and the current-version view over it. */
+  const store = (columns: ReadonlyArray<string>) => {
     const chain = makeInMemoryChainStore();
-    const leaves = makeInMemoryLeafStore(chain, { columns: COLUMNS, now: NOW });
-    return defineSubtype({
+    return { chain, leaves: makeInMemoryLeafStore(chain, { columns, now: NOW }) };
+  };
+  const leafStores = {
+    posts: store(COLUMNS),
+    pages: store(COLUMNS),
+    media: store(COLUMNS),
+  };
+  const leaf = (type: Target) =>
+    defineSubtype({
       type,
       access: ownedAccess({ draft: true }),
-      chain,
-      leaves,
-      viewer: Effect.sync(() => viewer),
+      chain: leafStores[type].chain,
+      leaves: leafStores[type].leaves,
+      viewer: viewerSeam,
       policy,
-      followers: makeInMemoryFollowers([]),
+      followers,
       toResource: (row: LeafRow) => row,
     });
-  };
   const ops = { posts: leaf("posts"), pages: leaf("pages"), media: leaf("media") };
+  const termStores = {
+    category: store(TERM_COLUMNS),
+    post_tag: store(TERM_COLUMNS),
+  };
+  const termOps = (taxonomy: Taxonomy) =>
+    defineSubtype({
+      type: taxonomy,
+      access: { kind: "reference" },
+      chain: termStores[taxonomy].chain,
+      leaves: termStores[taxonomy].leaves,
+      viewer: viewerSeam,
+      policy,
+      followers,
+      toResource: (row: LeafRow) => row,
+    });
+  const terms = { category: termOps("category"), post_tag: termOps("post_tag") };
+  const assignmentOps = (taxonomy: Taxonomy) => {
+    const ends = {
+      post: {
+        column: "postId",
+        type: "posts",
+        access: ownedAccess({ draft: true }),
+        nodes: leafStores.posts.leaves,
+      },
+      term: {
+        column: "termId",
+        type: taxonomy,
+        access: { kind: "reference" } as const,
+        nodes: termStores[taxonomy].leaves,
+      },
+    };
+    return defineEdgeOps({
+      type: `post_${taxonomy}`,
+      ends,
+      edges: makeInMemoryEdgeStore({ ends, uniqueKey: ["postId", "termId"], now: NOW }),
+      viewer: viewerSeam,
+      policy,
+      followers,
+      values: (input: EdgeValues) => input,
+      toResource: (row: EdgeRow) => row,
+    });
+  };
+  const assignments = { category: assignmentOps("category"), post_tag: assignmentOps("post_tag") };
+  const termReads: Array<readonly [Taxonomy, ReadonlyArray<string>]> = [];
+  const bindTerms = (taxonomy: Taxonomy) =>
+    bindTaxonomy({
+      terms: {
+        ...terms[taxonomy],
+        getMany: (ids) => {
+          termReads.push([taxonomy, ids]);
+          return terms[taxonomy].getMany(ids);
+        },
+      },
+      columns:
+        taxonomy === "category"
+          ? { name: "name", slug: "slug", parent: "parentId" }
+          : { name: "name", slug: "slug" },
+      fields: termFieldsOf,
+      serveable: () => true,
+      link: (fields) => `https://example.org/${taxonomy}/${fields.slug}`,
+      assignments: assignments[taxonomy],
+      ends: {
+        post: { alias: "post", column: "postId" },
+        term: { alias: "term", column: "termId" },
+      },
+      assignment: (edge: EdgeRow) => ({
+        post: Predicate.isString(edge["postId"]) ? edge["postId"] : "",
+        term: Predicate.isString(edge["termId"]) ? edge["termId"] : "",
+      }),
+    });
   const nodes = makeInMemoryIdCodec();
   const accounts = makeInMemoryIdCodec([member.id, stranger.id, moderator.id]);
   const renders: Array<ReadonlyArray<RenderRequest>> = [];
@@ -184,7 +286,7 @@ const site = (options: SiteOptions = {}) => {
       timezone: "Australia/Sydney",
     },
     ids: integerIds(nodes),
-    viewer: Effect.sync(() => viewer),
+    viewer: viewerSeam,
     policy,
     render: (requests) =>
       options.failing === "render"
@@ -224,6 +326,10 @@ const site = (options: SiteOptions = {}) => {
       },
       (_, type) => options.bound === undefined || Arr.contains(options.bound, type),
     ),
+    taxonomies:
+      options.terms === true
+        ? { category: bindTerms("category"), post_tag: bindTerms("post_tag") }
+        : undefined,
     authors: {
       ids: integerIds(accounts),
       getMany: (accountIds) =>
@@ -232,7 +338,13 @@ const site = (options: SiteOptions = {}) => {
           return HashMap.fromIterable(
             accountIds.map((id): readonly [string, Author] => [
               id,
-              { name: id, slug: id, description: "", url: "", avatarUrls: {} },
+              {
+                name: id,
+                slug: id,
+                description: "",
+                url: "",
+                avatarUrls: { "24": `https://example.org/${id}-24.png`, "48": "", "96": "" },
+              },
             ]),
           );
         }),
@@ -280,7 +392,40 @@ const site = (options: SiteOptions = {}) => {
     who: Viewer = Option.none(),
     method = "GET",
   ) => run(as(who, api.handle({ method, path: `/wp-json${path}`, query })));
-  return { api, ops, nodes, create, get, renders, authorReads, mediaReads, as };
+  /** A term, created by a moderator (a reference leaf's writer). */
+  const createTerm = async (
+    taxonomy: Taxonomy,
+    state: { readonly [column: string]: ColumnValue } = {},
+  ) => {
+    const { id } = await run(
+      as(
+        Option.some(moderator),
+        terms[taxonomy].create({
+          id: Option.none(),
+          state: { name: "A term", slug: "a-term", description: "", ...state },
+        }),
+      ),
+    );
+    return { id, wireId: nodes.assign(id) };
+  };
+  /** Assign a post a term, as a moderator. */
+  const assign = (taxonomy: Taxonomy, postId: string, termId: string) =>
+    run(as(Option.some(moderator), assignments[taxonomy].create({ postId, termId })));
+  return {
+    api,
+    ops,
+    nodes,
+    accounts,
+    create,
+    createTerm,
+    assign,
+    get,
+    renders,
+    authorReads,
+    mediaReads,
+    termReads,
+    as,
+  };
 };
 
 // ── Reading a response ──────────────────────────────────────────────────
@@ -634,7 +779,9 @@ describe("the wp/v2 read API — routes", () => {
       answers.map(() => [404, "rest_no_route"]),
     );
     expect(codeOf(await wp.get("/wp/v2/comments"))).toBe("rest_no_route");
-    expect(codeOf(await wp.get("/wp/v2/users/1"))).toBe("rest_no_route");
+    expect(codeOf(await wp.get("/wp/v2/settings"))).toBe("rest_no_route");
+    // A taxonomy the site doesn't bind has no route.
+    expect(codeOf(await wp.get("/wp/v2/categories"))).toBe("rest_no_route");
   });
 
   it("serves the discovery index and the namespace, with the api.w.org Link on every response", async () => {
@@ -654,6 +801,8 @@ describe("the wp/v2 read API — routes", () => {
       "/wp/v2/pages/(?P<id>[\\d]+)",
       "/wp/v2/media",
       "/wp/v2/media/(?P<id>[\\d]+)",
+      "/wp/v2/users",
+      "/wp/v2/users/(?P<id>[\\d]+)",
     ]);
     expect(["10", "11"]).toContain(index.gmt_offset);
     expect((await wp.get("/wp/v2")).status).toBe(200);
@@ -1081,5 +1230,288 @@ describe("the wp/v2 read API — the wire forms WordPress core answers in (golde
     const post = await wp.create("posts", {});
     const item = itemOf(await wp.get(`/wp/v2/posts/${post.wireId}`));
     expect([item.date, item.date_gmt]).toEqual(["2026-01-01T11:00:00", "2026-01-01T00:00:00"]);
+  });
+});
+
+// ── Phase 2: taxonomies and authors ─────────────────────────────────────
+
+const Term = Schema.Struct({
+  id: Schema.Number,
+  count: Schema.optionalKey(Schema.Number),
+  parent: Schema.optionalKey(Schema.Number),
+  slug: Schema.String,
+  _links: Schema.Record(Schema.String, Schema.Json),
+});
+const termOf = decodeBody(Term);
+const termsOf = decodeBody(Schema.Array(Term));
+const User = Schema.Struct({ id: Schema.Number, slug: Schema.String });
+const usersOf = decodeBody(Schema.Array(User));
+const sorted = (values: ReadonlyArray<number>) => Arr.sort(values, Order.Number);
+
+/**
+ * A site with both taxonomies bound: `news` and its child `sport`
+ * (categories), `hot` (a tag); the member's public `open` post in `news`,
+ * their draft in `news` and `sport`, and a stranger's public post tagged
+ * `hot`; a moderator owns only a draft.
+ */
+const taxonomySite = async () => {
+  const wp = site({ terms: true });
+  const news = await wp.createTerm("category", { name: "News", slug: "news" });
+  const sport = await wp.createTerm("category", {
+    name: "Sport",
+    slug: "sport",
+    parentId: news.id,
+  });
+  const hot = await wp.createTerm("post_tag", { name: "Hot", slug: "hot" });
+  const open = await wp.create("posts", { slug: "open" });
+  const draft = await wp.create("posts", { slug: "draft", draft: true });
+  const theirs = await wp.create("posts", { slug: "theirs" }, stranger);
+  await wp.create("posts", { slug: "moderated", draft: true }, moderator);
+  await wp.assign("category", open.id, news.id);
+  await wp.assign("category", draft.id, news.id);
+  await wp.assign("category", draft.id, sport.id);
+  await wp.assign("post_tag", theirs.id, hot.id);
+  return { wp, news, sport, hot, open, draft, theirs };
+};
+
+describe("the wp/v2 read API — taxonomies (phase 2)", () => {
+  it("counts only the assignments the viewer can read (EDGE-001), and hide_empty drops the rest", async () => {
+    const { wp, news, sport } = await taxonomySite();
+    const counts = async (who: Viewer, query: ReadonlyArray<readonly [string, string]> = []) =>
+      termsOf(await wp.get("/wp/v2/categories", query, who)).map(({ id, count }) => [id, count]);
+    expect(await counts(Option.none())).toEqual([
+      [news.wireId, 1],
+      [sport.wireId, 0],
+    ]);
+    expect(await counts(Option.some(member))).toEqual([
+      [news.wireId, 2],
+      [sport.wireId, 1],
+    ]);
+    expect(await counts(Option.none(), [["hide_empty", "true"]])).toEqual([[news.wireId, 1]]);
+    expect(await counts(Option.some(member), [["hide_empty", "1"]])).toHaveLength(2);
+    expect(
+      await counts(Option.some(member), [
+        ["orderby", "count"],
+        ["order", "asc"],
+      ]),
+    ).toEqual([
+      [sport.wireId, 1],
+      [news.wireId, 2],
+    ]);
+  });
+
+  it("answers the total and the paging headers, with an empty page past the end as core does", async () => {
+    const { wp } = await taxonomySite();
+    const first = await wp.get("/wp/v2/categories", [["per_page", "1"]]);
+    expect([first.headers["x-wp-total"], first.headers["x-wp-totalpages"]]).toEqual(["2", "2"]);
+    expect(first.headers["link"]).toContain('rel="next"');
+    const past = await wp.get("/wp/v2/categories", [["page", "9"]]);
+    expect([past.status, termsOf(past)]).toEqual([200, []]);
+  });
+
+  it("filters terms by include, exclude, slug, parent and post", async () => {
+    const { wp, news, sport, open, draft } = await taxonomySite();
+    const ids = async (
+      query: ReadonlyArray<readonly [string, string]>,
+      who: Viewer = Option.none(),
+    ) => termsOf(await wp.get("/wp/v2/categories", query, who)).map(({ id }) => id);
+    expect(await ids([["slug", "sport"]])).toEqual([sport.wireId]);
+    expect(await ids([["exclude", String(news.wireId)]])).toEqual([sport.wireId]);
+    expect(await ids([["parent", "0"]])).toEqual([news.wireId]);
+    expect(await ids([["parent", String(news.wireId)]])).toEqual([sport.wireId]);
+    expect(await ids([["post", String(open.wireId)]])).toEqual([news.wireId]);
+    expect(await ids([["post", String(draft.wireId)]], Option.some(member))).toEqual([
+      news.wireId,
+      sport.wireId,
+    ]);
+    expect(
+      await ids([
+        ["include", `${sport.wireId},${news.wireId}`],
+        ["orderby", "include"],
+      ]),
+    ).toEqual([sport.wireId, news.wireId]);
+  });
+
+  it("answers post= for a post the viewer can't read as an unknown post (SEC-AUTH-ENUM-001)", async () => {
+    const { wp, draft } = await taxonomySite();
+    const hidden = await wp.get("/wp/v2/categories", [["post", String(draft.wireId)]]);
+    const unknown = await wp.get("/wp/v2/categories", [["post", "999"]]);
+    expect([hidden.status, codeOf(hidden)]).toEqual([400, "rest_post_invalid_id"]);
+    expect([unknown.status, codeOf(unknown)]).toEqual([400, "rest_post_invalid_id"]);
+  });
+
+  it("answers one term, its readable parent, and 404 rest_term_invalid for an unknown id", async () => {
+    const { wp, news, sport, hot } = await taxonomySite();
+    const child = termOf(await wp.get(`/wp/v2/categories/${sport.wireId}`));
+    expect(child.parent).toBe(news.wireId);
+    expect(Record.has(child._links, "up")).toBe(true);
+    expect(termOf(await wp.get(`/wp/v2/tags/${hot.wireId}`)).parent).toBeUndefined();
+    const missing = await wp.get("/wp/v2/categories/999");
+    expect([missing.status, codeOf(missing)]).toEqual([404, "rest_term_invalid"]);
+    const edit = await wp.get(`/wp/v2/tags/${hot.wireId}`, [["context", "edit"]]);
+    expect([edit.status, codeOf(edit)]).toEqual([401, "rest_forbidden_context"]);
+  });
+
+  it("refuses the term parameters it can't honour", async () => {
+    const { wp } = await taxonomySite();
+    const refused = await inSequence(
+      [
+        ["/wp/v2/categories", "search", "news"],
+        ["/wp/v2/categories", "orderby", "term_group"],
+        ["/wp/v2/tags", "parent", "1"],
+        ["/wp/v2/tags", "hide_empty", "maybe"],
+      ] as const,
+      ([path, name, value]) => wp.get(path, [[name, value]]),
+    );
+    expect(refused.map(codeOf)).toEqual(refused.map(() => "rest_invalid_param"));
+  });
+});
+
+describe("the wp/v2 read API — items and their terms (phase 2)", () => {
+  it("lists the members of a term through memberFilter, joined by tax_relation", async () => {
+    const { wp, news, sport, hot, open, theirs } = await taxonomySite();
+    const ids = async (query: ReadonlyArray<readonly [string, string]>) =>
+      sorted(listed(await wp.get("/wp/v2/posts", query)));
+    expect(await ids([["categories", String(news.wireId)]])).toEqual([open.wireId]);
+    // The only post in `sport` is a draft: nothing an anonymous viewer can read.
+    expect(await ids([["categories", String(sport.wireId)]])).toEqual([]);
+    expect(await ids([["tags", String(hot.wireId)]])).toEqual([theirs.wireId]);
+    expect(
+      await ids([
+        ["categories", String(news.wireId)],
+        ["tags", String(hot.wireId)],
+      ]),
+    ).toEqual([]);
+    expect(
+      await ids([
+        ["categories", String(news.wireId)],
+        ["tags", String(hot.wireId)],
+        ["tax_relation", "OR"],
+      ]),
+    ).toEqual(sorted([open.wireId, theirs.wireId]));
+    expect(await ids([["categories", "999"]])).toEqual([]);
+  });
+
+  it("refuses the _exclude forms (pulpit#191) and a taxonomy the post type doesn't take", async () => {
+    const { wp, news } = await taxonomySite();
+    const exclude = await wp.get("/wp/v2/posts", [["categories_exclude", String(news.wireId)]]);
+    const onPages = await wp.get("/wp/v2/pages", [["categories", String(news.wireId)]]);
+    expect([codeOf(exclude), codeOf(onPages)]).toEqual([
+      "rest_invalid_param",
+      "rest_invalid_param",
+    ]);
+  });
+
+  it("shows an item's readable terms, its wp:term link and its embedded terms, one read per taxonomy", async () => {
+    const { wp, news, hot, open, theirs } = await taxonomySite();
+    const Shown = Schema.Struct({
+      id: Schema.Number,
+      categories: Schema.Array(Schema.Number),
+      tags: Schema.Array(Schema.Number),
+      _links: Schema.Struct({
+        "wp:term": Schema.Array(Schema.Struct({ taxonomy: Schema.String })),
+      }),
+      _embedded: Schema.Struct({
+        "wp:term": Schema.Array(Schema.Array(Schema.Struct({ id: Schema.Number }))),
+      }),
+    });
+    const before = wp.termReads.length;
+    const items = decodeBody(Schema.Array(Shown))(
+      await wp.get("/wp/v2/posts", [["_embed", "wp:term"]]),
+    );
+    const byId = (id: number) => items.find((item) => item.id === id);
+    expect([byId(open.wireId)?.categories, byId(open.wireId)?.tags]).toEqual([[news.wireId], []]);
+    expect([byId(theirs.wireId)?.categories, byId(theirs.wireId)?.tags]).toEqual([
+      [],
+      [hot.wireId],
+    ]);
+    expect(byId(open.wireId)?._links["wp:term"].map(({ taxonomy }) => taxonomy)).toEqual([
+      "category",
+      "post_tag",
+    ]);
+    expect(
+      byId(open.wireId)?._embedded["wp:term"].map((terms) => terms.map(({ id }) => id)),
+    ).toEqual([[news.wireId], []]);
+    expect(wp.termReads.slice(before).map(([taxonomy]) => taxonomy)).toEqual([
+      "category",
+      "post_tag",
+    ]);
+  });
+
+  it("never shows a term through an item the viewer can't read", async () => {
+    const { wp, draft } = await taxonomySite();
+    expect(codeOf(await wp.get(`/wp/v2/posts/${draft.wireId}`))).toBe("rest_post_invalid_id");
+    const own = decodeBody(Schema.Struct({ categories: Schema.Array(Schema.Number) }))(
+      await wp.get(`/wp/v2/posts/${draft.wireId}`, [], Option.some(member)),
+    );
+    expect(own.categories).toHaveLength(2);
+  });
+});
+
+describe("the wp/v2 read API — authors (phase 2)", () => {
+  it("lists only the authors of an item the viewer can read (SEC-AUTH-ENUM-001)", async () => {
+    const { wp } = await taxonomySite();
+    const slugs = async (who: Viewer, query: ReadonlyArray<readonly [string, string]> = []) =>
+      usersOf(await wp.get("/wp/v2/users", query, who)).map(({ slug }) => slug);
+    expect(await slugs(Option.none())).toEqual([member.id, stranger.id]);
+    expect(await slugs(Option.some(moderator))).toEqual([member.id, moderator.id, stranger.id]);
+    expect(await slugs(Option.none(), [["slug", stranger.id]])).toEqual([stranger.id]);
+    expect(
+      await slugs(Option.none(), [["exclude", String(wp.accounts.assign(member.id))]]),
+    ).toEqual([stranger.id]);
+    expect(await slugs(Option.none(), [["order", "desc"]])).toEqual([stranger.id, member.id]);
+    const response = await wp.get("/wp/v2/users");
+    expect([response.headers["x-wp-total"], response.headers["cache-control"]]).toEqual([
+      "2",
+      "private, no-store",
+    ]);
+  });
+
+  it("answers an account with no readable item as 404 rest_user_invalid_id, exactly as an unknown one", async () => {
+    const { wp } = await taxonomySite();
+    const hidden = await wp.get(`/wp/v2/users/${wp.accounts.assign(moderator.id)}`);
+    const unknown = await wp.get("/wp/v2/users/999");
+    expect([hidden.status, codeOf(hidden)]).toEqual([404, "rest_user_invalid_id"]);
+    expect([unknown.status, codeOf(unknown)]).toEqual([404, "rest_user_invalid_id"]);
+    const shown = await wp.get(
+      `/wp/v2/users/${wp.accounts.assign(moderator.id)}`,
+      [],
+      Option.some(moderator),
+    );
+    expect(shown.status).toBe(200);
+  });
+
+  it("answers an order core reserves for list_users as rest_forbidden_orderby, and refuses search", async () => {
+    const { wp } = await taxonomySite();
+    const email = await wp.get("/wp/v2/users", [["orderby", "email"]]);
+    expect([email.status, codeOf(email)]).toEqual([401, "rest_forbidden_orderby"]);
+    expect(codeOf(await wp.get("/wp/v2/users", [["search", "a"]]))).toBe("rest_invalid_param");
+  });
+});
+
+describe("the wp/v2 read API — phase 2 wire forms (golden)", () => {
+  it("answers terms and users in core's forms", async () => {
+    const { wp, news, hot, open } = await taxonomySite();
+    const category = await wp.get(`/wp/v2/categories/${news.wireId}`);
+    expect(formOf(withoutLinks(category))).toEqual(adjusted(CATEGORY_FORM));
+    expect(formOf(termOf(category)._links)).toEqual(TERM_LINKS_FORM);
+    expect(formOf(withoutLinks(await wp.get(`/wp/v2/tags/${hot.wireId}`)))).toEqual(
+      adjusted(TAG_FORM),
+    );
+    expect(
+      formOf(withoutLinks(await wp.get(`/wp/v2/users/${wp.accounts.assign(member.id)}`))),
+    ).toEqual(adjusted(USER_FORM));
+    const links = itemOf(await wp.get(`/wp/v2/posts/${open.wireId}`))._links;
+    expect(formOf(links["wp:term"] ?? null)).toEqual(WP_TERM_LINK_FORM);
+  });
+
+  it("lists the bound taxonomies in the discovery index", async () => {
+    const { wp } = await taxonomySite();
+    const index = decodeBody(Schema.Struct({ routes: Schema.Record(Schema.String, Schema.Json) }))(
+      await wp.get("/"),
+    );
+    expect(Record.keys(index.routes)).toEqual(
+      expect.arrayContaining(["/wp/v2/categories", "/wp/v2/tags/(?P<id>[\\d]+)", "/wp/v2/users"]),
+    );
   });
 });
