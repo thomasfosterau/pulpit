@@ -661,7 +661,7 @@ items.list(listId, { limit: 50, offset: 0 }); // { rows: [{ memberId, index, res
 
 - **Both models, one store** (owner decision on pulpit#193). A family picks its model:
   - **`mutable`** (the default) keeps the order beside the chain, like an edge: a write changes the store and nothing else.
-  - **`versioned`** also appends a parent version through the parent leaf's own `update` on every write. The version records the whole order (the member ids, in order) in a declared parent column, so `VERSION-CHAIN-001` covers it and history shows each reorder. After the parent's `restoreVersion`, `resync(parentId)` replaces the store's order with the one the restored version records.
+  - **`versioned`** also appends a parent version through the parent leaf's own `update` on every write. The version records the whole order (the member ids, in order) in a declared parent column, so `VERSION-CHAIN-001` covers it and history shows each reorder. After the parent's `restoreVersion`, `resync(parentId)` replaces the store's order with the one the restored version records, keeping only the members the writer can read, as `append` does (the column is writable through the parent's own `update`). The column names every member, the ones a reader of the parent can't read included, so wrap the parent leaf's `toResource` with `hideRecordedOrder(column, toResource)` to keep it out of the parent's resource (`EDGE-001`). The parent's history still shows it, behind the write gate.
 - **The gates.**
   - A read passes the parent's read gate: a hidden parent is `NodeNotFound`, never `Forbidden` (`SEC-AUTH-ENUM-001`).
   - Each member is read through the member leaf's own `getMany`. A member the viewer can't read is omitted from the page and from its total, as `EDGE-001` omits an edge with a hidden end, and `index` counts only the members shown.
@@ -672,6 +672,7 @@ items.list(listId, { limit: 50, offset: 0 }); // { rows: [{ memberId, index, res
 | Export | What it is |
 | --- | --- |
 | `defineCollection(definition)`, `CollectionDefinition`, `CollectionOps`, `CollectionMode`, `CollectionMember` | The factory, its declaration, the operations (`list`, `append`, `move`, `remove`, `resync`), the two models and a listed member. |
+| `hideRecordedOrder(column, toResource)` | A parent leaf's `toResource` without a versioned family's order column (`EDGE-001`). |
 | `CollectionStore`, `CollectionEntry`, `MAX_COLLECTION_SIZE` | The membership table seam (see [Seams](#seams)), one member's place and the size bound. |
 | `AlreadyMember`, `NotMember`, `CollectionFull` | The failures: 409, 404, 409. |
 
