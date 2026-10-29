@@ -20,6 +20,7 @@ import {
   Paths,
   Purge,
   Moderation,
+  Search,
   Proposals,
   Registry,
   WorkingCopy,
@@ -187,6 +188,15 @@ import type { PublicationFact, PublicationOps, SubtypeOps } from "@thomasfostera
 import { defineWorkingCopy } from "@thomasfosterau/pulpit/working-copy";
 import { CommentDepthExceeded, defineComments } from "@thomasfosterau/pulpit/comments";
 import { definePurge, type PurgeOps, type PurgeReport } from "@thomasfosterau/pulpit/purge";
+import {
+  embedPending,
+  fuseRankings,
+  hybridSearch,
+  type EmbeddingBatch,
+  type EmbeddingMismatch,
+  type FusedHit,
+  type SearchBranch,
+} from "@thomasfosterau/pulpit/search";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -1175,3 +1185,23 @@ export type _PurgeOp = Assert<
   >
 >;
 export type _PurgeReportBytes = Assert<Equals<PurgeReport["bytesLeft"], ReadonlyArray<string>>>;
+
+// ── search (pulpit#204) ──────────────────────────────────────────────────
+
+export type _SearchBarrel = Assert<Equals<typeof Search.fuseRankings, typeof fuseRankings>>;
+export type _Fused = Assert<Equals<ReturnType<typeof fuseRankings>, ReadonlyArray<FusedHit>>>;
+export type _FusedRanks = Assert<Equals<FusedHit["ranks"], { readonly [branch: string]: number }>>;
+declare const branches: ReadonlyArray<SearchBranch<Subquery, StoreFailure, Transaction>>;
+export const searchOver = hybridSearch({ branches });
+export type _HybridSearch = Assert<
+  Equals<
+    ReturnType<typeof searchOver>,
+    Effect.Effect<ReadonlyArray<FusedHit>, StoreFailure, Transaction>
+  >
+>;
+export type _EmbedPending = Assert<
+  Equals<
+    ReturnType<typeof embedPending<string, StoreFailure, Transaction>>,
+    Effect.Effect<EmbeddingBatch, StoreFailure | EmbeddingMismatch, Transaction>
+  >
+>;
