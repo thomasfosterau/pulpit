@@ -31,7 +31,11 @@ type Post = typeof Post.Type;
 const post = (visibility: string, title = "t"): Post => ({ id: "p-1", visibility, title });
 
 const setup = (
-  options: { readonly kv?: VersionedKv<string, never>; readonly ttlSeconds?: number } = {},
+  options: {
+    readonly kv?: VersionedKv<string, never>;
+    readonly ttlSeconds?: number;
+    readonly tombstoneTtlSeconds?: number;
+  } = {},
 ) => {
   const kv = makeInMemoryVersionedKv();
   let serveable = (resource: Post) => resource.visibility === "public";
@@ -41,6 +45,7 @@ const setup = (
     serveable: (resource) => serveable(resource),
     prefix: "posts:v1:",
     ttlSeconds: options.ttlSeconds ?? 60,
+    tombstoneTtlSeconds: options.tombstoneTtlSeconds,
   });
   return {
     kv,
@@ -71,10 +76,24 @@ describe("makeResourceCache — compare-on-set", () => {
     await run(cache.delete("p-1", 3n));
     await run(cache.set("p-1", post("public", "stale"), 2n));
     expect(await run(cache.get("p-1"))).toEqual(Option.none());
-    expect(Option.map(kv.peek("posts:v1:p-1"), (entry) => entry.version)).toEqual(Option.some(3n));
-    // A write at the evicted version or later caches again.
-    await run(cache.set("p-1", post("public", "fresh"), 3n));
+    // The stored rank: 2·version + 1 for a tombstone.
+    expect(Option.map(kv.peek("posts:v1:p-1"), (entry) => entry.version)).toEqual(Option.some(7n));
+    // A write after the evicted version caches again.
+    await run(cache.set("p-1", post("public", "fresh"), 4n));
     expect(await run(cache.get("p-1"))).toEqual(Option.some(post("public", "fresh")));
+  });
+
+  it("an eviction wins a tie: a fill that read the row at the evicted version can't re-cache it", async () => {
+    const { cache } = setup();
+    // A read-through loads the row at version 5, then the row is unpublished
+    // at the same version (publication appends no version) before the fill lands.
+    await run(cache.delete("p-1", 5n));
+    await run(cache.set("p-1", post("public", "pre-unpublish"), 5n));
+    expect(await run(cache.get("p-1"))).toEqual(Option.none());
+    // A value at the same version doesn't outrank another value: a re-fill replaces it.
+    await run(cache.set("p-1", post("public", "a"), 6n));
+    await run(cache.set("p-1", post("public", "b"), 6n));
+    expect(await run(cache.get("p-1"))).toEqual(Option.some(post("public", "b")));
   });
 });
 
@@ -102,10 +121,10 @@ describe("makeResourceCache — serveability on both sides (CACHE-AUTH-005)", ()
 describe("makeResourceCache — decode, TTL and failures", () => {
   it("evicts a value that no longer decodes, and reads it as a miss", async () => {
     const { cache, kv } = setup();
-    kv.poke("posts:v1:p-1", { version: 4n, value: Option.some({ id: "p-1" }) });
+    kv.poke("posts:v1:p-1", { version: 8n, value: Option.some({ id: "p-1" }) });
     expect(await run(cache.get("p-1"))).toEqual(Option.none());
     expect(Option.map(kv.peek("posts:v1:p-1"), (entry) => [entry.version, entry.value])).toEqual(
-      Option.some([4n, Option.none()]),
+      Option.some([9n, Option.none()]),
     );
   });
 
@@ -121,6 +140,48 @@ describe("makeResourceCache — decode, TTL and failures", () => {
       }).pipe(Effect.provide(TestClock.layer())),
     );
     expect(result).toEqual([Option.some(post("public")), Option.none()]);
+  });
+
+  it("keeps a tombstone past the value TTL, so a late stale write is still refused", async () => {
+    const result = await run(
+      Effect.gen(function* () {
+        const { cache, kv } = setup({ ttlSeconds: 10, tombstoneTtlSeconds: 100 });
+        yield* cache.set("p-1", post("public"), 1n);
+        yield* cache.delete("p-1", 2n);
+        yield* TestClock.adjust("50 seconds");
+        // A write-through that read version 1 lands long after the value TTL.
+        yield* cache.set("p-1", post("public", "stale"), 1n);
+        const late = yield* cache.get("p-1");
+        const held = Option.isSome(kv.peek("posts:v1:p-1"));
+        yield* TestClock.adjust("51 seconds");
+        // Past the tombstone TTL the bound no longer holds: that is the documented limit.
+        yield* cache.set("p-1", post("public", "after"), 1n);
+        const after = yield* cache.get("p-1");
+        return [late, held, after] as const;
+      }).pipe(Effect.provide(TestClock.layer())),
+    );
+    expect(result).toEqual([Option.none(), true, Option.some(post("public", "after"))]);
+  });
+
+  it("defaults the tombstone TTL to a day, and never below the value TTL", async () => {
+    const at = (ttlSeconds: number, wait: string, tombstoneTtlSeconds?: number) =>
+      run(
+        Effect.gen(function* () {
+          const { cache } = setup(
+            tombstoneTtlSeconds === undefined
+              ? { ttlSeconds }
+              : { ttlSeconds, tombstoneTtlSeconds },
+          );
+          yield* cache.delete("p-1", 2n);
+          yield* TestClock.adjust(wait);
+          yield* cache.set("p-1", post("public"), 1n);
+          return Option.isSome(yield* cache.get("p-1"));
+        }).pipe(Effect.provide(TestClock.layer())),
+      );
+    expect(await at(10, "23 hours")).toBe(false);
+    expect(await at(10, "25 hours")).toBe(true);
+    // A tombstone TTL below the value TTL is raised to it.
+    expect(await at(100, "50 seconds", 5)).toBe(false);
   });
 
   it("never fails: a KV failure reads as a miss and skips the write", async () => {

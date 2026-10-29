@@ -345,15 +345,18 @@ postCache.get(id); // Option<Post>
 ```
 
 - **Compare-on-set** (pulpit#121). Every entry carries the version it speaks for, and the KV's one conditional write (`putIfNotBehind`) keeps the highest. A `set` or `delete` below the stored version changes nothing, and an eviction raises the version, so a racing writer's late write-through never re-caches an older resource. The KV must compare and write in one atomic step; Workers KV alone can't.
+- **An eviction wins a tie.** A tombstone outranks a value at the same version, so only a strictly newer write clears it: a read-through that loaded the row before an unpublish at that version (publication appends no version) can't re-cache it. The cache stores a rank as the entry's `version`, `2·version` for a value and `2·version + 1` for a tombstone, so the KV still compares one number. The cost: after an eviction, a fill at the same version is refused, and the item reads from the store until a newer version or the tombstone expires.
+- **Tombstones outlive values.** A tombstone is kept for `tombstoneTtlSeconds` (default `DEFAULT_TOMBSTONE_TTL_SECONDS`, a day; never less than `ttlSeconds`). Set it above the longest a write-through or read-through fill can be in flight: a stale write that lands after its tombstone expired is no longer refused.
 - **Serveability on both sides** (`CACHE-AUTH-005`). `set` refuses, and evicts, a resource the policy doesn't serve. `get` checks again and evicts, so a policy change never serves a stale cached private row.
 - **Decode or evict.** `get` decodes with the resource's schema, and a stored value that no longer decodes is evicted and read as a miss. Bump `prefix` with the schema to start a fresh generation.
-- **A TTL backstop** on every write, so an entry no write evicted still expires.
+- **A TTL backstop** on every value write (`ttlSeconds`), so an entry no write evicted still expires.
 - **Never fails.** A KV failure reads as a miss and skips a write: the store stays the source of truth.
 
 | Export | What it is |
 | --- | --- |
 | `makeResourceCache(options)`, `ResourceCacheOptions`, `ResourceCache` | The cache, its options, and the seam plus `get`. |
-| `VersionedKv`, `KvEntry` | The KV seam (see [Seams](#seams)) and one stored entry (its version and encoded value, none for an eviction). |
+| `VersionedKv`, `KvEntry` | The KV seam (see [Seams](#seams)) and one stored entry (its rank and encoded value, none for an eviction). |
+| `DEFAULT_TOMBSTONE_TTL_SECONDS` | How long an eviction is kept by default: 86 400 seconds. |
 
 ## `./documents`
 
@@ -1230,7 +1233,7 @@ Filled by the application over its own reaction table (gardeneria's `social.reac
 
 ### `VersionedKv<E, R>`: the cache's key-value store
 
-Filled by the application, for `./cache`'s `makeResourceCache` (pulpit#205). Each entry is `{ version, value }`, where `value` is the resource's JSON encoding or none for an eviction.
+Filled by the application, for `./cache`'s `makeResourceCache` (pulpit#205). Each entry is `{ version, value }`, where `value` is the resource's JSON encoding or none for an eviction, and `version` is the rank the cache orders by (`2·version`, plus one for an eviction); the store compares it as a plain number.
 
 - `get(key)` returns the entry, or none when there is no entry or it has expired.
 - `putIfNotBehind(key, entry, ttlSeconds)` writes the entry, with that TTL, unless the stored entry's version is higher. It returns whether it wrote. The compare and the write must be **one atomic step**:
