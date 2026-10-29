@@ -16,7 +16,8 @@
  * `Following` is whatever a seam hands the `in` node: the follower seam's
  * set of followed accounts, or an edge family's members
  * (`EdgeStore.members`, pulpit#113); a subquery (`SQLWrapper`) for SQL, a
- * set for the in-memory evaluator.
+ * set for the in-memory evaluator. The `notIn` node takes the same
+ * `Following`, for an exclusion (`EdgeOps.nonMemberFilter`, pulpit#191).
  *
  * Rendering contract a SQL renderer must honour:
  *
@@ -26,6 +27,7 @@
  * | `never` | a predicate no row satisfies (the apps: `id = '00000000-…'`) |
  * | `eq` / `ne` | `col = $v` / `col <> $v` — a `NULL` column satisfies neither |
  * | `in` | `col IN (<seam subquery>)` — a subquery, never a materialised array (#1107); a `NULL` column satisfies none |
+ * | `notIn` | `(col IS NULL OR col NOT IN (<seam subquery>))` — the complement of `in` over the same subquery (pulpit#191); a `NULL` column satisfies it, and the subquery must never yield a `NULL` (`NOT IN` over a set holding one is `NULL` for every row) |
  * | `gt` / `gte` / `lt` / `lte` | `col > $v` / `col >= $v` / `col < $v` / `col <= $v` — a string compared with `COLLATE "C"` (code-point order), a `Date` as a timestamp, a number numerically (`±Infinity` included); a `NULL` column satisfies none |
  * | `anyOf` | `col = ANY($values)` — a `NULL` column satisfies none; empty is `never`; never a `NULL` element |
  * | `noneOf` | `col <> ALL($values)` — a `NULL` column satisfies none; empty is `always` (`<> ALL` over no values is true); never a `NULL` element (`<> ALL('{1,NULL}')` is `NULL` for every row outside the set) |
@@ -118,6 +120,7 @@ export type ListFilter<Following> =
   | { readonly kind: "eq"; readonly column: string; readonly value: Scalar }
   | { readonly kind: "ne"; readonly column: string; readonly value: Scalar }
   | { readonly kind: "in"; readonly column: string; readonly set: Following }
+  | { readonly kind: "notIn"; readonly column: string; readonly set: Following }
   | { readonly kind: "gt"; readonly column: string; readonly value: Comparable }
   | { readonly kind: "gte"; readonly column: string; readonly value: Comparable }
   | { readonly kind: "lt"; readonly column: string; readonly value: Comparable }
@@ -180,6 +183,30 @@ export const ne = (column: string, value: Scalar) =>
  */
 export const isIn = <Following>(column: string, set: Following) =>
   ({ kind: "in", column, set }) as const;
+
+/**
+ * `(column IS NULL OR column NOT IN (following))` (pulpit#191): the exact
+ * complement of {@link isIn} over the same seam set, so `isIn(c, s)` and
+ * `isNotIn(c, s)` partition every row. A `NULL` or absent column satisfies
+ * it, whatever `following` holds, and is never asked about; the seam's set
+ * must never hold a `NULL` (SQL's `NOT IN` over one is `NULL` for every row).
+ *
+ * @example
+ * ```ts
+ * import { strictEqual } from "node:assert";
+ * import { evaluate, isNotIn } from "@thomasfosterau/pulpit/filter";
+ *
+ * const excluded = new Set(["a"]);
+ * const context = { now: new Date(0), contains: (set: Set<string>, value: unknown) => set.has(String(value)) };
+ * strictEqual(evaluate(isNotIn("id", excluded), { id: "a" }, context), false);
+ * strictEqual(evaluate(isNotIn("id", excluded), { id: "b" }, context), true);
+ * strictEqual(evaluate(isNotIn("id", excluded), { id: null }, context), true);
+ * ```
+ *
+ * @since 0.1.0
+ */
+export const isNotIn = <Following>(column: string, set: Following) =>
+  ({ kind: "notIn", column, set }) as const;
 
 /**
  * `column > value`. A `NULL` or absent column satisfies it no more than SQL's
@@ -376,7 +403,7 @@ export interface EvaluationContext<Following> {
   /**
    * Whether `value` is a member of the follower seam's `set`. {@link evaluate}
    * never asks it about a `null` or absent column: such a row satisfies no
-   * `in`, whatever this would answer.
+   * `in`, and every `notIn`, whatever this would answer.
    */
   readonly contains: (set: Following, value: ColumnValue) => boolean;
 }
@@ -430,7 +457,7 @@ const instantOf = (value: ColumnValue): number =>
  * Run a filter against one row — the in-memory reading of the rendering
  * contract above. A column that is `null` or that the row lacks matches no
  * `eq`, satisfies no `ne`, `in`, comparison, `anyOf` or non-empty `noneOf`,
- * and is unpublished: SQL reads `NULL = $v`, `NULL <> $v`, `NULL IN (…)`,
+ * satisfies every `notIn`, and is unpublished: SQL reads `NULL = $v`, `NULL <> $v`, `NULL IN (…)`,
  * `NULL > $v` and `NULL <> ALL(…)` as `NULL`, which a `WHERE` drops, so `ne`
  * is not the complement of `eq`, nor `noneOf` of `anyOf`, over a nullable
  * column; {@link isNull} is the one node such a row satisfies. Such a row fails an `in` without `context.contains` being asked, so
@@ -458,6 +485,10 @@ export const evaluate = <Following>(
       in: (node) => {
         const value = row[node.column] ?? null;
         return value !== null && context.contains(node.set, value);
+      },
+      notIn: (node) => {
+        const value = row[node.column] ?? null;
+        return value === null || !context.contains(node.set, value);
       },
       gt: (node) => compareTo(row[node.column] ?? null, node.value) > 0,
       gte: (node) => compareTo(row[node.column] ?? null, node.value) >= 0,

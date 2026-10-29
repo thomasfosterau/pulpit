@@ -71,6 +71,7 @@ import {
   gt,
   gte,
   isIn,
+  isNotIn,
   lt,
   lte,
   MAX_SET_VALUES,
@@ -389,6 +390,7 @@ export type _ListFilterKind = Assert<
     | "eq"
     | "ne"
     | "in"
+    | "notIn"
     | "gt"
     | "gte"
     | "lt"
@@ -456,6 +458,9 @@ export type _ListFilterNotPublished = Assert<
 >;
 export type _ListFilterIn = Assert<
   Equals<Arm<"in">, { readonly kind: "in"; readonly column: string; readonly set: Subquery }>
+>;
+export type _ListFilterNotIn = Assert<
+  Equals<Arm<"notIn">, { readonly kind: "notIn"; readonly column: string; readonly set: Subquery }>
 >;
 export type _ListFilterAnd = Assert<
   Equals<
@@ -567,6 +572,15 @@ export type _IsIn = Assert<
       column: string,
       set: Following,
     ) => { readonly kind: "in"; readonly column: string; readonly set: Following }
+  >
+>;
+export type _IsNotIn = Assert<
+  Equals<
+    typeof isNotIn,
+    <Following>(
+      column: string,
+      set: Following,
+    ) => { readonly kind: "notIn"; readonly column: string; readonly set: Following }
   >
 >;
 export type _And = Assert<
@@ -970,6 +984,13 @@ export type _EdgeCreate = Assert<
 export type _EdgeMemberFilter = Assert<
   Equals<
     ReturnType<typeof links.memberFilter>,
+    Effect.Effect<ListFilter<Subquery>, StoreFailure, Transaction>
+  >
+>;
+// Edge non-membership (pulpit#191): the complement, over the same `Following`.
+export type _EdgeNonMemberFilter = Assert<
+  Equals<
+    ReturnType<typeof links.nonMemberFilter>,
     Effect.Effect<ListFilter<Subquery>, StoreFailure, Transaction>
   >
 >;

@@ -30,6 +30,7 @@ import {
   gt,
   gte,
   isIn,
+  isNotIn,
   isNull,
   type EvaluationContext,
   type FilterRow,
@@ -161,6 +162,36 @@ describe("evaluate — in against SQL's `NULL IN (…)`", () => {
     ]);
     expect(runSpy(inOr, { owner: null, kind: "post" })).toBe(true);
     expect(asked).toEqual([]);
+  });
+});
+
+describe("evaluate — notIn against `(col IS NULL OR col NOT IN (…))` (pulpit#191)", () => {
+  type Set = HashSet.HashSet<ColumnValue>;
+  const set: Set = HashSet.make<ReadonlyArray<ColumnValue>>("a");
+
+  it("is the exact complement of in over the same set, NULL and absent columns included", () => {
+    const asked: Array<ColumnValue> = [];
+    const context: EvaluationContext<Set> = {
+      now: NOW,
+      contains: (held, value) => {
+        asked.push(value);
+        return HashSet.has(held, value);
+      },
+    };
+    const rows: ReadonlyArray<FilterRow> = [{ owner: "a" }, { owner: "b" }, { owner: null }, {}];
+    expect(Array.map(rows, (row) => evaluate(isNotIn("owner", set), row, context))).toEqual([
+      false,
+      true,
+      true,
+      true,
+    ]);
+    Array.forEach(rows, (row) =>
+      expect(evaluate(isNotIn("owner", set), row, context)).toBe(
+        !evaluate(isIn("owner", set), row, context),
+      ),
+    );
+    // A NULL or absent column is never asked about.
+    expect(asked.every((value) => value !== null)).toBe(true);
   });
 });
 
