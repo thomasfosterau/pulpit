@@ -3,7 +3,7 @@
  * core's own REST responses, derived from the fixture core generates from its
  * REST API: `tests/qunit/fixtures/wp-api-generated.js` in
  * `WordPress/wordpress-develop` at `90634988698caa2f4e336830b537209e5fa01042`
- * (`PostsCollection[0]`, `PageModel`, `MediaModel`, and `PostsCollection[0]`'s
+ * (`PostsCollection[0]`, `PageModel`, `MediaModel`, `CategoryModel`, `TagModel`, `UserModel`, and `PostsCollection[0]`'s
  * `_links`). A leaf is the value's `typeof` (or `"null"`); an array is the
  * form of its first element, `[]` when the fixture's is empty.
  */
@@ -154,3 +154,100 @@ export const LINKS_FORM: WireForm = {
     },
   ],
 };
+
+/** `CategoryModel` (pulpit#86, phase 2). */
+export const CATEGORY_FORM: WireForm = {
+  id: "number",
+  count: "number",
+  description: "string",
+  link: "string",
+  name: "string",
+  slug: "string",
+  taxonomy: "string",
+  parent: "number",
+  meta: {
+    test_single: "string",
+    test_multi: [],
+    meta_key: "string",
+    test_cat_single: "string",
+    test_cat_multi: [],
+  },
+};
+
+/** `TagModel`. */
+export const TAG_FORM: WireForm = {
+  id: "number",
+  count: "number",
+  description: "string",
+  link: "string",
+  name: "string",
+  slug: "string",
+  taxonomy: "string",
+  meta: {
+    test_single: "string",
+    test_multi: [],
+    meta_key: "string",
+    test_tag_meta: "string",
+  },
+};
+
+/** `UserModel`. */
+export const USER_FORM: WireForm = {
+  id: "number",
+  name: "string",
+  url: "string",
+  description: "string",
+  link: "string",
+  slug: "string",
+  avatar_urls: {
+    "24": "string",
+    "48": "string",
+    "96": "string",
+  },
+  meta: {
+    meta_key: "string",
+  },
+};
+
+/** `CategoriesCollection[0]._links`. */
+export const TERM_LINKS_FORM: WireForm = {
+  self: [
+    {
+      href: "string",
+      targetHints: {
+        allow: ["string"],
+      },
+    },
+  ],
+  collection: [
+    {
+      href: "string",
+    },
+  ],
+  about: [
+    {
+      href: "string",
+    },
+  ],
+  "wp:post_type": [
+    {
+      href: "string",
+    },
+  ],
+  curies: [
+    {
+      name: "string",
+      href: "string",
+      templated: "boolean",
+    },
+  ],
+};
+
+/** `PostsCollection[0]._links["wp:term"]`. */
+export const WP_TERM_LINK_FORM: WireForm = [
+  {
+    taxonomy: "string",
+    embeddable: "boolean",
+    href: "string",
+  },
+];
