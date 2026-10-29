@@ -217,6 +217,12 @@ export type _TaxonomyMembers = Assert<
     (termIds: ReadonlyArray<string>) => Effect.Effect<ListFilter<CodecError>, unknown, CodecDb>
   >
 >;
+export type _TaxonomyNonMembers = Assert<
+  Equals<
+    BoundTaxonomy<CodecDb, CodecError>["nonMembers"],
+    (termIds: ReadonlyArray<string>) => Effect.Effect<ListFilter<CodecError>, unknown, CodecDb>
+  >
+>;
 export type _PostFieldsAuthor = Assert<Equals<PostFields["author"], Option.Option<string>>>;
 export type _PostFieldsDate = Assert<Equals<PostFields["date"], Option.Option<Date>>>;
 export type _WordPressHttp = Assert<

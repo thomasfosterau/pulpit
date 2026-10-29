@@ -52,8 +52,7 @@
  *
  * No writes (`POST` / `PUT` / `PATCH` / `DELETE` are `rest_no_route`), no
  * `context=edit` (`rest_forbidden_context`, after the 404 check), no
- * revisions, no `search`, no `categories_exclude` / `tags_exclude` (they
- * wait for a non-membership filter, pulpit#191). A parameter the adapter
+ * revisions, no `search`. A parameter the adapter
  * can't honour (`search`, `sticky`, `orderby=term_group`, `roles`, …) is
  * `400 rest_invalid_param`, never silently ignored, so a client never
  * mistakes an unfiltered list for a filtered one.
@@ -378,7 +377,8 @@ export interface AssignmentEnd {
  *
  * Every assignment read goes through the edge family's own gated operations
  * (`EDGE-001`): `list` for an item's terms, `memberFilter` for
- * `?categories=`, `countBy` for a term's `count`, so a hidden item or term
+ * `?categories=`, `nonMemberFilter` for `?categories_exclude=`, `countBy`
+ * for a term's `count`, so a hidden item or term
  * never shows through an assignment.
  *
  * @since 0.1.0
@@ -393,7 +393,7 @@ export interface TaxonomyBinding<Term, Edge, E, R, Following = never> {
   readonly link: (fields: TermFields) => string;
   readonly assignments: Pick<
     EdgeOps<unknown, Edge, E, R, Following>,
-    "list" | "memberFilter" | "countBy"
+    "list" | "memberFilter" | "nonMemberFilter" | "countBy"
   >;
   readonly ends: { readonly post: AssignmentEnd; readonly term: AssignmentEnd };
   /** One assignment's item and term node ids. */
@@ -439,6 +439,10 @@ export interface BoundTaxonomy<R, Following = never> {
   >;
   /** The items holding a readable assignment to one of `termIds`, as a filter over the item leaf. */
   readonly members: (
+    termIds: ReadonlyArray<string>,
+  ) => Effect.Effect<ListFilter<Following>, unknown, R>;
+  /** The items holding no readable assignment to any of `termIds`: the complement of `members` (pulpit#191). */
+  readonly nonMembers: (
     termIds: ReadonlyArray<string>,
   ) => Effect.Effect<ListFilter<Following>, unknown, R>;
   /** The readable assignments of each of `termIds`: its `count`. */
@@ -499,6 +503,7 @@ export const bindTaxonomy = <Term, Edge, E, R, Following = never>(
         total: page.total,
       })),
     members: (termIds) => binding.assignments.memberFilter(binding.ends.post.alias, termIds),
+    nonMembers: (termIds) => binding.assignments.nonMemberFilter(binding.ends.post.alias, termIds),
     counts: (termIds) => binding.assignments.countBy(binding.ends.term.alias, termIds),
     termsOf: (postIds) =>
       Arr.isReadonlyArrayNonEmpty(postIds)
@@ -676,17 +681,11 @@ const internalError = () =>
 const internal = <A, R>(effect: Effect.Effect<A, unknown, R>): Effect.Effect<A, WpRestError, R> =>
   Effect.mapError(effect, () => internalError());
 
-/**
- * The parameters the adapter refuses rather than silently ignores.
- * `categories_exclude` / `tags_exclude` wait for a non-membership filter in
- * the kernel (pulpit#191).
- */
+/** The parameters the adapter refuses rather than silently ignores. */
 const UNSUPPORTED = [
   "search",
   "search_columns",
   "search_semantics",
-  "categories_exclude",
-  "tags_exclude",
   "sticky",
   "ignore_sticky",
   "format",
@@ -716,8 +715,11 @@ interface CollectionParams {
   readonly before: Option.Option<Date>;
   readonly modifiedAfter: Option.Option<Date>;
   readonly modifiedBefore: Option.Option<Date>;
-  /** Each taxonomy's term list (`categories`, `tags`), as given. */
-  readonly terms: ReadonlyArray<readonly [Taxonomy, ReadonlyArray<string>]>;
+  /**
+   * Each taxonomy's term lists as given: `categories` / `tags` include,
+   * `categories_exclude` / `tags_exclude` exclude (pulpit#215).
+   */
+  readonly terms: ReadonlyArray<readonly [Taxonomy, "include" | "exclude", ReadonlyArray<string>]>;
   readonly taxRelation: "AND" | "OR";
 }
 
@@ -906,13 +908,20 @@ const collectionParams = (
       ([name, column]) => present(name) && Option.isNone(columnOf(columns, column)),
     ).forEach(([name]) => refuse(name, `${name} is not supported for this post type.`));
 
-    Arr.filter(
-      TAXONOMIES,
-      ([base, taxonomy]) => present(base) && !Arr.contains(taxonomies, taxonomy),
-    ).forEach(([base]) => refuse(base, `${base} is not supported for this post type.`));
+    Arr.filter(TAXONOMIES, ([, taxonomy]) => !Arr.contains(taxonomies, taxonomy)).forEach(
+      ([base]) =>
+        [base, `${base}_exclude`]
+          .filter(present)
+          .forEach((name) => refuse(name, `${name} is not supported for this post type.`)),
+    );
     const terms = Arr.getSomes(
-      taxonomies.map((taxonomy) =>
-        Option.map(list(taxonomyBase(taxonomy)), (values) => [taxonomy, values] as const),
+      Arr.flatMap(taxonomies, (taxonomy) =>
+        (["include", "exclude"] as const).map((mode) =>
+          Option.map(
+            list(mode === "include" ? taxonomyBase(taxonomy) : `${taxonomyBase(taxonomy)}_exclude`),
+            (values) => [taxonomy, mode, values] as const,
+          ),
+        ),
       ),
     );
 
@@ -1324,8 +1333,13 @@ export const defineWordPress = <R, Following = never>(
 
   /**
    * The `categories` / `tags` filter: each taxonomy's readable members
-   * (`EDGE-001`, through `memberFilter`), joined by `tax_relation`. A list
-   * whose ids all decode to none fails closed, as `memberFilter` does.
+   * (`EDGE-001`, through `memberFilter`), and for `categories_exclude` /
+   * `tags_exclude` its non-members (`nonMemberFilter`, pulpit#191), every
+   * clause joined by `tax_relation` as core's `tax_query` joins them. An
+   * include list whose ids all decode to none fails closed, as
+   * `memberFilter` does; an exclude list excludes nothing, as
+   * `nonMemberFilter` does, so an unknown or hidden term never narrows the
+   * list differently from an absent one.
    */
   const termMembership = (
     params: CollectionParams,
@@ -1335,10 +1349,12 @@ export const defineWordPress = <R, Following = never>(
       if (!Arr.isReadonlyArrayNonEmpty(params.terms)) return always;
       const filters = yield* Effect.forEach(
         Arr.zip(params.terms, decoded),
-        ([[taxonomy], termIds]) =>
+        ([[taxonomy, mode], termIds]) =>
           Option.match(Option.fromNullishOr(config.taxonomies?.[taxonomy]), {
-            onNone: () => Effect.succeed<ListFilter<Following>>(never),
-            onSome: (binding) => internal(binding.members(termIds)),
+            onNone: () =>
+              Effect.succeed<ListFilter<Following>>(mode === "include" ? never : always),
+            onSome: (binding) =>
+              internal(mode === "include" ? binding.members(termIds) : binding.nonMembers(termIds)),
           }),
         { concurrency: 1 },
       );
@@ -2039,7 +2055,7 @@ export const defineWordPress = <R, Following = never>(
           params.exclude,
           Option.getOrElse(params.parent, () => []),
           params.parentExclude,
-          ...params.terms.map(([, values]) => values),
+          ...params.terms.map(([, , values]) => values),
         ]);
       const membership = yield* termMembership(params, termIds);
       const [author = [], authorExclude = []] = yield* decodeLists(authors.ids, [
