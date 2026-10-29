@@ -1392,14 +1392,47 @@ describe("the wp/v2 read API — items and their terms (phase 2)", () => {
     expect(await ids([["categories", "999"]])).toEqual([]);
   });
 
-  it("refuses the _exclude forms (pulpit#191) and a taxonomy the post type doesn't take", async () => {
+  it("excludes a term's readable members through nonMemberFilter (pulpit#215), joined by tax_relation", async () => {
+    const { wp, news, sport, hot, open, theirs } = await taxonomySite();
+    const ids = async (query: ReadonlyArray<readonly [string, string]>) =>
+      sorted(listed(await wp.get("/wp/v2/posts", query)));
+    expect(await ids([["categories_exclude", String(news.wireId)]])).toEqual([theirs.wireId]);
+    expect(await ids([["tags_exclude", String(hot.wireId)]])).toEqual([open.wireId]);
+    // `sport`'s only post is a draft the anonymous viewer can't read: its assignment excludes nothing.
+    expect(await ids([["categories_exclude", String(sport.wireId)]])).toEqual(
+      sorted([open.wireId, theirs.wireId]),
+    );
+    // An unknown term excludes nothing, as an absent one doesn't.
+    expect(await ids([["categories_exclude", "999"]])).toEqual(
+      sorted([open.wireId, theirs.wireId]),
+    );
+    expect(
+      await ids([
+        ["categories", String(news.wireId)],
+        ["tags_exclude", String(hot.wireId)],
+      ]),
+    ).toEqual([open.wireId]);
+    const both = [
+      ["categories_exclude", String(news.wireId)],
+      ["tags_exclude", String(hot.wireId)],
+    ] as const;
+    expect(await ids(both)).toEqual([]);
+    expect(await ids([...both, ["tax_relation", "OR"]])).toEqual(
+      sorted([open.wireId, theirs.wireId]),
+    );
+  });
+
+  it("refuses an _exclude list past the cap and a taxonomy the post type doesn't take", async () => {
     const { wp, news } = await taxonomySite();
-    const exclude = await wp.get("/wp/v2/posts", [["categories_exclude", String(news.wireId)]]);
-    const onPages = await wp.get("/wp/v2/pages", [["categories", String(news.wireId)]]);
-    expect([codeOf(exclude), codeOf(onPages)]).toEqual([
-      "rest_invalid_param",
-      "rest_invalid_param",
+    const tooMany = Array.from({ length: MAX_LIST_PARAMETER + 1 }, (_, index) =>
+      String(index + 1),
+    ).join(",");
+    const responses = await Promise.all([
+      wp.get("/wp/v2/posts", [["categories_exclude", tooMany]]),
+      wp.get("/wp/v2/pages", [["categories", String(news.wireId)]]),
+      wp.get("/wp/v2/pages", [["categories_exclude", String(news.wireId)]]),
     ]);
+    expect(responses.map(codeOf)).toEqual(responses.map(() => "rest_invalid_param"));
   });
 
   it("shows an item's readable terms, its wp:term link and its embedded terms, one read per taxonomy", async () => {
