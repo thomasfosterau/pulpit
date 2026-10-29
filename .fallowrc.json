@@ -7,6 +7,7 @@
     "packages/pulpit/src/version-chain.ts",
     "packages/pulpit/src/subtype.ts",
     "packages/pulpit/src/publication.ts",
+    "packages/pulpit/src/cache.ts",
     "packages/pulpit/src/documents.ts",
     "packages/pulpit/src/edges.ts",
     "packages/pulpit/src/working-copy.ts",

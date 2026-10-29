@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`, `Cache`). |
 | **Content model** |  |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`, `localised`) and `validateRegistry`. |
@@ -32,6 +32,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./moderation` | The moderation workflow: the transition rules as a before hook, the decision, the review-queue filter, threshold grading and member reports over a `ReportStore` seam. |
 | **Publication** |  |
 | `./publication` | The publication and moderation predicates, the scheduled-publication sweep window, and the cache serveability policy. |
+| `./cache` | The reference resource cache (`makeResourceCache` over a `VersionedKv` seam): the kernel's compare-on-set `ResourceCacheSeam` with a read-through `get`, serveability checked on write and read, decode-or-evict and a TTL backstop. |
 | **Structure and routing** |  |
 | `./edges` | `defineEdgeOps`, the edge operations factory over an `EdgeStore` seam: relations between nodes, readable only when every end is, with declared cardinality limits. |
 | `./paths` | Routable content: `routable`, a leaf's path claims tied to its chain over a `PathStore` seam, the aliases a path change leaves behind, and the gated `resolve`. |
@@ -46,7 +47,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | **Discovery and search** |  |
 | `./search` | Hybrid search: reciprocal rank fusion (`fuseRankings`), a reranker seam, `hybridSearch` over `SearchBranch` seams that each apply the leaf's read scope, and the embedding pipeline (`enqueueEmbeddings`, `embedPending`, `sweepEmbeddings`) over `EmbeddingStore` and `Embedder` seams. |
 | **Testing** |  |
-| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy, purge, embedding and reaction stores, the budget counter and write counts, an endpoint view, a follower seam, a search branch and its scope check), for tests only. Not on the root export. |
+| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy, purge, embedding and reaction stores, the budget counter and write counts, a versioned KV, an endpoint view, a follower seam, a search branch and its scope check), for tests only. Not on the root export. |
 
 **Discovery and search** is also `./subtype`'s searchable projection, read scope and hit hydration (see [Search](#subtype) under `./subtype`), which `./search` builds on. **Localisation** is the version chain's locale level (`./version-chain`, `./subtype`'s `getLocalised` and `./filter`'s `locale` arm), not a module of its own.
 
@@ -317,6 +318,40 @@ The publication axis (stamped AND arrived), the moderation state, and the KV cac
 | `ModerationState` | `pending \| approved \| rejected`. |
 | `isPubliclyServeable(resource, { owned?, publishGated?, now? })` | The KV cache's security gate (`CACHE-AUTH-005`): only what every viewer may read is serveable. |
 | `serveablePolicy(options)` | The same gate as a resource cache's `serveable` hook (see [Seams](#seams)). |
+
+## `./cache`
+
+The reference resource cache (pulpit#205; owner decision: in the kernel, behind a minimal KV seam). `makeResourceCache` is `./subtype`'s `ResourceCacheSeam`, the one `subtypeHandlers` writes through, plus the read-through `get` an application serves from, over a `VersionedKv` it supplies. It replaces each application's own `cache.ts`.
+
+```ts
+import { makeResourceCache } from "@thomasfosterau/pulpit/cache";
+import { serveablePolicy } from "@thomasfosterau/pulpit/publication";
+
+const postCache = makeResourceCache({
+  kv, // the application's VersionedKv: a Durable Object, Redis, a SQL table
+  schema: PostResource, // the resource's JSON codec
+  serveable: serveablePolicy({ owned: true }),
+  prefix: "posts:v3:", // bump the generation when the schema changes
+  ttlSeconds: 3600,
+});
+const handlers = subtypeHandlers(postOps, {
+  transact,
+  inTransaction,
+  cache: Option.some(postCache),
+});
+postCache.get(id); // Option<Post>
+```
+
+- **Compare-on-set** (pulpit#121). Every entry carries the version it speaks for, and the KV's one conditional write (`putIfNotBehind`) keeps the highest. A `set` or `delete` below the stored version changes nothing, and an eviction raises the version, so a racing writer's late write-through never re-caches an older resource. The KV must compare and write in one atomic step; Workers KV alone can't.
+- **Serveability on both sides** (`CACHE-AUTH-005`). `set` refuses, and evicts, a resource the policy doesn't serve. `get` checks again and evicts, so a policy change never serves a stale cached private row.
+- **Decode or evict.** `get` decodes with the resource's schema, and a stored value that no longer decodes is evicted and read as a miss. Bump `prefix` with the schema to start a fresh generation.
+- **A TTL backstop** on every write, so an entry no write evicted still expires.
+- **Never fails.** A KV failure reads as a miss and skips a write: the store stays the source of truth.
+
+| Export | What it is |
+| --- | --- |
+| `makeResourceCache(options)`, `ResourceCacheOptions`, `ResourceCache` | The cache, its options, and the seam plus `get`. |
+| `VersionedKv`, `KvEntry` | The KV seam (see [Seams](#seams)) and one stored entry (its version and encoded value, none for an eviction). |
 
 ## `./documents`
 
@@ -915,6 +950,7 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | `scopeCheckedBranch(branch, { rows, now })` | Wraps any branch; fails `SearchScopeLeak` on a hit whose row the scope doesn't admit or `rows` lacks. |  |
 | `makeInMemoryEmbeddingStore()`, `InMemoryEmbeddingStore` | [`EmbeddingStore`](#searchbranchfollowing-e-r-and-embeddingstoree-r-search-and-embeddings), a queue in insertion order (idempotent `enqueue`; a hash with a vector is never queued again). | `queued()`, `vectors()`. |
 | `makeInMemoryReactionStore()`, `InMemoryReactionStore` | [`ReactionStore`](#reactionstoree-r-the-reaction-table), keyed `(nodeId, accountId)`: `upsert` replaces, `tally` groups by node and kind, `byAccount` is newest first. | `rows()`. |
+| `makeInMemoryVersionedKv()`, `InMemoryVersionedKv` | [`VersionedKv`](#versionedkve-r-the-caches-key-value-store), comparing and writing in one step; an entry past its TTL reads as absent (the Effect `Clock`, so `TestClock` steers expiry). | `peek(key)`, `poke(key, entry)` (a corrupt value). |
 | `makeInMemoryFollowers(table)`, `InMemoryFollowing` | [`FollowerSeam`](#the-viewer-the-role-axes-and-the-follower-seam) over an explicit table of who follows whom; the `in` set is a `HashSet` of account ids, where SQL's is a subquery. |  |
 
 `now` is the instant the list filter's `published` / `notPublished` compare against (and, for the edge store, the base of the minted `createdAt`s). Pass a fixed `Date` for a deterministic suite; left out, each call reads the Effect `Clock`, so `TestClock` steers it. The role ladder and the `AccessPolicy` are the application's, so `./testing` ships none.
@@ -1122,6 +1158,18 @@ Filled by the application over its own search views and embedding tables (pulpit
 ### `ReactionStore<E, R>`: the reaction table
 
 Filled by the application over its own reaction table (gardeneria's `social.reactions`): `node_id` (a foreign key to `core.node`, `ON DELETE CASCADE`), `account_id` (`ON DELETE CASCADE`), `kind` (`text`), `reacted_at` (`timestamptz NOT NULL DEFAULT now()`), with primary key `(node_id, account_id)` and an index on `(account_id, reacted_at DESC)`. `upsert` is `INSERT … ON CONFLICT (node_id, account_id) DO UPDATE SET kind = EXCLUDED.kind, reacted_at = EXCLUDED.reacted_at` returning the replaced kind (read in the same statement through a CTE); `delete` is `DELETE … RETURNING`; `tally(nodeIds)` is one `SELECT node_id, kind, count(*) … WHERE node_id = ANY($ids) GROUP BY node_id, kind`; `byAccount` is `WHERE account_id = $id ORDER BY reacted_at DESC, node_id LIMIT … OFFSET …`; `eraseAccount` is `DELETE … WHERE account_id = $id`. It applies no policy and never opens a transaction.
+
+### `VersionedKv<E, R>`: the cache's key-value store
+
+Filled by the application, for `./cache`'s `makeResourceCache` (pulpit#205). Each entry is `{ version, value }`, where `value` is the resource's JSON encoding or none for an eviction.
+
+- `get(key)` returns the entry, or none when there is no entry or it has expired.
+- `putIfNotBehind(key, entry, ttlSeconds)` writes the entry, with that TTL, unless the stored entry's version is higher. It returns whether it wrote. The compare and the write must be **one atomic step**:
+  - a Durable Object's single-threaded storage;
+  - Redis, as a Lua script, or `WATCH` / `MULTI`;
+  - SQL, as `INSERT … ON CONFLICT (key) DO UPDATE … WHERE cache.version <= EXCLUDED.version`.
+
+  Workers KV alone has no conditional write, so it can't fill this seam. The store applies no policy.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 
