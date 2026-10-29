@@ -19,7 +19,15 @@
  *   in order) in a declared parent column, so `VERSION-CHAIN-001` covers it
  *   and history shows each reorder. After the parent's `restoreVersion`,
  *   {@link CollectionOps.resync} replaces the store's order with the one
- *   the restored version records.
+ *   the restored version records, keeping only the members the writer can
+ *   read, as `append` does.
+ *
+ *   That column holds the id of every member, the ones a reader of the
+ *   parent may not be able to read included, so it must stay out of the
+ *   parent's viewer-facing resource (`EDGE-001`): wrap the parent leaf's
+ *   `toResource` with {@link hideRecordedOrder}. The parent's history
+ *   (`getVersion`, `compare`) still shows it, behind the write gate
+ *   (`READ-009`).
  *
  * ## The gates
  *
@@ -49,6 +57,7 @@ import { byCodePoint } from "./internal/list-order.ts";
 import {
   MAX_PAGE_LIMIT,
   type Forbidden,
+  type LeafRow,
   type Page,
   type SubtypeOps,
   type Unauthorized,
@@ -151,7 +160,11 @@ export type CollectionMode<E, R> =
   | { readonly kind: "mutable" }
   | {
       readonly kind: "versioned";
-      /** The parent column recording the order: the member ids, in order (a `jsonb` array). */
+      /**
+       * The parent column recording the order: the member ids, in order (a
+       * `jsonb` array). Keep it out of the parent's resource with
+       * {@link hideRecordedOrder} (`EDGE-001`).
+       */
       readonly column: string;
       /** The parent leaf's chain store, read (ungated) by `resync` for the restored order. */
       readonly chain: VersionChainStore<E, R>;
@@ -239,13 +252,43 @@ export interface CollectionOps<Member, E, R> {
   /**
    * A versioned family's store order replaced by the order the parent's
    * head records (after the parent's `restoreVersion`), behind the parent's
-   * write gate. A mutable family, or a head recording no order, leaves the
+   * write gate, keeping only the members the writer can read (as `append`
+   * checks). A mutable family, or a head recording no order, leaves the
    * store as it is.
    */
   readonly resync: (
     parentId: string,
   ) => Effect.Effect<void, Unauthorized | Forbidden | NodeNotFound | E, R>;
 }
+
+/**
+ * Wrap a parent leaf's `toResource` so the row it maps no longer carries a
+ * versioned collection's order `column`: the recorded order names every
+ * member, the ones the viewer can't read included, so it must never reach
+ * a reader of the parent (`EDGE-001`). The chain still records it, so
+ * {@link CollectionOps.resync} reads it back.
+ *
+ * @example
+ * ```ts
+ * import { deepStrictEqual } from "node:assert";
+ * import { hideRecordedOrder } from "@thomasfosterau/pulpit/collections";
+ *
+ * const toResource = hideRecordedOrder("memberOrder", (row) => row);
+ * const row = { id: "l-1", version: 2n, action: "update", title: "Ferns", memberOrder: ["i-1"] } as const;
+ * deepStrictEqual(toResource(row), { id: "l-1", version: 2n, action: "update", title: "Ferns" });
+ * ```
+ *
+ * @since 0.1.0
+ */
+export const hideRecordedOrder =
+  <Resource>(
+    column: string,
+    toResource: (row: LeafRow) => Resource,
+  ): ((row: LeafRow) => Resource) =>
+  (row) => {
+    const { [column]: _recorded, ...rest } = row;
+    return toResource({ ...rest, id: row.id, version: row.version, action: row.action });
+  };
 
 /** The order with positions `0…n-1`. */
 const renumber = (ids: ReadonlyArray<string>): ReadonlyArray<CollectionEntry> =>
@@ -359,8 +402,16 @@ export const defineCollection = <Parent, Member, E, R>(
       return Arr.isArray<unknown>(value) ? Option.some(value) : Option.none();
     });
     if (Option.isNone(recorded)) return;
-    const ids = Arr.dedupe(Arr.filter(recorded.value, Predicate.isString));
-    yield* store.replace(parentId, renumber(Arr.take(ids, MAX_COLLECTION_SIZE)));
+    const ids = Arr.take(
+      Arr.dedupe(Arr.filter(recorded.value, Predicate.isString)),
+      MAX_COLLECTION_SIZE,
+    );
+    // Gate parity with `append`: the column is writable through the parent's
+    // own `update`, so keep only the members the writer can read.
+    const readable = Arr.isReadonlyArrayNonEmpty(ids)
+      ? yield* members.getMany(ids)
+      : HashMap.empty<string, Member>();
+    yield* store.replace(parentId, renumber(Arr.filter(ids, (id) => HashMap.has(readable, id))));
   });
 
   return { list, append, move, remove, resync };
