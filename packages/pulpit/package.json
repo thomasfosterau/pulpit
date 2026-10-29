@@ -49,6 +49,7 @@
     "./working-copy": "./src/working-copy.ts",
     "./comments": "./src/comments.ts",
     "./purge": "./src/purge.ts",
+    "./search": "./src/search.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -116,6 +117,10 @@
       "./purge": {
         "types": "./dist/purge.d.ts",
         "default": "./dist/purge.js"
+      },
+      "./search": {
+        "types": "./dist/search.d.ts",
+        "default": "./dist/search.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",

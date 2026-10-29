@@ -109,3 +109,10 @@ export * as Comments from "./comments.ts";
  * and bytes nothing else references (`definePurge` over a `PurgeStore`).
  */
 export * as Purge from "./purge.ts";
+
+/**
+ * Hybrid search: reciprocal rank fusion over ranked branches, the reranker
+ * and branch seams every branch's scope runs through, and the embedding
+ * pipeline as seams (`fuseRankings`, `hybridSearch`, `embedPending`).
+ */
+export * as Search from "./search.ts";

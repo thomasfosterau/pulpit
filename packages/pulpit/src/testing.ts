@@ -1,7 +1,7 @@
 /**
  * **In-memory fakes of the kernel's seams** — a store for each of the
- * version-chain, leaf, document, edge, proposal, path, report, publication and purge seams, an endpoint view, a
- * follower seam and a resource cache, all held in memory with no SQL. They are the reference semantics of
+ * version-chain, leaf, document, edge, proposal, path, report, publication, purge and embedding seams, an
+ * endpoint view, a follower seam, a search branch (with a scope check) and a resource cache, all held in memory with no SQL. They are the reference semantics of
  * each seam's contract in the package README → Seams, and the fakes the
  * kernel's own suites run against; an adapter's or an application's tests can
  * run the kernel's operations over them too.
@@ -76,6 +76,12 @@ import {
 } from "./filter.ts";
 import { byCodePoint, rowOrder } from "./internal/list-order.ts";
 import type { ErasedReferences, PurgeStore } from "./purge.ts";
+import {
+  SearchScopeLeak,
+  type EmbeddingStore,
+  type RankedHit,
+  type SearchBranch,
+} from "./search.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
 import type { ReportRow, ReportStore } from "./moderation.ts";
 import type { ProposalListing, ProposalRow, ProposalStore } from "./proposals.ts";
@@ -1379,5 +1385,137 @@ export const makeInMemoryPurgeStore = (
         return deleted;
       }),
     unreferencedBlobs: (hashes) => Effect.sync(() => unreferenced(hashes, blobColumns)),
+  };
+};
+
+// ── Search (pulpit#204) ───────────────────────────────────────────────
+
+/** A scored row, as the in-memory branch ranks it. */
+interface ScoredRow {
+  readonly row: { readonly id: string };
+  readonly score: number;
+}
+
+/** Best score first, ties by id in code-point order. */
+const scoredOrder: Order.Order<ScoredRow> = Order.combine(
+  Order.mapInput(Order.flip(Order.Number), (hit: ScoredRow) => hit.score),
+  Order.mapInput(byCodePoint, (hit: ScoredRow) => hit.row.id),
+);
+
+/**
+ * An in-memory {@link SearchBranch} over `rows`: each row the scope admits
+ * (evaluated at `now` over {@link InMemoryFollowing}) and `score` gives a
+ * score for the query is a hit, best score first, ties by id, at most
+ * `request.limit`. The reference semantics of the branch contract: it
+ * applies the scope it is handed in the same pass that ranks.
+ *
+ * @since 0.1.0
+ */
+export const makeInMemorySearchBranch = (options: {
+  readonly name: string;
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is weight 1
+  readonly weight?: number | undefined;
+  readonly rows: () => ReadonlyArray<FilterRow & { readonly id: string }>;
+  /** The row's score for `query`, or none when it doesn't match. */
+  readonly score: (row: FilterRow, query: string) => Option.Option<number>;
+  readonly now: Date;
+}): SearchBranch<InMemoryFollowing, never, never> => ({
+  name: options.name,
+  weight: options.weight,
+  search: (request) =>
+    Effect.sync(() =>
+      Arr.take(
+        Arr.sort(
+          Arr.getSomes(
+            Arr.map(
+              Arr.filter(options.rows(), (row) =>
+                evaluate(request.scope, row, contextAt(options.now)),
+              ),
+              (row) => Option.map(options.score(row, request.query), (score) => ({ row, score })),
+            ),
+          ),
+          scoredOrder,
+        ).map(({ row }): RankedHit => ({ id: row.id })),
+        Math.max(0, request.limit),
+      ),
+    ),
+});
+
+/**
+ * Wrap a {@link SearchBranch} so it fails {@link SearchScopeLeak} when it
+ * returns a hit whose row (looked up in `rows` by id) the scope it was
+ * handed does not admit, or that `rows` lacks: the test seam an
+ * application wraps around its own SQL branches to prove each applies the
+ * scope (`SEC-AUTH-ENUM-001`).
+ *
+ * @since 0.1.0
+ */
+export const scopeCheckedBranch = <E, R>(
+  branch: SearchBranch<InMemoryFollowing, E, R>,
+  options: {
+    readonly rows: () => ReadonlyArray<FilterRow & { readonly id: string }>;
+    readonly now: Date;
+  },
+): SearchBranch<InMemoryFollowing, E | SearchScopeLeak, R> => ({
+  ...branch,
+  search: (request) =>
+    Effect.flatMap(branch.search(request), (hits) => {
+      const byId = HashMap.fromIterable(Arr.map(options.rows(), (row) => [row.id, row] as const));
+      const leak = Arr.findFirst(
+        hits,
+        (hit) =>
+          !Option.exists(HashMap.get(byId, hit.id), (row) =>
+            evaluate(request.scope, row, contextAt(options.now)),
+          ),
+      );
+      return Option.match(leak, {
+        onNone: () => Effect.succeed(hits),
+        onSome: (hit) => Effect.fail(new SearchScopeLeak({ branch: branch.name, id: hit.id })),
+      });
+    }),
+});
+
+/**
+ * {@link makeInMemoryEmbeddingStore}'s fake: the seam plus test hooks.
+ *
+ * @since 0.1.0
+ */
+export interface InMemoryEmbeddingStore extends EmbeddingStore<never, never> {
+  /** The queued hashes, in queue order. */
+  readonly queued: () => ReadonlyArray<DocumentHash>;
+  /** The written vectors, by hash. */
+  readonly vectors: () => HashMap.HashMap<DocumentHash, ReadonlyArray<number>>;
+}
+
+/**
+ * An in-memory {@link EmbeddingStore}: a queue in insertion order
+ * (`enqueue` is idempotent, and a hash with a vector is never queued again),
+ * `pending` the oldest `limit` queued, `write` storing each vector and
+ * dequeuing it, and `discard` dequeuing.
+ *
+ * @since 0.1.0
+ */
+export const makeInMemoryEmbeddingStore = (): InMemoryEmbeddingStore => {
+  let queue: ReadonlyArray<DocumentHash> = [];
+  let vectors = HashMap.empty<DocumentHash, ReadonlyArray<number>>();
+  const dequeue = (hashes: ReadonlyArray<DocumentHash>) => {
+    queue = Arr.filter(queue, (hash) => !Arr.contains(hashes, hash));
+  };
+  return {
+    enqueue: (hash) =>
+      Effect.sync(() => {
+        if (!Arr.contains(queue, hash) && !HashMap.has(vectors, hash)) queue = [...queue, hash];
+      }),
+    pending: (limit) => Effect.sync(() => Arr.take(queue, Math.max(0, limit))),
+    write: (written) =>
+      Effect.sync(() => {
+        vectors = Arr.reduce(written, vectors, (acc, { hash, vector }) =>
+          HashMap.set(acc, hash, vector),
+        );
+        dequeue(Arr.map(written, ({ hash }) => hash));
+      }),
+    discard: (hashes) => Effect.sync(() => dequeue(hashes)),
+    queued: () => queue,
+    vectors: () => vectors,
   };
 };

@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`). |
 | **Content model** |  |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`, `localised`) and `validateRegistry`. |
@@ -41,10 +41,12 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./blobs` | File and media leaves: the `BlobStore` seam keyed by content hash, the file field spread, the commit-ordered byte write (`defineFileWrites`, with its `bytesPending` marker) and the usage index's edge ends. |
 | **Erasure** |  |
 | `./purge` | Erasure (`definePurge` over a `PurgeStore` seam): the one destructive path, which hard-deletes a node's chain and the rows kept for it, then the documents and bytes no other version references. |
+| **Discovery and search** |  |
+| `./search` | Hybrid search: reciprocal rank fusion (`fuseRankings`), a reranker seam, `hybridSearch` over `SearchBranch` seams that each apply the leaf's read scope, and the embedding pipeline (`enqueueEmbeddings`, `embedPending`, `sweepEmbeddings`) over `EmbeddingStore` and `Embedder` seams. |
 | **Testing** |  |
-| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy and purge stores, an endpoint view, a follower seam), for tests only. Not on the root export. |
+| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy, purge and embedding stores, an endpoint view, a follower seam, a search branch and its scope check), for tests only. Not on the root export. |
 
-**Discovery and search** is `./subtype`'s searchable projection, read scope and hit hydration (see [Search](#subtype) under `./subtype`), and **localisation** is the version chain's locale level (`./version-chain`, `./subtype`'s `getLocalised` and `./filter`'s `locale` arm): neither is a module of its own.
+**Discovery and search** is also `./subtype`'s searchable projection, read scope and hit hydration (see [Search](#subtype) under `./subtype`), which `./search` builds on. **Localisation** is the version chain's locale level (`./version-chain`, `./subtype`'s `getLocalised` and `./filter`'s `locale` arm), not a module of its own.
 
 The operations are written against seams that the application fills; their expected shapes are in [Seams](#seams).
 
@@ -240,7 +242,7 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
 
 **The head version on the wire** (pulpit#65). Every `LeafRow` carries its head `version` (see [Seams](#leafstorerow-following-e-r-the-current-version-view)), so a read can tell the client the version its next write should expect. The mapper stamps it as the resource object's `meta.version`, a decimal string (`bigint` has no JSON form), with `versionMeta(row)`: `toResource: (row) => ({ type: "posts", id: row.id, attributes: …, meta: versionMeta(row) })`. A single-resource response (`get`, `create`, `update`, `restore`, `restoreVersion`) also sends `versionEtag(resource)` as its `ETag` header: the strong tag `"<version>"`, read back from that `meta.version`, so the two never disagree. A collection response sends no `ETag`, since it has no single version; each resource in it still carries its own `meta.version`. The version reaches only a resource the read already serves the viewer, so it says nothing about a hidden row (`SEC-AUTH-ENUM-001`). What it does disclose about a row the viewer can see is how many versions its chain holds.
 
-**Search** (pulpit#54). The ranking engine (full text, trigram, vectors, their fusion) is the application's SQL; pulpit owns three things around it.
+**Search** (pulpit#54). The ranking queries (full text, trigram, vectors) are the application's SQL; pulpit owns three things around them here, and their fusion and the embedding pipeline in [`./search`](#search) (pulpit#204).
 
 - **The projection.** `defineSearchProjection({ fields, languageColumn? })` declares, once and beside the leaf's registry entry, which view columns the leaf's search view indexes, each with a PostgreSQL `setweight` label (`A`–`D`), and the column naming each row's text search configuration. It throws `SubtypeDeclarationError` at import for no field, a column named twice or a weight outside `A`–`D`. Passed to `defineSubtype` as `search`, each column it names must be a view column, or `defineSubtype` throws too. The application's search-view generator reads the same value.
 - **The scope.** `searchScopeFilter({ access, columns, policy, followers }, viewer, { includeDeleted, where })` is the `ListFilter` a search must apply to its hits, rendered into the search query as a list store renders it. It is the very filter `list` reads under (`list` calls it), so a search surfaces no row `list` would hide (`SEC-AUTH-ENUM-001`): a hidden, draft or tombstoned row, or one the family's `where` excludes. On a leaf with the live pointer (pulpit#46, below), the search must also match over the rows its `LiveView.list` reads, not the head: the viewer's own rows (`headFor`) at the head and every other node's live row. Hydration re-reads the live version anyway, but a match scored against an unpublished head would still tell a reader that the draft contains the term.
@@ -738,6 +740,44 @@ const posts = definePurge({
 | `PurgeStore`, `ErasedReferences` | The erasure seam (see [Seams](#seams)) and the hashes an erased node referenced. |
 | `PurgeReport` | What a purge did: the documents and bytes deleted, and the bytes left behind. |
 
+## `./search`
+
+Hybrid search (pulpit#204): the parts of the apps' search pipeline that are not SQL. The ranked queries stay the application's, as [`SearchBranch`](#searchbranchfollowing-e-r-and-embeddingstoree-r-search-and-embeddings) seams; pulpit fuses them, lets a reranker reorder the result, and runs the embedding pipeline over seams.
+
+```ts
+import { deepStrictEqual } from "node:assert";
+import * as Effect from "effect/Effect";
+import { always } from "@thomasfosterau/pulpit/filter";
+import { hybridSearch } from "@thomasfosterau/pulpit/search";
+
+const search = hybridSearch({
+  branches: [
+    { name: "text", search: () => Effect.succeed([{ id: "a" }, { id: "b" }]) },
+    { name: "vector", weight: 2, search: () => Effect.succeed([{ id: "b" }]) },
+  ],
+});
+// In an application, `scope` is the leaf's `searchScopeFilter(leaf, viewer, request)`.
+const hits = Effect.runSync(search({ query: "tomato", scope: always, limit: 10 }));
+deepStrictEqual(
+  hits.map((hit) => hit.id),
+  ["b", "a"],
+);
+```
+
+- **Fusion.** `fuseRankings(branches, { k?, limit?, perBranch? })` is reciprocal rank fusion: each branch's first `perBranch` distinct hits score `weight / (k + rank)` (rank from 1, `k` defaulting to `RRF_K`, 60, the apps' constant), a hit's score is the sum over the branches that ranked it, and `ranks` records each rank. The result is ordered by score, then by id in code-point order, and capped at `limit`. A branch's `weight` defaults to 1; one that is not a finite, non-negative number scores nothing. Every count is clamped to `[1, MAX_PAGE_LIMIT]`. Pure.
+- **The reranker** (`RerankerSeam`, optional) is shown the query and the fused candidates and answers their ids in its order. `applyReranking` lets it reorder only: an id that was not a candidate is dropped, and a candidate it omits follows the ones it ranked, in fused order.
+- **The branches.** `hybridSearch({ branches, reranker?, k?, perBranch? })` returns a function of `{ query, scope, limit }` that hands **every branch the same `scope`** (the leaf's `searchScopeFilter`), runs them one after another in the caller's transaction, fuses, reranks, and caps at `limit`. An empty query asks no branch. Feed the result to `hydrateSearchHits`, which re-reads it through the gated `getMany`. A branch must apply the scope in the query that ranks, the live-row rule included, so a hidden row is never ranked and never shifts another hit's rank (`SEC-AUTH-ENUM-001`). `./testing`'s `scopeCheckedBranch` wraps a branch and fails `SearchScopeLeak` on a hit outside the scope, so an application's suite can prove its own branches do.
+- **Embeddings.** `enqueueEmbeddings(documents, embeddings)` queues a document on its first insert (`onDocumentInsert`, in the `put`'s transaction, so a rolled-back write queues nothing). `embedPending({ embeddings, documents, embedder, text, batchSize })` embeds one batch: one `pending` read, one `getMany`, one `Embedder.embed` call and one `write` (`PERF-DB-001`). A pending document that is missing, or whose `text` is none, is discarded rather than retried forever; an embedder answering with the wrong number of vectors fails `EmbeddingMismatch` and writes nothing. `sweepEmbeddings(pipeline, maxBatches)` runs batches until the queue drains or `maxBatches` have run: the daily sweep of the unembedded.
+
+`/ask`-style retrieval stays application code over these reads.
+
+| Export | What it is |
+| --- | --- |
+| `fuseRankings(branches, options?)`, `BranchRanking`, `RankedHit`, `FusedHit`, `FusionOptions`, `RRF_K` | Reciprocal rank fusion and its inputs, output and options. |
+| `applyReranking(candidates, order)`, `RerankerSeam` | A reranker's reordering, which can't add or drop a hit, and the seam. |
+| `hybridSearch(definition)`, `HybridSearchDefinition`, `SearchBranch`, `BranchRequest`, `SearchScopeLeak` | The branches under one scope, fused and reranked; the branch seam and its request; the failure `scopeCheckedBranch` raises. |
+| `enqueueEmbeddings`, `embedPending`, `sweepEmbeddings`, `EmbeddingStore`, `Embedder`, `EmbeddingPipeline`, `EmbeddingBatch`, `EmbeddingMismatch` | The embedding pipeline, its seams, a batch's result and its one failure. |
+
 ## `./testing`
 
 In-memory fakes of the kernel's seams, for tests: an adapter's or an application's suite can run the real operations (`defineVersionChain`, `defineSubtype`, `defineEdgeOps`, …) over them without a database. Each fake implements its seam's contract as stated under [Seams](#seams), in memory and with no SQL, and enforces what the real table's schema enforces (a primary or unique key) and nothing the operations are responsible for. They are the fakes the kernel's own suites run against, so they are its reference semantics for each seam.
@@ -794,6 +834,9 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | `makeInMemoryPublication({ chain, leaves, now? })`, `InMemoryPublication` | [`PublicationStore`](#publicationstoree-r-and-liveviewrow-following-e-r-the-live-pointer) and `LiveView` over an in-memory chain and leaf store, plus the gated leaf's current-version view with `draft` computed from the log. | `recorded()` (every fact). |
 | `makeInMemoryWorkingCopyStore()`, `InMemoryWorkingCopyStore` | [`WorkingCopyStore`](#workingcopystoree-r-the-autosave-buffer), one copy per `(id, userId)`. | `copies()`. |
 | `makeInMemoryPurgeStore({ chains, documents?, documentColumns?, blobColumns?, dependents? })`, `InMemoryPurgeStoreOptions` | [`PurgeStore`](#purgestoree-r-erasure), erasing a node's rows from every chain (and, through `dependents`, from other fakes) and reading a hash as referenced while any remaining row carries it in a declared column. |  |
+| `makeInMemorySearchBranch({ name, weight?, rows, score, now })` | [`SearchBranch`](#searchbranchfollowing-e-r-and-embeddingstoree-r-search-and-embeddings), ranking the rows the scope admits by `score` (best first, ties by id). |  |
+| `scopeCheckedBranch(branch, { rows, now })` | Wraps any branch; fails `SearchScopeLeak` on a hit whose row the scope doesn't admit or `rows` lacks. |  |
+| `makeInMemoryEmbeddingStore()`, `InMemoryEmbeddingStore` | [`EmbeddingStore`](#searchbranchfollowing-e-r-and-embeddingstoree-r-search-and-embeddings), a queue in insertion order (idempotent `enqueue`; a hash with a vector is never queued again). | `queued()`, `vectors()`. |
 | `makeInMemoryFollowers(table)`, `InMemoryFollowing` | [`FollowerSeam`](#the-viewer-the-role-axes-and-the-follower-seam) over an explicit table of who follows whom; the `in` set is a `HashSet` of account ids, where SQL's is a subquery. |  |
 
 `now` is the instant the list filter's `published` / `notPublished` compare against (and, for the edge store, the base of the minted `createdAt`s). Pass a fixed `Date` for a deterministic suite; left out, each call reads the Effect `Clock`, so `TestClock` steers it. The role ladder and the `AccessPolicy` are the application's, so `./testing` ships none.
@@ -980,6 +1023,13 @@ Filled by the application, over the same tables as its other stores. Like them i
 - `unreferencedBlobs(hashes)` returns those of `hashes` that no remaining version row references, for `definePurge` to delete from the `BlobStore` once the transaction has returned.
 
 Erasure is the only path that deletes a version row, a document or bytes (`VERSION-CHAIN-001/002`, `DOC-001`): nothing else may call these methods' SQL.
+
+### `SearchBranch<Following, E, R>` and `EmbeddingStore<E, R>`: search and embeddings
+
+Filled by the application over its own search views and embedding tables (pulpit#204); no library is expected to provide one.
+
+- A `SearchBranch`'s `search({ query, scope, limit })` is one ranked query over the leaf's search view, returning at most `limit` ids, best first. It must render `scope` (the leaf's `searchScopeFilter`) into the same statement that ranks, as the leaf's `list` renders its filter, and on a publish-gated leaf match over the rows `LiveView.list` reads; a branch that ranks first and filters after leaks a hidden row's rank into the others'. A full-text branch is `ts_rank_cd` over the projection's `setweight` vector, a trigram one `similarity`, a vector one `ORDER BY embedding <=> $query` with a `LIMIT`, a literal-id branch an exact match (ISBN, DOI, QID). It applies no other policy and never opens a transaction.
+- An `EmbeddingStore` is the queue and the vector column. `enqueue(hash)` inserts an outbox row (`ON CONFLICT DO NOTHING`); `pending(limit)` is the oldest `limit` queued hashes and, for the sweep, any stored document whose vector is still `NULL` (`ORDER BY queued_at LIMIT $limit`); `write(vectors)` sets each document's vector and deletes its queue row in one statement; `discard(hashes)` deletes queue rows. An `Embedder` is the model: one call per batch, one vector per text, in order.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 
