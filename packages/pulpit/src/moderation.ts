@@ -55,6 +55,7 @@ import * as Order from "effect/Order";
 import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import type { BoundBudget } from "./budgets.ts";
 import { always, eq, never, type ListFilter } from "./filter.ts";
 import { nowDate, plainRowQuery, signedIn as signedInAs } from "./internal/plain-rows.ts";
 import { ModerationState } from "./publication.ts";
@@ -573,14 +574,15 @@ export interface ReportOps<E, R> {
   /**
    * File a report against `targetId`. Fails `Unauthorized` when anonymous
    * and `NodeNotFound` when the reporter can't `get` the target, never
-   * `Forbidden` (`SEC-AUTH-ENUM-001`). The answer is the reporter's own
+   * `Forbidden` (`SEC-AUTH-ENUM-001`), and `WriteRejected` (`RATE_LIMITED`)
+   * when the declared budget is spent. The answer is the reporter's own
    * report: never whether others reported the same node.
    */
   readonly file: (input: {
     readonly targetId: string;
     readonly reason: string;
     readonly details: Option.Option<string>;
-  }) => Effect.Effect<{ readonly id: string }, Unauthorized | NodeNotFound | E, R>;
+  }) => Effect.Effect<{ readonly id: string }, Unauthorized | NodeNotFound | WriteRejected | E, R>;
   /** One report, for its reporter or the moderate rung; `ReportNotFound` otherwise. */
   readonly get: (id: string) => Effect.Effect<ReportRow, ReportNotFound | E, R>;
   /**
@@ -618,6 +620,13 @@ export const defineReports = <Resource, E, R>(definition: {
   readonly reports: ReportStore<E, R>;
   readonly viewer: Effect.Effect<Viewer, never, R>;
   readonly policy: AccessPolicy;
+  /**
+   * A write budget on `file` (pulpit#199, `./budgets`' `bindBudget`), spent
+   * as the `file` action once the reporter can read the target and before
+   * the report is stored. Omitted, reports are unthrottled.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no budget"
+  readonly budget?: BoundBudget<E, R> | undefined;
 }): ReportOps<E, R> => {
   const { target, reports, policy } = definition;
   const type = target.type;
@@ -632,6 +641,9 @@ export const defineReports = <Resource, E, R>(definition: {
     const account = yield* signedIn;
     // A target the reporter can't read is missing to them (SEC-AUTH-ENUM-001).
     yield* target.get(input.targetId);
+    if (definition.budget !== undefined) {
+      yield* definition.budget.spend(Option.some(account), "file", input.targetId);
+    }
     const id = yield* reports.mintId;
     yield* reports.insert({
       id,

@@ -62,7 +62,8 @@
  * translation but never drop one (a `null` locale is refused): removing a
  * locale is the owner's.
  *
- * Rate limiting, notifications and the wire shape are the application's.
+ * A write budget (pulpit#199) is an opt-in: `budget` throttles `submit`.
+ * Notifications and the wire shape are the application's.
  *
  * @copyright Thomas Foster
  * @module pulpit/proposals
@@ -75,6 +76,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
+import type { BoundBudget } from "./budgets.ts";
 import { always, eq, never, or, type ListFilter } from "./filter.ts";
 import { nowDate, plainRowQuery, signedIn as signedInAs } from "./internal/plain-rows.ts";
 import {
@@ -623,6 +625,13 @@ export interface ProposalsDefinition<Resource, E, R> {
    */
   // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no translation is proposable"
   readonly localeAttributes?: ReadonlyArray<string> | undefined;
+  /**
+   * A write budget on `submit` (pulpit#199, `./budgets`' `bindBudget`),
+   * spent as the `submit` action once the submission validates and before
+   * it is stored. Omitted, submissions are unthrottled.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no budget"
+  readonly budget?: BoundBudget<E, R> | undefined;
 }
 
 /**
@@ -656,8 +665,9 @@ export interface ProposalOps<E, R> {
   /**
    * Submit a pending proposal against `targetId`, stamped with its head.
    * Fails `Unauthorized` when anonymous, `Forbidden` below the propose rung,
-   * `NodeNotFound` when the viewer can't `get` the target, and
-   * {@link InvalidProposalPatch}.
+   * `NodeNotFound` when the viewer can't `get` the target,
+   * {@link InvalidProposalPatch}, and `WriteRejected` (`RATE_LIMITED`) when
+   * the declared budget is spent.
    */
   readonly submit: (input: {
     readonly targetId: string;
@@ -668,7 +678,7 @@ export interface ProposalOps<E, R> {
     readonly rationale: Option.Option<string>;
   }) => Effect.Effect<
     { readonly id: string },
-    Unauthorized | Forbidden | NodeNotFound | InvalidProposalPatch | E,
+    Unauthorized | Forbidden | NodeNotFound | InvalidProposalPatch | WriteRejected | E,
     R
   >;
   /**
@@ -859,6 +869,9 @@ export const defineProposals = <Resource, E, R>(
     yield* target.get(input.targetId);
     const locales = Option.fromUndefinedOr(input.locales);
     yield* validate(input.patch, locales);
+    if (definition.budget !== undefined) {
+      yield* definition.budget.spend(Option.some(account), "submit", input.targetId);
+    }
     const head = yield* headOf(input.targetId);
     const id = yield* proposals.mintId;
     yield* proposals.insert({

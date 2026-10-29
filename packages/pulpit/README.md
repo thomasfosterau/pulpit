@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`). |
 | **Content model** |  |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`, `localised`) and `validateRegistry`. |
@@ -36,6 +36,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./edges` | `defineEdgeOps`, the edge operations factory over an `EdgeStore` seam: relations between nodes, readable only when every end is, with declared cardinality limits. |
 | `./paths` | Routable content: `routable`, a leaf's path claims tied to its chain over a `PathStore` seam, the aliases a path change leaves behind, and the gated `resolve`. |
 | **Participation and user-generated content** |  |
+| `./budgets` | Write budgets: a declared ceiling on an account's writes of one kind in a rolling window, spent inside the write (`budgetHook` on a chain write; `bindBudget`'s `spend` on a proposal's `submit` or a report's `file`) over a `BudgetCounter` seam, refused as a rate-limited `WriteRejected` (the wire's 429). |
 | `./comments` | The comments family: threaded comments on any node as versioned owned leaves (`defineComments`), behind the target's read gate and the moderation gate, with a configurable reply depth. |
 | **Media** |  |
 | `./blobs` | File and media leaves: the `BlobStore` seam keyed by content hash, the file field spread, the commit-ordered byte write (`defineFileWrites`, with its `bytesPending` marker) and the usage index's edge ends. |
@@ -44,7 +45,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | **Discovery and search** |  |
 | `./search` | Hybrid search: reciprocal rank fusion (`fuseRankings`), a reranker seam, `hybridSearch` over `SearchBranch` seams that each apply the leaf's read scope, and the embedding pipeline (`enqueueEmbeddings`, `embedPending`, `sweepEmbeddings`) over `EmbeddingStore` and `Embedder` seams. |
 | **Testing** |  |
-| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy, purge and embedding stores, an endpoint view, a follower seam, a search branch and its scope check), for tests only. Not on the root export. |
+| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy, purge and embedding stores, the budget counter and write counts, an endpoint view, a follower seam, a search branch and its scope check), for tests only. Not on the root export. |
 
 **Discovery and search** is also `./subtype`'s searchable projection, read scope and hit hydration (see [Search](#subtype) under `./subtype`), which `./search` builds on. **Localisation** is the version chain's locale level (`./version-chain`, `./subtype`'s `getLocalised` and `./filter`'s `locale` arm), not a module of its own.
 
@@ -512,7 +513,7 @@ const program = Effect.gen(function* () {
 - **Accept appends through the target's own `update`** (`PUB-003`), as the account that accepted, with the head it classified against as `expectedVersion` and the proposer as the version's `proposedBy`; a conflicting proposal fails `ProposalConflict` (409) and writes nothing, and an edit landing between the classification and the append fails `StaleVersion`. The append and the proposal's close run in the caller's transaction, so they commit together. It runs the target's before hooks but not `subtypeHandlers`' cache write-through: an application that caches the target writes the accepted version through itself.
 - **Gates.** `submit`: signed in (`Unauthorized`), at `canPropose` (`Forbidden`), and able to `get` the target (`NodeNotFound` otherwise, never `Forbidden`). `review`, `accept`, `reject`: the target's write gate (`requireWriter`) before the proposal's status is disclosed; `review` and `accept` then read the versions through the target's gated `compare`. A proposal whose target was deleted can still be rejected. `withdraw`: its author (`Forbidden` for anyone else). A decided proposal fails `ProposalClosed` (409). `get` / `list`: the moderate rung reads every proposal; any other signed-in account reads its own and those on targets it owns; the anonymous read none, and a proposal the viewer can't read is `ProposalNotFound`.
 
-Rate limiting, notifications and the wire shape (a JSON:API `proposals` resource) are the application's.
+A [write budget](#budgets) (pulpit#199) throttles `submit` when the definition passes one as `budget`. Notifications and the wire shape (a JSON:API `proposals` resource) are the application's.
 
 | Export | What it is |
 | --- | --- |
@@ -630,7 +631,7 @@ const moderation = defineModeration({ target: comments, declaration, viewer, pol
   - The classifier's own flag is never overridden downward.
   - The grade has a priority band (`low | medium | high | urgent`) from the worst breach.
   - Classification runs from an application's after hook; acting on a grade is a `moderate` call.
-- **Member reports**, `defineReports({ target, reports, viewer, policy })`, are plain rows over a `ReportStore`.
+- **Member reports**, `defineReports({ target, reports, viewer, policy, budget? })`, are plain rows over a `ReportStore`. An optional [write budget](#budgets) throttles `file`.
   - `file` needs a signed-in account that can `get` the target. One that can't gets `NodeNotFound`, never `Forbidden`, and the answer never says whether others reported the node.
   - `get` / `list` are for the reporter and the moderate rung.
   - `resolve(id, "resolved" | "dismissed", note)` is the moderate rung's alone. A closed report fails `ReportClosed`, and acting on the node is a separate call.
@@ -778,6 +779,43 @@ deepStrictEqual(
 | `hybridSearch(definition)`, `HybridSearchDefinition`, `SearchBranch`, `BranchRequest`, `SearchScopeLeak` | The branches under one scope, fused and reranked; the branch seam and its request; the failure `scopeCheckedBranch` raises. |
 | `enqueueEmbeddings`, `embedPending`, `sweepEmbeddings`, `EmbeddingStore`, `Embedder`, `EmbeddingPipeline`, `EmbeddingBatch`, `EmbeddingMismatch` | The embedding pipeline, its seams, a batch's result and its one failure. |
 
+## `./budgets`
+
+Write budgets (pulpit#199): every family that takes user content needs a write throttle, and gardeneria re-adds one per family (a count-then-insert in the write's transaction). A budget is declared once per family and action: at most `limit` writes per account in any window of `windowSeconds`.
+
+```ts
+import * as Effect from "effect/Effect";
+import { bindBudget, budgetHook, countingCounter } from "@thomasfosterau/pulpit/budgets";
+
+const budget = bindBudget({
+  type: "comments",
+  budget: { limit: 10, windowSeconds: 3600 }, // ten comments an hour
+  counter: countingCounter(commentCounts), // count(*) over the family's own rows
+  policy,
+});
+const comments = defineSubtype({
+  // …the leaf's declaration…
+  hooks: Effect.succeed({ before: [budgetHook(budget)], after: [] }),
+});
+const proposals = defineProposals({ /* … */ budget }); // throttles submit
+const reports = defineReports({ /* … */ budget }); // throttles file
+```
+
+- **Spent inside the write.** `budgetHook(bound, actions?)` is a before hook on [`./subtype`'s lifecycle seam](#subtype): it spends one write on each create (or each of the `actions` it lists), so a write over budget appends nothing, and a localised write spends once. `./proposals`' `submit` and `./moderation`'s report `file` take the bound budget as an opt-in `budget` and spend it as the `submit` or `file` action once the request is valid, before the row is stored. A comment family throttles through its leaf's hooks.
+- **A distinct refusal.** Over budget, the write fails `WriteRejected` with the reason `RATE_LIMITED`; `isRateLimited(error)` tells it apart from every other refusal, so the wire answers 429 rather than 422.
+- **Who spends.** Each account has its own budget per family and action. An account the budget's `exempt` rung admits (`(policy) => policy.canModerate` by default) spends nothing, and neither does an anonymous viewer, whom the write's own gate refuses.
+- **The window** is rolling: a write counts from the instant it was made until `windowSeconds` later. The clock is Effect's `Clock`, so a test fixes it with `TestClock`.
+- **One counter seam, two shapes** (owner decision on [#199](https://github.com/thomasfosterau/pulpit/issues/199)). `countingCounter(store)` is gardeneria's count within the write's transaction: one indexed `count(*)` of the account's writes since the window opened, with the write's own row as the spend. It is exact but not atomic: two concurrent transactions can both count `limit - 1` and both write. A family that must hold its limit under concurrency fills `BudgetCounter.take` with an atomic counter instead (a Durable Object, a row taken `FOR UPDATE`); see [Seams](#seams).
+- **A malformed budget** (a `limit` or `windowSeconds` that isn't a positive safe integer) throws `BudgetDeclarationError` when it is bound, never as an Effect failure.
+
+| Export | What it is |
+| --- | --- |
+| `WriteBudget`, `bindBudget(definition)`, `BoundBudget` | The declaration (limit, window, exempt rung), its binding to a family's type, counter and policy, and the bound budget's `spend`. |
+| `budgetHook(bound, actions?)` | The bound budget as a chain write's before hook. |
+| `BudgetCounter`, `BudgetRequest`, `countingCounter(store)`, `WriteCountStore` | The counter seam and what it is asked; the count-within-the-transaction counter and the count it reads (see [Seams](#seams)). |
+| `RATE_LIMITED`, `isRateLimited(error)` | The refusal's reason, and the test for it. |
+| `BudgetDeclarationError` | A malformed budget, thrown by `bindBudget`. |
+
 ## `./testing`
 
 In-memory fakes of the kernel's seams, for tests: an adapter's or an application's suite can run the real operations (`defineVersionChain`, `defineSubtype`, `defineEdgeOps`, …) over them without a database. Each fake implements its seam's contract as stated under [Seams](#seams), in memory and with no SQL, and enforces what the real table's schema enforces (a primary or unique key) and nothing the operations are responsible for. They are the fakes the kernel's own suites run against, so they are its reference semantics for each seam.
@@ -829,6 +867,8 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | `makeInMemoryProposalStore({ chain, leaves })`, `InMemoryProposalStore` | [`ProposalStore`](#proposalstoree-r-the-proposal-table), reading each listing's head version from `chain` and its `targetOwnerId` from `leaves`' owner stamps; newest first, `id` descending on a tie. | `rows()` (every proposal as it now stands). |
 | `makeInMemoryBlobStore()`, `InMemoryBlobStore`, `InMemoryBlob`, `InMemoryBlobFailure` | [`BlobStore`](#blobstoree-r-the-byte-store), with `memory://<key>` URLs and no signed upload. | `objects()` (every stored object), `failNextPut()` (a byte write failing after the commit). |
 | `makeInMemoryPathStore()`, `InMemoryPathStore` | [`PathStore`](#pathstoree-r-the-path-table), one entry per path, with `claim`'s `PathTaken` and alias rules in one step. | `entries()` (every stored path and its entry). |
+| `makeInMemoryBudgetCounter()`, `InMemoryBudgetCounter` | An atomic [`BudgetCounter`](#budgetcountere-r-and-writecountstoree-r-the-write-budget-counter): it counts the spends it admitted in the window and records one only when it answers `true`. | `spends()` (every admitted spend). |
+| `makeInMemoryWriteCountStore()`, `InMemoryWriteCountStore`, `RecordedWrite` | [`WriteCountStore`](#budgetcountere-r-and-writecountstoree-r-the-write-budget-counter), counting the recorded writes at or after `since`. | `record(write)` (the row a write inserts). |
 | `makeInMemoryReportStore()`, `InMemoryReportStore` | [`ReportStore`](#reportstoree-r-the-member-report-table), evaluating the filter in memory, newest first with `id` descending on a tie. | `rows()` (every report as it now stands). |
 | `makeInMemoryResourceCache(serveable)`, `InMemoryResourceCache` | [`ResourceCacheSeam`](#resourcecacheseam-and-the-serveable-hook-the-resource-cache), with compare-on-set: a `set` below the highest version held for an id is a no-op, and a `delete` raises it. | `get(id)` (what it would serve), `versionOf(id)` (the version held, set or evicted). |
 | `makeInMemoryPublication({ chain, leaves, now? })`, `InMemoryPublication` | [`PublicationStore`](#publicationstoree-r-and-liveviewrow-following-e-r-the-live-pointer) and `LiveView` over an in-memory chain and leaf store, plus the gated leaf's current-version view with `draft` computed from the log. | `recorded()` (every fact). |
@@ -969,6 +1009,15 @@ Filled by the application, over a path table per routable namespace (gardeneria'
 Filled by the application over its own report table (gardeneria's `user_reports`); no library is expected to provide one. Expected schema: `id` (a UUID primary key), `target_node_id` (a foreign key to `core.node`), `reporter_id`, `reason`, `details` (nullable), `status` (`open | resolved | dismissed`), `filed_at` (`timestamptz NOT NULL DEFAULT now()`), and the nullable `resolved_at`, `resolved_by` and `resolution_note`. Index `reporter_id`, `target_node_id`, and the open rows.
 
 Method contract: `insert` inserts the row; `get(id)` is `id = $id LIMIT 1`, joined to `core.node` for `targetType`; `lock(id)` is the same row `FOR UPDATE`, so two resolutions serialise; `close(id, resolution)` updates the open row's status, resolver, timestamp and note; `list` renders `where` over `reporterId`, `targetId`, `targetType` and `status`, orders by `filed_at DESC, id DESC`, applies `LIMIT` / `OFFSET` and returns the unpaged total as a window column. `E` and `R` are as for the chain store, and the store never opens a transaction itself.
+
+### `BudgetCounter<E, R>` and `WriteCountStore<E, R>`: the write budget counter
+
+Filled by the application for each family it throttles (pulpit#199); no library is expected to provide one. `take(request)` spends one write of `request.action` by `request.accountId` on `request.type` and answers whether it was within `request.limit` writes since `request.since`. It runs in the caller's transaction, so a write that rolls back spends nothing a transactional counter recorded. Two shapes fill it:
+
+- **Counting** (`countingCounter(store)`, the default shape): `WriteCountStore.countSince({ type, action, accountId, since })` is `SELECT count(*) FROM <the family's table> WHERE <author column> = $accountId AND <created column> >= $since`, over an index on `(author column, created column)`. The write's own row is the spend, so `take` records nothing. Exact, but two concurrent transactions can both see room.
+- **Atomic**: a counter with its own state (a Durable Object, a counter row taken `FOR UPDATE`) checks and records the spend in one step, and records nothing when it answers `false`.
+
+`makeInMemoryBudgetCounter` and `makeInMemoryWriteCountStore` in [`./testing`](#testing) follow this contract.
 
 ### `PublicationStore<E, R>` and `LiveView<Row, Following, E, R>`: the live pointer
 

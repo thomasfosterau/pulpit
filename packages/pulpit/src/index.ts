@@ -116,3 +116,10 @@ export * as Purge from "./purge.ts";
  * pipeline as seams (`fuseRankings`, `hybridSearch`, `embedPending`).
  */
 export * as Search from "./search.ts";
+
+/**
+ * Write budgets: a declared ceiling on an account's writes in a rolling
+ * window, spent inside the write as a before hook or by a plain-row family,
+ * over a `BudgetCounter` seam (`bindBudget`, `budgetHook`).
+ */
+export * as Budgets from "./budgets.ts";

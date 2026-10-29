@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 import { Resource } from "@thomasfosterau/effect-jsonapi";
 import {
   Blobs,
+  Budgets,
   Comments,
   Content,
   Documents,
@@ -149,6 +150,7 @@ import {
 import type {
   AfterWriteEvent,
   BeforeWriteEvent,
+  BeforeWriteHook,
   Forbidden,
   LifecycleHooks,
   Unauthorized,
@@ -197,6 +199,16 @@ import {
   type FusedHit,
   type SearchBranch,
 } from "@thomasfosterau/pulpit/search";
+import {
+  bindBudget,
+  budgetHook,
+  countingCounter,
+  isRateLimited,
+  RATE_LIMITED,
+  type BoundBudget,
+  type BudgetCounter,
+  type BudgetRequest,
+} from "@thomasfosterau/pulpit/budgets";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -1204,4 +1216,42 @@ export type _EmbedPending = Assert<
     ReturnType<typeof embedPending<string, StoreFailure, Transaction>>,
     Effect.Effect<EmbeddingBatch, StoreFailure | EmbeddingMismatch, Transaction>
   >
+>;
+
+// ── budgets ──────────────────────────────────────────────────────────────
+
+export type _BudgetsBarrel = Assert<Equals<typeof Budgets.bindBudget, typeof bindBudget>>;
+export type _BudgetSpend = Assert<
+  Equals<
+    ReturnType<BoundBudget<StoreFailure, Transaction>["spend"]>,
+    Effect.Effect<void, WriteRejected | StoreFailure, Transaction>
+  >
+>;
+export type _BudgetTake = Assert<
+  Equals<
+    ReturnType<BudgetCounter<StoreFailure, Transaction>["take"]>,
+    Effect.Effect<boolean, StoreFailure, Transaction>
+  >
+>;
+export type _BudgetRequestLimit = Assert<Equals<BudgetRequest["limit"], number>>;
+export type _BudgetHook = Assert<
+  Equals<
+    ReturnType<typeof budgetHook<StoreFailure, Transaction>>["run"],
+    BeforeWriteHook<StoreFailure, Transaction>["run"]
+  >
+>;
+export type _CountingCounter = Assert<
+  Equals<
+    ReturnType<typeof countingCounter<StoreFailure, Transaction>>,
+    BudgetCounter<StoreFailure, Transaction>
+  >
+>;
+export type _RateLimited = Assert<Equals<typeof RATE_LIMITED, "rate-limited">>;
+export type _IsRateLimited = Assert<
+  Equals<Parameters<typeof isRateLimited>, [error: WriteRejected]>
+>;
+export type _ProposalSubmitBudget = Assert<
+  WriteRejected extends Effect.Error<ReturnType<ProposalOps<StoreFailure, Transaction>["submit"]>>
+    ? true
+    : false
 >;
