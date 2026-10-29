@@ -7,6 +7,7 @@
  */
 
 import * as Effect from "effect/Effect";
+import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Resource } from "@thomasfosterau/effect-jsonapi";
@@ -924,6 +925,20 @@ export type _EdgeMemberFilter = Assert<
   Equals<
     ReturnType<typeof links.memberFilter>,
     Effect.Effect<ListFilter<Subquery>, StoreFailure, Transaction>
+  >
+>;
+// Readable-edge counts per node (pulpit#185): one grouped read, a count per id.
+export type _EdgeCountBy = Assert<
+  Equals<
+    ReturnType<typeof links.countBy>,
+    Effect.Effect<HashMap.HashMap<string, number>, StoreFailure, Transaction>
+  >
+>;
+export type _EdgeCountByParameters = Assert<
+  Equals<
+    Parameters<typeof links.countBy>,
+    // oxlint-disable-next-line effect/prefer-option-over-null -- pins the optional `where` parameter's declared `?: T | undefined` (AGENTS.md → Conventions)
+    [end: string, ids: ReadonlyArray<string>, where?: ListFilter<never> | undefined]
   >
 >;
 export type _EdgeGet = Assert<
