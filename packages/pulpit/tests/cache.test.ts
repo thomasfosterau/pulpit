@@ -10,6 +10,7 @@
  */
 
 import { describe, expect, it } from "vite-plus/test";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -164,7 +165,7 @@ describe("makeResourceCache — decode, TTL and failures", () => {
   });
 
   it("defaults the tombstone TTL to a day, and never below the value TTL", async () => {
-    const at = (ttlSeconds: number, wait: string, tombstoneTtlSeconds?: number) =>
+    const at = (ttlSeconds: number, wait: Duration.Input, tombstoneTtlSeconds?: number) =>
       run(
         Effect.gen(function* () {
           const { cache } = setup(
