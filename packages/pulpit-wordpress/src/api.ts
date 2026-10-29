@@ -1,7 +1,8 @@
 /**
- * **The `wp/v2` read API** — posts, pages and media as WordPress's REST API
- * serves them, over the leaves an application binds to those types, plus the
- * discovery index (pulpit#86, phase 1).
+ * **The `wp/v2` read API** — posts, pages and media, categories and tags,
+ * and their authors, as WordPress's REST API serves them, over the leaves
+ * an application binds to those types and taxonomies, plus the discovery
+ * index (pulpit#86, phases 1 and 2).
  *
  * The behavioural spec is WordPress core's REST API
  * (`WordPress/wordpress-develop` trunk at `9063498`:
@@ -37,15 +38,24 @@
  * - **Caching** (`CACHE-AUTH-005`). A response is `Cache-Control: public`
  *   only when its viewer is anonymous and every item in it, embeds included,
  *   is serveable by its binding's `serveable`; anything else is
- *   `private, no-store`.
+ *   `private, no-store`. A `/users` response is always `private, no-store`:
+ *   which accounts it lists depends on what the viewer can read.
+ * - **Assignments are read through the edge family** (`EDGE-001`). An
+ *   item's `categories` / `tags`, a term's `count`, `?categories=` /
+ *   `?tags=` and `post=` all count only edges whose both ends the viewer
+ *   can read, so a hidden item or term is never confirmed through one.
+ * - **Authors are the accounts owning a readable item** (pulpit#86,
+ *   decision 5, through the kernel's `readableOwners`). Any other account,
+ *   unknown or not, answers `404 rest_user_invalid_id`.
  *
- * ## What phase 1 leaves out
+ * ## What it leaves out
  *
  * No writes (`POST` / `PUT` / `PATCH` / `DELETE` are `rest_no_route`), no
  * `context=edit` (`rest_forbidden_context`, after the 404 check), no
- * revisions, no `search`, no categories or tags, no `/users` route. A
- * parameter phase 1 can't honour (`search`, `categories`, `tags`, `sticky`,
- * …) is `400 rest_invalid_param`, never silently ignored, so a client never
+ * revisions, no `search`, no `categories_exclude` / `tags_exclude` (they
+ * wait for a non-membership filter, pulpit#191). A parameter the adapter
+ * can't honour (`search`, `sticky`, `orderby=term_group`, `roles`, …) is
+ * `400 rest_invalid_param`, never silently ignored, so a client never
  * mistakes an unfiltered list for a filtered one.
  *
  * @copyright Thomas Foster
