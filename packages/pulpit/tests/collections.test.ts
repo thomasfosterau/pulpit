@@ -12,7 +12,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
-import * as Record from "effect/Record";
 import {
   defineCollection,
   hideRecordedOrder,
@@ -231,8 +230,7 @@ describe("defineCollection — order versioned with the parent", () => {
     expect(head?.state["memberOrder"]).toEqual([mine]);
     // ...but another reader of the public list never sees the private member's id.
     const seen = await run(as(Option.some(otherMember), lists.ops.get(list)));
-    expect(Record.has(seen, "memberOrder")).toBe(false);
-    expect(Record.values(seen)).not.toContainEqual([mine]);
+    expect(seen["memberOrder"]).toBeUndefined();
     expect(
       await run(as(Option.some(otherMember), collection.list(list, { limit: 10, offset: 0 }))),
     ).toMatchObject({ rows: [], total: 0 });

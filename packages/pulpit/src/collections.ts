@@ -52,7 +52,6 @@ import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
-import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import { byCodePoint } from "./internal/list-order.ts";
 import {
@@ -286,13 +285,10 @@ export const hideRecordedOrder =
     column: string,
     toResource: (row: LeafRow) => Resource,
   ): ((row: LeafRow) => Resource) =>
-  (row) =>
-    toResource({
-      ...Record.remove(row, column),
-      id: row.id,
-      version: row.version,
-      action: row.action,
-    });
+  (row) => {
+    const { [column]: _recorded, ...rest } = row;
+    return toResource({ ...rest, id: row.id, version: row.version, action: row.action });
+  };
 
 /** The order with positions `0…n-1`. */
 const renumber = (ids: ReadonlyArray<string>): ReadonlyArray<CollectionEntry> =>
