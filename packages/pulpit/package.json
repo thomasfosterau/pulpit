@@ -40,6 +40,7 @@
     "./filter": "./src/filter.ts",
     "./subtype": "./src/subtype.ts",
     "./publication": "./src/publication.ts",
+    "./cache": "./src/cache.ts",
     "./documents": "./src/documents.ts",
     "./edges": "./src/edges.ts",
     "./proposals": "./src/proposals.ts",
@@ -83,6 +84,10 @@
       "./publication": {
         "types": "./dist/publication.d.ts",
         "default": "./dist/publication.js"
+      },
+      "./cache": {
+        "types": "./dist/cache.d.ts",
+        "default": "./dist/cache.js"
       },
       "./documents": {
         "types": "./dist/documents.d.ts",

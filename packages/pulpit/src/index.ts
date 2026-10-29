@@ -130,3 +130,10 @@ export * as Budgets from "./budgets.ts";
  * (`defineReactions` over a `ReactionStore`).
  */
 export * as Reactions from "./reactions.ts";
+
+/**
+ * The reference resource cache: `./subtype`'s `ResourceCacheSeam`, with a
+ * read-through `get`, over a minimal versioned key-value seam
+ * (`makeResourceCache` over a `VersionedKv`).
+ */
+export * as Cache from "./cache.ts";

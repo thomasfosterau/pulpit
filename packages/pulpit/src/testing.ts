@@ -84,6 +84,7 @@ import {
   type SearchBranch,
 } from "./search.ts";
 import type { ReactionRow, ReactionStore } from "./reactions.ts";
+import type { KvEntry, VersionedKv } from "./cache.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
 import type { ReportRow, ReportStore } from "./moderation.ts";
 import type { ProposalListing, ProposalRow, ProposalStore } from "./proposals.ts";
@@ -1687,5 +1688,48 @@ export const makeInMemoryReactionStore = (): InMemoryReactionStore => {
         return before - rows.length;
       }),
     rows: () => rows,
+  };
+};
+
+// ── The versioned KV (pulpit#205) ─────────────────────────────────────
+
+/**
+ * {@link makeInMemoryVersionedKv}'s fake: the seam plus test hooks.
+ *
+ * @since 0.1.0
+ */
+export interface InMemoryVersionedKv extends VersionedKv<never, never> {
+  /** The stored entry at `key` with its expiry instant (ms), expired or not. */
+  readonly peek: (key: string) => Option.Option<KvEntry & { readonly expiresAt: number }>;
+  /** Overwrite `key` unconditionally (a corrupt or foreign value, for a decode test). */
+  readonly poke: (key: string, entry: KvEntry) => void;
+}
+
+/**
+ * An in-memory {@link VersionedKv}: `putIfNotBehind` compares and writes in
+ * one step, and an entry past its TTL reads as absent (the Effect `Clock`,
+ * so `TestClock` steers expiry). In memory only; not for production.
+ *
+ * @since 0.1.0
+ */
+export const makeInMemoryVersionedKv = (): InMemoryVersionedKv => {
+  let entries = HashMap.empty<string, KvEntry & { readonly expiresAt: number }>();
+  const live = (key: string, now: number) =>
+    Option.filter(HashMap.get(entries, key), (entry) => entry.expiresAt > now);
+  return {
+    get: (key) =>
+      Effect.map(Clock.currentTimeMillis, (now) =>
+        Option.map(live(key, now), ({ version, value }) => ({ version, value })),
+      ),
+    putIfNotBehind: (key, entry, ttlSeconds) =>
+      Effect.map(Clock.currentTimeMillis, (now) => {
+        if (Option.exists(live(key, now), (held) => held.version > entry.version)) return false;
+        entries = HashMap.set(entries, key, { ...entry, expiresAt: now + ttlSeconds * 1000 });
+        return true;
+      }),
+    peek: (key) => HashMap.get(entries, key),
+    poke: (key, entry) => {
+      entries = HashMap.set(entries, key, { ...entry, expiresAt: Number.POSITIVE_INFINITY });
+    },
   };
 };

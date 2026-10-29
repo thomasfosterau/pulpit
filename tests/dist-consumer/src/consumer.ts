@@ -23,6 +23,7 @@ import {
   Moderation,
   Search,
   Reactions,
+  Cache,
   Proposals,
   Registry,
   WorkingCopy,
@@ -159,6 +160,7 @@ import type {
   LifecycleHooks,
   Unauthorized,
   WriteRejected,
+  ResourceCacheSeam,
 } from "@thomasfosterau/pulpit/subtype";
 import type { ChainPatch, WriteAction } from "@thomasfosterau/pulpit/version-chain";
 
@@ -219,6 +221,7 @@ import {
   type ReactionOps,
   type Tally,
 } from "@thomasfosterau/pulpit/reactions";
+import { makeResourceCache, type ResourceCache } from "@thomasfosterau/pulpit/cache";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -1305,5 +1308,23 @@ export type _Tally = Assert<
   Equals<
     ReturnType<ReactionOps<StoreFailure, Transaction>["tally"]>,
     Effect.Effect<HashMap.HashMap<string, Tally>, StoreFailure, Transaction>
+  >
+>;
+
+// ── cache (pulpit#205) ───────────────────────────────────────────────────
+
+export type _CacheBarrel = Assert<Equals<typeof Cache.makeResourceCache, typeof makeResourceCache>>;
+export type _CacheIsSeam = Assert<
+  Equals<
+    ResourceCache<string, Transaction> extends ResourceCacheSeam<string, Transaction>
+      ? true
+      : false,
+    true
+  >
+>;
+export type _CacheGet = Assert<
+  Equals<
+    ReturnType<ResourceCache<string, Transaction>["get"]>,
+    Effect.Effect<Option.Option<string>, never, Transaction>
   >
 >;
