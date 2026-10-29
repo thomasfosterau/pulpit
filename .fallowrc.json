@@ -16,6 +16,7 @@
     "packages/pulpit/src/search.ts",
     "packages/pulpit/src/budgets.ts",
     "packages/pulpit/src/reactions.ts",
+    "packages/pulpit/src/social.ts",
     "packages/pulpit/src/blobs.ts",
     "packages/pulpit/src/paths.ts",
     "packages/pulpit/src/collections.ts",

@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`, `Cache`, `Collections`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`, `Cache`, `Collections`, `Social`). |
 | **Content model** |  |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`, `localised`) and `validateRegistry`. |
@@ -41,6 +41,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./budgets` | Write budgets: a declared ceiling on an account's writes of one kind in a rolling window, spent inside the write (`budgetHook` on a chain write; `bindBudget`'s `spend` on a proposal's `submit` or a report's `file`) over a `BudgetCounter` seam, refused as a rate-limited `WriteRejected` (the wire's 429). |
 | `./comments` | The comments family: threaded comments on any node as versioned owned leaves (`defineComments`), behind the target's read gate and the moderation gate, with a configurable reply depth. |
 | `./reactions` | Reactions (`defineReactions` over a `ReactionStore` seam): one per account per node, a kind from the family's own vocabulary, behind the target's read gate, with a grouped tally for a page of nodes. |
+| `./social` | The social graph (`defineSocial` over a `SocialStore` seam): follow, mute and block between accounts, the follower seam filled from it (`socialFollowers`), and the opt-in read filter over the authors a viewer silenced. |
 | **Media** |  |
 | `./blobs` | File and media leaves: the `BlobStore` seam keyed by content hash, the file field spread, the commit-ordered byte write (`defineFileWrites`, with its `bytesPending` marker) and the usage index's edge ends. |
 | **Erasure** |  |
@@ -48,7 +49,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | **Discovery and search** |  |
 | `./search` | Hybrid search: reciprocal rank fusion (`fuseRankings`), a reranker seam, `hybridSearch` over `SearchBranch` seams that each apply the leaf's read scope, and the embedding pipeline (`enqueueEmbeddings`, `embedPending`, `sweepEmbeddings`) over `EmbeddingStore` and `Embedder` seams. |
 | **Testing** |  |
-| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy, purge, embedding, reaction and collection stores, the budget counter and write counts, a versioned KV, an endpoint view, a follower seam, a search branch and its scope check), for tests only. Not on the root export. |
+| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy, purge, embedding, reaction, collection and social stores, the budget counter and write counts, a versioned KV, an endpoint view, a follower seam, a search branch and its scope check), for tests only. Not on the root export. |
 
 **Discovery and search** is also `./subtype`'s searchable projection, read scope and hit hydration (see [Search](#subtype) under `./subtype`), which `./search` builds on. **Localisation** is the version chain's locale level (`./version-chain`, `./subtype`'s `getLocalised` and `./filter`'s `locale` arm), not a module of its own.
 
@@ -925,6 +926,35 @@ reactions.tally(pageOfPostIds); // HashMap<postId, { counts, total }>
 | `ReactionStore`, `ReactionRow` | The table seam (see [Seams](#seams)) and one stored reaction. |
 | `InvalidReactionKind` | An undeclared kind: 422. |
 
+## `./social`
+
+The social graph (pulpit#195), after gardeneria's `social.follows`: who follows, mutes and blocks whom.
+
+```ts
+import { defineSocial, socialFollowers } from "@thomasfosterau/pulpit/social";
+
+const social = defineSocial({ store: socialStore, viewer, accounts }); // `accounts`: the app's account visibility
+const posts = defineSubtype({ …, followers: socialFollowers(socialStore) }); // `followers` rows, end to end
+
+social.follow(accountId); // { changed }
+social.silencedFilter("ownerId"); // the opt-in read filter: drop the authors the viewer muted or blocked
+```
+
+- **A relationship is a fact** keyed `(kind, from, to)` for `follow`, `mute` and `block`: no history, asserting one twice changes nothing (`changed: false`), removing one hard-deletes it. Only the viewer writes their own (`Unauthorized` when anonymous); one with oneself is `SelfRelationship` (422).
+- **Following is immediate** (owner decision on pulpit#195); follow requests are a later slice.
+- **A block suppresses interaction only** (owner decision on pulpit#195). While either account blocks the other, neither may follow the other (`InteractionBlocked`, 403), and blocking ends both follows between them. Other modules gate an interaction (a reaction, a reply, a mention) on `interactionAllowed(a, b)`. A block hides no content by itself: `silencedFilter(column)` is the opt-in read filter a feed or thread applies, `column NOT IN` the accounts the viewer muted or blocked (through `./filter`'s `notIn`; an unset author is kept, and the anonymous get `always`).
+- **A mute is one-way and private**: it only feeds that filter.
+- **Lists.** `followers` and `following` are public, newest first, `LIMIT`ed (`MAX_PAGE_LIMIT`), and shown through the application's `AccountVisibility` (a private profile, a suspended account), when it supplies one. `muted` and `blocked` are the viewer's own.
+- **The follower seam.** `socialFollowers(store)` is `./subtype`'s `FollowerSeam` over the graph, so a `followers` row is readable by its owner's followers, and stops being the moment the follow ends.
+- **Account erasure** (pulpit#207) deletes every relationship from or to a member through the store's `eraseAccount`.
+
+| Export | What it is |
+| --- | --- |
+| `defineSocial(definition)`, `SocialDefinition`, `SocialOps`, `SocialPageRequest`, `Related` | The factory, its declaration, the operations, a page request and a listed account. |
+| `socialFollowers(store)` | The follower seam over the graph. |
+| `SocialStore`, `Relationship`, `RelationshipKind`, `AccountVisibility` | The relationship table seam (see [Seams](#seams)), one relationship, its kinds, and the application's account visibility. |
+| `InteractionBlocked`, `SelfRelationship` | The failures: 403 and 422. |
+
 ## `./testing`
 
 In-memory fakes of the kernel's seams, for tests: an adapter's or an application's suite can run the real operations (`defineVersionChain`, `defineSubtype`, `defineEdgeOps`, …) over them without a database. Each fake implements its seam's contract as stated under [Seams](#seams), in memory and with no SQL, and enforces what the real table's schema enforces (a primary or unique key) and nothing the operations are responsible for. They are the fakes the kernel's own suites run against, so they are its reference semantics for each seam.
@@ -989,6 +1019,7 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | `makeInMemoryReactionStore()`, `InMemoryReactionStore` | [`ReactionStore`](#reactionstoree-r-the-reaction-table), keyed `(nodeId, accountId)`: `upsert` replaces, `tally` groups by node and kind, `byAccount` is newest first. | `rows()`. |
 | `makeInMemoryVersionedKv()`, `InMemoryVersionedKv` | [`VersionedKv`](#versionedkve-r-the-caches-key-value-store), comparing and writing in one step; an entry past its TTL reads as absent (the Effect `Clock`, so `TestClock` steers expiry). | `peek(key)`, `poke(key, entry)` (a corrupt value). |
 | `makeInMemoryCollectionStore()`, `InMemoryCollectionStore` | [`CollectionStore`](#collectionstoree-r-the-membership-table), each parent's entries replaced whole and read back by position, then member id. | `rows()`. |
+| `makeInMemorySocialStore()`, `InMemorySocialStore` | [`SocialStore`](#socialstorefollowing-e-r-the-relationship-table), keyed `(kind, from, to)`; `followingOf` and `silencedBy` are `HashSet`s. | `rows()`. |
 | `makeInMemoryFollowers(table)`, `InMemoryFollowing` | [`FollowerSeam`](#the-viewer-the-role-axes-and-the-follower-seam) over an explicit table of who follows whom; the `in` set is a `HashSet` of account ids, where SQL's is a subquery. |  |
 
 `now` is the instant the list filter's `published` / `notPublished` compare against (and, for the edge store, the base of the minted `createdAt`s). Pass a fixed `Date` for a deterministic suite; left out, each call reads the Effect `Clock`, so `TestClock` steers it. The role ladder and the `AccessPolicy` are the application's, so `./testing` ships none.
@@ -1218,6 +1249,10 @@ Filled by the application over its own membership table:
 - **`replace(parentId, entries)`** rewrites the parent's order in one statement: a `DELETE` of the parent's rows and an `INSERT` of the new ones, in the caller's transaction.
 
 It applies no policy and never opens a transaction. A versioned family's parent column is a `jsonb` array of member ids on the parent's version table.
+
+### `SocialStore<Following, E, R>`: the relationship table
+
+Filled by the application over its own relationship table (gardeneria's `social.follows`, widened by a `kind`): `kind` (`follow | mute | block`), `from_id` and `to_id` (account foreign keys, `ON DELETE CASCADE`), `at` (`timestamptz NOT NULL DEFAULT now()`), primary key `(kind, from_id, to_id)`, with indexes on `(kind, to_id, at DESC)` and `(kind, from_id, at DESC)`. `add` is `INSERT … ON CONFLICT DO NOTHING RETURNING`; `remove` is `DELETE … RETURNING`; `has` is an `EXISTS`; `list` is one page by `from_id` or `to_id`, `ORDER BY at DESC`, then the other account's id, with the window total; `isFollowing` is the follower seam's `EXISTS` (a failure reads as `false`, failing closed); `followingOf(follower)` is the subquery `SELECT to_id … WHERE kind = 'follow' AND from_id = $follower`, and `silencedBy(viewer)` the same over `kind IN ('mute', 'block')`, both never materialised; `eraseAccount` deletes every row from or to the account. It applies no policy and never opens a transaction.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 

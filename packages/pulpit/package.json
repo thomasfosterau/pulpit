@@ -54,6 +54,7 @@
     "./search": "./src/search.ts",
     "./budgets": "./src/budgets.ts",
     "./reactions": "./src/reactions.ts",
+    "./social": "./src/social.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -141,6 +142,10 @@
       "./reactions": {
         "types": "./dist/reactions.d.ts",
         "default": "./dist/reactions.js"
+      },
+      "./social": {
+        "types": "./dist/social.d.ts",
+        "default": "./dist/social.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",
