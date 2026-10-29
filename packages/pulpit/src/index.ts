@@ -123,3 +123,10 @@ export * as Search from "./search.ts";
  * over a `BudgetCounter` seam (`bindBudget`, `budgetHook`).
  */
 export * as Budgets from "./budgets.ts";
+
+/**
+ * Reactions: one reaction per account per node, a kind from the family's
+ * vocabulary, behind the target's read gate, with a grouped tally
+ * (`defineReactions` over a `ReactionStore`).
+ */
+export * as Reactions from "./reactions.ts";

@@ -22,6 +22,7 @@ import {
   Purge,
   Moderation,
   Search,
+  Reactions,
   Proposals,
   Registry,
   WorkingCopy,
@@ -212,6 +213,12 @@ import {
   type BudgetCounter,
   type BudgetRequest,
 } from "@thomasfosterau/pulpit/budgets";
+import {
+  defineReactions,
+  type InvalidReactionKind,
+  type ReactionOps,
+  type Tally,
+} from "@thomasfosterau/pulpit/reactions";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -1277,4 +1284,26 @@ export type _ProposalSubmitBudget = Assert<
   WriteRejected extends Effect.Error<ReturnType<ProposalOps<StoreFailure, Transaction>["submit"]>>
     ? true
     : false
+>;
+
+// ── reactions (pulpit#196) ───────────────────────────────────────────────
+
+export type _ReactionsBarrel = Assert<
+  Equals<typeof Reactions.defineReactions, typeof defineReactions>
+>;
+export type _React = Assert<
+  Equals<
+    ReturnType<ReactionOps<StoreFailure, Transaction>["react"]>,
+    Effect.Effect<
+      { readonly replaced: Option.Option<string> },
+      Unauthorized | InvalidReactionKind | NodeNotFound | StoreFailure,
+      Transaction
+    >
+  >
+>;
+export type _Tally = Assert<
+  Equals<
+    ReturnType<ReactionOps<StoreFailure, Transaction>["tally"]>,
+    Effect.Effect<HashMap.HashMap<string, Tally>, StoreFailure, Transaction>
+  >
 >;
