@@ -28,11 +28,13 @@ import {
   type ViewerAccount,
 } from "@thomasfosterau/pulpit/subtype";
 import { defineEdgeOps, type EdgeRow, type EdgeValues } from "@thomasfosterau/pulpit/edges";
+import { routable } from "@thomasfosterau/pulpit/paths";
 import {
   makeInMemoryChainStore,
   makeInMemoryEdgeStore,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
+  makeInMemoryPathStore,
 } from "@thomasfosterau/pulpit/testing";
 import type { ColumnValue } from "@thomasfosterau/pulpit/version-chain";
 import {
@@ -430,6 +432,7 @@ const site = (options: SiteOptions = {}) => {
     mediaReads,
     termReads,
     as,
+    chains: { posts: leafStores.posts.chain },
   };
 };
 
@@ -1604,5 +1607,93 @@ describe("the wp/v2 read API — media from a file leaf (pulpit#221)", () => {
     expect(
       fileMediaFields(file, blobs, { ...described, mediaDetails: { width: 10 } }).mediaDetails,
     ).toEqual({ width: 10 });
+  });
+});
+
+describe("the wp/v2 read API — a routable leaf's paths (pulpit#222)", () => {
+  /** A post written through `./paths`' `routable`, so its slug is its claimed path. */
+  const routed = () => {
+    const wp = site();
+    const paths = makeInMemoryPathStore();
+    const posts = routable(wp.ops.posts, { column: "slug", paths, chain: wp.chains.posts });
+    return { wp, paths, posts };
+  };
+
+  it("finds a renamed post by its canonical path only: an alias neither matches ?slug= nor redirects", async () => {
+    const { wp, paths, posts } = routed();
+    const { id } = await run(
+      wp.as(
+        Option.some(member),
+        posts.create({
+          id: Option.none(),
+          state: {
+            title: "T",
+            content: "",
+            excerpt: "",
+            slug: "old",
+            publishedAt: PAST,
+            updatedAt: PAST,
+            visibility: "public",
+            draft: false,
+          },
+        }),
+      ),
+    );
+    await run(wp.as(Option.some(member), posts.update({ id, patch: { slug: "new" } })));
+    const wireId = wp.nodes.assign(id);
+    // The path table keeps "old" as an alias of the node.
+    const canonical = (path: string) =>
+      Option.map(HashMap.get(paths.entries(), path), (entry) => entry.canonical);
+    expect([canonical("new"), canonical("old")]).toEqual([Option.some(true), Option.some(false)]);
+    expect(listed(await wp.get("/wp/v2/posts", [["slug", "new"]]))).toEqual([wireId]);
+    expect(listed(await wp.get("/wp/v2/posts", [["slug", "old"]]))).toEqual([]);
+    // `link` is built from the canonical path the slug column holds.
+    const item = objectOf(await wp.get(`/wp/v2/posts/${wireId}`));
+    expect([item["slug"], item["link"]]).toEqual(["new", "https://example.org/post/new"]);
+  });
+
+  it("reveals nothing of a hidden node through its path or its alias", async () => {
+    const { wp, posts } = routed();
+    const { id } = await run(
+      wp.as(
+        Option.some(member),
+        posts.create({
+          id: Option.none(),
+          state: {
+            title: "T",
+            content: "",
+            excerpt: "",
+            slug: "secret",
+            publishedAt: PAST,
+            updatedAt: PAST,
+            visibility: "private",
+            draft: false,
+          },
+        }),
+      ),
+    );
+    await run(wp.as(Option.some(member), posts.update({ id, patch: { slug: "secret-2" } })));
+    const wireId = wp.nodes.assign(id);
+    const anonymous = await inSequence(["secret", "secret-2"], (slug) =>
+      wp.get("/wp/v2/posts", [["slug", slug]]),
+    );
+    expect(anonymous.map((response) => [listed(response), response.headers["x-wp-total"]])).toEqual(
+      [
+        [[], "0"],
+        [[], "0"],
+      ],
+    );
+    // Its owner finds it by its canonical path, never by the alias.
+    const owned = (slug: string) =>
+      wp.get(
+        "/wp/v2/posts",
+        [
+          ["slug", slug],
+          ["status", "private"],
+        ],
+        Option.some(member),
+      );
+    expect(listed(await owned("secret-2"))).toEqual([wireId]);
+    expect(listed(await owned("secret"))).toEqual([]);
   });
 });
