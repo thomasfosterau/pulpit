@@ -144,3 +144,10 @@ export * as Cache from "./cache.ts";
  * `CollectionStore`).
  */
 export * as Collections from "./collections.ts";
+
+/**
+ * The social graph: follow, mute and block between accounts, the follower
+ * seam filled from it, and the opt-in read filter over silenced authors
+ * (`defineSocial` over a `SocialStore`).
+ */
+export * as Social from "./social.ts";

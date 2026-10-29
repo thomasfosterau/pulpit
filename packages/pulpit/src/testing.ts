@@ -86,6 +86,7 @@ import {
 import type { ReactionRow, ReactionStore } from "./reactions.ts";
 import type { KvEntry, VersionedKv } from "./cache.ts";
 import type { CollectionEntry, CollectionStore } from "./collections.ts";
+import type { Relationship, SocialStore } from "./social.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
 import type { ReportRow, ReportStore } from "./moderation.ts";
 import type { ProposalListing, ProposalRow, ProposalStore } from "./proposals.ts";
@@ -1773,5 +1774,79 @@ export const makeInMemoryCollectionStore = (): InMemoryCollectionStore => {
         byParent = HashMap.set(byParent, parentId, [...entries]);
       }),
     rows: () => byParent,
+  };
+};
+
+// ── The social graph (pulpit#195) ─────────────────────────────────────
+
+/**
+ * {@link makeInMemorySocialStore}'s fake: the seam plus a test hook.
+ *
+ * @since 0.1.0
+ */
+export interface InMemorySocialStore extends SocialStore<InMemoryFollowing, never, never> {
+  /** Every stored relationship. */
+  readonly rows: () => ReadonlyArray<Relationship>;
+}
+
+/**
+ * An in-memory {@link SocialStore}, keyed `(kind, from, to)` as the real
+ * table is; `followingOf` and `silencedBy` return {@link InMemoryFollowing}
+ * sets, where SQL's are subqueries. In memory only; not for production.
+ *
+ * @since 0.1.0
+ */
+export const makeInMemorySocialStore = (): InMemorySocialStore => {
+  let rows: ReadonlyArray<Relationship> = [];
+  const matches = (kind: string, from: string, to: string) => (row: Relationship) =>
+    row.kind === kind && row.from === from && row.to === to;
+  const toIds = (from: string, kinds: ReadonlyArray<string>) =>
+    HashSet.fromIterable(
+      Arr.map(
+        Arr.filter(rows, (row) => row.from === from && kinds.includes(row.kind)),
+        (row) => row.to,
+      ),
+    );
+  type Related = { readonly accountId: string; readonly at: Date };
+  const newestFirst = Order.combine(
+    Order.mapInput(Order.flip(Order.Number), (row: Related) => row.at.getTime()),
+    Order.mapInput(byCodePoint, (row: Related) => row.accountId),
+  );
+  return {
+    add: (relationship) =>
+      Effect.sync(() => {
+        if (rows.some(matches(relationship.kind, relationship.from, relationship.to))) return false;
+        rows = [...rows, relationship];
+        return true;
+      }),
+    remove: (kind, from, to) =>
+      Effect.sync(() => {
+        const before = rows.length;
+        rows = Arr.filter(rows, (row) => !matches(kind, from, to)(row));
+        return rows.length < before;
+      }),
+    has: (kind, from, to) => Effect.sync(() => rows.some(matches(kind, from, to))),
+    list: ({ kind, side, accountId, limit, offset }) =>
+      Effect.sync(() => {
+        const related = Arr.sort(
+          Arr.map(
+            Arr.filter(rows, (row) => row.kind === kind && row[side] === accountId),
+            (row) => ({ accountId: side === "from" ? row.to : row.from, at: row.at }),
+          ),
+          newestFirst,
+        );
+        return { rows: related.slice(offset, offset + limit), total: related.length };
+      }),
+    isFollowing: (follower, followed) =>
+      Effect.sync(() => rows.some(matches("follow", follower, followed))),
+    followingOf: (follower) => toIds(follower, ["follow"]),
+    silencedBy: (viewer) => toIds(viewer, ["mute", "block"]),
+    eraseAccount: (accountId) =>
+      Effect.sync(() => {
+        const before = rows.length;
+        rows = Arr.filter(rows, (row) => row.from !== accountId && row.to !== accountId);
+        return before - rows.length;
+      }),
+    rows: () => rows,
   };
 };

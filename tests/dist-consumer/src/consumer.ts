@@ -25,6 +25,7 @@ import {
   Reactions,
   Cache,
   Collections,
+  Social,
   Proposals,
   Registry,
   WorkingCopy,
@@ -162,6 +163,7 @@ import type {
   Unauthorized,
   WriteRejected,
   ResourceCacheSeam,
+  FollowerSeam,
 } from "@thomasfosterau/pulpit/subtype";
 import type { ChainPatch, WriteAction } from "@thomasfosterau/pulpit/version-chain";
 
@@ -228,6 +230,14 @@ import {
   type CollectionMember,
   type CollectionOps,
 } from "@thomasfosterau/pulpit/collections";
+import {
+  defineSocial,
+  socialFollowers,
+  type InteractionBlocked,
+  type SelfRelationship,
+  type SocialOps,
+  type SocialStore,
+} from "@thomasfosterau/pulpit/social";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -1346,3 +1356,25 @@ export type _CollectionList = Assert<
     Effect.Effect<Page<CollectionMember<string>>, NodeNotFound | StoreFailure, Transaction>
   >
 >;
+
+// ── social (pulpit#195) ──────────────────────────────────────────────────
+
+export type _SocialBarrel = Assert<Equals<typeof Social.defineSocial, typeof defineSocial>>;
+export type _Follow = Assert<
+  Equals<
+    ReturnType<SocialOps<Subquery, StoreFailure, Transaction>["follow"]>,
+    Effect.Effect<
+      { readonly changed: boolean },
+      Unauthorized | SelfRelationship | InteractionBlocked | StoreFailure,
+      Transaction
+    >
+  >
+>;
+declare const socialStore: SocialStore<Subquery, StoreFailure, Transaction>;
+export type _SocialFollowers = Assert<
+  Equals<
+    ReturnType<typeof socialFollowers<Subquery, StoreFailure, Transaction>>,
+    FollowerSeam<Subquery, Transaction>
+  >
+>;
+export const socialSeam = socialFollowers(socialStore);
