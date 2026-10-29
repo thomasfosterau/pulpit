@@ -27,6 +27,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as HashMap from "effect/HashMap";
 import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
@@ -1903,7 +1904,7 @@ describe("qualifying a filter with an end's alias renames every node's column", 
 
 // ── Edge membership (pulpit#113) ──────────────────────────────────────
 
-describe("memberFilter: edge membership never disagrees with EDGE-001's per-edge predicate", () => {
+describe("memberFilter and countBy: membership and counts never disagree with EDGE-001's per-edge predicate", () => {
   /** Posts (owned, with drafts) × terms (reference, with a followers column), every pair linked. */
   const taxonomy = (policy: AccessPolicy = gardeneriaPolicy) => {
     const posts = makeInMemoryNodes(["ownerId", "visibility", "draft"]);
@@ -2069,5 +2070,97 @@ describe("memberFilter: edge membership never disagrees with EDGE-001's per-edge
     // Not vacuous: a well-formed request does ask.
     await run(pair.memberFilter("post", ["t-public"]));
     expect(asked).toBe(1);
+  });
+
+  /** Entries ordered by key, so two count maps compare as lists. */
+  const byKey = Order.mapInput(Order.String, (entry: readonly [string, number]) => entry[0]);
+
+  it.each(cases)(
+    "countBy for $label: each term's count is the edges the viewer can get",
+    async ({ policy, viewer }) => {
+      const { edges, ops, actAs, termRows, pairs } = taxonomy(policy);
+      const ids = await run(
+        Effect.forEach(pairs, (pair) => Effect.flatMap(edges.insert(pair), Effect.fromOption), {
+          concurrency: 1,
+        }),
+      );
+      const termIds = termRows.map((term) => term.id);
+      const [counts, expected] = await run(
+        actAs(
+          viewer,
+          Effect.gen(function* () {
+            const counted = yield* ops.countBy("term", [...termIds, ...termIds]);
+            const readable = yield* Effect.filter(
+              Arr.zip(pairs, ids),
+              ([, id]) => Effect.map(Effect.exit(ops.get(id)), Exit.isSuccess),
+              { concurrency: 1 },
+            );
+            const perTerm = Arr.map(
+              termIds,
+              (termId) =>
+                [termId, readable.filter(([pair]) => pair.termId === termId).length] as const,
+            );
+            return [counted, perTerm] as const;
+          }),
+        ),
+      );
+      expect(Arr.sort(Arr.fromIterable(HashMap.toEntries(counts)), byKey)).toEqual(
+        Arr.sort(expected, byKey),
+      );
+      // Not vacuous: every viewer reads `p-public` through `t-public`.
+      expect(Option.getOrElse(HashMap.get(counts, "t-public"), () => 0)).toBeGreaterThan(0);
+    },
+  );
+
+  it("countBy narrows by the family's own predicate", async () => {
+    const { edges, ops, actAs } = taxonomy();
+    await run(edges.insert({ postId: "p-public", termId: "t-public" }));
+    await run(edges.insert({ postId: "p-followers", termId: "t-public" }));
+    const counted = await run(
+      actAs(as(admin), ops.countBy("term", ["t-public"], eq("postId", "p-public"))),
+    );
+    expect(HashMap.get(counted, "t-public")).toEqual(Option.some(1));
+  });
+
+  it("countBy reads the store once, and fails closed to 0 without asking it", async () => {
+    const { edges, postRows } = taxonomy();
+    let asked = 0;
+    const counting: InMemoryEdgeStore = {
+      ...edges,
+      countBy: (query) =>
+        Effect.suspend(() => {
+          asked += 1;
+          return edges.countBy(query);
+        }),
+    };
+    await run(edges.insert({ postId: "p-public", termId: "t-public" }));
+    const posts = makeInMemoryNodes(["ownerId", "visibility", "draft"]);
+    const terms = makeInMemoryNodes(["visibility"]);
+    Arr.forEach(postRows, posts.put);
+    terms.put(node("t-public", { visibility: "public" }));
+    const ops = defineEdgeOps({
+      type: "links",
+      ends: { post: ownedEnd("postId", posts), term: referenceEnd("termId", terms) },
+      edges: counting,
+      viewer: Effect.succeed(anonymous),
+      policy: gardeneriaPolicy,
+      followers: follows,
+      values: (input: EdgeValues) => input,
+      toResource: (row: EdgeRow) => row,
+    });
+    const tooMany = Arr.makeBy(MAX_SET_VALUES + 1, (i) => `t-${i}`);
+    expect(HashMap.size(await run(ops.countBy("term", [])))).toBe(0);
+    const over = await run(ops.countBy("term", tooMany));
+    expect(HashMap.size(over)).toBe(MAX_SET_VALUES + 1);
+    expect(HashMap.every(over, (count) => count === 0)).toBe(true);
+    expect(HashMap.get(await run(ops.countBy("nope", ["t-public"])), "t-public")).toEqual(
+      Option.some(0),
+    );
+    expect(asked).toBe(0);
+    // Not vacuous: a well-formed request asks once, for every id at once.
+    const one = await run(ops.countBy("term", ["t-public", "t-none"]));
+    expect(asked).toBe(1);
+    expect(HashMap.get(one, "t-public")).toEqual(Option.some(1));
+    expect(HashMap.get(one, "t-none")).toEqual(Option.some(0));
   });
 });

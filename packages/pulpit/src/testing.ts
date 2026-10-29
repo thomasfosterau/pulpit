@@ -674,7 +674,7 @@ const byCreation = Order.combine(
  * `EdgeStore`) over one edge family's rows. It enforces what an edge table's
  * schema enforces, the family's unique key (with `NULLS NOT DISTINCT`, as
  * gardeneria's `page_slugs_unique_variant`), and nothing the operations are
- * responsible for. `list`, `countAt` and `members` join each end's view the way the SQL
+ * responsible for. `list`, `countAt`, `members` and `countBy` join each end's view the way the SQL
  * store's INNER JOIN does: under the end's alias, dropping an edge whose end
  * has no row. `list` orders by `createdAt` then `id` and reports the unpaged
  * total as the SQL store's window column does (`0` for an empty page).
@@ -789,6 +789,17 @@ export const makeInMemoryEdgeStore = (options: InMemoryEdgeStoreOptions): InMemo
               : [];
           }),
         ),
+      ),
+    // The SQL store's grouped count over the list's joins: per requested
+    // node, the edges at it that satisfy `where`; a node with none, no key.
+    countBy: ({ column, ids, where }) =>
+      Effect.map(matching(where), (rows) =>
+        Arr.reduce(rows, HashMap.empty<string, number>(), (counts, row) => {
+          const node = row[column];
+          return Predicate.isString(node) && ids.includes(node)
+            ? HashMap.set(counts, node, Option.getOrElse(HashMap.get(counts, node), () => 0) + 1)
+            : counts;
+        }),
       ),
     rows: () => stored,
     raceNextInsert: (winner) => {

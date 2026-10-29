@@ -79,12 +79,23 @@
 
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
+import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
-import { always, and, anyOf, eq, isIn, never, or, type ListFilter } from "./filter.ts";
+import {
+  always,
+  and,
+  anyOf,
+  eq,
+  isIn,
+  MAX_SET_VALUES,
+  never,
+  or,
+  type ListFilter,
+} from "./filter.ts";
 import { renameColumns } from "./internal/filter-columns.ts";
 import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
 import { canViewReferenceRow, referenceListFilter } from "./internal/reference-columns.ts";
@@ -475,6 +486,20 @@ export interface EdgeStore<Row extends EdgeRow, Following, E, R> {
     readonly ids: ReadonlyArray<string>;
     readonly where: ListFilter<Following>;
   }) => Effect.Effect<Following, E, R>;
+  /**
+   * How many stored edges hold each of `ids` in `column` and satisfy
+   * `where`, over the same joins as {@link EdgeStore.list} (pulpit#185): one
+   * `SELECT e.<column>, count(*) FROM <edge> e JOIN <each end's view> …
+   * WHERE e.<column> = ANY($ids) AND <where> GROUP BY e.<column>`, never a
+   * read per id. A node with no such edge has no key. `ids` is never empty,
+   * holds no duplicate and is never longer than `MAX_SET_VALUES`:
+   * {@link EdgeOps.countBy} answers without asking otherwise.
+   */
+  readonly countBy: (query: {
+    readonly column: string;
+    readonly ids: ReadonlyArray<string>;
+    readonly where: ListFilter<Following>;
+  }) => Effect.Effect<HashMap.HashMap<string, number>, E, R>;
 }
 
 // ── The factory ───────────────────────────────────────────────────────
@@ -613,6 +638,28 @@ export interface EdgeOps<Create, Resource, E, R, Following = never> {
     end: string,
     otherIds: ReadonlyArray<string>,
   ) => Effect.Effect<ListFilter<Following>, E, R>;
+  /**
+   * The number of edges the viewer can read at each node of `ids` at end
+   * `end` (pulpit#185), in one grouped store read: a taxonomy term's post
+   * count, for every term on a page. Only edges {@link list} would show
+   * count (`EDGE-001`, the same `endpointFilter`, and `where`, the family's
+   * own predicate, as {@link EdgeListRequest.where}): an edge with a hidden
+   * end, or a tombstoned end below the view-deleted rung, never counts, so a
+   * hidden or tombstoned node at `end` counts `0` and its edges are never
+   * confirmed.
+   *
+   * Every requested id (deduplicated) has a key, `0` for a node with no
+   * readable edge. Fails closed, every count `0` without reading the store,
+   * for more than `MAX_SET_VALUES` ids (`SEC-INPUT-003`) or an `end` the
+   * family doesn't declare; no ids read nothing. Fails only with the
+   * store's `E`.
+   */
+  readonly countBy: (
+    end: string,
+    ids: ReadonlyArray<string>,
+    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter, `?: T | undefined` (AGENTS.md → Conventions); the omitted value is `always`
+    where?: ListFilter<never> | undefined,
+  ) => Effect.Effect<HashMap.HashMap<string, number>, E, R>;
 }
 
 /** What is wrong with one end's declaration: an alias with a `.`, or a `maxEdges` that is not a positive safe integer. */
@@ -835,5 +882,33 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     return isIn("id", following);
   });
 
-  return { list, get, create, delete: remove, memberFilter };
+  const countBy = Effect.fn(`${type}.countBy`)(function* (
+    end: string,
+    ids: ReadonlyArray<string>,
+    where: ListFilter<never> = always,
+  ) {
+    const wanted = Arr.dedupe(ids);
+    const zero = HashMap.fromIterable(Arr.map(wanted, (id) => [id, 0] as const));
+    const counted = Record.get(ends, end);
+    // A misnamed end, no ids, or past MAX_SET_VALUES: every count 0, unread.
+    if (
+      Option.isNone(counted) ||
+      !Arr.isReadonlyArrayNonEmpty(wanted) ||
+      wanted.length > MAX_SET_VALUES
+    ) {
+      return zero;
+    }
+    const viewer = yield* definition.viewer;
+    const counts = yield* edges.countBy({
+      column: counted.value.column,
+      ids: wanted,
+      where: and<Following>(endpointFilter(ends, viewer, policy, followers), where),
+    });
+    return HashMap.union(
+      zero,
+      HashMap.filter(counts, (_, id) => HashMap.has(zero, id)),
+    );
+  });
+
+  return { list, get, create, delete: remove, memberFilter, countBy };
 };
