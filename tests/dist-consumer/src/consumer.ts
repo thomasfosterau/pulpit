@@ -113,6 +113,10 @@ import {
   type SearchField,
   type SearchProjection,
   type SearchWeight,
+  readableOwners,
+  type DistinctQuery,
+  type OwnerSetTooLarge,
+  type OwnersRequest,
 } from "@thomasfosterau/pulpit/subtype";
 import {
   duePublications,
@@ -628,6 +632,35 @@ export type _Get = Assert<
     Effect.Effect<PostDoc, NodeNotFound | StoreFailure, Transaction>
   >
 >;
+// Distinct readable owners (pulpit#186): per leaf, and the exact union across leaves.
+export type _Owners = Assert<
+  Equals<ReturnType<typeof posts.owners>, Effect.Effect<Page<string>, StoreFailure, Transaction>>
+>;
+export type _ReadableOwners = Assert<
+  Equals<
+    ReturnType<typeof readableOwners<StoreFailure, Transaction>>,
+    Effect.Effect<Page<string>, OwnerSetTooLarge | StoreFailure, Transaction>
+  >
+>;
+export type _LeafStoreDistinct = Assert<
+  Equals<
+    LeafStore<LeafRow, Subquery, StoreFailure, Transaction>["distinct"],
+    (query: DistinctQuery<Subquery>) => Effect.Effect<Page<string>, StoreFailure, Transaction>
+  >
+>;
+/* oxlint-disable effect/prefer-option-over-null -- the assertion spells the emitted optional field */
+export type _OwnersRequest = Assert<
+  Equals<
+    OwnersRequest,
+    {
+      readonly limit: number;
+      readonly offset: number;
+      readonly includeDeleted: boolean;
+      readonly among?: ReadonlyArray<string> | undefined;
+    }
+  >
+>;
+/* oxlint-enable effect/prefer-option-over-null */
 // The gated compare (pulpit#82): the chain's comparison behind `getVersion`'s gate.
 export type _SubtypeCompare = Assert<
   Equals<
