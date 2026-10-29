@@ -89,6 +89,7 @@
  */
 
 import * as Array from "effect/Array";
+import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -107,6 +108,7 @@ import type { Visibility } from "./content.ts";
 import {
   always,
   and,
+  anyOf,
   eq,
   isIn,
   locale as localeIn,
@@ -116,6 +118,7 @@ import {
   or,
   type ListFilter,
 } from "./filter.ts";
+import { byCodePoint } from "./internal/list-order.ts";
 import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
 import { canViewReferenceRow, referenceListFilter } from "./internal/reference-columns.ts";
 import {
@@ -730,6 +733,19 @@ export interface ListOrder {
 }
 
 /**
+ * What `LeafStore.distinct` reads: the column, the rows' filter and the page
+ * window over the distinct values.
+ *
+ * @since 0.1.0
+ */
+export interface DistinctQuery<Following> {
+  readonly column: string;
+  readonly where: ListFilter<Following>;
+  readonly limit: number;
+  readonly offset: number;
+}
+
+/**
  * The read seam over a leaf's fail-closed current-version view, plus the
  * owner stamp. `columns` is the view's column set — what the owned filter
  * checks its declaration against.
@@ -757,6 +773,15 @@ export interface LeafStore<Row extends LeafRow, Following, E, R> {
     readonly limit: number;
     readonly offset: number;
   }) => Effect.Effect<Page<Row>, E, R>;
+  /**
+   * The distinct values of `column` among the view rows matching `where`
+   * (pulpit#186): `SELECT DISTINCT <column> … WHERE <where> AND <column> IS
+   * NOT NULL ORDER BY <column> COLLATE "C" LIMIT … OFFSET …`, with the
+   * unpaged distinct count as `total`. Only string values are distinct
+   * values; a `NULL` or non-string one is none. Applies no visibility
+   * policy.
+   */
+  readonly distinct: (query: DistinctQuery<Following>) => Effect.Effect<Page<string>, E, R>;
   /** The owner of an owned node (`core.node_owner`), or none. */
   readonly ownerOf: (id: string) => Effect.Effect<Option.Option<string>, E, R>;
   /** Record a freshly created owned node's owner. */
@@ -823,6 +848,14 @@ export interface LiveView<Row extends LeafRow, Following, E, R> extends Pick<
   LeafStore<Row, Following, E, R>,
   "get" | "getMany"
 > {
+  /**
+   * `LeafStore.distinct` over the rows {@link LiveView.list} chooses for
+   * the same `headFor` (pulpit#186): a node counts with the row the viewer
+   * reads, its head or its live version, or not at all.
+   */
+  readonly distinct: (
+    query: DistinctQuery<Following> & { readonly headFor: ListFilter<Following> },
+  ) => Effect.Effect<Page<string>, E, R>;
   /**
    * The page under `where`, ordered as `LeafStore.list` orders, over one
    * row per node chosen per viewer: the **head** row (as the current-version
@@ -1369,6 +1402,21 @@ export interface ListRequest {
 type Gate = Unauthorized | Forbidden;
 
 /**
+ * What {@link SubtypeOps.owners} reads: the page window, the soft-delete
+ * axis as {@link ListRequest.includeDeleted}, and an optional set of
+ * account ids to narrow to.
+ *
+ * @since 0.1.0
+ */
+export interface OwnersRequest {
+  readonly limit: number;
+  readonly offset: number;
+  readonly includeDeleted: boolean;
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is every owner
+  readonly among?: ReadonlyArray<string> | undefined;
+}
+
+/**
  * An update's input: the node, the tri-state patch, an optional expected
  * version and, for an edit that applies an accepted proposal, the
  * contributor the version records as `proposedBy` (`./proposals`).
@@ -1520,6 +1568,18 @@ export interface SubtypeOps<Resource, E, R> {
    * carries none of `locales` (or the leaf has no locale level), in one
    * read of the locale rows after the gate.
    */
+  /**
+   * The accounts that own at least one row the viewer may list
+   * (pulpit#186): the distinct owner column values of exactly the rows
+   * {@link SubtypeOps.list} would show for `request` (the same scope, and on
+   * a publish-gated leaf the same head-or-live choice), in code-point order,
+   * with the distinct total. `among`, when given, narrows to those account
+   * ids (more than `MAX_SET_VALUES` reads none, `SEC-INPUT-003`). A hidden
+   * row never contributes its owner (`SEC-AUTH-ENUM-001`). A reference leaf
+   * has no owner, so its page is empty. The limit is clamped to
+   * {@link MAX_PAGE_LIMIT}. Fails only with the store's `E`.
+   */
+  readonly owners: (request: OwnersRequest) => Effect.Effect<Page<string>, E, R>;
   readonly getLocalised: (
     id: string,
     locales: ReadonlyArray<string>,
@@ -1806,6 +1866,29 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     return toResource(yield* visibleRow(yield* definition.viewer, id));
   });
 
+  const owners = Effect.fn(`${type}.owners`)(function* (request: OwnersRequest) {
+    if (access.kind !== "owned") return { rows: [], total: 0 };
+    const viewer = yield* definition.viewer;
+    const among = request.among === undefined ? always : anyOf(access.ownerColumn, request.among);
+    const query = {
+      column: access.ownerColumn,
+      where: searchScopeFilter({ access, columns: leaves.columns, policy, followers }, viewer, {
+        includeDeleted: request.includeDeleted,
+        where: among,
+      }),
+      limit: Math.max(1, Math.min(Math.trunc(request.limit), MAX_PAGE_LIMIT)),
+      offset: Math.max(0, Math.trunc(request.offset)),
+    };
+    // The same choice `list` makes: the head by rung, else live rows and the viewer's own heads.
+    return yield* Option.match(publication, {
+      onNone: () => leaves.distinct(query),
+      onSome: ({ live }) =>
+        readsHeadByRung(viewer)
+          ? leaves.distinct(query)
+          : live.distinct({ ...query, headFor: ownHeads(viewer) }),
+    });
+  });
+
   const getLocalised = Effect.fn(`${type}.getLocalised`)(function* (
     id: string,
     locales: ReadonlyArray<string>,
@@ -2048,6 +2131,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     delete: softDelete,
     get,
     getLocalised,
+    owners,
     getMany,
     list,
     getVersion,
@@ -2918,3 +3002,74 @@ export const defineLocaleLevel = (declaration: {
   }
   return { columns: [...declaration.columns] };
 };
+
+// ── Owners across leaves ──────────────────────────────────────────────
+
+/**
+ * {@link readableOwners} refused a union it could not make exact: a leaf
+ * has more readable owners than one read returns ({@link MAX_PAGE_LIMIT}),
+ * so the union and its total would be short (`SEC-INPUT-003`).
+ *
+ * @since 0.1.0
+ */
+export class OwnerSetTooLarge extends Schema.TaggedError<OwnerSetTooLarge>()("OwnerSetTooLarge", {
+  type: Schema.String,
+}) {}
+
+/**
+ * The accounts that own at least one row the viewer may list in any of
+ * `leaves` (pulpit#186): the union of each leaf's
+ * {@link SubtypeOps.owners}, deduplicated in code-point order, paged by
+ * `request`, with the exact union size as `total`. One read per leaf, each
+ * for every owner it has (up to {@link MAX_PAGE_LIMIT}): a leaf with more
+ * fails {@link OwnerSetTooLarge} rather than answer a short union. With
+ * `among` (at most `MAX_SET_VALUES` ids) no leaf can exceed it. A hidden row
+ * never contributes its owner (`SEC-AUTH-ENUM-001`). Fails otherwise only
+ * with the stores' `E`.
+ *
+ * @example
+ * ```ts
+ * import { deepStrictEqual } from "node:assert";
+ * import * as Effect from "effect/Effect";
+ * import { readableOwners } from "@thomasfosterau/pulpit/subtype";
+ *
+ * const leaf = (type: string, owners: ReadonlyArray<string>) => ({
+ *   type,
+ *   owners: () => Effect.succeed({ rows: owners, total: owners.length }),
+ * });
+ * const page = Effect.runSync(
+ *   readableOwners([leaf("posts", ["ana", "bo"]), leaf("pages", ["bo", "cy"])], {
+ *     limit: 10,
+ *     offset: 0,
+ *     includeDeleted: false,
+ *   }),
+ * );
+ * deepStrictEqual(page, { rows: ["ana", "bo", "cy"], total: 3 });
+ * ```
+ *
+ * @since 0.1.0
+ */
+export const readableOwners = <E, R>(
+  leaves: ReadonlyArray<{
+    readonly type: string;
+    readonly owners: (request: OwnersRequest) => Effect.Effect<Page<string>, E, R>;
+  }>,
+  request: OwnersRequest,
+): Effect.Effect<Page<string>, OwnerSetTooLarge | E, R> =>
+  Effect.gen(function* () {
+    const every: OwnersRequest = { ...request, limit: MAX_PAGE_LIMIT, offset: 0 };
+    const pages = yield* Effect.forEach(
+      leaves,
+      (leaf) =>
+        Effect.flatMap(leaf.owners(every), (page) =>
+          page.total > page.rows.length
+            ? Effect.fail(new OwnerSetTooLarge({ type: leaf.type }))
+            : Effect.succeed(page.rows),
+        ),
+      { concurrency: 1 },
+    );
+    const union = Arr.sort(Array.dedupe(Array.flatten(pages)), byCodePoint);
+    const limit = Math.max(1, Math.min(Math.trunc(request.limit), MAX_PAGE_LIMIT));
+    const offset = Math.max(0, Math.trunc(request.offset));
+    return { rows: union.slice(offset, offset + limit), total: union.length };
+  });

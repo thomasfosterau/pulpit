@@ -74,7 +74,7 @@ import {
   type FilterRow,
   type ListFilter,
 } from "./filter.ts";
-import { rowOrder } from "./internal/list-order.ts";
+import { byCodePoint, rowOrder } from "./internal/list-order.ts";
 import type { ErasedReferences, PurgeStore } from "./purge.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
 import type { ReportRow, ReportStore } from "./moderation.ts";
@@ -84,7 +84,9 @@ import type {
   FollowerSeam,
   LeafRow,
   LeafStore,
+  DistinctQuery,
   ListOrder,
+  Page,
   LiveView,
   PublicationFact,
   PublicationStore,
@@ -147,6 +149,32 @@ const localesAt = (chain: InMemoryChainStore, id: string, version: bigint): Loca
     Arr.findFirst(chain.rows(), (row) => row.id === id && row.version === version),
     { onNone: () => ({}), onSome: localesOf },
   );
+
+/**
+ * The distinct string values of `column` among the rows matching `where` at
+ * `now`, in code-point order, paged: `LeafStore.distinct`'s contract.
+ */
+const distinctPage = (
+  rows: ReadonlyArray<LeafRow>,
+  query: DistinctQuery<InMemoryFollowing>,
+  now: Date,
+): Page<string> => {
+  const values = Arr.sort(
+    Arr.dedupe(
+      Arr.flatMap(rows, (row) => {
+        const value = row[query.column];
+        return evaluate(query.where, row, contextAt(now)) && Predicate.isString(value)
+          ? [value]
+          : [];
+      }),
+    ),
+    byCodePoint,
+  );
+  return {
+    rows: values.slice(query.offset, query.offset + query.limit),
+    total: values.length,
+  };
+};
 
 /** A view page: the rows matching `where` at `now`, in the list order contract's order. */
 const viewPage = (
@@ -355,6 +383,11 @@ export const makeInMemoryLeafStore = (
       onSome: (ownerId): LeafRow => ({ ...base, ownerId }),
     });
   };
+  /** The rows `list` reads: one per `(id, locale)` on a localised view. */
+  const listed = (): ReadonlyArray<LeafRow> =>
+    options.localised === true
+      ? Arr.flatMap(view(), (row) => localeRows(row, localesAt(chain, row.id, row.version)))
+      : view();
   const view = (): ReadonlyArray<LeafRow> =>
     Arr.sort(
       HashMap.toValues(
@@ -376,16 +409,9 @@ export const makeInMemoryLeafStore = (
     ]),
     get: (id) => Effect.sync(() => Arr.findFirst(view(), (row) => row.id === id)),
     getMany: (ids) => Effect.sync(() => view().filter((row) => ids.includes(row.id))),
-    list: (query) =>
-      Effect.map(instantOf(fixedNow), (now) =>
-        viewPage(
-          options.localised === true
-            ? Arr.flatMap(view(), (row) => localeRows(row, localesAt(chain, row.id, row.version)))
-            : view(),
-          query,
-          now,
-        ),
-      ),
+    list: (query) => Effect.map(instantOf(fixedNow), (now) => viewPage(listed(), query, now)),
+    distinct: (query) =>
+      Effect.map(instantOf(fixedNow), (now) => distinctPage(listed(), query, now)),
     ownerOf: (id) => Effect.sync(() => HashMap.get(owners, id)),
     stampOwner: (id, ownerId) =>
       Effect.sync(() => {
@@ -1154,6 +1180,20 @@ export const makeInMemoryPublication = (options: {
     Effect.flatMap(instantOf(fixedNow), read);
   const heads = () =>
     options.leaves.getMany(Arr.dedupe(Arr.map(options.chain.rows(), (row) => row.id)));
+  /** The rows a live list reads: per node, its head for `headFor`, else its live row, else none. */
+  const chosen = (headFor: ListFilter<InMemoryFollowing>, now: Date) =>
+    Effect.map(heads(), (rows) =>
+      Arr.flatMap(
+        Arr.getSomes(
+          Arr.map(rows, (head) =>
+            evaluate(headFor, head, contextAt(now))
+              ? Option.some(headOf(head, now))
+              : liveOf(head, now),
+          ),
+        ),
+        listed,
+      ),
+    );
   const facts: PublicationStore<never, never> = {
     record: (fact) =>
       Effect.sync(() => {
@@ -1176,23 +1216,10 @@ export const makeInMemoryPublication = (options: {
         ),
       ),
     list: (query) =>
+      atNow((now) => Effect.map(chosen(query.headFor, now), (rows) => viewPage(rows, query, now))),
+    distinct: (query) =>
       atNow((now) =>
-        Effect.map(heads(), (rows) =>
-          viewPage(
-            Arr.flatMap(
-              Arr.getSomes(
-                Arr.map(rows, (head) =>
-                  evaluate(query.headFor, head, contextAt(now))
-                    ? Option.some(headOf(head, now))
-                    : liveOf(head, now),
-                ),
-              ),
-              listed,
-            ),
-            query,
-            now,
-          ),
-        ),
+        Effect.map(chosen(query.headFor, now), (rows) => distinctPage(rows, query, now)),
       ),
   };
   const leaves: LeafStore<LeafRow, InMemoryFollowing, never, never> = {
@@ -1209,6 +1236,16 @@ export const makeInMemoryPublication = (options: {
       atNow((now) =>
         Effect.map(heads(), (rows) =>
           viewPage(
+            Arr.flatMap(rows, (row) => listed(headOf(row, now))),
+            query,
+            now,
+          ),
+        ),
+      ),
+    distinct: (query) =>
+      atNow((now) =>
+        Effect.map(heads(), (rows) =>
+          distinctPage(
             Arr.flatMap(rows, (row) => listed(headOf(row, now))),
             query,
             now,
