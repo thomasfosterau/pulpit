@@ -51,6 +51,7 @@
     "./purge": "./src/purge.ts",
     "./search": "./src/search.ts",
     "./budgets": "./src/budgets.ts",
+    "./reactions": "./src/reactions.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -126,6 +127,10 @@
       "./budgets": {
         "types": "./dist/budgets.d.ts",
         "default": "./dist/budgets.js"
+      },
+      "./reactions": {
+        "types": "./dist/reactions.d.ts",
+        "default": "./dist/reactions.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",

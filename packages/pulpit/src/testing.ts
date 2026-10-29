@@ -83,6 +83,7 @@ import {
   type RankedHit,
   type SearchBranch,
 } from "./search.ts";
+import type { ReactionRow, ReactionStore } from "./reactions.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
 import type { ReportRow, ReportStore } from "./moderation.ts";
 import type { ProposalListing, ProposalRow, ProposalStore } from "./proposals.ts";
@@ -1615,5 +1616,76 @@ export const makeInMemoryWriteCountStore = (): InMemoryWriteCountStore => {
     record: (write) => {
       writes = [...writes, write];
     },
+  };
+};
+
+// ── Reactions (pulpit#196) ────────────────────────────────────────────
+
+/**
+ * {@link makeInMemoryReactionStore}'s fake: the seam plus a test hook.
+ *
+ * @since 0.1.0
+ */
+export interface InMemoryReactionStore extends ReactionStore<never, never> {
+  /** Every stored reaction. */
+  readonly rows: () => ReadonlyArray<ReactionRow>;
+}
+
+/**
+ * An in-memory {@link ReactionStore}, keyed `(nodeId, accountId)` as the
+ * real table is: `upsert` replaces, `tally` groups by node and kind,
+ * `byAccount` is newest first (`nodeId` breaking a tie).
+ *
+ * @since 0.1.0
+ */
+export const makeInMemoryReactionStore = (): InMemoryReactionStore => {
+  let rows: ReadonlyArray<ReactionRow> = [];
+  const same = (nodeId: string, accountId: string) => (row: ReactionRow) =>
+    row.nodeId === nodeId && row.accountId === accountId;
+  const newestFirst = Order.combine(
+    Order.mapInput(Order.flip(Order.Number), (row: ReactionRow) => row.reactedAt.getTime()),
+    Order.mapInput(byCodePoint, (row: ReactionRow) => row.nodeId),
+  );
+  return {
+    upsert: (row) =>
+      Effect.sync(() => {
+        const before = Arr.findFirst(rows, same(row.nodeId, row.accountId));
+        rows = [...Arr.filter(rows, (held) => !same(row.nodeId, row.accountId)(held)), row];
+        return Option.map(before, (held) => held.kind);
+      }),
+    delete: (nodeId, accountId) =>
+      Effect.sync(() => {
+        const before = rows.length;
+        rows = Arr.filter(rows, (held) => !same(nodeId, accountId)(held));
+        return rows.length < before;
+      }),
+    tally: (nodeIds) =>
+      Effect.sync(() =>
+        Arr.reduce(
+          Arr.filter(rows, (row) => Arr.contains(nodeIds, row.nodeId)),
+          HashMap.empty<string, { readonly [kind: string]: number }>(),
+          (acc, row) => {
+            const counts = Option.getOrElse(HashMap.get(acc, row.nodeId), () => ({}));
+            return HashMap.set(acc, row.nodeId, {
+              ...counts,
+              [row.kind]: Option.getOrElse(Record.get(counts, row.kind), () => 0) + 1,
+            });
+          },
+        ),
+      ),
+    byAccount: ({ accountId, limit, offset }) =>
+      Effect.sync(() =>
+        Arr.sort(
+          Arr.filter(rows, (row) => row.accountId === accountId),
+          newestFirst,
+        ).slice(offset, offset + limit),
+      ),
+    eraseAccount: (accountId) =>
+      Effect.sync(() => {
+        const before = rows.length;
+        rows = Arr.filter(rows, (row) => row.accountId !== accountId);
+        return before - rows.length;
+      }),
+    rows: () => rows,
   };
 };

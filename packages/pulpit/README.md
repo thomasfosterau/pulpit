@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`). |
 | **Content model** |  |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`, `localised`) and `validateRegistry`. |
@@ -38,6 +38,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | **Participation and user-generated content** |  |
 | `./budgets` | Write budgets: a declared ceiling on an account's writes of one kind in a rolling window, spent inside the write (`budgetHook` on a chain write; `bindBudget`'s `spend` on a proposal's `submit` or a report's `file`) over a `BudgetCounter` seam, refused as a rate-limited `WriteRejected` (the wire's 429). |
 | `./comments` | The comments family: threaded comments on any node as versioned owned leaves (`defineComments`), behind the target's read gate and the moderation gate, with a configurable reply depth. |
+| `./reactions` | Reactions (`defineReactions` over a `ReactionStore` seam): one per account per node, a kind from the family's own vocabulary, behind the target's read gate, with a grouped tally for a page of nodes. |
 | **Media** |  |
 | `./blobs` | File and media leaves: the `BlobStore` seam keyed by content hash, the file field spread, the commit-ordered byte write (`defineFileWrites`, with its `bytesPending` marker) and the usage index's edge ends. |
 | **Erasure** |  |
@@ -45,7 +46,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | **Discovery and search** |  |
 | `./search` | Hybrid search: reciprocal rank fusion (`fuseRankings`), a reranker seam, `hybridSearch` over `SearchBranch` seams that each apply the leaf's read scope, and the embedding pipeline (`enqueueEmbeddings`, `embedPending`, `sweepEmbeddings`) over `EmbeddingStore` and `Embedder` seams. |
 | **Testing** |  |
-| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy, purge and embedding stores, the budget counter and write counts, an endpoint view, a follower seam, a search branch and its scope check), for tests only. Not on the root export. |
+| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy, purge, embedding and reaction stores, the budget counter and write counts, an endpoint view, a follower seam, a search branch and its scope check), for tests only. Not on the root export. |
 
 **Discovery and search** is also `./subtype`'s searchable projection, read scope and hit hydration (see [Search](#subtype) under `./subtype`), which `./search` builds on. **Localisation** is the version chain's locale level (`./version-chain`, `./subtype`'s `getLocalised` and `./filter`'s `locale` arm), not a module of its own.
 
@@ -705,7 +706,7 @@ const comments = defineComments({
   - A reply's parent must be a comment the viewer can read, on the same target.
   - Each comment stores `targetType`, `targetId`, `parentId` and `depth`, all written by `create`.
   - A `maxDepth` that isn't a non-negative safe integer throws `CommentDeclarationError` when the family is declared.
-- **Stays outside the kernel:** the document grammar (prosekit-utilities), captcha and spam handling, reactions and the UI.
+- **Stays outside the kernel:** the document grammar (prosekit-utilities), captcha and spam handling, and the UI. Reactions are [`./reactions`](#reactions).
 
 | Export | What it is |
 | --- | --- |
@@ -820,6 +821,38 @@ const reports = defineReports({ /* … */ budget }); // throttles file
 | `RATE_LIMITED`, `isRateLimited(error)` | The refusal's reason, and the test for it. |
 | `BudgetDeclarationError` | A malformed budget, thrown by `bindBudget`. |
 
+## `./reactions`
+
+Reactions (pulpit#196), after gardeneria's `social.reactions`: likes and their kin on any node.
+
+```ts
+import { defineReactions, reactionKinds } from "@thomasfosterau/pulpit/reactions";
+
+const reactions = defineReactions({
+  type: "posts",
+  kinds: reactionKinds(["like", "celebrate", "helpful", "curious", "sympathise"]),
+  target: postOps, // the target leaf's `defineSubtype` operations: `get` and `getMany`
+  reactions: reactionStore,
+  viewer,
+});
+
+reactions.react(postId, "like"); // { replaced: Option<kind> }
+reactions.tally(pageOfPostIds); // HashMap<postId, { counts, total }>
+```
+
+- **A fact beside the node** (owner decision on pulpit#196). No version chain and no history: the store keys a reaction `(node, account)`, so an account has at most one per node. `react` with another kind replaces it (and returns the kind it replaced); `unreact` hard-deletes it.
+- **The kinds are the family's.** `reactionKinds(kinds)` throws `ReactionDeclarationError` at import for no kind, an empty one or a repeated one; `react` with an undeclared kind fails `InvalidReactionKind` (422). The kernel holds no list of kinds.
+- **The target's read gate on every operation** (`SEC-AUTH-ENUM-001`). `react` and `unreact` on a node the viewer can't read fail `NodeNotFound`, never `Forbidden`. `tally(nodeIds)` answers only for the nodes the viewer can read (a hidden or missing one has no key; a readable one with no reaction has a zero tally), in one `getMany` and one grouped store read (`PERF-DB-001`); more than `MAX_SET_VALUES` ids reads nothing (`SEC-INPUT-003`). `mine({ limit, offset })` is the viewer's own reactions, newest first, omitting one whose node is now hidden from them.
+- **Account erasure** (pulpit#207) deletes a member's reactions through the store's `eraseAccount`; no reaction operation exposes it.
+- **Block and mute** (pulpit#195) suppress interaction only: a family gates `react` on the social graph once it lands; a tally counts every account's reaction.
+
+| Export | What it is |
+| --- | --- |
+| `defineReactions(definition)`, `ReactionsDefinition`, `ReactionOps`, `Tally` | The factory, its declaration, the operations (`react`, `unreact`, `tally`, `mine`) and a node's tally. |
+| `reactionKinds(kinds)`, `ReactionKinds`, `ReactionDeclarationError` | The family's vocabulary and its import-time check. |
+| `ReactionStore`, `ReactionRow` | The table seam (see [Seams](#seams)) and one stored reaction. |
+| `InvalidReactionKind` | An undeclared kind: 422. |
+
 ## `./testing`
 
 In-memory fakes of the kernel's seams, for tests: an adapter's or an application's suite can run the real operations (`defineVersionChain`, `defineSubtype`, `defineEdgeOps`, …) over them without a database. Each fake implements its seam's contract as stated under [Seams](#seams), in memory and with no SQL, and enforces what the real table's schema enforces (a primary or unique key) and nothing the operations are responsible for. They are the fakes the kernel's own suites run against, so they are its reference semantics for each seam.
@@ -881,6 +914,7 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | `makeInMemorySearchBranch({ name, weight?, rows, score, now })` | [`SearchBranch`](#searchbranchfollowing-e-r-and-embeddingstoree-r-search-and-embeddings), ranking the rows the scope admits by `score` (best first, ties by id). |  |
 | `scopeCheckedBranch(branch, { rows, now })` | Wraps any branch; fails `SearchScopeLeak` on a hit whose row the scope doesn't admit or `rows` lacks. |  |
 | `makeInMemoryEmbeddingStore()`, `InMemoryEmbeddingStore` | [`EmbeddingStore`](#searchbranchfollowing-e-r-and-embeddingstoree-r-search-and-embeddings), a queue in insertion order (idempotent `enqueue`; a hash with a vector is never queued again). | `queued()`, `vectors()`. |
+| `makeInMemoryReactionStore()`, `InMemoryReactionStore` | [`ReactionStore`](#reactionstoree-r-the-reaction-table), keyed `(nodeId, accountId)`: `upsert` replaces, `tally` groups by node and kind, `byAccount` is newest first. | `rows()`. |
 | `makeInMemoryFollowers(table)`, `InMemoryFollowing` | [`FollowerSeam`](#the-viewer-the-role-axes-and-the-follower-seam) over an explicit table of who follows whom; the `in` set is a `HashSet` of account ids, where SQL's is a subquery. |  |
 
 `now` is the instant the list filter's `published` / `notPublished` compare against (and, for the edge store, the base of the minted `createdAt`s). Pass a fixed `Date` for a deterministic suite; left out, each call reads the Effect `Clock`, so `TestClock` steers it. The role ladder and the `AccessPolicy` are the application's, so `./testing` ships none.
@@ -1084,6 +1118,10 @@ Filled by the application over its own search views and embedding tables (pulpit
 
 - A `SearchBranch`'s `search({ query, scope, limit })` is one ranked query over the leaf's search view, returning at most `limit` ids, best first. It must render `scope` (the leaf's `searchScopeFilter`) into the same statement that ranks, as the leaf's `list` renders its filter, and on a publish-gated leaf match over the rows `LiveView.list` reads; a branch that ranks first and filters after leaks a hidden row's rank into the others'. A full-text branch is `ts_rank_cd` over the projection's `setweight` vector, a trigram one `similarity`, a vector one `ORDER BY embedding <=> $query` with a `LIMIT`, a literal-id branch an exact match (ISBN, DOI, QID). It applies no other policy and never opens a transaction.
 - An `EmbeddingStore` is the queue and the vector column. `enqueue(hash)` inserts an outbox row (`ON CONFLICT DO NOTHING`); `pending(limit)` is the oldest `limit` queued hashes and, for the sweep, any stored document whose vector is still `NULL` (`ORDER BY queued_at LIMIT $limit`); `write(vectors)` sets each document's vector and deletes its queue row in one statement; `discard(hashes)` deletes queue rows. An `Embedder` is the model: one call per batch, one vector per text, in order.
+
+### `ReactionStore<E, R>`: the reaction table
+
+Filled by the application over its own reaction table (gardeneria's `social.reactions`): `node_id` (a foreign key to `core.node`, `ON DELETE CASCADE`), `account_id` (`ON DELETE CASCADE`), `kind` (`text`), `reacted_at` (`timestamptz NOT NULL DEFAULT now()`), with primary key `(node_id, account_id)` and an index on `(account_id, reacted_at DESC)`. `upsert` is `INSERT … ON CONFLICT (node_id, account_id) DO UPDATE SET kind = EXCLUDED.kind, reacted_at = EXCLUDED.reacted_at` returning the replaced kind (read in the same statement through a CTE); `delete` is `DELETE … RETURNING`; `tally(nodeIds)` is one `SELECT node_id, kind, count(*) … WHERE node_id = ANY($ids) GROUP BY node_id, kind`; `byAccount` is `WHERE account_id = $id ORDER BY reacted_at DESC, node_id LIMIT … OFFSET …`; `eraseAccount` is `DELETE … WHERE account_id = $id`. It applies no policy and never opens a transaction.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 
