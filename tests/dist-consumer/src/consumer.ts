@@ -1066,6 +1066,14 @@ export type _Classify = Assert<
     ReadonlyArray<string>
   >
 >;
+// A localised leaf's proposals (pulpit#184): the per-locale patch as submitted, and the verdict by locale.
+export type _ProposalLocales = Assert<Equals<ProposalRow["locales"], Option.Option<Schema.Json>>>;
+export type _ClassifyLocales = Assert<
+  Equals<
+    ReturnType<typeof classifyProposalConflict>["conflictingLocales"],
+    { readonly [locale: string]: ReadonlyArray<string> }
+  >
+>;
 export type _ProposedBy = Assert<Equals<VersionRow["proposedBy"], Option.Option<string>>>;
 
 // ── blobs ────────────────────────────────────────────────────────────────

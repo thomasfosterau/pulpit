@@ -50,6 +50,18 @@
  *   account reads its own and those on targets it owns; the anonymous read
  *   none. A proposal is never public.
  *
+ * ## A localised leaf (pulpit#184)
+ *
+ * On a leaf with a locale level (pulpit#56) a proposal may also carry a
+ * per-locale patch over the leaf's translated columns
+ * ({@link ProposalsDefinition.localeAttributes}), stored beside its shared
+ * patch and accepted through the same `update` as one version. Its conflict
+ * check reads each touched locale at the base and at the head: a touched
+ * translated column conflicts when it changed, when either version lacks it,
+ * or when the locale was added or dropped in between. A proposal may add a
+ * translation but never drop one (a `null` locale is refused): removing a
+ * locale is the owner's.
+ *
  * Rate limiting, notifications and the wire shape are the application's.
  *
  * @copyright Thomas Foster
@@ -78,8 +90,10 @@ import {
 } from "./subtype.ts";
 import {
   diffStates,
+  localesOf,
   NodeNotFound,
   type ChainPatch,
+  type LocalePatch,
   type ChainWrite,
   type StaleVersion,
   type VersionChainStore,
@@ -134,6 +148,11 @@ export interface ProposalRow {
   readonly authorId: string;
   /** The patch as submitted (what the reviewer reads), decoded again at accept. */
   readonly patch: Schema.Json;
+  /**
+   * A localised leaf's per-locale patch as submitted (pulpit#184), decoded
+   * again at accept; none for a proposal that touches no translation.
+   */
+  readonly locales: Option.Option<Schema.Json>;
   readonly rationale: Option.Option<string>;
   /** The target's head when the proposal was submitted. */
   readonly baseVersion: bigint;
@@ -204,6 +223,8 @@ export class ProposalClosed extends Schema.TaggedError<ProposalClosed>()("Propos
 export class ProposalConflict extends Schema.TaggedError<ProposalConflict>()("ProposalConflict", {
   id: Schema.String,
   attributes: Schema.Array(Schema.String),
+  /** The conflicting translated columns, by locale (pulpit#184); `{}` when none. */
+  locales: Schema.Record(Schema.String, Schema.Array(Schema.String)),
 }) {}
 
 /**
@@ -249,7 +270,20 @@ export interface ProposalConflictVerdict {
   readonly state: ProposalConflictState;
   /** The touched attributes that changed or can't be compared; empty unless `conflicting`. */
   readonly conflictingAttributes: ReadonlyArray<string>;
+  /**
+   * The touched translated columns that changed or can't be compared, by
+   * locale (pulpit#184); a locale with none is omitted, so it is `{}` unless
+   * `conflicting`.
+   */
+  readonly conflictingLocales: TouchedLocales;
 }
+
+/**
+ * The translated columns a proposal touches, by locale (pulpit#184).
+ *
+ * @since 0.1.0
+ */
+export type TouchedLocales = { readonly [locale: string]: ReadonlyArray<string> };
 
 /**
  * The full verdict from the target's states at the base version and at the
@@ -257,7 +291,13 @@ export interface ProposalConflictVerdict {
  * without comparing anything. Otherwise a touched attribute conflicts when
  * `diffStates` reports it changed (values compare structurally: a document
  * by content, `null` against a value is a change, two `null`s are not) or
- * when either state lacks it (fail closed). Pure.
+ * when either state lacks it (fail closed).
+ *
+ * On a localised leaf, `touchedLocales` names the translated columns the
+ * proposal touches, by locale (pulpit#184), and each is read from the two
+ * versions' locale levels the same way. A locale neither version carries
+ * cannot conflict (a new translation); a locale only one carries (added or
+ * dropped in between) conflicts on every touched column. Pure.
  *
  * @example
  * ```ts
@@ -275,7 +315,7 @@ export interface ProposalConflictVerdict {
  *     "name",
  *     "note",
  *   ]),
- *   { state: "conflicting", conflictingAttributes: ["name"] },
+ *   { state: "conflicting", conflictingAttributes: ["name"], conflictingLocales: {} },
  * );
  * ```
  *
@@ -285,17 +325,46 @@ export const classifyProposalConflict = (
   base: VersionSnapshot,
   current: VersionSnapshot,
   touchedKeys: ReadonlyArray<string>,
+  touchedLocales: TouchedLocales = {},
 ): ProposalConflictVerdict => {
-  if (base.version === current.version) return { state: "clean", conflictingAttributes: [] };
-  const changes = diffStates(base.state, current.state);
-  const conflictingAttributes = Arr.filter(
-    touchedKeys,
-    (key) =>
-      !Record.has(base.state, key) || !Record.has(current.state, key) || Record.has(changes, key),
+  if (base.version === current.version) {
+    return { state: "clean", conflictingAttributes: [], conflictingLocales: {} };
+  }
+  const conflictingAttributes = conflictsIn(base.state, current.state, touchedKeys);
+  const before = localesOf(base);
+  const after = localesOf(current);
+  const conflictingLocales = Record.filter(
+    Record.map(touchedLocales, (keys, locale) =>
+      Option.match(Record.get(before, locale), {
+        // A locale neither version carries is a new translation; one only the head carries was added since.
+        onNone: () => (Record.has(after, locale) ? keys : []),
+        onSome: (from) =>
+          Option.match(Record.get(after, locale), {
+            // Dropped since the base.
+            onNone: () => keys,
+            onSome: (to) => conflictsIn(from, to, keys),
+          }),
+      }),
+    ),
+    Arr.isReadonlyArrayNonEmpty,
   );
-  return Arr.isReadonlyArrayNonEmpty(conflictingAttributes)
-    ? { state: "conflicting", conflictingAttributes }
-    : { state: "stale", conflictingAttributes: [] };
+  return Arr.isReadonlyArrayNonEmpty(conflictingAttributes) ||
+    !Record.isEmptyRecord(conflictingLocales)
+    ? { state: "conflicting", conflictingAttributes, conflictingLocales }
+    : { state: "stale", conflictingAttributes: [], conflictingLocales: {} };
+};
+
+/** The touched `keys` that changed from `from` to `to`, or that either lacks (fail closed). */
+const conflictsIn = (
+  from: VersionSnapshot["state"],
+  to: VersionSnapshot["state"],
+  keys: ReadonlyArray<string>,
+): ReadonlyArray<string> => {
+  const changes = diffStates(from, to);
+  return Arr.filter(
+    keys,
+    (key) => !Record.has(from, key) || !Record.has(to, key) || Record.has(changes, key),
+  );
 };
 
 // ── Patch validation ──────────────────────────────────────────────────
@@ -327,6 +396,10 @@ export interface ValidatedPatch {
   readonly patch: ChainPatch;
   /** The attribute names it touches, in the leaf's declaration order. */
   readonly touchedKeys: ReadonlyArray<string>;
+  /** The decoded per-locale patch (pulpit#184), ready for the target's `update`; `{}` for none. */
+  readonly locales: LocalePatch;
+  /** The translated columns it touches, by locale, each in the declaration order. */
+  readonly touchedLocales: TouchedLocales;
 }
 
 const quoted = (keys: ReadonlyArray<string>) => Arr.map(keys, (key) => `\`${key}\``).join(", ");
@@ -353,6 +426,18 @@ const keyViolation = (
     : Option.none();
 };
 
+/** A JSON object's members, or none for an array, a scalar or `null`. */
+const jsonMembers = (
+  value: Schema.Json,
+): Option.Option<ReadonlyArray<readonly [string, Schema.Json]>> =>
+  value === null ||
+  Predicate.isBoolean(value) ||
+  Predicate.isNumber(value) ||
+  Predicate.isString(value) ||
+  Arr.isArray<Schema.Json>(value)
+    ? Option.none()
+    : Option.some(Record.toEntries(value));
+
 /**
  * Check a submitted patch's shape and keys against the leaf's proposable
  * `attributes` (its update fields, in declaration order) and the
@@ -361,6 +446,14 @@ const keyViolation = (
  * otherwise accept and change nothing). Run at submit and again at accept,
  * since the leaf's schema may have moved in between. Fails
  * {@link InvalidProposalPatch}.
+ *
+ * On a localised leaf, `options.locales` is the per-locale patch as
+ * submitted (pulpit#184): an object from a non-empty locale tag to an object
+ * of changes to `options.localeAttributes` (the translated columns), each
+ * checked and decoded as the shared patch is. A `null` locale (dropping a
+ * translation) is refused, as is any locale on a leaf with no
+ * `localeAttributes`. The shared patch may then be `{}`, so long as some
+ * locale changes something.
  *
  * @since 0.1.0
  */
@@ -371,22 +464,88 @@ export const validateProposalPatch = <R>(
     readonly attributes: ReadonlyArray<string>;
     readonly forbidden: ReadonlyArray<string>;
     readonly decode: (patch: Schema.Json) => Effect.Effect<ChainPatch, InvalidProposalPatch, R>;
+    /** The per-locale patch as submitted (pulpit#184); absent, none. */
+    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no translation"
+    readonly locales?: Schema.Json | undefined;
+    /** The translated columns a proposal may touch, in declaration order; absent, none. */
+    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no locale level"
+    readonly localeAttributes?: ReadonlyArray<string> | undefined;
   },
 ): Effect.Effect<ValidatedPatch, InvalidProposalPatch, R> => {
   const invalid = (reason: string) => Effect.fail(new InvalidProposalPatch({ type, reason }));
   if (!Predicate.isObject(patch) || Arr.isArray(patch)) {
     return invalid("expected an object of attribute changes");
   }
+  const localeMembers = jsonMembers(options.locales ?? {});
+  if (Option.isNone(localeMembers)) return invalid("expected an object of changes per locale");
   const keys = Record.keys(patch);
-  if (!Arr.isReadonlyArrayNonEmpty(keys)) return invalid("it proposes no changes");
+  const locales = localeMembers.value;
+  if (!Arr.isReadonlyArrayNonEmpty(keys) && !Arr.isReadonlyArrayNonEmpty(locales)) {
+    return invalid("it proposes no changes");
+  }
+  const translated = options.localeAttributes ?? [];
+  const localeProblem = Arr.findFirst(locales, ([locale, changes]) =>
+    localeViolation(locale, changes, translated, options.forbidden),
+  );
+  if (Option.isSome(localeProblem)) return invalid(localeProblem.value);
   return Option.match(keyViolation(keys, options.attributes, options.forbidden), {
     onSome: invalid,
     onNone: () =>
-      Effect.map(options.decode(patch), (decoded) => ({
-        patch: decoded,
-        touchedKeys: Arr.filter(options.attributes, (key) => Arr.contains(keys, key)),
-      })),
+      Effect.gen(function* () {
+        const decoded = Arr.isReadonlyArrayNonEmpty(keys) ? yield* options.decode(patch) : {};
+        const decodedLocales = yield* Effect.forEach(
+          locales,
+          ([locale, changes]) =>
+            Effect.map(
+              options.decode(changes),
+              (decodedChanges) => [locale, decodedChanges] as const,
+            ),
+          { concurrency: 1 },
+        );
+        return {
+          patch: decoded,
+          touchedKeys: Arr.filter(options.attributes, (key) => Arr.contains(keys, key)),
+          locales: Record.fromEntries(decodedLocales),
+          touchedLocales: Record.fromEntries(
+            Arr.map(locales, ([locale, changes]) => {
+              const touched = Option.match(jsonMembers(changes), {
+                onNone: () => [],
+                onSome: Arr.map(([key]) => key),
+              });
+              return [locale, Arr.filter(translated, (key) => Arr.contains(touched, key))] as const;
+            }),
+          ),
+        };
+      }),
   });
+};
+
+/** Why one locale's entry of a per-locale patch is not admissible, or none. */
+const localeViolation = (
+  locale: string,
+  changes: Schema.Json,
+  translated: ReadonlyArray<string>,
+  forbidden: ReadonlyArray<string>,
+): Option.Option<string> => {
+  if (!Arr.isReadonlyArrayNonEmpty(translated)) {
+    return Option.some("this leaf takes no translated attributes");
+  }
+  if (locale === "") return Option.some("a locale tag is empty");
+  if (changes === null) {
+    return Option.some(`dropping the \`${locale}\` translation is the owner's to do`);
+  }
+  const members = jsonMembers(changes);
+  if (Option.isNone(members)) {
+    return Option.some(`expected an object of attribute changes for \`${locale}\``);
+  }
+  const keys = Arr.map(members.value, ([key]) => key);
+  if (!Arr.isReadonlyArrayNonEmpty(keys)) {
+    return Option.some(`it proposes no changes for \`${locale}\``);
+  }
+  return Option.map(
+    keyViolation(keys, translated, forbidden),
+    (reason) => `${reason} (in \`${locale}\`)`,
+  );
 };
 
 // ── The seam ──────────────────────────────────────────────────────────
@@ -455,8 +614,15 @@ export interface ProposalsDefinition<Resource, E, R> {
   /** The keys no proposal may carry; {@link PROPOSAL_FORBIDDEN_KEYS} when omitted. */
   // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is the kernel's default list
   readonly forbidden?: ReadonlyArray<string> | undefined;
-  /** The leaf's update decoder over a patch's values (`SEC-INPUT-001`). */
+  /** The leaf's update decoder over a patch's values (`SEC-INPUT-001`), shared or one locale's. */
   readonly decode: (patch: Schema.Json) => Effect.Effect<ChainPatch, InvalidProposalPatch, R>;
+  /**
+   * The translated columns a proposal may touch on a localised leaf
+   * (pulpit#184), in declaration order: the leaf's locale level's columns,
+   * or fewer. Omitted, a proposal carries no per-locale patch.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no translation is proposable"
+  readonly localeAttributes?: ReadonlyArray<string> | undefined;
 }
 
 /**
@@ -496,6 +662,9 @@ export interface ProposalOps<E, R> {
   readonly submit: (input: {
     readonly targetId: string;
     readonly patch: Schema.Json;
+    /** A localised leaf's per-locale patch (pulpit#184); absent, none. */
+    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no translation"
+    readonly locales?: Schema.Json | undefined;
     readonly rationale: Option.Option<string>;
   }) => Effect.Effect<
     { readonly id: string },
@@ -604,11 +773,13 @@ export const defineProposals = <Resource, E, R>(
 ): ProposalOps<E, R> => {
   const { type, target, proposals, policy } = definition;
   const forbidden = definition.forbidden ?? PROPOSAL_FORBIDDEN_KEYS;
-  const validate = (patch: Schema.Json) =>
+  const validate = (patch: Schema.Json, locales: Option.Option<Schema.Json>) =>
     validateProposalPatch(type, patch, {
       attributes: definition.attributes,
       forbidden,
       decode: definition.decode,
+      locales: Option.getOrUndefined(locales),
+      localeAttributes: definition.localeAttributes,
     });
 
   const signedIn = signedInAs(definition.viewer);
@@ -651,11 +822,16 @@ export const defineProposals = <Resource, E, R>(
   /** Re-validate the stored patch and classify it, through the target's gated `compare`. */
   const classify = (row: ProposalRow, head: bigint) =>
     Effect.gen(function* () {
-      const validated = yield* validate(row.patch);
+      const validated = yield* validate(row.patch, row.locales);
       const comparison = yield* target.compare(row.targetId, row.baseVersion, head);
       return {
         validated,
-        conflict: classifyProposalConflict(comparison.from, comparison.to, validated.touchedKeys),
+        conflict: classifyProposalConflict(
+          comparison.from,
+          comparison.to,
+          validated.touchedKeys,
+          validated.touchedLocales,
+        ),
       };
     });
 
@@ -673,13 +849,16 @@ export const defineProposals = <Resource, E, R>(
   const submit = Effect.fn(`${type}.proposals.submit`)(function* (input: {
     readonly targetId: string;
     readonly patch: Schema.Json;
+    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no translation"
+    readonly locales?: Schema.Json | undefined;
     readonly rationale: Option.Option<string>;
   }) {
     const account = yield* signedIn;
     if (!definition.canPropose(account)) return yield* new Forbidden();
     // A target the proposer can't read is missing to them (SEC-AUTH-ENUM-001).
     yield* target.get(input.targetId);
-    yield* validate(input.patch);
+    const locales = Option.fromUndefinedOr(input.locales);
+    yield* validate(input.patch, locales);
     const head = yield* headOf(input.targetId);
     const id = yield* proposals.mintId;
     yield* proposals.insert({
@@ -688,6 +867,7 @@ export const defineProposals = <Resource, E, R>(
       targetType: type,
       authorId: account.id,
       patch: input.patch,
+      locales,
       rationale: input.rationale,
       baseVersion: head.version,
       status: "pending",
@@ -771,13 +951,18 @@ export const defineProposals = <Resource, E, R>(
     const head = yield* headOf(row.targetId);
     const { validated, conflict } = yield* classify(row, head.version);
     if (conflict.state === "conflicting") {
-      return yield* new ProposalConflict({ id, attributes: conflict.conflictingAttributes });
+      return yield* new ProposalConflict({
+        id,
+        attributes: conflict.conflictingAttributes,
+        locales: conflict.conflictingLocales,
+      });
     }
     // Through the target's own update (PUB-003), expecting the head it was
     // classified against: an edit landing in between fails StaleVersion.
     const written = yield* target.update({
       id: row.targetId,
       patch: validated.patch,
+      locales: validated.locales,
       expectedVersion: head.version,
       proposedBy: Option.some(row.authorId),
     });
