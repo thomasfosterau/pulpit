@@ -1,6 +1,6 @@
 # @thomasfosterau/pulpit
 
-The versioned-content kernel of an Effect headless CMS: the Content model fields and registry flags on `@thomasfosterau/effect-jsonapi`, the append-only node/version chain operations, the subtype operation factory with owned / reference-data access, the publication, moderation and cache-serveability predicates, the content-addressed document store seam, and the edge operations factory.
+The kernel of a general-purpose Effect headless CMS: versioned content of any shape, with its history and review, publication, structure and routing, participation and user-generated content, discovery and search, media, localisation and erasure, each a module of its own behind seams the application fills. The kernel names no application type: a `page`, a `post` or an `album` is a leaf the application declares and binds to the capabilities it needs. Optional packages (the WordPress-compatible read API, [`@thomasfosterau/pulpit-wordpress`](../pulpit-wordpress/README.md), today) build on it; it imports none of them.
 
 **Disclaimer:** This repository and package have been created using Claude Code. The package's API and functionality is in flux, so expect churn and breaking changes.
 
@@ -19,22 +19,32 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | Subpath | Contents |
 | --- | --- |
 | `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`). |
+| **Content model** |  |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`, `localised`) and `validateRegistry`. |
-| `./version-chain` | The append-only node/version chain operations over a `VersionChainStore` seam, and the field-level version compare (`diffStates`, `compare`). |
+| `./documents` | The content-addressed `DocumentStore` seam and its first-insert hook, the `DocumentHash` it is keyed by, the `documentRef` field spread, and the hash contract's `canonicalText`. |
 | `./filter` | `ListFilter`, the read-predicate tree a store renders to SQL, and its in-memory `evaluate`. |
 | `./subtype` | `LeafAccess`, the read scope and viewer predicates, the write gates, `defineSubtype`, `subtypeHandlers`, and the lifecycle hook seam (before / after every write). |
-| `./publication` | The publication and moderation predicates, the scheduled-publication sweep window, and the cache serveability policy. |
-| `./documents` | The content-addressed `DocumentStore` seam and its first-insert hook, the `DocumentHash` it is keyed by, the `documentRef` field spread, and the hash contract's `canonicalText`. |
-| `./edges` | `defineEdgeOps`, the edge operations factory over an `EdgeStore` seam: relations between nodes, readable only when every end is, with declared cardinality limits. |
-| `./proposals` | `defineProposals`, suggested edits over a `ProposalStore` seam: a contributor's patch against a base version, its two-tier stale / conflict classification, and accept (through the target's own update, recording `proposedBy`), reject and withdraw. |
-| `./blobs` | File and media leaves: the `BlobStore` seam keyed by content hash, the file field spread, the commit-ordered byte write (`defineFileWrites`, with its `bytesPending` marker) and the usage index's edge ends. |
-| `./paths` | Routable content: `routable`, a leaf's path claims tied to its chain over a `PathStore` seam, the aliases a path change leaves behind, and the gated `resolve`. |
-| `./moderation` | The moderation workflow: the transition rules as a before hook, the decision, the review-queue filter, threshold grading and member reports over a `ReportStore` seam. |
+| **History and review** |  |
+| `./version-chain` | The append-only node/version chain operations over a `VersionChainStore` seam, and the field-level version compare (`diffStates`, `compare`). |
 | `./working-copy` | An editor's autosave buffer outside the version chain (`WorkingCopyStore`), committed as one ordinary version (`defineWorkingCopy`). |
+| `./proposals` | `defineProposals`, suggested edits over a `ProposalStore` seam: a contributor's patch against a base version, its two-tier stale / conflict classification, and accept (through the target's own update, recording `proposedBy`), reject and withdraw. |
+| `./moderation` | The moderation workflow: the transition rules as a before hook, the decision, the review-queue filter, threshold grading and member reports over a `ReportStore` seam. |
+| **Publication** |  |
+| `./publication` | The publication and moderation predicates, the scheduled-publication sweep window, and the cache serveability policy. |
+| **Structure and routing** |  |
+| `./edges` | `defineEdgeOps`, the edge operations factory over an `EdgeStore` seam: relations between nodes, readable only when every end is, with declared cardinality limits. |
+| `./paths` | Routable content: `routable`, a leaf's path claims tied to its chain over a `PathStore` seam, the aliases a path change leaves behind, and the gated `resolve`. |
+| **Participation and user-generated content** |  |
 | `./comments` | The comments family: threaded comments on any node as versioned owned leaves (`defineComments`), behind the target's read gate and the moderation gate, with a configurable reply depth. |
+| **Media** |  |
+| `./blobs` | File and media leaves: the `BlobStore` seam keyed by content hash, the file field spread, the commit-ordered byte write (`defineFileWrites`, with its `bytesPending` marker) and the usage index's edge ends. |
+| **Erasure** |  |
 | `./purge` | Erasure (`definePurge` over a `PurgeStore` seam): the one destructive path, which hard-deletes a node's chain and the rows kept for it, then the documents and bytes no other version references. |
+| **Testing** |  |
 | `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy and purge stores, an endpoint view, a follower seam), for tests only. Not on the root export. |
+
+**Discovery and search** is `./subtype`'s searchable projection, read scope and hit hydration (see [Search](#subtype) under `./subtype`), and **localisation** is the version chain's locale level (`./version-chain`, `./subtype`'s `getLocalised` and `./filter`'s `locale` arm): neither is a module of its own.
 
 The operations are written against seams that the application fills; their expected shapes are in [Seams](#seams).
 
