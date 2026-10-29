@@ -18,7 +18,7 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import { always, evaluate, type FilterRow } from "../src/filter.ts";
-import { defineSocial, socialFollowers } from "../src/social.ts";
+import { defineSocial, socialFollowers, type SocialStore } from "../src/social.ts";
 import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/subtype.ts";
 import {
   makeInMemoryChainStore,
@@ -67,7 +67,7 @@ describe("defineSocial — follows, mutes and blocks", () => {
     await run(as("u-c", social.follow("u-b")));
     const followers = await run(social.followers("u-b", page));
     expect([followers.total, Arr.sort(ids(followers.rows), Order.String)]).toEqual([
-      2,
+      Option.some(2),
       ["u-a", "u-c"],
     ]);
     expect(ids((await run(social.following("u-a", page))).rows)).toEqual(["u-b"]);
@@ -117,6 +117,43 @@ describe("defineSocial — follows, mutes and blocks", () => {
     await run(as("u-hidden", social.follow("u-b")));
     const followers = await run(social.followers("u-b", page));
     expect(ids(followers.rows)).toEqual(["u-a"]);
+    // The store's total would count the hidden follower too, so none is given.
+    expect(followers.total).toEqual(Option.none());
+  });
+
+  it("answers a subject the viewer can't see as one with no relationships", async () => {
+    const { social, as } = setup((accountIds) => accountIds.filter((id) => id !== "u-hidden"));
+    await run(as("u-a", social.follow("u-hidden")));
+    await run(as("u-hidden", social.follow("u-a")));
+    const missing = await run(social.followers("u-nobody", page));
+    expect(await run(social.followers("u-hidden", page))).toEqual(missing);
+    expect(await run(social.following("u-hidden", page))).toEqual(missing);
+    expect(missing).toEqual({ rows: [], total: Option.none() });
+  });
+
+  it("a block racing a follow never leaves the follow standing (either order)", async () => {
+    // The block commits after the follow began but before its write: the
+    // write itself refuses (there is no separate check for the block to slip past).
+    const inner = makeInMemorySocialStore();
+    const racing: SocialStore<InMemoryFollowing, never, never> = {
+      ...inner,
+      addFollow: (relationship) =>
+        Effect.andThen(
+          inner.addBlock({ kind: "block", from: relationship.to, to: relationship.from, at: NOW }),
+          inner.addFollow(relationship),
+        ),
+    };
+    const social = defineSocial({
+      store: racing,
+      viewer: Effect.succeed(Option.some({ id: "u-a", role: "user" })),
+    });
+    expect(await tagOf(social.follow("u-b"))).toEqual(Option.some("InteractionBlocked"));
+    expect(inner.rows().filter((row) => row.kind === "follow")).toEqual([]);
+    // The block lands just after the follow: it ends the follow it finds.
+    const { store, social: after, as } = setup();
+    await run(as("u-a", after.follow("u-b")));
+    await run(as("u-b", after.block("u-a")));
+    expect(store.rows().filter((row) => row.kind === "follow")).toEqual([]);
   });
 
   it("erases an account's relationships either way through the store", async () => {

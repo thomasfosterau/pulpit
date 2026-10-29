@@ -113,8 +113,27 @@ export class SelfRelationship extends Schema.TaggedError<SelfRelationship>()("Se
  * @since 0.1.0
  */
 export interface SocialStore<Following, E, R> {
-  /** Insert the relationship (`ON CONFLICT DO NOTHING`); whether a row was written. */
+  /** Insert the relationship (`ON CONFLICT DO NOTHING`); whether a row was written. Used for a mute. */
   readonly add: (relationship: Relationship) => Effect.Effect<boolean, E, R>;
+  /**
+   * Insert a follow unless a block stands between the two accounts, either
+   * way: `"added"`, `"present"` (already following) or `"blocked"` (nothing
+   * written). The check and the insert must be **one atomic step against
+   * {@link SocialStore.addBlock} on the same pair**, so a concurrent block
+   * can never leave a follow standing: take a lock on the unordered pair
+   * that `addBlock` also takes (`pg_advisory_xact_lock` on it, in the
+   * caller's transaction), then `INSERT … SELECT … WHERE NOT EXISTS (a
+   * block either way) ON CONFLICT DO NOTHING`.
+   */
+  readonly addFollow: (
+    relationship: Relationship,
+  ) => Effect.Effect<"added" | "present" | "blocked", E, R>;
+  /**
+   * Insert a block and delete both follows between the two accounts, as one
+   * atomic step against {@link SocialStore.addFollow} on the same pair (the
+   * same pair lock); whether the block row was written.
+   */
+  readonly addBlock: (relationship: Relationship) => Effect.Effect<boolean, E, R>;
   /** Delete the relationship; whether a row went. */
   readonly remove: (
     kind: RelationshipKind,
@@ -263,16 +282,20 @@ export interface SocialOps<Following, E, R> {
   readonly unblock: (
     accountId: string,
   ) => Effect.Effect<{ readonly changed: boolean }, Unauthorized | E, R>;
-  /** The accounts following `accountId`, newest first, as the application's account visibility shows them. */
+  /**
+   * The accounts following `accountId`, newest first, as the application's
+   * account visibility shows them. A subject the viewer can't see answers
+   * as an account with no followers.
+   */
   readonly followers: (
     accountId: string,
     request: SocialPageRequest,
-  ) => Effect.Effect<Page<Related>, E, R>;
-  /** The accounts `accountId` follows, newest first, as the application's account visibility shows them. */
+  ) => Effect.Effect<RelatedPage, E, R>;
+  /** The accounts `accountId` follows, as {@link SocialOps.followers} shows them. */
   readonly following: (
     accountId: string,
     request: SocialPageRequest,
-  ) => Effect.Effect<Page<Related>, E, R>;
+  ) => Effect.Effect<RelatedPage, E, R>;
   /** The viewer's own mutes, newest first. Fails `Unauthorized` when anonymous. */
   readonly muted: (request: SocialPageRequest) => Effect.Effect<Page<Related>, Unauthorized | E, R>;
   /** The viewer's own blocks, newest first. Fails `Unauthorized` when anonymous. */
@@ -291,6 +314,20 @@ export interface SocialOps<Following, E, R> {
 }
 
 /** A page request clamped as every list's is (`SEC-INPUT-003`). */
+/**
+ * One page of a public follower or following list. `total` counts only
+ * accounts the viewer may see: it is the store's total when the
+ * application declares no {@link AccountVisibility}, and none when it does
+ * (the store's count would include accounts the seam hides), so a filtered
+ * page may also hold fewer than `limit` rows.
+ *
+ * @since 0.1.0
+ */
+export interface RelatedPage {
+  readonly rows: ReadonlyArray<Related>;
+  readonly total: Option.Option<number>;
+}
+
 const window = (request: SocialPageRequest) => ({
   limit: Math.max(1, Math.min(Math.trunc(request.limit), MAX_PAGE_LIMIT)),
   offset: Math.max(0, Math.trunc(request.offset)),
@@ -349,10 +386,12 @@ export const defineSocial = <Following, E, R>(
   const follow = Effect.fn("social.follow")(function* (to: string) {
     const account = yield* signedIn;
     yield* notSelf("follow", account, to);
-    if (!(yield* interactionAllowed(account.id, to))) {
-      return yield* new InteractionBlocked({ accountId: to });
-    }
-    return yield* assert("follow", account, to);
+    // The block check is part of the store's insert, never a read before
+    // it, so a concurrent block can't land in between.
+    const at = yield* nowDate;
+    const outcome = yield* store.addFollow({ kind: "follow", from: account.id, to, at });
+    if (outcome === "blocked") return yield* new InteractionBlocked({ accountId: to });
+    return { changed: outcome === "added" };
   });
 
   const mute = Effect.fn("social.mute")(function* (to: string) {
@@ -364,32 +403,34 @@ export const defineSocial = <Following, E, R>(
   const block = Effect.fn("social.block")(function* (to: string) {
     const account = yield* signedIn;
     yield* notSelf("block", account, to);
-    const written = yield* assert("block", account, to);
-    // A block ends both follows between the two accounts.
-    yield* store.remove("follow", to, account.id);
-    yield* store.remove("follow", account.id, to);
-    return written;
+    // A block ends both follows between the two accounts, in the same atomic step.
+    const at = yield* nowDate;
+    return { changed: yield* store.addBlock({ kind: "block", from: account.id, to, at }) };
   });
-
-  const visibleOnly = (viewer: Viewer, page: Page<Related>) =>
-    definition.accounts === undefined || !Arr.isReadonlyArrayNonEmpty(page.rows)
-      ? Effect.succeed(page)
-      : Effect.map(
-          definition.accounts.visible(
-            viewer,
-            Arr.map(page.rows, (row) => row.accountId),
-          ),
-          (shown) => ({
-            rows: Arr.filter(page.rows, (row) => HashSet.has(shown, row.accountId)),
-            total: page.total,
-          }),
-        );
 
   const publicList = (side: "from" | "to", operation: string) =>
     Effect.fn(`social.${operation}`)(function* (accountId: string, request: SocialPageRequest) {
+      const { accounts } = definition;
+      if (accounts === undefined) {
+        const page = yield* store.list({ kind: "follow", side, accountId, ...window(request) });
+        return { rows: page.rows, total: Option.some(page.total) };
+      }
       const viewer = yield* definition.viewer;
+      // A subject the viewer can't see answers as one with no relationships.
+      if (!HashSet.has(yield* accounts.visible(viewer, [accountId]), accountId)) {
+        return { rows: [], total: Option.none() };
+      }
       const page = yield* store.list({ kind: "follow", side, accountId, ...window(request) });
-      return yield* visibleOnly(viewer, page);
+      const shown = Arr.isReadonlyArrayNonEmpty(page.rows)
+        ? yield* accounts.visible(
+            viewer,
+            Arr.map(page.rows, (row) => row.accountId),
+          )
+        : HashSet.empty<string>();
+      return {
+        rows: Arr.filter(page.rows, (row) => HashSet.has(shown, row.accountId)),
+        total: Option.none(),
+      };
     });
 
   const ownList = (kind: RelationshipKind, operation: string) =>
