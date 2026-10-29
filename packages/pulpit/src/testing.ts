@@ -808,6 +808,12 @@ export const makeInMemoryEdgeStore = (options: InMemoryEdgeStoreOptions): InMemo
         stored = stored.filter((row) => row.id !== id);
         return stored.length < before;
       }),
+    closeValidity: (id, column, to) =>
+      Effect.sync(() => {
+        const found = stored.some((row) => row.id === id);
+        stored = stored.map((row) => (row.id === id ? { ...row, [column]: to } : row));
+        return found;
+      }),
     // The SQL store's subquery, computed eagerly over the list's joins: the
     // member end's ids of the edges whose other end is named and that
     // satisfy `where`. A non-string member id is never in the set.

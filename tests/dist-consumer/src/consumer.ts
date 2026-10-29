@@ -143,9 +143,12 @@ import {
   type EdgeDeclarationError,
   type EdgeNotFound,
   type EdgeRow,
+  type EdgeValidity,
   type EdgeStore,
   type EdgeWrite,
   type EdgeWriteGate,
+  type InvalidValidity,
+  validAt,
 } from "@thomasfosterau/pulpit/edges";
 import type {
   AfterWriteEvent,
@@ -997,11 +1000,31 @@ export type _EdgeCreate = Assert<
       | NodeNotFound
       | EdgeConflict
       | EdgeCardinalityExceeded
+      | InvalidValidity
       | StoreFailure,
       Transaction
     >
   >
 >;
+// Validity intervals (pulpit#210): the one edge update, and the instant filter.
+export type _EdgeCloseValidity = Assert<
+  Equals<
+    ReturnType<typeof links.closeValidity>,
+    Effect.Effect<
+      { readonly id: string },
+      Unauthorized | Forbidden | NodeNotFound | EdgeNotFound | InvalidValidity | StoreFailure,
+      Transaction
+    >
+  >
+>;
+export type _EdgeCloseValidityParameters = Assert<
+  Equals<Parameters<typeof links.closeValidity>, [id: string, at: Date]>
+>;
+export type _EdgeValidity = Assert<
+  Equals<EdgeValidity, { readonly from: string; readonly to: string }>
+>;
+export type _ValidAt = Assert<Equals<ReturnType<typeof validAt<never>>, ListFilter<never>>>;
+export type _InvalidValidityTag = Assert<Equals<InvalidValidity["_tag"], "InvalidValidity">>;
 // Edge membership (pulpit#113): the filter is over the family's `Following`.
 export type _EdgeMemberFilter = Assert<
   Equals<
