@@ -1,0 +1,5 @@
+---
+"@thomasfosterau/pulpit": minor
+---
+
+Proposals over a localised leaf (pulpit#184). `ProposalsDefinition` takes an optional `localeAttributes` (the translated columns a proposal may touch), and `submit` an optional `locales`: a per-locale patch, validated and decoded per locale as the shared patch is, stored as submitted in the new required `ProposalRow.locales` (`Option<Schema.Json>`; a `ProposalStore` keeps it in a nullable `locales` `jsonb` column), and accepted through the target's `update` as one version. A proposal may add a translation but never drop one (a `null` locale is refused). `classifyProposalConflict` takes an optional fourth argument, the touched translated columns by locale (`TouchedLocales`), and its verdict gains `conflictingLocales`: a touched translated column conflicts when it changed, when either version lacks it, or when its locale was added or dropped in between. `ProposalConflict` gains `locales`. `ValidatedPatch` gains `locales` and `touchedLocales`, and `validateProposalPatch` takes `locales` and `localeAttributes` options.

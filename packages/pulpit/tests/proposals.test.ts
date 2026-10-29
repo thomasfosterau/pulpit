@@ -31,13 +31,19 @@ import {
   validateProposalPatch,
 } from "../src/proposals.ts";
 import {
+  defineLocaleLevel,
   defineSubtype,
   ownedAccess,
   type LeafRow,
   type Viewer,
   type ViewerAccount,
 } from "../src/subtype.ts";
-import type { ChainPatch, ChainState, VersionSnapshot } from "../src/version-chain.ts";
+import type {
+  ChainPatch,
+  ChainState,
+  LocaleStates,
+  VersionSnapshot,
+} from "../src/version-chain.ts";
 import {
   makeInMemoryChainStore,
   makeInMemoryFollowers,
@@ -84,6 +90,7 @@ describe("classifyProposalConflict", () => {
     expect(classifyProposalConflict(only, only, ["name"])).toEqual({
       state: "clean",
       conflictingAttributes: [],
+      conflictingLocales: {},
     });
   });
 
@@ -93,6 +100,7 @@ describe("classifyProposalConflict", () => {
     expect(classifyProposalConflict(base, current, ["name"])).toEqual({
       state: "stale",
       conflictingAttributes: [],
+      conflictingLocales: {},
     });
   });
 
@@ -102,6 +110,7 @@ describe("classifyProposalConflict", () => {
     expect(classifyProposalConflict(base, current, ["name", "description"])).toEqual({
       state: "conflicting",
       conflictingAttributes: ["name"],
+      conflictingLocales: {},
     });
   });
 
@@ -119,6 +128,7 @@ describe("classifyProposalConflict", () => {
     expect(classifyProposalConflict(base, current, ["name", "mappings"])).toEqual({
       state: "conflicting",
       conflictingAttributes: ["mappings"],
+      conflictingLocales: {},
     });
   });
 
@@ -200,6 +210,8 @@ describe("validateProposalPatch — the patch rules", () => {
     expect(Exit.isSuccess(exit) && exit.value).toEqual({
       patch: { body: "b", title: "t" },
       touchedKeys: ["title", "body"],
+      locales: {},
+      touchedLocales: {},
     });
   });
 
@@ -389,7 +401,11 @@ describe("defineProposals — the operations", () => {
     await run(actAs(member, target.update({ id, patch: { body: "Theirs" } })));
     const review = await run(actAs(member, ops.review(conflicting)));
     expect(review.baseState).toEqual(Option.some("moved"));
-    expect(review.conflict).toEqual({ state: "conflicting", conflictingAttributes: ["body"] });
+    expect(review.conflict).toEqual({
+      state: "conflicting",
+      conflictingAttributes: ["body"],
+      conflictingLocales: {},
+    });
     expect(await tagOf(actAs(member, ops.accept(conflicting)))).toEqual(
       Option.some("ProposalConflict"),
     );
@@ -466,6 +482,7 @@ describe("defineProposals — the operations", () => {
         targetType: "pages",
         authorId: curator.id,
         patch: { retired: "x" },
+        locales: Option.none(),
         rationale: Option.none(),
         baseVersion: 0n,
         status: "pending",
@@ -525,5 +542,263 @@ describe("defineProposals — the operations", () => {
       (await list(Option.some(first), Option.none())).rows.map((view) => view.proposal.id),
     ).toEqual([a]);
     expect((await list(Option.none(), Option.some("pending"))).total).toBe(1);
+  });
+});
+
+describe("over a localised leaf (pulpit#184)", () => {
+  const atLocales = (version: bigint, locales: LocaleStates): VersionSnapshot => ({
+    ...snapshot(version, { colour: "red" }),
+    locales,
+  });
+
+  describe("classifyProposalConflict per locale", () => {
+    const base = atLocales(4n, { en: { title: "Hello" }, fr: { title: "Bonjour" } });
+
+    it("is stale when only an untouched locale changed", () => {
+      const current = atLocales(5n, { en: { title: "Hi" }, fr: { title: "Bonjour" } });
+      expect(classifyProposalConflict(base, current, [], { fr: ["title"] })).toEqual({
+        state: "stale",
+        conflictingAttributes: [],
+        conflictingLocales: {},
+      });
+    });
+
+    it("conflicts when a touched translated column changed underneath", () => {
+      const current = atLocales(5n, { en: { title: "Hello" }, fr: { title: "Salut" } });
+      expect(classifyProposalConflict(base, current, [], { fr: ["title"] })).toEqual({
+        state: "conflicting",
+        conflictingAttributes: [],
+        conflictingLocales: { fr: ["title"] },
+      });
+    });
+
+    it("a new translation neither version carries is not a conflict; one added since is", () => {
+      const moved = atLocales(5n, { en: { title: "Hi" }, fr: { title: "Bonjour" } });
+      expect(classifyProposalConflict(base, moved, [], { de: ["title"] }).state).toBe("stale");
+      const added = atLocales(5n, { ...base.locales, de: { title: "Hallo" } });
+      expect(
+        classifyProposalConflict(base, added, [], { de: ["title"] }).conflictingLocales,
+      ).toEqual({ de: ["title"] });
+    });
+
+    it("conflicts on a touched locale dropped since the base", () => {
+      const dropped = atLocales(5n, { en: { title: "Hello" } });
+      expect(
+        classifyProposalConflict(base, dropped, [], { fr: ["title"] }).conflictingLocales,
+      ).toEqual({ fr: ["title"] });
+    });
+
+    it("fails closed on a translated column either version lacks", () => {
+      const current = atLocales(5n, { en: { title: "Hello" }, fr: { title: "Bonjour", alt: "x" } });
+      expect(
+        classifyProposalConflict(base, current, [], { fr: ["alt"] }).conflictingLocales,
+      ).toEqual({
+        fr: ["alt"],
+      });
+    });
+
+    it("equal versions are clean without comparing anything", () => {
+      expect(classifyProposalConflict(base, base, [], { fr: ["title"] }).state).toBe("clean");
+    });
+  });
+
+  describe("validateProposalPatch with a per-locale patch", () => {
+    const validate = (patch: Schema.Json, locales: Schema.Json, localeAttributes = ["title"]) =>
+      Effect.runPromiseExit(
+        validateProposalPatch("pages", patch, {
+          attributes: ["colour"],
+          forbidden: PROPOSAL_FORBIDDEN_KEYS,
+          decode: decodeStrings,
+          locales,
+          localeAttributes,
+        }),
+      );
+    const reason = async (
+      patch: Schema.Json,
+      locales: Schema.Json,
+      localeAttributes?: Array<string>,
+    ) => {
+      const exit = await validate(patch, locales, localeAttributes);
+      return Exit.isFailure(exit)
+        ? Option.map(Exit.findErrorOption(exit), (error) => error.reason)
+        : Option.none();
+    };
+
+    it("takes a translation alone, decoded, with its touched columns", async () => {
+      const exit = await validate({}, { fr: { title: "Salut" } });
+      expect(Exit.isSuccess(exit) && exit.value).toEqual({
+        patch: {},
+        touchedKeys: [],
+        locales: { fr: { title: "Salut" } },
+        touchedLocales: { fr: ["title"] },
+      });
+    });
+
+    it("refuses dropping a translation, an empty or malformed locale, and an empty proposal", async () => {
+      expect(await reason({}, { fr: null })).toEqual(
+        Option.some("dropping the `fr` translation is the owner's to do"),
+      );
+      expect(await reason({}, { fr: {} })).toEqual(Option.some("it proposes no changes for `fr`"));
+      expect(await reason({}, { fr: "x" })).toEqual(
+        Option.some("expected an object of attribute changes for `fr`"),
+      );
+      expect(await reason({}, { "": { title: "x" } })).toEqual(
+        Option.some("a locale tag is empty"),
+      );
+      expect(await reason({}, ["fr"])).toEqual(
+        Option.some("expected an object of changes per locale"),
+      );
+      expect(await reason({}, {})).toEqual(Option.some("it proposes no changes"));
+    });
+
+    it("refuses a shared column in a locale, a forbidden one, and any locale on a leaf without translations", async () => {
+      expect(await reason({}, { fr: { colour: "x" } })).toEqual(
+        Option.some("`colour` is not a proposable attribute (in `fr`)"),
+      );
+      expect(await reason({}, { fr: { visibility: "public" } })).toEqual(
+        Option.some(
+          "`visibility` can't be proposed: identity and publication are the owner's to set (in `fr`)",
+        ),
+      );
+      expect(await reason({ colour: "x" }, { fr: { title: "x" } }, [])).toEqual(
+        Option.some("this leaf takes no translated attributes"),
+      );
+    });
+
+    it("refuses what the leaf's decoder refuses in a locale", async () => {
+      expect(await reason({}, { fr: { title: 7 } })).toEqual(
+        Option.some("a value is not a string"),
+      );
+    });
+  });
+
+  describe("defineProposals end to end", () => {
+    const curator: ViewerAccount = { id: "u-curator", role: "contributor" };
+
+    const setup = () => {
+      const chain = makeInMemoryChainStore();
+      const leaves = makeInMemoryLeafStore(chain, {
+        columns: ["title", "colour", "visibility"],
+        localised: true,
+        now: NOW,
+      });
+      let viewer: Viewer = Option.none();
+      const viewerOf = Effect.sync(() => viewer);
+      const target = defineSubtype({
+        type: "pages",
+        access: ownedAccess(),
+        chain,
+        leaves,
+        viewer: viewerOf,
+        policy: gardeneriaPolicy,
+        followers: makeInMemoryFollowers([]),
+        toResource: (row: LeafRow) => row,
+        locales: defineLocaleLevel({ columns: ["title"] }),
+      });
+      const store = makeInMemoryProposalStore({ chain, leaves });
+      const ops = defineProposals({
+        type: "pages",
+        target,
+        chain,
+        ownerOf: leaves.ownerOf,
+        proposals: store,
+        viewer: viewerOf,
+        policy: gardeneriaPolicy,
+        canPropose: () => true,
+        attributes: ["colour"],
+        localeAttributes: ["title"],
+        decode: decodeStrings,
+      });
+      const actAs = <A, E>(who: ViewerAccount, effect: Effect.Effect<A, E>) =>
+        Effect.suspend(() => {
+          viewer = Option.some(who);
+          return effect;
+        });
+      const page = () =>
+        run(
+          actAs(
+            member,
+            target.create({
+              id: Option.none(),
+              state: { colour: "red", visibility: "public" },
+              locales: { en: { title: "Hello" }, fr: { title: "Bonjour" } },
+            }),
+          ),
+        ).then(({ id }) => id);
+      const propose = (targetId: string, locales: Schema.Json, patch: Schema.Json = {}) =>
+        run(
+          actAs(curator, ops.submit({ targetId, patch, locales, rationale: Option.none() })),
+        ).then(({ id }) => id);
+      const title = (id: string, locale: string) =>
+        run(actAs(member, target.getLocalised(id, [locale]))).then(
+          ({ resource }) => resource["title"],
+        );
+      return { store, target, ops, actAs, page, propose, title };
+    };
+
+    it("stores the per-locale patch as submitted and accepts it as one update", async () => {
+      const { store, ops, actAs, page, propose, title } = setup();
+      const id = await page();
+      const proposal = await propose(id, { fr: { title: "Salut" } }, { colour: "blue" });
+      expect(store.rows()[0]?.locales).toEqual(Option.some({ fr: { title: "Salut" } }));
+      const written = await run(actAs(member, ops.accept(proposal)));
+      expect(written.version).toBe(1n);
+      expect(await title(id, "fr")).toBe("Salut");
+      expect(await title(id, "en")).toBe("Hello");
+    });
+
+    it("an edit to another locale leaves the proposal stale and acceptable", async () => {
+      const { ops, actAs, page, propose, target, title } = setup();
+      const id = await page();
+      const proposal = await propose(id, { fr: { title: "Salut" } });
+      await run(actAs(member, target.update({ id, patch: {}, locales: { en: { title: "Hi" } } })));
+      const review = await run(actAs(member, ops.review(proposal)));
+      expect(review.conflict.state).toBe("stale");
+      await run(actAs(member, ops.accept(proposal)));
+      expect(await title(id, "fr")).toBe("Salut");
+      expect(await title(id, "en")).toBe("Hi");
+    });
+
+    it("an edit to the touched translation conflicts, and accept refuses it naming the locale", async () => {
+      const { ops, actAs, page, propose, target, title } = setup();
+      const id = await page();
+      const proposal = await propose(id, { fr: { title: "Salut" } });
+      await run(
+        actAs(member, target.update({ id, patch: {}, locales: { fr: { title: "Coucou" } } })),
+      );
+      const review = await run(actAs(member, ops.review(proposal)));
+      expect(review.conflict).toEqual({
+        state: "conflicting",
+        conflictingAttributes: [],
+        conflictingLocales: { fr: ["title"] },
+      });
+      const refused = await Effect.runPromiseExit(actAs(member, ops.accept(proposal)));
+      expect(
+        Exit.isFailure(refused) && Option.getOrUndefined(Exit.findErrorOption(refused)),
+      ).toMatchObject({
+        _tag: "ProposalConflict",
+        attributes: [],
+        locales: { fr: ["title"] },
+      });
+      expect(await title(id, "fr")).toBe("Coucou");
+    });
+
+    it("refuses a proposal that drops a translation at submit", async () => {
+      const { ops, actAs, page } = setup();
+      const id = await page();
+      expect(
+        await tagOf(
+          actAs(
+            curator,
+            ops.submit({
+              targetId: id,
+              patch: {},
+              locales: { fr: null },
+              rationale: Option.none(),
+            }),
+          ),
+        ),
+      ).toEqual(Option.some("InvalidProposalPatch"));
+    });
   });
 });
