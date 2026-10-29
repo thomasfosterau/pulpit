@@ -101,6 +101,7 @@ export const forwarded = (flag: true | undefined): RegistryEntry => ({
   referenceData: flag,
   searchable: flag,
   routable: flag,
+  localised: flag,
 });
 export const marker: RegistryEntry = {
   key: "node",

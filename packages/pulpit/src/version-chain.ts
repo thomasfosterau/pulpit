@@ -760,8 +760,9 @@ export type WriteAction = typeof WriteAction.Type;
  * On a localised leaf (pulpit#56) `locales` is the write's locale patch, in
  * the same reading: the whole locale level for `create` and
  * `restoreVersion`, the caller's {@link LocalePatch} for `update` /
- * `restore`, absent for `delete`. A hook sees it but does not replace it:
- * its returned patch is the shared columns' alone.
+ * `restore`, `{}` for `delete`. `beforeAppend`'s patch is the shared
+ * columns' alone; `beforeAppendLocales` returns the locale patch the write
+ * applies (see {@link ChainHooks}).
  *
  * @since 0.1.0
  */
@@ -795,6 +796,16 @@ export interface ChainHooks<E, R> {
   readonly beforeAppend?:
     | ((event: ChainAppendEvent) => Effect.Effect<ChainPatch, E, R>)
     | undefined;
+  /**
+   * The locale level's counterpart of `beforeAppend` (pulpit#56): runs at the
+   * same point, shown the same event, and its {@link LocalePatch} replaces
+   * the event's `locales`, so a hook that validates or transforms a column
+   * does so in every locale too. Absent, the event's locale patch is applied
+   * as given.
+   */
+  readonly beforeAppendLocales?:
+    | ((event: ChainAppendEvent) => Effect.Effect<LocalePatch, E, R>)
+    | undefined;
   /* oxlint-enable effect/prefer-option-over-null */
 }
 
@@ -821,7 +832,7 @@ export const defineVersionChain = <E, R>(
   store: VersionChainStore<E, R>,
   hooks: ChainHooks<E, R> = {},
 ): VersionChainOps<E, R> => {
-  const { beforeAppend } = hooks;
+  const { beforeAppend, beforeAppendLocales } = hooks;
 
   /**
    * The state a write stores: the hook's patch (or the caller's, without a
@@ -830,16 +841,17 @@ export const defineVersionChain = <E, R>(
   const nextState = (
     event: ChainAppendEvent,
     base: Pick<VersionSnapshot, "state" | "locales">,
-  ): Effect.Effect<Written, E, R> => {
-    const locales = applyLocalePatch(localesOf(base), event.locales ?? {});
-    const written = (patch: ChainPatch): Written =>
-      Record.isEmptyRecord(locales)
-        ? { state: applyPatch(base.state, patch) }
-        : { state: applyPatch(base.state, patch), locales };
-    return beforeAppend === undefined
-      ? Effect.succeed(written(event.patch))
-      : Effect.map(beforeAppend(event), written);
-  };
+  ): Effect.Effect<Written, E, R> =>
+    Effect.gen(function* () {
+      const patch = beforeAppend === undefined ? event.patch : yield* beforeAppend(event);
+      const localePatch =
+        beforeAppendLocales === undefined
+          ? (event.locales ?? {})
+          : yield* beforeAppendLocales(event);
+      const state = applyPatch(base.state, patch);
+      const locales = applyLocalePatch(localesOf(base), localePatch);
+      return Record.isEmptyRecord(locales) ? { state } : { state, locales };
+    });
 
   /**
    * Append at `previous + 1`, after checking the precondition against that
@@ -894,7 +906,9 @@ export const defineVersionChain = <E, R>(
    * (`restoreVersion` otherwise needs the head entry alone).
    */
   const hookPrior = (id: string) =>
-    beforeAppend === undefined ? Effect.succeed(Option.none<VersionSnapshot>()) : current(id);
+    beforeAppend === undefined && beforeAppendLocales === undefined
+      ? Effect.succeed(Option.none<VersionSnapshot>())
+      : current(id);
 
   const create = Effect.fn(`${type}.create`)(function* (input: CreateInput) {
     const id = Option.isSome(input.id) ? input.id.value : yield* store.mintId;

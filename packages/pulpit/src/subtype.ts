@@ -996,6 +996,21 @@ export interface BeforeWriteHook<E, R> {
   /** Names the hook in its span and in a logged failure. */
   readonly name: string;
   readonly run: (event: BeforeWriteEvent) => Effect.Effect<ChainPatch, WriteRejected | E, R>;
+  /**
+   * The hook's locale-level pass on a localised leaf (pulpit#56): shown the
+   * same event, it returns the {@link LocalePatch} the write applies (the
+   * event's `locales`, or a transformed one), or fails the write as `run`
+   * does. **Fails closed:** a write carrying a locale patch through a hook
+   * that declares no `locales` is refused with {@link WriteRejected}, so a
+   * hook that validates or rewrites a column can never be bypassed by
+   * writing it per locale. A hook with nothing to do per locale passes the
+   * event's patch through (`(event) => Effect.succeed(event.locales ?? {})`).
+   */
+  /* oxlint-disable effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "refuses every locale patch" */
+  readonly locales?:
+    | ((event: BeforeWriteEvent) => Effect.Effect<LocalePatch, WriteRejected | E, R>)
+    | undefined;
+  /* oxlint-enable effect/prefer-option-over-null */
 }
 
 /**
@@ -1120,6 +1135,35 @@ const runBefore = <E, R>(
     () => event.patch,
     (patch, hook) =>
       hook.run({ ...event, patch }).pipe(Effect.withSpan(`${event.type}.before.${hook.name}`)),
+  );
+
+/**
+ * Run the before hooks' locale passes in order, each shown the previous
+ * one's locale patch. A hook with no `locales` pass refuses a write that
+ * carries any locale change (fail closed, pulpit#56) and passes `{}` on.
+ */
+const runBeforeLocales = <E, R>(
+  hooks: ReadonlyArray<BeforeWriteHook<E, R>>,
+  event: BeforeWriteEvent,
+): Effect.Effect<LocalePatch, WriteRejected | E, R> =>
+  Effect.reduce(
+    hooks,
+    (): LocalePatch => event.locales ?? {},
+    (locales, hook) =>
+      hook.locales === undefined
+        ? Array.isReadonlyArrayNonEmpty(writtenKeys(locales))
+          ? Effect.fail(
+              new WriteRejected({
+                type: event.type,
+                id: event.id,
+                action: event.action,
+                reason: `before hook '${hook.name}' does not handle a locale patch`,
+              }),
+            )
+          : Effect.succeed(locales)
+        : hook
+            .locales({ ...event, locales })
+            .pipe(Effect.withSpan(`${event.type}.before.${hook.name}.locales`)),
   );
 
 /** Run the after hooks in order, each failure handed to the policy, never to the write. */
@@ -1574,6 +1618,14 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
                   )
                 : Effect.succeed(event.patch),
             ),
+          beforeAppendLocales: (event) =>
+            Effect.flatMap(hooks, ({ before }) =>
+              Array.isReadonlyArrayNonEmpty(before)
+                ? Effect.flatMap(definition.viewer, (viewer) =>
+                    runBeforeLocales(before, { ...event, type, viewer }),
+                  )
+                : Effect.succeed(event.locales ?? {}),
+            ),
         },
   );
   const actor = (account: ViewerAccount) => Option.some(account.id);
@@ -1587,7 +1639,12 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   if (definition.search !== undefined) checkSearchProjection(definition.search, leaves.columns);
   // And the locale level, so a translated column the view lacks throws at declaration.
   const localeLevel = Option.fromUndefinedOr(definition.locales);
-  if (Option.isSome(localeLevel)) checkLocaleLevel(localeLevel.value, leaves.columns);
+  if (Option.isSome(localeLevel)) {
+    checkLocaleLevel(localeLevel.value, leaves.columns, [
+      ...accessColumns(access),
+      ...(definition.publication === undefined ? [] : PUBLICATION_COLUMNS),
+    ]);
+  }
 
   /**
    * The write's locale level checked against the declaration (pulpit#56):
@@ -1776,8 +1833,13 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
           ? leaves.list(query)
           : live.list({ ...query, headFor: never }),
     });
+    // Defence in depth: each locale row passes the node's read gate itself,
+    // so a store that joined a locale row onto other access facts serves none.
+    const readable = Option.isSome(preview)
+      ? page.rows
+      : yield* Effect.filter(page.rows, (row) => visible(viewer, row));
     const found = Array.findFirst(wanted, (tag) =>
-      Array.findFirst(page.rows, (row) => row[LOCALE_COLUMN] === tag).pipe(
+      Array.findFirst(readable, (row) => row[LOCALE_COLUMN] === tag).pipe(
         Option.map((row): LocalisedResource<Resource> => ({
           locale: tag,
           resource: toResource(row),
@@ -2738,7 +2800,35 @@ export interface LocalisedResource<Resource> {
 /** The names a view keeps for itself: no translated column may take one. */
 const RESERVED_COLUMNS: ReadonlyArray<string> = ["id", "version", "action", LOCALE_COLUMN];
 
-const checkLocaleLevel = (level: LocaleLevel, columns: ReadonlySet<string>) => {
+/**
+ * The columns a leaf's read gate reads (pulpit#56): none of them may be
+ * translated, so every locale row carries the node's one owner, visibility,
+ * draft and moderation state.
+ */
+const accessColumns = (access: LeafAccess): ReadonlyArray<string> =>
+  access.kind === "owned"
+    ? [
+        access.ownerColumn,
+        access.visibilityColumn,
+        ...Option.toArray(access.draftColumn),
+        ...Option.toArray(access.moderationColumn),
+      ]
+    : ["visibility", ...(access.followersOfColumn === undefined ? [] : [access.followersOfColumn])];
+
+/** The columns a live view stamps on a publish-gated leaf's rows. */
+const PUBLICATION_COLUMNS: ReadonlyArray<string> = ["draft", "publishedAt"];
+
+const checkLocaleLevel = (
+  level: LocaleLevel,
+  columns: ReadonlySet<string>,
+  gated: ReadonlyArray<string>,
+) => {
+  const gate = Array.findFirst(level.columns, (column) => gated.includes(column));
+  if (Option.isSome(gate)) {
+    throw new SubtypeDeclarationError({
+      message: `locales names '${gate.value}', which the read gate reads: it must be shared`,
+    });
+  }
   const undeclared = Array.findFirst(
     [...level.columns, LOCALE_COLUMN],
     (column) => !columns.has(column),
