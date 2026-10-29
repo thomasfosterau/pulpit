@@ -27,6 +27,7 @@ export const renameColumns = <Following>(
       eq: (node): ListFilter<Following> => ({ ...node, column: rename(node.column) }),
       ne: (node): ListFilter<Following> => ({ ...node, column: rename(node.column) }),
       in: (node): ListFilter<Following> => ({ ...node, column: rename(node.column) }),
+      notIn: (node): ListFilter<Following> => ({ ...node, column: rename(node.column) }),
       gt: (node): ListFilter<Following> => ({ ...node, column: rename(node.column) }),
       gte: (node): ListFilter<Following> => ({ ...node, column: rename(node.column) }),
       lt: (node): ListFilter<Following> => ({ ...node, column: rename(node.column) }),

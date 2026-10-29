@@ -91,6 +91,7 @@ import {
   anyOf,
   eq,
   isIn,
+  isNotIn,
   MAX_SET_VALUES,
   never,
   or,
@@ -478,7 +479,7 @@ export interface EdgeStore<Row extends EdgeRow, Following, E, R> {
    * WHERE e.<otherColumn> = ANY($ids) AND <where>` in SQL, never a
    * materialised array, and the set itself in memory. `ids` is never empty
    * and never longer than `MAX_SET_VALUES`: {@link EdgeOps.memberFilter}
-   * answers `never` without asking.
+   * answers `never` (and {@link EdgeOps.nonMemberFilter} `always`) without asking.
    */
   readonly members: (query: {
     readonly column: string;
@@ -635,6 +636,27 @@ export interface EdgeOps<Create, Resource, E, R, Following = never> {
    * without exactly two ends. Fails only with the store's `E`.
    */
   readonly memberFilter: (
+    end: string,
+    otherIds: ReadonlyArray<string>,
+  ) => Effect.Effect<ListFilter<Following>, E, R>;
+  /**
+   * Edge non-membership as a list filter for the leaf at `end` (pulpit#191):
+   * the complement of {@link EdgeOps.memberFilter} over the same store
+   * `members` subquery, `(id IS NULL OR id NOT IN (…))` under `./filter`'s
+   * `notIn` node, so `?categories_exclude=1,2` lists the posts holding no
+   * readable `post_category` edge to those terms. The member set and this
+   * filter partition the rows a leaf's `list` reads.
+   *
+   * Only edges the viewer can read count as a membership (`EDGE-001`): a row
+   * whose only edge to `otherIds` is hidden from the viewer, or has a
+   * tombstoned end below the view-deleted rung, is not excluded, so the
+   * hidden edge is never confirmed. An exclusion fails closed by excluding
+   * nothing: no `otherIds`, more than `MAX_SET_VALUES` of them
+   * (`SEC-INPUT-003`; an adapter caps its list before this), an `end` the
+   * family doesn't declare, or a family without exactly two ends all give
+   * `always` without reading the store. Fails only with the store's `E`.
+   */
+  readonly nonMemberFilter: (
     end: string,
     otherIds: ReadonlyArray<string>,
   ) => Effect.Effect<ListFilter<Following>, E, R>;
@@ -858,20 +880,26 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     return { id };
   });
 
-  const memberFilter = Effect.fn(`${type}.memberFilter`)(function* (
+  /**
+   * The store's `members` set for `end` against `otherIds`, under the
+   * viewer's `EDGE-001` filter; none, without reading the store, for no ids,
+   * more than `MAX_SET_VALUES`, a misnamed end or a family of other than two
+   * ends. `memberFilter` reads none as `never`, `nonMemberFilter` as `always`.
+   */
+  const readableMembers = Effect.fnUntraced(function* (
     end: string,
     otherIds: ReadonlyArray<string>,
   ) {
     const member = Record.get(ends, end);
     const others = endEntries.filter(([alias]) => alias !== end);
     const [other] = others;
-    const closed: ListFilter<Following> = never;
-    // A misnamed end, or a family of other than two ends, fails closed.
-    if (Option.isNone(member) || other === undefined || others.length !== 1) return closed;
+    if (Option.isNone(member) || other === undefined || others.length !== 1) {
+      return Option.none<Following>();
+    }
     const otherColumn = other[1].column;
     const named = anyOf(otherColumn, otherIds);
-    // No ids, or past MAX_SET_VALUES: `anyOf` is `never`, and so is the arm.
-    if (named.kind === "never") return closed;
+    // No ids, or past MAX_SET_VALUES: `anyOf` is `never`.
+    if (named.kind === "never") return Option.none<Following>();
     const viewer = yield* definition.viewer;
     const following = yield* edges.members({
       column: member.value.column,
@@ -879,7 +907,30 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
       ids: otherIds,
       where: and<Following>(endpointFilter(ends, viewer, policy, followers), named),
     });
-    return isIn("id", following);
+    return Option.some(following);
+  });
+
+  const memberFilter = Effect.fn(`${type}.memberFilter`)(function* (
+    end: string,
+    otherIds: ReadonlyArray<string>,
+  ) {
+    const following = yield* readableMembers(end, otherIds);
+    return Option.match(following, {
+      onNone: (): ListFilter<Following> => never,
+      onSome: (set): ListFilter<Following> => isIn("id", set),
+    });
+  });
+
+  const nonMemberFilter = Effect.fn(`${type}.nonMemberFilter`)(function* (
+    end: string,
+    otherIds: ReadonlyArray<string>,
+  ) {
+    const following = yield* readableMembers(end, otherIds);
+    // An exclusion fails closed by excluding nothing.
+    return Option.match(following, {
+      onNone: (): ListFilter<Following> => always,
+      onSome: (set): ListFilter<Following> => isNotIn("id", set),
+    });
   });
 
   const countBy = Effect.fn(`${type}.countBy`)(function* (
@@ -910,5 +961,5 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     );
   });
 
-  return { list, get, create, delete: remove, memberFilter, countBy };
+  return { list, get, create, delete: remove, memberFilter, nonMemberFilter, countBy };
 };
