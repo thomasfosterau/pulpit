@@ -98,11 +98,24 @@ import * as HashMap from "effect/HashMap";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
+import * as Record from "effect/Record";
 import * as Ref from "effect/Ref";
+import * as Str from "effect/String";
 import * as Schema from "effect/Schema";
 import { ResourceHandlers, type Assemble, type Handlers } from "@thomasfosterau/effect-jsonapi";
 import type { Visibility } from "./content.ts";
-import { always, and, eq, isIn, ne, never, or, type ListFilter } from "./filter.ts";
+import {
+  always,
+  and,
+  eq,
+  isIn,
+  locale as localeIn,
+  LOCALE_COLUMN,
+  ne,
+  never,
+  or,
+  type ListFilter,
+} from "./filter.ts";
 import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
 import { canViewReferenceRow, referenceListFilter } from "./internal/reference-columns.ts";
 import {
@@ -112,6 +125,8 @@ import {
   type ChainState,
   type ChainWrite,
   type ColumnValue,
+  type LocalePatch,
+  type LocaleStates,
   type Precondition,
   type StaleVersion,
   type VersionAction,
@@ -981,6 +996,21 @@ export interface BeforeWriteHook<E, R> {
   /** Names the hook in its span and in a logged failure. */
   readonly name: string;
   readonly run: (event: BeforeWriteEvent) => Effect.Effect<ChainPatch, WriteRejected | E, R>;
+  /**
+   * The hook's locale-level pass on a localised leaf (pulpit#56): shown the
+   * same event, it returns the {@link LocalePatch} the write applies (the
+   * event's `locales`, or a transformed one), or fails the write as `run`
+   * does. **Fails closed:** a write carrying a locale patch through a hook
+   * that declares no `locales` is refused with {@link WriteRejected}, so a
+   * hook that validates or rewrites a column can never be bypassed by
+   * writing it per locale. A hook with nothing to do per locale passes the
+   * event's patch through (`(event) => Effect.succeed(event.locales ?? {})`).
+   */
+  /* oxlint-disable effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "refuses every locale patch" */
+  readonly locales?:
+    | ((event: BeforeWriteEvent) => Effect.Effect<LocalePatch, WriteRejected | E, R>)
+    | undefined;
+  /* oxlint-enable effect/prefer-option-over-null */
 }
 
 /**
@@ -1105,6 +1135,35 @@ const runBefore = <E, R>(
     () => event.patch,
     (patch, hook) =>
       hook.run({ ...event, patch }).pipe(Effect.withSpan(`${event.type}.before.${hook.name}`)),
+  );
+
+/**
+ * Run the before hooks' locale passes in order, each shown the previous
+ * one's locale patch. A hook with no `locales` pass refuses a write that
+ * carries any locale change (fail closed, pulpit#56) and passes `{}` on.
+ */
+const runBeforeLocales = <E, R>(
+  hooks: ReadonlyArray<BeforeWriteHook<E, R>>,
+  event: BeforeWriteEvent,
+): Effect.Effect<LocalePatch, WriteRejected | E, R> =>
+  Effect.reduce(
+    hooks,
+    (): LocalePatch => event.locales ?? {},
+    (locales, hook) =>
+      hook.locales === undefined
+        ? Array.isReadonlyArrayNonEmpty(writtenKeys(locales))
+          ? Effect.fail(
+              new WriteRejected({
+                type: event.type,
+                id: event.id,
+                action: event.action,
+                reason: `before hook '${hook.name}' does not handle a locale patch`,
+              }),
+            )
+          : Effect.succeed(locales)
+        : hook
+            .locales({ ...event, locales })
+            .pipe(Effect.withSpan(`${event.type}.before.${hook.name}.locales`)),
   );
 
 /** Run the after hooks in order, each failure handed to the policy, never to the write. */
@@ -1258,6 +1317,16 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
   // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "not searchable"
   readonly search?: SearchProjection | undefined;
   /**
+   * The leaf's locale level ({@link defineLocaleLevel}, pulpit#56): which of
+   * its columns are translated, written and read per locale, while the rest
+   * are shared by every locale of the node. Each column, and
+   * {@link LOCALE_COLUMN}, must be a column of the view, or
+   * {@link defineSubtype} throws {@link SubtypeDeclarationError}. Omitted,
+   * the leaf is not localised and a write carrying a locale is refused.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "not localised"
+  readonly locales?: LocaleLevel | undefined;
+  /**
    * The live pointer, opt-in (pulpit#46). With it, the view-private rung,
    * the corpus-write rung on a reference leaf and a row's own owner read
    * the head; everyone else reads the live version (a node with none is
@@ -1306,11 +1375,37 @@ type Gate = Unauthorized | Forbidden;
  *
  * @since 0.1.0
  */
-export interface UpdateRequest extends Precondition {
-  readonly id: string;
-  readonly patch: ChainPatch;
+export interface UpdateRequest extends RestoreRequest {
   // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no proposal", and a given value is itself an `Option`
   readonly proposedBy?: Option.Option<string> | undefined;
+}
+
+/**
+ * A restore's input: the node, the tri-state patch, a localised leaf's
+ * per-locale patch and an optional expected version.
+ *
+ * @since 0.1.0
+ */
+export interface RestoreRequest extends Precondition {
+  readonly id: string;
+  readonly patch: ChainPatch;
+  /** A localised leaf's per-locale patch (pulpit#56); absent, every locale carries forward. */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key carries every locale forward
+  readonly locales?: LocalePatch | undefined;
+}
+
+/**
+ * A create's input: a caller-supplied id (minted when none), the initial
+ * state and a localised leaf's locale level at version 0.
+ *
+ * @since 0.1.0
+ */
+export interface CreateRequest {
+  readonly id: Option.Option<string>;
+  readonly state: ChainState;
+  /** A localised leaf's locale level at version 0 (pulpit#56); absent, none. */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no locale"
+  readonly locales?: LocaleStates | undefined;
 }
 
 /**
@@ -1348,16 +1443,12 @@ export interface SubtypeOps<Resource, E, R> {
    * Create the node at version 0, stamping the viewer as owner on an owned
    * leaf. Fails `Unauthorized` when anonymous, `Forbidden` below the
    * corpus-write rung on a reference leaf, `NodeAlreadyExists` when a
-   * caller-supplied id is taken.
+   * caller-supplied id is taken, and `WriteRejected` when the write breaks
+   * the leaf's locale level (see {@link SubtypeOps.update}).
    */
-  readonly create: (input: {
-    readonly id: Option.Option<string>;
-    readonly state: ChainState;
-  }) => Effect.Effect<
-    ChainWrite,
-    Gate | WriteRejected | NodeAlreadyExists | VersionConflict | E,
-    R
-  >;
+  readonly create: (
+    input: CreateRequest,
+  ) => Effect.Effect<ChainWrite, Gate | WriteRejected | NodeAlreadyExists | VersionConflict | E, R>;
   /**
    * Append a tri-state patch. Fails `Unauthorized` when anonymous,
    * `Forbidden` below the write rung (the corpus-write rung for reference
@@ -1366,6 +1457,13 @@ export interface SubtypeOps<Resource, E, R> {
    * caller (`PUB-009`; pulpit#101), or when the node is unknown or
    * tombstoned, and `StaleVersion` when `input.expectedVersion` is not the
    * head (checked after the gate, so only a writer learns the head).
+   *
+   * On a localised leaf (pulpit#56) `input.locales` patches the locale
+   * level; the write appends one version of the whole node, however few
+   * locales it touches. Fails `WriteRejected`, after the gate and with
+   * nothing appended, when the shared patch names a translated column, a
+   * locale's patch names a shared one, a locale tag is empty, or a leaf with
+   * no locale level is sent a locale.
    */
   readonly update: (
     input: UpdateRequest,
@@ -1381,7 +1479,7 @@ export interface SubtypeOps<Resource, E, R> {
    * tombstone, so only it can restore one; anyone else gets `NodeNotFound`.
    */
   readonly restore: (
-    input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
+    input: RestoreRequest,
   ) => Effect.Effect<
     ChainWrite,
     Gate | WriteRejected | NodeNotFound | StaleVersion | VersionConflict | E,
@@ -1410,6 +1508,22 @@ export interface SubtypeOps<Resource, E, R> {
    * from the viewer (`SEC-AUTH-ENUM-001`).
    */
   readonly get: (id: string) => Effect.Effect<Resource, NodeNotFound | E, R>;
+  /**
+   * The locale-fallback read (pulpit#56): the node's row in the first of
+   * `locales`, in the caller's order, that the version the viewer reads
+   * carries (the head, or on a publish-gated leaf the live version for a
+   * viewer who doesn't read the head), with the shared columns joined in.
+   * Gated by the node's own read gate alone, exactly as `get` is: draft,
+   * visibility and publication are the node's, shared by its locales, so no
+   * locale is ever hidden on its own. Fails `NodeNotFound` when the node is
+   * missing or hidden from the viewer (`SEC-AUTH-ENUM-001`) and when it
+   * carries none of `locales` (or the leaf has no locale level), in one
+   * read of the locale rows after the gate.
+   */
+  readonly getLocalised: (
+    id: string,
+    locales: ReadonlyArray<string>,
+  ) => Effect.Effect<LocalisedResource<Resource>, NodeNotFound | E, R>;
   /** Visible rows by id, in one read; a missing or hidden id is simply absent. */
   readonly getMany: (
     ids: ReadonlyArray<string>,
@@ -1504,6 +1618,14 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
                   )
                 : Effect.succeed(event.patch),
             ),
+          beforeAppendLocales: (event) =>
+            Effect.flatMap(hooks, ({ before }) =>
+              Array.isReadonlyArrayNonEmpty(before)
+                ? Effect.flatMap(definition.viewer, (viewer) =>
+                    runBeforeLocales(before, { ...event, type, viewer }),
+                  )
+                : Effect.succeed(event.locales ?? {}),
+            ),
         },
   );
   const actor = (account: ViewerAccount) => Option.some(account.id);
@@ -1515,6 +1637,37 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   const isSortable = sortableColumns(type, leaves.columns, definition.sortable);
   // Checked here too, so a projection naming a column the view lacks throws when the leaf is declared.
   if (definition.search !== undefined) checkSearchProjection(definition.search, leaves.columns);
+  // And the locale level, so a translated column the view lacks throws at declaration.
+  const localeLevel = Option.fromUndefinedOr(definition.locales);
+  if (Option.isSome(localeLevel)) {
+    checkLocaleLevel(localeLevel.value, leaves.columns, [
+      ...accessColumns(access),
+      ...(definition.publication === undefined ? [] : PUBLICATION_COLUMNS),
+    ]);
+  }
+
+  /**
+   * The write's locale level checked against the declaration (pulpit#56):
+   * shared columns in `state`, translated ones per locale, every locale tag
+   * non-empty; a leaf with none takes no locale. Runs after the gate.
+   */
+  const lockedLocales = (
+    id: string,
+    action: WriteAction,
+    state: ChainPatch,
+    locales: LocalePatch,
+  ): Effect.Effect<void, WriteRejected> =>
+    Option.match(
+      localeViolation(
+        Option.map(localeLevel, (level) => level.columns),
+        state,
+        locales,
+      ),
+      {
+        onNone: () => Effect.void,
+        onSome: (reason) => Effect.fail(new WriteRejected({ type, id, action, reason })),
+      },
+    );
 
   /**
    * The row's own visibility, by access kind; the soft-delete axis is checked
@@ -1610,11 +1763,14 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
       access.kind === "reference" ? Effect.asVoid(visibleRow(viewer, id)) : Effect.void,
     );
 
-  const create = Effect.fn(`${type}.create`)(function* (input: {
-    readonly id: Option.Option<string>;
-    readonly state: ChainState;
-  }) {
+  const create = Effect.fn(`${type}.create`)(function* (input: CreateRequest) {
     const account = yield* requireCreator(access, yield* definition.viewer, policy);
+    yield* lockedLocales(
+      Option.getOrElse(input.id, () => ""),
+      "create",
+      input.state,
+      input.locales ?? {},
+    );
     const written = yield* chain.create({ ...input, actorId: actor(account) });
     if (access.kind === "owned") yield* leaves.stampOwner(written.id, account.id);
     return written;
@@ -1622,13 +1778,13 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
 
   const update = Effect.fn(`${type}.update`)(function* (input: UpdateRequest) {
     const account = yield* writer(yield* definition.viewer, input.id);
+    yield* lockedLocales(input.id, "update", input.patch, input.locales ?? {});
     return yield* chain.update({ ...input, actorId: actor(account) });
   });
 
-  const restore = Effect.fn(`${type}.restore`)(function* (
-    input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
-  ) {
+  const restore = Effect.fn(`${type}.restore`)(function* (input: RestoreRequest) {
     const account = yield* writer(yield* definition.viewer, input.id);
+    yield* lockedLocales(input.id, "restore", input.patch, input.locales ?? {});
     return yield* chain.restore({ ...input, actorId: actor(account) });
   });
 
@@ -1648,6 +1804,50 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     }
     // Hidden and missing are the same answer (SEC-AUTH-ENUM-001).
     return toResource(yield* visibleRow(yield* definition.viewer, id));
+  });
+
+  const getLocalised = Effect.fn(`${type}.getLocalised`)(function* (
+    id: string,
+    locales: ReadonlyArray<string>,
+  ) {
+    const viewer = yield* definition.viewer;
+    // The node's own gate, exactly as `get` runs it: a preview grant reads
+    // its node's head unless tombstoned, anyone else the row `get` serves.
+    const preview = (yield* previewing(id))
+      ? Option.filter(yield* leaves.get(id), (head) => head.action !== "delete")
+      : Option.none<Row>();
+    const shown = Option.isSome(preview) ? preview.value : yield* visibleRow(viewer, id);
+    if (Option.isNone(localeLevel)) return yield* new NodeNotFound({ type, id });
+    // One read of the requested locales' rows, from the version the gate chose.
+    const wanted = Array.dedupe(locales);
+    const query = {
+      where: and<Following>(eq("id", id), localeIn(wanted)),
+      orderBy: [],
+      limit: Math.max(1, Math.min(wanted.length, MAX_PAGE_LIMIT)),
+      offset: 0,
+    };
+    const page = yield* Option.match(publication, {
+      onNone: () => leaves.list(query),
+      onSome: ({ live }) =>
+        Option.isSome(preview) || readsHeadOf(viewer, shown)
+          ? leaves.list(query)
+          : live.list({ ...query, headFor: never }),
+    });
+    // Defence in depth: each locale row passes the node's read gate itself,
+    // so a store that joined a locale row onto other access facts serves none.
+    const readable = Option.isSome(preview)
+      ? page.rows
+      : yield* Effect.filter(page.rows, (row) => visible(viewer, row));
+    const found = Array.findFirst(wanted, (tag) =>
+      Array.findFirst(readable, (row) => row[LOCALE_COLUMN] === tag).pipe(
+        Option.map((row): LocalisedResource<Resource> => ({
+          locale: tag,
+          resource: toResource(row),
+        })),
+      ),
+    );
+    if (Option.isNone(found)) return yield* new NodeNotFound({ type, id });
+    return found.value;
   });
 
   /** The rows a viewer reads for these heads: the heads they read, and one live read for the rest. */
@@ -1847,6 +2047,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     restore,
     delete: softDelete,
     get,
+    getLocalised,
     getMany,
     list,
     getVersion,
@@ -2134,23 +2335,22 @@ export interface CommittedWrite<Resource> extends ChainWrite {
 export interface SubtypeHandlers<Resource, E, R> {
   readonly list: SubtypeOps<Resource, E, R>["list"];
   readonly get: SubtypeOps<Resource, E, R>["get"];
-  readonly create: (input: {
-    readonly id: Option.Option<string>;
-    readonly state: ChainState;
-  }) => Effect.Effect<
+  readonly create: (
+    input: CreateRequest,
+  ) => Effect.Effect<
     CommittedWrite<Resource>,
     Gate | WriteRejected | NodeAlreadyExists | NodeNotFound | VersionConflict | E,
     R
   >;
   readonly update: (
-    input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
+    input: RestoreRequest,
   ) => Effect.Effect<
     CommittedWrite<Resource>,
     Gate | WriteRejected | NodeNotFound | StaleVersion | VersionConflict | E,
     R
   >;
   readonly restore: (
-    input: { readonly id: string; readonly patch: ChainPatch } & Precondition,
+    input: RestoreRequest,
   ) => Effect.Effect<
     CommittedWrite<Resource>,
     Gate | WriteRejected | NodeNotFound | StaleVersion | VersionConflict | E,
@@ -2566,4 +2766,155 @@ export const subtypeResourceHandlers = <
       delete: (id) => handlers.delete(id),
     },
   });
+};
+
+// ── Localisation ──────────────────────────────────────────────────────
+
+/**
+ * A leaf's locale level (pulpit#56, model (b)): the columns translated per
+ * locale. Every other column of the leaf is shared by all of a node's
+ * locales, so one value serves the whole node; history, draft, visibility and
+ * publication are the node's, never a locale's. Declared once, beside the
+ * leaf's registry entry (flagged `localised`), so the application's view
+ * generator and {@link defineSubtype} (`locales`) read the same value, as a
+ * {@link SearchProjection} is.
+ *
+ * @since 0.1.0
+ */
+export interface LocaleLevel {
+  /** The translated columns, each once. */
+  readonly columns: ReadonlyArray<string>;
+}
+
+/**
+ * What {@link SubtypeOps.getLocalised} returns: the locale it fell back to
+ * and the resource in that locale.
+ *
+ * @since 0.1.0
+ */
+export interface LocalisedResource<Resource> {
+  readonly locale: string;
+  readonly resource: Resource;
+}
+
+/** The names a view keeps for itself: no translated column may take one. */
+const RESERVED_COLUMNS: ReadonlyArray<string> = ["id", "version", "action", LOCALE_COLUMN];
+
+/**
+ * The columns a leaf's read gate reads (pulpit#56): none of them may be
+ * translated, so every locale row carries the node's one owner, visibility,
+ * draft and moderation state.
+ */
+const accessColumns = (access: LeafAccess): ReadonlyArray<string> =>
+  access.kind === "owned"
+    ? [
+        access.ownerColumn,
+        access.visibilityColumn,
+        ...Option.toArray(access.draftColumn),
+        ...Option.toArray(access.moderationColumn),
+      ]
+    : ["visibility", ...(access.followersOfColumn === undefined ? [] : [access.followersOfColumn])];
+
+/** The columns a live view stamps on a publish-gated leaf's rows. */
+const PUBLICATION_COLUMNS: ReadonlyArray<string> = ["draft", "publishedAt"];
+
+const checkLocaleLevel = (
+  level: LocaleLevel,
+  columns: ReadonlySet<string>,
+  gated: ReadonlyArray<string>,
+) => {
+  const gate = Array.findFirst(level.columns, (column) => gated.includes(column));
+  if (Option.isSome(gate)) {
+    throw new SubtypeDeclarationError({
+      message: `locales names '${gate.value}', which the read gate reads: it must be shared`,
+    });
+  }
+  const undeclared = Array.findFirst(
+    [...level.columns, LOCALE_COLUMN],
+    (column) => !columns.has(column),
+  );
+  if (Option.isSome(undeclared)) {
+    throw new SubtypeDeclarationError({
+      message: `locales names '${undeclared.value}', which is not a column of the view`,
+    });
+  }
+};
+
+/** The keys of a patch that set or clear a value (an `undefined` key carries forward). */
+const writtenKeys = <A>(patch: Record.ReadonlyRecord<string, A>): ReadonlyArray<string> =>
+  Array.filter(Record.keys(patch), (key) => patch[key] !== undefined);
+
+/**
+ * Why a write breaks the locale level, or none: `translated` is the leaf's
+ * declared columns (none for a leaf with no locale level).
+ */
+const localeViolation = (
+  translated: Option.Option<ReadonlyArray<string>>,
+  state: ChainPatch,
+  locales: LocalePatch,
+): Option.Option<string> => {
+  const tags = writtenKeys(locales);
+  if (Option.isNone(translated)) {
+    return Array.isReadonlyArrayNonEmpty(tags)
+      ? Option.some("the leaf declares no locale level")
+      : Option.none();
+  }
+  const isTranslated = (column: string) => translated.value.includes(column);
+  const shared = Array.findFirst(writtenKeys(state), isTranslated);
+  if (Option.isSome(shared)) {
+    return Option.some(`'${shared.value}' is translated: write it per locale`);
+  }
+  if (tags.some(Str.isEmpty)) return Option.some("a locale tag is empty");
+  return Array.findFirst(tags, (tag) =>
+    Option.fromNullishOr(locales[tag]).pipe(
+      Option.flatMap((change) =>
+        Array.findFirst(writtenKeys(change), (column) => !isTranslated(column)),
+      ),
+      Option.map(
+        (column) =>
+          `locale '${tag}' names '${column}', a shared column: write it once, for every locale`,
+      ),
+    ),
+  );
+};
+
+/**
+ * Declare a {@link LocaleLevel}. Throws {@link SubtypeDeclarationError} at
+ * import, as a registry violation is, for no column, a column named twice or
+ * one the view keeps for itself (`id`, `version`, `action`,
+ * {@link LOCALE_COLUMN}); {@link defineSubtype} checks the columns against
+ * the view.
+ *
+ * @example
+ * ```ts
+ * import { deepStrictEqual } from "node:assert";
+ * import { defineLocaleLevel } from "@thomasfosterau/pulpit/subtype";
+ *
+ * const pages = defineLocaleLevel({ columns: ["title", "body", "slug"] });
+ * deepStrictEqual(pages.columns, ["title", "body", "slug"]);
+ * ```
+ *
+ * @since 0.1.0
+ */
+export const defineLocaleLevel = (declaration: {
+  readonly columns: ReadonlyArray<string>;
+}): LocaleLevel => {
+  if (!Array.isReadonlyArrayNonEmpty(declaration.columns)) {
+    throw new SubtypeDeclarationError({ message: "locales declares no column" });
+  }
+  const repeated = Array.findFirst(declaration.columns, (column, index) =>
+    declaration.columns.slice(0, index).includes(column),
+  );
+  if (Option.isSome(repeated)) {
+    throw new SubtypeDeclarationError({ message: `locales names '${repeated.value}' twice` });
+  }
+  const reserved = Array.findFirst(declaration.columns, (column) =>
+    RESERVED_COLUMNS.includes(column),
+  );
+  if (Option.isSome(reserved)) {
+    throw new SubtypeDeclarationError({
+      message: `locales names '${reserved.value}', which the view keeps for itself`,
+    });
+  }
+  return { columns: [...declaration.columns] };
 };

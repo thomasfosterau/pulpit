@@ -23,7 +23,10 @@
  * - `referenceData` — corpus material: written directly at the corpus-write
  *   rung, proposed by anyone signed in, publicly readable;
  * - `searchable` — a search plane emits it;
- * - `routable` — addressed by a path claim on its root node (`./paths`).
+ * - `routable` — addressed by a path claim on its root node (`./paths`);
+ * - `localised` — carries a locale level in its chain (pulpit#56): its
+ *   translated columns per locale, declared beside the entry with
+ *   `./subtype`'s `defineLocaleLevel`.
  *
  * `owned` and `referenceData` are mutually exclusive — a leaf sits on one
  * side of the trust model or the other, and the subtype factory reads the
@@ -79,6 +82,7 @@ export const RESOURCE_FLAGS = [
   "referenceData",
   "searchable",
   "routable",
+  "localised",
 ] as const;
 
 /**
@@ -119,6 +123,8 @@ export interface RegistryEntry {
   readonly searchable?: true | undefined;
   /** Routable: addressed by a path claim on its root node (`./paths`). */
   readonly routable?: true | undefined;
+  /** Localised: a locale level in its chain, its translated columns per locale (pulpit#56). */
+  readonly localised?: true | undefined;
 }
 /* oxlint-enable effect/prefer-option-over-null */
 
@@ -472,6 +478,7 @@ export interface RegistryWireTypes<Root extends string> {
   readonly referenceData: ReadonlyArray<string>;
   readonly searchable: ReadonlyArray<string>;
   readonly routable: ReadonlyArray<string>;
+  readonly localised: ReadonlyArray<string>;
   readonly branches: { readonly [K in Root]: ReadonlyArray<string> };
 }
 
@@ -511,6 +518,7 @@ export const registryWireTypes = <Root extends string>(
     referenceData: flagged("referenceData"),
     searchable: flagged("searchable"),
     routable: flagged("routable"),
+    localised: flagged("localised"),
     branches,
   };
 };

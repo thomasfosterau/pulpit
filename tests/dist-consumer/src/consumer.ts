@@ -41,8 +41,12 @@ import {
 } from "@thomasfosterau/pulpit/registry";
 import {
   defineVersionChain,
+  diffLocales,
   diffStates,
   type AttributeChange,
+  type LocaleChange,
+  type LocaleDiff,
+  type LocaleStates,
   type ChainState,
   type ChainWrite,
   type NodeAlreadyExists,
@@ -73,6 +77,8 @@ import {
   never,
   noneOf,
   isNull,
+  locale,
+  LOCALE_COLUMN,
   notPublished,
   or,
   published,
@@ -336,8 +342,21 @@ export type _Comparison = Assert<
       readonly from: VersionSnapshot;
       readonly to: VersionSnapshot;
       readonly changes: StateDiff;
+      readonly locales: LocaleDiff;
     }
   >
+>;
+export type _LocaleDiff = Assert<Equals<LocaleDiff, { readonly [locale: string]: LocaleChange }>>;
+export type _LocaleChange = Assert<
+  Equals<
+    LocaleChange,
+    | { readonly _tag: "added"; readonly after: ChainState }
+    | { readonly _tag: "removed"; readonly before: ChainState }
+    | { readonly _tag: "changed"; readonly changes: StateDiff }
+  >
+>;
+export type _DiffLocales = Assert<
+  Equals<typeof diffLocales, (from: LocaleStates, to: LocaleStates) => LocaleDiff>
 >;
 
 // ── filter + subtype ─────────────────────────────────────────────────────
@@ -374,10 +393,23 @@ export type _ListFilterKind = Assert<
     | "isNull"
     | "published"
     | "notPublished"
+    | "locale"
     | "and"
     | "or"
   >
 >;
+export type _ListFilterLocale = Assert<
+  Equals<
+    Arm<"locale">,
+    {
+      readonly kind: "locale";
+      readonly column: string;
+      readonly locales: ReadonlyArray<string>;
+    }
+  >
+>;
+export type _LocaleColumn = Assert<Equals<typeof LOCALE_COLUMN, "locale">>;
+export const localeFilter: ListFilter<Subquery> = locale(["en"]);
 export type _ListFilterEq = Assert<
   Equals<Arm<"eq">, { readonly kind: "eq"; readonly column: string; readonly value: Scalar }>
 >;

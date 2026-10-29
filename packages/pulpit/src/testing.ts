@@ -67,7 +67,13 @@ import {
   type EdgeValues,
   type EndpointView,
 } from "./edges.ts";
-import { evaluate, type EvaluationContext, type FilterRow, type ListFilter } from "./filter.ts";
+import {
+  evaluate,
+  LOCALE_COLUMN,
+  type EvaluationContext,
+  type FilterRow,
+  type ListFilter,
+} from "./filter.ts";
 import { rowOrder } from "./internal/list-order.ts";
 import type { ErasedReferences, PurgeStore } from "./purge.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
@@ -85,8 +91,10 @@ import type {
   ResourceCacheSeam,
 } from "./subtype.ts";
 import {
+  localesOf,
   VersionConflict,
   type ColumnValue,
+  type LocaleStates,
   type VersionChainEntry,
   type VersionChainStore,
   type VersionRow,
@@ -117,6 +125,28 @@ const contextAt = (now: Date): EvaluationContext<InMemoryFollowing> => ({
   now,
   contains: (set, value: ColumnValue) => Predicate.isString(value) && HashSet.has(set, value),
 });
+
+/**
+ * A node's rows in a localised view (pulpit#56): one per locale its version
+ * carries, the locale's columns over the shared row and the tag in
+ * {@link LOCALE_COLUMN}; a version carrying none is its shared row alone,
+ * the `NULL`-locale row a left join gives.
+ */
+const localeRows = (row: LeafRow, locales: LocaleStates): ReadonlyArray<LeafRow> =>
+  Record.isEmptyRecord(locales)
+    ? [row]
+    : Arr.map(Record.toEntries(locales), ([tag, columns]): LeafRow => ({
+        ...row,
+        ...columns,
+        [LOCALE_COLUMN]: tag,
+      }));
+
+/** The locale level of `id` at `version` in an in-memory chain, `{}` for none. */
+const localesAt = (chain: InMemoryChainStore, id: string, version: bigint): LocaleStates =>
+  Option.match(
+    Arr.findFirst(chain.rows(), (row) => row.id === id && row.version === version),
+    { onNone: () => ({}), onSome: localesOf },
+  );
 
 /** A view page: the rows matching `where` at `now`, in the list order contract's order. */
 const viewPage = (
@@ -227,7 +257,10 @@ export const makeInMemoryChainStore = (): InMemoryChainStore => {
           ? Option.none()
           : Option.map(
               Arr.findFirst(chain(id), (candidate) => candidate.version === version),
-              (row): VersionSnapshot => ({ ...entryOf(row), state: row.state }),
+              (row): VersionSnapshot =>
+                row.locales === undefined
+                  ? { ...entryOf(row), state: row.state }
+                  : { ...entryOf(row), state: row.state, locales: row.locales },
             ),
       ),
     append: (row) =>
@@ -282,6 +315,13 @@ export interface InMemoryLeafStore extends LeafStore<LeafRow, InMemoryFollowing,
 export interface InMemoryLeafStoreOptions {
   /** The view's leaf columns; `id`, `action` and `ownerId` are always in its `columns`. */
   readonly columns: ReadonlyArray<string>;
+  /**
+   * A localised leaf's view (pulpit#56): its `columns` gain
+   * {@link LOCALE_COLUMN}, and `list` reads one row per `(id, locale)`.
+   * `get` / `getMany` read the shared row either way.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is an unlocalised view
+  readonly localised?: boolean | undefined;
   /** The instant `published` / `notPublished` compare against; the Effect `Clock`'s at each `list` when absent. */
   // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option`
   readonly now?: Date | undefined;
@@ -326,10 +366,26 @@ export const makeInMemoryLeafStore = (
     );
   return {
     // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is the native `ReadonlySet` `LeafStore.columns` names
-    columns: new Set(["id", "version", "action", "ownerId", ...options.columns]),
+    columns: new Set([
+      "id",
+      "version",
+      "action",
+      "ownerId",
+      ...options.columns,
+      ...(options.localised === true ? [LOCALE_COLUMN] : []),
+    ]),
     get: (id) => Effect.sync(() => Arr.findFirst(view(), (row) => row.id === id)),
     getMany: (ids) => Effect.sync(() => view().filter((row) => ids.includes(row.id))),
-    list: (query) => Effect.map(instantOf(fixedNow), (now) => viewPage(view(), query, now)),
+    list: (query) =>
+      Effect.map(instantOf(fixedNow), (now) =>
+        viewPage(
+          options.localised === true
+            ? Arr.flatMap(view(), (row) => localeRows(row, localesAt(chain, row.id, row.version)))
+            : view(),
+          query,
+          now,
+        ),
+      ),
     ownerOf: (id) => Effect.sync(() => HashMap.get(owners, id)),
     stampOwner: (id, ownerId) =>
       Effect.sync(() => {
@@ -1048,6 +1104,10 @@ export const makeInMemoryPublication = (options: {
   readonly now?: Date | undefined;
 }): InMemoryPublication => {
   const fixedNow = Option.fromNullishOr(options.now);
+  const localised = options.leaves.columns.has(LOCALE_COLUMN);
+  /** A row as a localised view lists it: one per locale its version carries. */
+  const listed = (row: LeafRow): ReadonlyArray<LeafRow> =>
+    localised ? localeRows(row, localesAt(options.chain, row.id, row.version)) : [row];
   let log: ReadonlyArray<PublicationFact> = [];
   const effectiveAt = (id: string, now: Date) =>
     Arr.findLast(log, (fact) => fact.id === id && fact.at.getTime() <= now.getTime());
@@ -1108,12 +1168,15 @@ export const makeInMemoryPublication = (options: {
       atNow((now) =>
         Effect.map(heads(), (rows) =>
           viewPage(
-            Arr.getSomes(
-              Arr.map(rows, (head) =>
-                evaluate(query.headFor, head, contextAt(now))
-                  ? Option.some(headOf(head, now))
-                  : liveOf(head, now),
+            Arr.flatMap(
+              Arr.getSomes(
+                Arr.map(rows, (head) =>
+                  evaluate(query.headFor, head, contextAt(now))
+                    ? Option.some(headOf(head, now))
+                    : liveOf(head, now),
+                ),
               ),
+              listed,
             ),
             query,
             now,
@@ -1135,7 +1198,7 @@ export const makeInMemoryPublication = (options: {
       atNow((now) =>
         Effect.map(heads(), (rows) =>
           viewPage(
-            Arr.map(rows, (row) => headOf(row, now)),
+            Arr.flatMap(rows, (row) => listed(headOf(row, now))),
             query,
             now,
           ),

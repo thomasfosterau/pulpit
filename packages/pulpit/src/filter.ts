@@ -32,6 +32,7 @@
  * | `isNull` | `col IS NULL` — the one node a `NULL` column satisfies by itself |
  * | `published` | `(col IS NOT NULL AND col <= now())` — the database's clock, one per query |
  * | `notPublished` | `(col IS NULL OR col > now())` — parenthesised, so it cannot bind to a surrounding `AND` |
+ * | `locale` | `col = ANY($locales)` over the view's locale column (pulpit#56) — as `anyOf`; on a view with no locale level, `never` |
  * | `and` / `or` | `AND` / `OR` over the parts |
  *
  * An `anyOf` / `noneOf` node carrying more than {@link MAX_SET_VALUES} values,
@@ -126,6 +127,7 @@ export type ListFilter<Following> =
   | { readonly kind: "isNull"; readonly column: string }
   | { readonly kind: "published"; readonly column: string }
   | { readonly kind: "notPublished"; readonly column: string }
+  | { readonly kind: "locale"; readonly column: string; readonly locales: ReadonlyArray<string> }
   | { readonly kind: "and"; readonly filters: ReadonlyArray<ListFilter<Following>> }
   | { readonly kind: "or"; readonly filters: ReadonlyArray<ListFilter<Following>> };
 
@@ -278,6 +280,41 @@ export const published = (column: string) => ({ kind: "published", column }) as 
  * @since 0.1.0
  */
 export const notPublished = (column: string) => ({ kind: "notPublished", column }) as const;
+
+/**
+ * The column a localised leaf's current-version view keys its locale level
+ * by (pulpit#56): one view row per `(id, locale)` the head carries, the
+ * shared columns joined in, and a node carrying no locale as one row whose
+ * `locale` is `NULL`. No leaf column may take the name.
+ *
+ * @since 0.1.0
+ */
+export const LOCALE_COLUMN = "locale";
+
+/**
+ * The locale arm (pulpit#56): the view rows in one of `locales`, read from
+ * the view's {@link LOCALE_COLUMN} as {@link anyOf} reads its column. A row
+ * carrying no locale (a `NULL` locale), and every row of a view with no
+ * locale level, is in none. No locales is {@link never}, and so are more than
+ * {@link MAX_SET_VALUES} (`SEC-INPUT-003`).
+ *
+ * @example
+ * ```ts
+ * import { strictEqual } from "node:assert";
+ * import { evaluate, locale } from "@thomasfosterau/pulpit/filter";
+ *
+ * const context = { now: new Date(0), contains: () => false };
+ * strictEqual(evaluate(locale(["fr", "en"]), { id: "a", locale: "fr" }, context), true);
+ * strictEqual(evaluate(locale(["fr", "en"]), { id: "a", locale: "de" }, context), false);
+ * strictEqual(evaluate(locale(["fr"]), { id: "a" }, context), false);
+ * ```
+ *
+ * @since 0.1.0
+ */
+export const locale = (locales: ReadonlyArray<string>) =>
+  Array.isReadonlyArrayEmpty(locales) || locales.length > MAX_SET_VALUES
+    ? never
+    : ({ kind: "locale", column: LOCALE_COLUMN, locales: [...locales] } as const);
 
 /** No parts → the identity; one part → that part, bare; more → the combined node. */
 const collapse = <Following>(
@@ -440,6 +477,14 @@ export const evaluate = <Following>(
       isNull: (node) => (row[node.column] ?? null) === null,
       published: (node) => arrived(node.column),
       notPublished: (node) => !arrived(node.column),
+      locale: (node) => {
+        const value = row[node.column] ?? null;
+        return (
+          node.locales.length <= MAX_SET_VALUES &&
+          Predicate.isString(value) &&
+          node.locales.includes(value)
+        );
+      },
       and: (node) => node.filters.every((part) => evaluate(part, row, context)),
       or: (node) => node.filters.some((part) => evaluate(part, row, context)),
     }),

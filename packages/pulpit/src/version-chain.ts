@@ -118,6 +118,30 @@ export type ChainState = { readonly [column: string]: ColumnValue };
 export type ChainPatch = { readonly [column: string]: ColumnValue | undefined };
 
 /**
+ * A localised leaf's locale level at one version (pulpit#56, model (b)): each
+ * locale the version carries, keyed by its tag (`"en"`, `"fr-CA"`), and that
+ * locale's translated columns. The node's shared (untranslated) columns stay
+ * in its {@link ChainState}; a translated column lives here only. A store
+ * keeps it as the locale level's fact rows, keyed `(id, version, locale)`.
+ * A version that carries no locale has none; an absent `locales` and `{}`
+ * mean the same.
+ *
+ * @since 0.1.0
+ */
+export type LocaleStates = { readonly [locale: string]: ChainState };
+
+/**
+ * A tri-state patch over a {@link LocaleStates}, per locale: a
+ * {@link ChainPatch} updates that locale's columns (starting from none for a
+ * locale the version did not carry), `null` drops the locale, and an absent
+ * or `undefined` key carries it forward unchanged.
+ *
+ * @since 0.1.0
+ */
+// oxlint-disable-next-line effect/prefer-option-over-null -- the tri-state rule, one level up: `null` drops a locale and `undefined` carries it forward, as a decoded update input says it
+export type LocalePatch = { readonly [locale: string]: ChainPatch | null | undefined };
+
+/**
  * One entry in a node's append-only version chain.
  *
  * @since 0.1.0
@@ -137,7 +161,15 @@ export interface VersionChainEntry {
  * @since 0.1.0
  */
 export interface VersionSnapshot extends VersionChainEntry {
+  /** The shared (untranslated) columns, or every column of a leaf with no locale level. */
   readonly state: ChainState;
+  /**
+   * A localised leaf's locale level at this version (pulpit#56); absent, the
+   * version carries no locale. A store reconstructs it with the rest of the
+   * snapshot, or reports the version absent.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no locale", the same as `{}`
+  readonly locales?: LocaleStates | undefined;
 }
 
 /**
@@ -272,6 +304,8 @@ export interface VersionChainStore<E, R> {
    * The full state at `(id, version)`, or none when the version does not
    * exist OR any level of the chain has no row there — a version that cannot
    * be fully reconstructed is reported as absent, never as a partial state.
+   * On a localised leaf the snapshot carries its locale level too: every
+   * `(id, version, locale)` fact row, as `locales` (pulpit#56).
    */
   readonly snapshot: (
     id: string,
@@ -279,7 +313,7 @@ export interface VersionChainStore<E, R> {
   ) => Effect.Effect<Option.Option<VersionSnapshot>, E, R>;
   /**
    * Append one version row — at version 0 together with the node's identity
-   * row. Fails {@link VersionConflict} when `(id, version)` already exists
+   * row, and one locale-level row per locale `row.locales` carries. Fails {@link VersionConflict} when `(id, version)` already exists
    * (at version 0: the id already belongs to a node).
    */
   readonly append: (row: VersionRow) => Effect.Effect<void, E | VersionConflict, R>;
@@ -310,6 +344,46 @@ export const applyPatch = (state: ChainState, patch: ChainPatch) => ({
   ...state,
   ...Record.filter(patch, (value): value is ColumnValue => value !== undefined),
 });
+
+/**
+ * Apply a {@link LocalePatch} to a locale level: a patch updates its locale
+ * (from nothing for a locale `locales` lacks) with {@link applyPatch}, `null`
+ * drops the locale, `undefined` carries it forward. Pure and total.
+ *
+ * @example
+ * ```ts
+ * import { deepStrictEqual } from "node:assert";
+ * import { applyLocalePatch } from "@thomasfosterau/pulpit/version-chain";
+ *
+ * const before = { en: { title: "Hello" }, fr: { title: "Bonjour" } };
+ * deepStrictEqual(applyLocalePatch(before, { en: { title: "Hi" }, fr: null, de: { title: "Hallo" } }), {
+ *   en: { title: "Hi" },
+ *   de: { title: "Hallo" },
+ * });
+ * ```
+ *
+ * @since 0.1.0
+ */
+export const applyLocalePatch = (locales: LocaleStates, patch: LocalePatch): LocaleStates =>
+  Record.reduce(patch, locales, (acc, change, locale) => {
+    if (change === undefined) return acc;
+    if (change === null) return Record.remove(acc, locale);
+    return {
+      ...acc,
+      [locale]: applyPatch(
+        Option.getOrElse(Record.get(acc, locale), () => ({})),
+        change,
+      ),
+    };
+  });
+
+/**
+ * The locale level a snapshot carries, `{}` for none.
+ *
+ * @since 0.1.0
+ */
+export const localesOf = (snapshot: Pick<VersionSnapshot, "locales">): LocaleStates =>
+  snapshot.locales ?? {};
 
 // ── Version compare ───────────────────────────────────────────────────
 
@@ -383,6 +457,75 @@ export const diffStates = (from: ChainState, to: ChainState): StateDiff =>
   );
 
 /**
+ * How one locale differs between two versions' locale levels, read from the
+ * first to the second: `added` (the second carries it, the first did not,
+ * with its columns), `removed` (the reverse) or `changed` (both carry it, and
+ * its columns differ: their {@link StateDiff}).
+ *
+ * @since 0.1.0
+ */
+export type LocaleChange =
+  | { readonly _tag: "added"; readonly after: ChainState }
+  | { readonly _tag: "removed"; readonly before: ChainState }
+  | { readonly _tag: "changed"; readonly changes: StateDiff };
+
+/**
+ * The per-locale change set between two locale levels, keyed by locale: one
+ * {@link LocaleChange} per locale that differs. An unchanged locale has no
+ * key.
+ *
+ * @since 0.1.0
+ */
+export type LocaleDiff = { readonly [locale: string]: LocaleChange };
+
+/** One locale's change, or none when both sides carry it with equal columns (or neither does). */
+const localeChangeOf = (
+  before: Option.Option<ChainState>,
+  after: Option.Option<ChainState>,
+): Option.Option<LocaleChange> => {
+  if (Option.isNone(before)) {
+    return Option.map(after, (state): LocaleChange => ({ _tag: "added", after: state }));
+  }
+  if (Option.isNone(after)) return Option.some({ _tag: "removed", before: before.value });
+  const changes = diffStates(before.value, after.value);
+  return Record.isEmptyRecord(changes) ? Option.none() : Option.some({ _tag: "changed", changes });
+};
+
+/**
+ * The per-locale change set from locale level `from` to locale level `to`
+ * (pulpit#56): every locale added, removed, or whose columns changed by
+ * {@link diffStates}; an unchanged locale is omitted. Pure and total.
+ *
+ * @example
+ * ```ts
+ * import { deepStrictEqual } from "node:assert";
+ * import { diffLocales } from "@thomasfosterau/pulpit/version-chain";
+ *
+ * deepStrictEqual(
+ *   diffLocales({ en: { title: "Hello" }, fr: { title: "Bonjour" } }, { en: { title: "Hi" }, de: { title: "Hallo" } }),
+ *   {
+ *     en: { _tag: "changed", changes: { title: { _tag: "changed", before: "Hello", after: "Hi" } } },
+ *     fr: { _tag: "removed", before: { title: "Bonjour" } },
+ *     de: { _tag: "added", after: { title: "Hallo" } },
+ *   },
+ * );
+ * ```
+ *
+ * @since 0.1.0
+ */
+export const diffLocales = (from: LocaleStates, to: LocaleStates): LocaleDiff =>
+  Record.fromEntries(
+    Array.flatMap(Array.dedupe([...Record.keys(from), ...Record.keys(to)]), (locale) =>
+      Array.fromOption(
+        Option.map(
+          localeChangeOf(Record.get(from, locale), Record.get(to, locale)),
+          (change) => [locale, change] as const,
+        ),
+      ),
+    ),
+  );
+
+/**
  * What {@link VersionChainOps.compare} returns: both versions as read
  * (entry and full state) and the {@link StateDiff} from the first to the
  * second.
@@ -400,8 +543,15 @@ export interface VersionComparison {
   readonly from: VersionSnapshot;
   /** The version compared to, with its state. */
   readonly to: VersionSnapshot;
-  /** `diffStates(from.state, to.state)`. */
+  /** `diffStates(from.state, to.state)`: the shared columns. */
   readonly changes: StateDiff;
+  /**
+   * `diffLocales` over the two versions' locale levels (pulpit#56): the
+   * per-locale changes, `{}` for a leaf with no locale level. Kept beside
+   * `changes` rather than inside it, since a column may itself be named
+   * `locales`.
+   */
+  readonly locales: LocaleDiff;
 }
 
 /**
@@ -413,8 +563,11 @@ export interface VersionComparison {
 export interface CreateInput {
   /** A caller-supplied node id (client-generated ids); minted by the store when absent. */
   readonly id: Option.Option<string>;
-  /** The leaf's full state at version 0. */
+  /** The leaf's full state at version 0: its shared columns, on a localised leaf. */
   readonly state: ChainState;
+  /** A localised leaf's locale level at version 0 (pulpit#56); absent, none. */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no locale"
+  readonly locales?: LocaleStates | undefined;
   /** The acting account, recorded on the version row; none for a write with no session behind it. */
   readonly actorId: Option.Option<string>;
 }
@@ -454,6 +607,13 @@ export interface UpdateInput extends Precondition {
    * an absent key carries forward.
    */
   readonly patch: ChainPatch;
+  /**
+   * A localised leaf's per-locale patch ({@link LocalePatch}, pulpit#56):
+   * absent, every locale carries forward. Even a write that touches one
+   * locale appends one version of the whole node.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key carries every locale forward
+  readonly locales?: LocalePatch | undefined;
   /** The acting account, recorded on the version row; none for a write with no session behind it. */
   readonly actorId: Option.Option<string>;
   /**
@@ -597,6 +757,13 @@ export type WriteAction = typeof WriteAction.Type;
  * The version written is the hook's patch applied to `prior`'s state (to
  * nothing for `create` and `restoreVersion`, whose patch is the whole state).
  *
+ * On a localised leaf (pulpit#56) `locales` is the write's locale patch, in
+ * the same reading: the whole locale level for `create` and
+ * `restoreVersion`, the caller's {@link LocalePatch} for `update` /
+ * `restore`, `{}` for `delete`. `beforeAppend`'s patch is the shared
+ * columns' alone; `beforeAppendLocales` returns the locale patch the write
+ * applies (see {@link ChainHooks}).
+ *
  * @since 0.1.0
  */
 export interface ChainAppendEvent {
@@ -605,6 +772,9 @@ export interface ChainAppendEvent {
   /** The head the append extends (its full state), or none for a create. */
   readonly prior: Option.Option<VersionSnapshot>;
   readonly patch: ChainPatch;
+  /** The write's locale patch (see above); absent or `{}`, every locale carries forward. */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key carries every locale forward
+  readonly locales?: LocalePatch | undefined;
   /** The acting account the row will record. */
   readonly actorId: Option.Option<string>;
 }
@@ -626,10 +796,23 @@ export interface ChainHooks<E, R> {
   readonly beforeAppend?:
     | ((event: ChainAppendEvent) => Effect.Effect<ChainPatch, E, R>)
     | undefined;
+  /**
+   * The locale level's counterpart of `beforeAppend` (pulpit#56): runs at the
+   * same point, shown the same event, and its {@link LocalePatch} replaces
+   * the event's `locales`, so a hook that validates or transforms a column
+   * does so in every locale too. Absent, the event's locale patch is applied
+   * as given.
+   */
+  readonly beforeAppendLocales?:
+    | ((event: ChainAppendEvent) => Effect.Effect<LocalePatch, E, R>)
+    | undefined;
   /* oxlint-enable effect/prefer-option-over-null */
 }
 
 const isVersionConflict = Schema.is(VersionConflict);
+
+/** What a write stores: the shared state and, when it carries any locale, the locale level. */
+type Written = Pick<VersionSnapshot, "state" | "locales">;
 
 /** The write clock: the current instant, as the `Date` a version row stores. */
 const now: Effect.Effect<Date> = Effect.map(Clock.currentTimeMillis, (millis) =>
@@ -649,16 +832,26 @@ export const defineVersionChain = <E, R>(
   store: VersionChainStore<E, R>,
   hooks: ChainHooks<E, R> = {},
 ): VersionChainOps<E, R> => {
-  const { beforeAppend } = hooks;
+  const { beforeAppend, beforeAppendLocales } = hooks;
 
   /**
    * The state a write stores: the hook's patch (or the caller's, without a
    * hook) over `base`, the prior state or nothing.
    */
-  const nextState = (event: ChainAppendEvent, base: ChainState): Effect.Effect<ChainState, E, R> =>
-    beforeAppend === undefined
-      ? Effect.succeed(applyPatch(base, event.patch))
-      : Effect.map(beforeAppend(event), (patch) => applyPatch(base, patch));
+  const nextState = (
+    event: ChainAppendEvent,
+    base: Pick<VersionSnapshot, "state" | "locales">,
+  ): Effect.Effect<Written, E, R> =>
+    Effect.gen(function* () {
+      const patch = beforeAppend === undefined ? event.patch : yield* beforeAppend(event);
+      const localePatch =
+        beforeAppendLocales === undefined
+          ? (event.locales ?? {})
+          : yield* beforeAppendLocales(event);
+      const state = applyPatch(base.state, patch);
+      const locales = applyLocalePatch(localesOf(base), localePatch);
+      return Record.isEmptyRecord(locales) ? { state } : { state, locales };
+    });
 
   /**
    * Append at `previous + 1`, after checking the precondition against that
@@ -671,7 +864,7 @@ export const defineVersionChain = <E, R>(
     id: string,
     previous: VersionChainEntry,
     action: VersionAction,
-    state: ChainState,
+    content: Written,
     actorId: Option.Option<string>,
     precondition: Precondition,
     proposedBy: Option.Option<string> = Option.none(),
@@ -683,7 +876,16 @@ export const defineVersionChain = <E, R>(
       }
       const version = previous.version + 1n;
       const timestamp = yield* now;
-      yield* store.append({ id, type, version, action, timestamp, state, actorId, proposedBy });
+      yield* store.append({
+        id,
+        type,
+        version,
+        action,
+        timestamp,
+        ...content,
+        actorId,
+        proposedBy,
+      });
       return { id, version };
     });
 
@@ -704,16 +906,25 @@ export const defineVersionChain = <E, R>(
    * (`restoreVersion` otherwise needs the head entry alone).
    */
   const hookPrior = (id: string) =>
-    beforeAppend === undefined ? Effect.succeed(Option.none<VersionSnapshot>()) : current(id);
+    beforeAppend === undefined && beforeAppendLocales === undefined
+      ? Effect.succeed(Option.none<VersionSnapshot>())
+      : current(id);
 
   const create = Effect.fn(`${type}.create`)(function* (input: CreateInput) {
     const id = Option.isSome(input.id) ? input.id.value : yield* store.mintId;
     if (Option.isSome(input.id) && Option.isSome(yield* store.head(id))) {
       return yield* new NodeAlreadyExists({ type, id });
     }
-    const state = yield* nextState(
-      { action: "create", id, prior: Option.none(), patch: input.state, actorId: input.actorId },
-      {},
+    const content = yield* nextState(
+      {
+        action: "create",
+        id,
+        prior: Option.none(),
+        patch: input.state,
+        locales: input.locales ?? {},
+        actorId: input.actorId,
+      },
+      { state: {} },
     );
     const timestamp = yield* now;
     yield* store
@@ -723,7 +934,7 @@ export const defineVersionChain = <E, R>(
         version: 0n,
         action: "create",
         timestamp,
-        state,
+        ...content,
         actorId: input.actorId,
         proposedBy: Option.none(),
       })
@@ -745,21 +956,22 @@ export const defineVersionChain = <E, R>(
       if (Option.isNone(head) || (head.value.action === "delete" && !allowDeleted)) {
         return yield* new NodeNotFound({ type, id: input.id });
       }
-      const state = yield* nextState(
+      const content = yield* nextState(
         {
           action: allowDeleted ? "restore" : "update",
           id: input.id,
           prior: head,
           patch: input.patch,
+          locales: input.locales ?? {},
           actorId: input.actorId,
         },
-        head.value.state,
+        head.value,
       );
       return yield* appendNext(
         input.id,
         head.value,
         "update",
-        state,
+        content,
         input.actorId,
         input,
         input.proposedBy,
@@ -784,11 +996,11 @@ export const defineVersionChain = <E, R>(
     if (head.value.action === "delete") {
       return { id, version: head.value.version, alreadyDeleted: true };
     }
-    const state = yield* nextState(
+    const content = yield* nextState(
       { action: "delete", id, prior: head, patch: {}, actorId },
-      head.value.state,
+      head.value,
     );
-    const written = yield* appendNext(id, head.value, "delete", state, actorId, precondition);
+    const written = yield* appendNext(id, head.value, "delete", content, actorId, precondition);
     return { ...written, alreadyDeleted: false };
   });
 
@@ -801,7 +1013,12 @@ export const defineVersionChain = <E, R>(
   const compare = Effect.fn(`${type}.compare`)(function* (id: string, from: bigint, to: bigint) {
     const before = yield* getVersion(id, from);
     const after = yield* getVersion(id, to);
-    return { from: before, to: after, changes: diffStates(before.state, after.state) };
+    return {
+      from: before,
+      to: after,
+      changes: diffStates(before.state, after.state),
+      locales: diffLocales(localesOf(before), localesOf(after)),
+    };
   });
 
   const restoreVersion = Effect.fn(`${type}.restoreVersion`)(function* (
@@ -817,14 +1034,23 @@ export const defineVersionChain = <E, R>(
     const prior = yield* hookPrior(id);
     const head = Option.isSome(prior) ? prior : yield* store.head(id);
     if (Option.isNone(head)) return yield* new VersionNotFound({ type, id, version });
-    const state = yield* nextState(
-      { action: "restoreVersion", id, prior, patch: snapshot.value.state, actorId },
-      {},
+    // Every locale is restored together with the shared columns: the
+    // locale patch is the whole historical level, over nothing.
+    const content = yield* nextState(
+      {
+        action: "restoreVersion",
+        id,
+        prior,
+        patch: snapshot.value.state,
+        locales: localesOf(snapshot.value),
+        actorId,
+      },
+      { state: {} },
     );
     // `update`, not a fourth action: a restore is an ordinary edit whose
     // content came from history, and `action` stays the currency / tombstone
     // axis every fail-closed view reads (#864 A8).
-    return yield* appendNext(id, head.value, "update", state, actorId, precondition);
+    return yield* appendNext(id, head.value, "update", content, actorId, precondition);
   });
 
   const history = Effect.fn(`${type}.history`)(function* (
