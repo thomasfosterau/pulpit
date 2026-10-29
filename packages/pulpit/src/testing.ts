@@ -85,6 +85,7 @@ import {
 } from "./search.ts";
 import type { ReactionRow, ReactionStore } from "./reactions.ts";
 import type { KvEntry, VersionedKv } from "./cache.ts";
+import type { CollectionEntry, CollectionStore } from "./collections.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
 import type { ReportRow, ReportStore } from "./moderation.ts";
 import type { ProposalListing, ProposalRow, ProposalStore } from "./proposals.ts";
@@ -1731,5 +1732,46 @@ export const makeInMemoryVersionedKv = (): InMemoryVersionedKv => {
     poke: (key, entry) => {
       entries = HashMap.set(entries, key, { ...entry, expiresAt: Number.POSITIVE_INFINITY });
     },
+  };
+};
+
+// ── Ordered collections (pulpit#193) ─────────────────────────────────
+
+/**
+ * {@link makeInMemoryCollectionStore}'s fake: the seam plus a test hook.
+ *
+ * @since 0.1.0
+ */
+export interface InMemoryCollectionStore extends CollectionStore<never, never> {
+  /** Every parent's entries, as stored. */
+  readonly rows: () => HashMap.HashMap<string, ReadonlyArray<CollectionEntry>>;
+}
+
+/**
+ * An in-memory {@link CollectionStore}: each parent's entries, replaced
+ * whole, read back by position then member id. In memory only; not for
+ * production.
+ *
+ * @since 0.1.0
+ */
+export const makeInMemoryCollectionStore = (): InMemoryCollectionStore => {
+  let byParent = HashMap.empty<string, ReadonlyArray<CollectionEntry>>();
+  const entryOrder = Order.combine(
+    Order.mapInput(Order.Number, (entry: CollectionEntry) => entry.position),
+    Order.mapInput(byCodePoint, (entry: CollectionEntry) => entry.memberId),
+  );
+  return {
+    entries: (parentId, limit) =>
+      Effect.sync(() =>
+        Arr.take(
+          Arr.sort(Option.getOrElse(HashMap.get(byParent, parentId), Arr.empty), entryOrder),
+          Math.max(0, limit),
+        ),
+      ),
+    replace: (parentId, entries) =>
+      Effect.sync(() => {
+        byParent = HashMap.set(byParent, parentId, [...entries]);
+      }),
+    rows: () => byParent,
   };
 };

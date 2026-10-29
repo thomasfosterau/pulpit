@@ -46,6 +46,7 @@
     "./proposals": "./src/proposals.ts",
     "./blobs": "./src/blobs.ts",
     "./paths": "./src/paths.ts",
+    "./collections": "./src/collections.ts",
     "./moderation": "./src/moderation.ts",
     "./working-copy": "./src/working-copy.ts",
     "./comments": "./src/comments.ts",
@@ -108,6 +109,10 @@
       "./paths": {
         "types": "./dist/paths.d.ts",
         "default": "./dist/paths.js"
+      },
+      "./collections": {
+        "types": "./dist/collections.d.ts",
+        "default": "./dist/collections.js"
       },
       "./moderation": {
         "types": "./dist/moderation.d.ts",
