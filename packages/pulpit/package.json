@@ -50,6 +50,7 @@
     "./comments": "./src/comments.ts",
     "./purge": "./src/purge.ts",
     "./search": "./src/search.ts",
+    "./budgets": "./src/budgets.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -121,6 +122,10 @@
       "./search": {
         "types": "./dist/search.d.ts",
         "default": "./dist/search.js"
+      },
+      "./budgets": {
+        "types": "./dist/budgets.d.ts",
+        "default": "./dist/budgets.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",

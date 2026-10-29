@@ -58,6 +58,7 @@ import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import { sha256Hex, type BlobHead, type BlobStore } from "./blobs.ts";
+import type { BudgetCounter, BudgetRequest, WriteCountStore } from "./budgets.ts";
 import { canonicalText, type DocumentHash, type DocumentStore } from "./documents.ts";
 import {
   endpointColumn,
@@ -1517,5 +1518,96 @@ export const makeInMemoryEmbeddingStore = (): InMemoryEmbeddingStore => {
     discard: (hashes) => Effect.sync(() => dequeue(hashes)),
     queued: () => queue,
     vectors: () => vectors,
+  };
+};
+
+// ── Write budgets ─────────────────────────────────────────────────────
+
+/**
+ * One write {@link makeInMemoryWriteCountStore} has recorded.
+ *
+ * @since 0.1.0
+ */
+export interface RecordedWrite {
+  readonly type: string;
+  readonly action: string;
+  readonly accountId: string;
+  readonly at: Date;
+}
+
+type BudgetKey = Pick<RecordedWrite, "type" | "action" | "accountId">;
+const sameBudgetKey = (left: BudgetKey, right: BudgetKey) =>
+  left.type === right.type && left.action === right.action && left.accountId === right.accountId;
+
+/**
+ * An in-memory atomic {@link BudgetCounter}, plus the hook a test reads it
+ * through. In memory only; not for production.
+ *
+ * @since 0.1.0
+ */
+export interface InMemoryBudgetCounter extends BudgetCounter<never, never> {
+  /** Every spend it admitted, in order. */
+  readonly spends: () => ReadonlyArray<BudgetRequest>;
+}
+
+/**
+ * An in-memory atomic {@link BudgetCounter} (README → Seams →
+ * `BudgetCounter`): it counts the spends it admitted at or after the
+ * request's `since`, and records a spend only when it answers `true`. One
+ * JavaScript thread makes its check-and-record atomic. In memory only; not
+ * for production.
+ *
+ * @since 0.1.0
+ */
+export const makeInMemoryBudgetCounter = (): InMemoryBudgetCounter => {
+  let spends: ReadonlyArray<BudgetRequest> = [];
+  return {
+    take: (request) =>
+      Effect.sync(() => {
+        const used = Arr.filter(
+          spends,
+          (spend) =>
+            sameBudgetKey(spend, request) && spend.now.getTime() >= request.since.getTime(),
+        ).length;
+        if (used >= request.limit) return false;
+        spends = [...spends, request];
+        return true;
+      }),
+    spends: () => spends,
+  };
+};
+
+/**
+ * An in-memory {@link WriteCountStore}, plus `record`, the row a write
+ * inserts. In memory only; not for production.
+ *
+ * @since 0.1.0
+ */
+export interface InMemoryWriteCountStore extends WriteCountStore<never, never> {
+  /** Record one write, as the family's own row would. */
+  readonly record: (write: RecordedWrite) => void;
+}
+
+/**
+ * An in-memory {@link WriteCountStore} (README → Seams →
+ * `WriteCountStore`): `countSince` counts the recorded writes of the key at
+ * or after `since`. In memory only; not for production.
+ *
+ * @since 0.1.0
+ */
+export const makeInMemoryWriteCountStore = (): InMemoryWriteCountStore => {
+  let writes: ReadonlyArray<RecordedWrite> = [];
+  return {
+    countSince: (query) =>
+      Effect.sync(
+        () =>
+          Arr.filter(
+            writes,
+            (write) => sameBudgetKey(write, query) && write.at.getTime() >= query.since.getTime(),
+          ).length,
+      ),
+    record: (write) => {
+      writes = [...writes, write];
+    },
   };
 };
