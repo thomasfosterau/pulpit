@@ -90,7 +90,11 @@ import {
   and,
   anyOf,
   eq,
+  gt,
   isIn,
+  isNull,
+  lt,
+  lte,
   isNotIn,
   MAX_SET_VALUES,
   never,
@@ -472,6 +476,14 @@ export interface EdgeStore<Row extends EdgeRow, Following, E, R> {
   /** Hard-delete the edge; whether a row went. */
   readonly delete: (id: string) => Effect.Effect<boolean, E, R>;
   /**
+   * Set the edge's validity end column to `to` and update nothing else
+   * (pulpit#210, `EDGE-002`): `UPDATE … SET <column> = $to WHERE id = $id
+   * RETURNING id`; whether a row was updated. Required only by a family that
+   * declares {@link EdgeDefinition.validity}.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); a family without validity never calls it
+  readonly closeValidity?: CloseValidity<E, R> | undefined;
+  /**
    * The node ids at `column` of the stored edges whose `otherColumn` is one
    * of `ids` and that satisfy `where`, over the same joins as
    * {@link EdgeStore.list}, as the follower seam's `Following` (pulpit#113):
@@ -539,7 +551,116 @@ export interface EdgeDefinition<Create, Row extends EdgeRow, Resource, Following
   /** The write gate; {@link corpusWriteGate} when absent. */
   // oxlint-disable-next-line effect/prefer-option-over-null -- the optional-field convention (AGENTS.md → Conventions); absent is the default `corpusWriteGate`
   readonly writeGate?: EdgeWriteGate<E, R> | undefined;
+  /**
+   * The family's validity interval (pulpit#210): the edge columns holding
+   * when it starts and ends to hold (each a `Date`, or `NULL` for open).
+   * With it, a create checks `from ≤ to`, `maxEdges` counts only the edges
+   * valid at the same time as the new one, and `closeValidity` may end an
+   * open interval. Absent, edges have no interval.
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- the optional-field convention (AGENTS.md → Conventions); absent is "no interval"
+  readonly validity?: EdgeValidity | undefined;
 }
+
+/**
+ * {@link EdgeStore.closeValidity}'s shape: set the edge `id`'s `column` to
+ * `to`; whether a row was updated.
+ *
+ * @since 0.1.0
+ */
+export type CloseValidity<E, R> = (
+  id: string,
+  column: string,
+  to: Date,
+) => Effect.Effect<boolean, E, R>;
+
+/**
+ * An edge family's validity interval columns (pulpit#210). An edge holds
+ * over `[from, to)`: from its `from` instant (or always, when `NULL`) until
+ * its `to` instant (or forever, when `NULL`).
+ *
+ * @since 0.1.0
+ */
+export interface EdgeValidity {
+  readonly from: string;
+  readonly to: string;
+}
+
+/**
+ * An edge's validity interval is malformed: a bound that is neither a
+ * `Date` nor `NULL`, `from` after `to`, or a close that would widen it. The
+ * wire's 422.
+ *
+ * @since 0.1.0
+ */
+export class InvalidValidity extends Schema.TaggedError<InvalidValidity>()("InvalidValidity", {
+  type: Schema.String,
+  reason: Schema.String,
+}) {}
+
+/**
+ * The edges valid at `at` (pulpit#210), as a list filter over a family's
+ * {@link EdgeValidity} columns: `from` is `NULL` or at or before `at`, and
+ * `to` is `NULL` or after it. Pass it as a list's `where`, so "who held
+ * the office on that day" is one gated read.
+ *
+ * @example
+ * ```ts
+ * import { strictEqual } from "node:assert";
+ * import { validAt } from "@thomasfosterau/pulpit/edges";
+ * import { evaluate } from "@thomasfosterau/pulpit/filter";
+ *
+ * const filter = validAt({ from: "validFrom", to: "validTo" }, new Date("2020-06-01"));
+ * const context = { now: new Date(0), contains: () => false };
+ * const row = { validFrom: new Date("2020-01-01"), validTo: null };
+ * strictEqual(evaluate(filter, row, context), true);
+ * strictEqual(evaluate(filter, { ...row, validTo: new Date("2020-03-01") }, context), false);
+ * ```
+ *
+ * @since 0.1.0
+ */
+export const validAt = <Following = never>(
+  validity: EdgeValidity,
+  at: Date,
+): ListFilter<Following> =>
+  and<Following>(
+    or<Following>(isNull(validity.from), lte(validity.from, at)),
+    or<Following>(isNull(validity.to), gt(validity.to, at)),
+  );
+
+/**
+ * The edges whose interval overlaps `[from, to)` (either bound none for
+ * open): `NULL`-or-before `to` on the `from` column, and `NULL`-or-after
+ * `from` on the `to` column.
+ */
+const overlapping = <Following>(
+  validity: EdgeValidity,
+  from: Option.Option<Date>,
+  to: Option.Option<Date>,
+): ListFilter<Following> =>
+  and<Following>(
+    Option.match(to, {
+      onNone: (): ListFilter<Following> => always,
+      onSome: (end) => or<Following>(isNull(validity.from), lt(validity.from, end)),
+    }),
+    Option.match(from, {
+      onNone: (): ListFilter<Following> => always,
+      onSome: (start) => or<Following>(isNull(validity.to), gt(validity.to, start)),
+    }),
+  );
+
+/** A validity bound: a `Date`, none for `NULL` or absent, or a malformed value. */
+const boundOf = (
+  values: { readonly [column: string]: ColumnValue },
+  column: string,
+): Option.Option<Option.Option<Date>> =>
+  Option.match(Option.fromNullishOr(values[column]), {
+    onNone: () => Option.some(Option.none<Date>()),
+    onSome: (value) =>
+      Predicate.isDate(value) && !Number.isNaN(value.getTime())
+        ? Option.some(Option.some(value))
+        : Option.none(),
+  });
 
 /**
  * A list request: the bounded page cursor and the family's own predicate.
@@ -602,7 +723,29 @@ export interface EdgeOps<Create, Resource, E, R, Following = never> {
     input: Create,
   ) => Effect.Effect<
     EdgeWrite,
-    Unauthorized | Forbidden | NodeNotFound | EdgeConflict | EdgeCardinalityExceeded | E,
+    | Unauthorized
+    | Forbidden
+    | NodeNotFound
+    | EdgeConflict
+    | EdgeCardinalityExceeded
+    | InvalidValidity
+    | E,
+    R
+  >;
+  /**
+   * End the edge's validity interval at `at` (pulpit#210): the one update an
+   * edge takes (`EDGE-002`), which sets only the interval's `to` column and
+   * only narrows it: `at` must not be after a closed interval's end, nor
+   * before its start. Fails `EdgeNotFound` for a missing or hidden edge
+   * (before the gate), the gate's failures, and {@link InvalidValidity} for
+   * a family without an interval or an `at` that would widen it.
+   */
+  readonly closeValidity: (
+    id: string,
+    at: Date,
+  ) => Effect.Effect<
+    { readonly id: string },
+    Unauthorized | Forbidden | NodeNotFound | EdgeNotFound | InvalidValidity | E,
     R
   >;
   /**
@@ -732,6 +875,17 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
 ): EdgeOps<Create, Resource, E, R, Following> => {
   const { type, ends, edges, policy, followers, toResource } = definition;
   validateEnds(type, ends);
+  const validity = Option.fromUndefinedOr(definition.validity);
+  if (Option.isSome(validity)) {
+    if (validity.value.from === validity.value.to) {
+      throw new EdgeDeclarationError({ message: `${type}: validity names one column twice` });
+    }
+    if (edges.closeValidity === undefined) {
+      throw new EdgeDeclarationError({
+        message: `${type}: validity needs an edge store with closeValidity`,
+      });
+    }
+  }
   const endEntries = Record.toEntries(ends);
   const writeGate: EdgeWriteGate<E, R> = definition.writeGate ?? corpusWriteGate;
   const onConflict = definition.onConflict ?? "fail";
@@ -825,9 +979,34 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     return toResource(row.value);
   });
 
+  /** The create's interval, checked (`from ≤ to`, each a `Date` or open), or none without one. */
+  const intervalOf = (values: EdgeValues) =>
+    Option.match(validity, {
+      onNone: () =>
+        Effect.succeed(Option.none<readonly [Option.Option<Date>, Option.Option<Date>]>()),
+      onSome: (columns) => {
+        const from = boundOf(values, columns.from);
+        const to = boundOf(values, columns.to);
+        if (Option.isNone(from) || Option.isNone(to)) {
+          return Effect.fail(
+            new InvalidValidity({ type, reason: "a validity bound is neither a date nor open" }),
+          );
+        }
+        const reversed =
+          Option.isSome(from.value) &&
+          Option.isSome(to.value) &&
+          from.value.value.getTime() > to.value.value.getTime();
+        return reversed
+          ? Effect.fail(new InvalidValidity({ type, reason: "validity starts after it ends" }))
+          : Effect.succeed(Option.some([from.value, to.value] as const));
+      },
+    });
+
   const create = Effect.fn(`${type}.create`)(function* (input: Create) {
     const viewer = yield* definition.viewer;
     const values = definition.values(input);
+    // The interval is the input's own shape: checked first, it reads nothing.
+    const interval = yield* intervalOf(values);
     // Every end first, before the gate: a node the viewer cannot read is
     // `NodeNotFound` whoever asks, so a gate's 403 never confirms it (#1306).
     // An end must be live as well as readable: the view-deleted rung reads a
@@ -854,9 +1033,14 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     // bounded ends cannot deadlock two creates naming the pair both ways.
     // Only edges the viewer can read with every end live count (pulpit#77,
     // pulpit#93): a hidden edge must not shape the answer.
+    // With an interval, only the edges valid at the same time count (owner decision on pulpit#210).
     const counted = and<Following>(
       endpointFilter(ends, viewer, policy, followers),
       liveEndsFilter<Following, E, R>(ends),
+      Option.match(Option.all([validity, interval]), {
+        onNone: (): ListFilter<Following> => always,
+        onSome: ([columns, [from, to]]) => overlapping<Following>(columns, from, to),
+      }),
     );
     yield* Effect.forEach(Arr.sort(nodes, byNodeId), withinLimit(counted), {
       concurrency: 1,
@@ -868,6 +1052,29 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     const raced = yield* edges.existing(values);
     if (Option.isNone(raced)) return yield* new EdgeConflict({ type });
     return yield* resolveCollision(viewer, raced.value);
+  });
+
+  const closeValidity = Effect.fn(`${type}.closeValidity`)(function* (id: string, at: Date) {
+    const viewer = yield* definition.viewer;
+    const row = yield* visibleEdge(viewer, id);
+    if (Option.isNone(row)) return yield* new EdgeNotFound({ type, id });
+    yield* writeGate({ viewer, policy, edge: row.value });
+    const close = edges.closeValidity;
+    if (Option.isNone(validity) || close === undefined) {
+      return yield* new InvalidValidity({ type, reason: "the family declares no validity" });
+    }
+    const from = Option.flatten(boundOf(row.value, validity.value.from));
+    const to = Option.flatten(boundOf(row.value, validity.value.to));
+    // Only ever narrowing (EDGE-002): never past a closed end, never before the start.
+    if (
+      Number.isNaN(at.getTime()) ||
+      Option.exists(to, (end) => at.getTime() > end.getTime()) ||
+      Option.exists(from, (start) => at.getTime() < start.getTime())
+    ) {
+      return yield* new InvalidValidity({ type, reason: "a close may only narrow the interval" });
+    }
+    if (!(yield* close(id, validity.value.to, at))) return yield* new EdgeNotFound({ type, id });
+    return { id };
   });
 
   const remove = Effect.fn(`${type}.delete`)(function* (id: string) {
@@ -953,5 +1160,14 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     );
   });
 
-  return { list, get, create, delete: remove, memberFilter, nonMemberFilter, countBy };
+  return {
+    list,
+    get,
+    create,
+    delete: remove,
+    closeValidity,
+    memberFilter,
+    nonMemberFilter,
+    countBy,
+  };
 };
