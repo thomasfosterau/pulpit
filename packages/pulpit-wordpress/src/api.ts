@@ -73,6 +73,7 @@ import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
+import { fileUrl, type BlobStore, type FileColumns } from "@thomasfosterau/pulpit/blobs";
 import type { Visibility } from "@thomasfosterau/pulpit/content";
 import {
   always,
@@ -185,7 +186,7 @@ export interface PostFields {
   readonly draft: boolean;
   readonly visibility: Visibility;
   readonly deleted: boolean;
-  /** An attachment's media fields (#55 brings the file leaf's own); absent for a post or page. */
+  /** An attachment's media fields (`fileMediaFields` maps a file leaf's, pulpit#221); absent for a post or page. */
   readonly media?: MediaFields | undefined;
 }
 
@@ -204,6 +205,13 @@ export interface MediaFields {
   readonly sourceUrl: string;
   readonly mediaDetails: Schema.JsonObject;
   readonly fileSize: Option.Option<number>;
+  /**
+   * The file version's bytes are not confirmed yet (`./blobs`' `bytesPending`,
+   * pulpit#221): the item reads as missing (`404 rest_post_invalid_id`), is
+   * left out of every list, and is never a `featured_media` or `_embed`
+   * target, until the bytes are there. Absent, the item is shown.
+   */
+  readonly bytesPending?: boolean | undefined;
 }
 
 /**
@@ -228,6 +236,12 @@ export interface PostColumns {
   readonly visibility?: string | undefined;
   readonly mimeType?: string | undefined;
   readonly mediaType?: string | undefined;
+  /**
+   * A file leaf's `bytesPending` column (pulpit#221): when declared, a list
+   * reads only the rows whose bytes are confirmed (`bytesPending = false`),
+   * so its total never counts a pending item.
+   */
+  readonly bytesPending?: string | undefined;
 }
 
 /* oxlint-enable effect/prefer-option-over-null */
@@ -285,6 +299,67 @@ export interface BoundPostType<R, Following = never> {
 }
 
 /**
+ * An attachment's {@link MediaFields} from a `./blobs` file version
+ * (pulpit#221): `mime_type` from its `mediaType`, `media_type` from that
+ * type's top level (`application` for one WordPress doesn't name),
+ * `filesize` from `byteSize`, `source_url` from `fileUrl`
+ * (empty while the bytes are pending or the store serves no URL), and
+ * `bytesPending` carried over, so a pending file reads as missing. The
+ * caption, description, alt text and any further `media_details` (an image's
+ * width and height) are the application's.
+ *
+ * @example
+ * ```ts
+ * import { strictEqual } from "node:assert";
+ * import * as Option from "effect/Option";
+ * import { fileMediaFields } from "@thomasfosterau/pulpit-wordpress/api";
+ *
+ * const media = fileMediaFields(
+ *   {
+ *     contentHash: "0".repeat(64),
+ *     byteSize: 2048,
+ *     mediaType: "image/png",
+ *     filename: "fern.png",
+ *     bytesPending: false,
+ *   },
+ *   { publicUrl: (key) => Option.some(`https://cdn.example.org/${key}`) },
+ *   { caption: "", description: "", altText: "A fern" },
+ * );
+ * strictEqual(media.mediaType, "image");
+ * strictEqual(media.sourceUrl.startsWith("https://cdn.example.org/"), true);
+ * ```
+ *
+ * @since 0.1.0
+ */
+export const fileMediaFields = <E, R>(
+  file: FileColumns,
+  blobs: Pick<BlobStore<E, R>, "publicUrl">,
+  described: {
+    readonly caption: ColumnValue;
+    readonly description: ColumnValue;
+    readonly altText: string;
+    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is `{}`
+    readonly mediaDetails?: Schema.JsonObject | undefined;
+  },
+): MediaFields => {
+  const topLevel = file.mediaType.split("/")[0] ?? "";
+  return {
+    caption: described.caption,
+    description: described.description,
+    altText: described.altText,
+    mediaType: Arr.contains<string>(MEDIA_TYPES, topLevel) ? topLevel : "application",
+    mimeType: file.mediaType,
+    sourceUrl: Option.getOrElse(fileUrl(file, blobs), () => ""),
+    mediaDetails: described.mediaDetails ?? {},
+    fileSize: Option.some(file.byteSize),
+    bytesPending: file.bytesPending !== false,
+  };
+};
+
+/** Whether an item's bytes, if it has any, are confirmed (pulpit#221). */
+const isConfirmed = (item: ShownItem): boolean => item.fields.media?.bytesPending !== true;
+
+/**
  * Bind an application leaf to a WordPress post type. Its `get`'s
  * `NodeNotFound` (a missing or hidden row, `SEC-AUTH-ENUM-001`) becomes
  * none; every other failure stays the store's.
@@ -298,19 +373,30 @@ export const bind = <Resource, E, R, Following = never>(
     fields: binding.fields(resource),
     serveable: binding.serveable(resource),
   });
+  // A pending file is missing to every reader until its bytes are confirmed (pulpit#221).
+  const confirmed = Option.match(Option.fromUndefinedOr(binding.columns.bytesPending), {
+    onNone: (): ListFilter<Following> => always,
+    onSome: (column): ListFilter<Following> => eq(column, false),
+  });
   return {
     columns: binding.columns,
     get: (id) =>
       binding.ops.get(id).pipe(
-        Effect.map((resource) => Option.some(shown(resource))),
+        Effect.map((resource) => Option.filter(Option.some(shown(resource)), isConfirmed)),
         Effect.catchIf(Schema.is(NodeNotFound), () => Effect.succeedNone),
       ),
-    getMany: (ids) => Effect.map(binding.ops.getMany(ids), HashMap.map(shown)),
+    getMany: (ids) =>
+      Effect.map(binding.ops.getMany(ids), (found) =>
+        HashMap.filter(HashMap.map(found, shown), isConfirmed),
+      ),
     list: (request) =>
-      Effect.map(binding.ops.list(request), (page) => ({
-        rows: page.rows.map(shown),
-        total: page.total,
-      })),
+      Effect.map(
+        binding.ops.list({ ...request, where: and(request.where, confirmed) }),
+        (page) => ({
+          rows: Arr.filter(page.rows.map(shown), isConfirmed),
+          total: page.total,
+        }),
+      ),
     owners: binding.ops.owners,
   };
 };

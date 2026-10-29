@@ -39,6 +39,7 @@ import {
   bind,
   bindTaxonomy,
   defineWordPress,
+  fileMediaFields,
   MAX_LIST_PARAMETER,
   type Author,
   type PostColumns,
@@ -104,6 +105,7 @@ const COLUMNS = [
   "parentId",
   "menuOrder",
   "mimeType",
+  "bytesPending",
 ];
 
 /** A row's string column, or none. */
@@ -136,6 +138,7 @@ const fieldsOf = (row: LeafRow): PostFields => ({
         sourceUrl: `https://cdn.example.org/${textOf(row, "slug")}.jpg`,
         mediaDetails: {},
         fileSize: Option.none(),
+        bytesPending: row["bytesPending"] === true,
       }
     : undefined,
 });
@@ -319,7 +322,8 @@ const site = (options: SiteOptions = {}) => {
               return ops.media.getMany(ids);
             },
           },
-          columns,
+          // A file leaf's bytesPending column: lists read confirmed files only (pulpit#221).
+          columns: { ...columns, bytesPending: "bytesPending" },
           fields: fieldsOf,
           serveable,
         }),
@@ -379,6 +383,7 @@ const site = (options: SiteOptions = {}) => {
             updatedAt: PAST,
             visibility: "public",
             draft: false,
+            bytesPending: false,
             ...state,
           },
         }),
@@ -1513,5 +1518,58 @@ describe("the wp/v2 read API — phase 2 wire forms (golden)", () => {
     expect(Record.keys(index.routes)).toEqual(
       expect.arrayContaining(["/wp/v2/categories", "/wp/v2/tags/(?P<id>[\\d]+)", "/wp/v2/users"]),
     );
+  });
+});
+
+describe("the wp/v2 read API — media from a file leaf (pulpit#221)", () => {
+  it("reads a file whose bytes are pending as missing: 404, out of lists and totals, never featured", async () => {
+    const wp = site();
+    const ready = await wp.create("media", { mimeType: "image/jpeg", slug: "ready" });
+    const pending = await wp.create("media", { mimeType: "image/jpeg", bytesPending: true });
+    const post = await wp.create("posts", { featuredMediaId: pending.id });
+
+    expect(codeOf(await wp.get(`/wp/v2/media/${pending.wireId}`))).toBe("rest_post_invalid_id");
+    const list = await wp.get("/wp/v2/media");
+    expect(listed(list)).toEqual([ready.wireId]);
+    expect(list.headers["x-wp-total"]).toBe("1");
+    const item = itemOf(await wp.get(`/wp/v2/posts/${post.wireId}`, [["_embed", "1"]]));
+    expect(item.featured_media).toBe(0);
+    expect(Record.has(item._embedded ?? {}, "wp:featuredmedia")).toBe(false);
+    // Its owner, too, reads it as missing until the bytes are there.
+    expect(codeOf(await wp.get(`/wp/v2/media/${pending.wireId}`, [], Option.some(member)))).toBe(
+      "rest_post_invalid_id",
+    );
+  });
+
+  it("maps a file version onto the media fields", () => {
+    const file = {
+      contentHash: "a".repeat(64),
+      byteSize: 2048,
+      mediaType: "image/png",
+      filename: "fern.png",
+      bytesPending: false,
+    };
+    const blobs = { publicUrl: (key: string) => Option.some(`https://cdn.example.org/${key}`) };
+    const described = { caption: "c", description: "d", altText: "A fern" };
+    const media = fileMediaFields(file, blobs, described);
+    expect(media).toMatchObject({
+      mediaType: "image",
+      mimeType: "image/png",
+      altText: "A fern",
+      fileSize: Option.some(2048),
+      bytesPending: false,
+      mediaDetails: {},
+    });
+    expect(media.sourceUrl).toMatch(/^https:\/\/cdn\.example\.org\//);
+    // Pending bytes: no URL, and the item is marked pending.
+    const pendingMedia = fileMediaFields({ ...file, bytesPending: true }, blobs, described);
+    expect([pendingMedia.sourceUrl, pendingMedia.bytesPending]).toEqual(["", true]);
+    // A top-level type WordPress doesn't name is `application`.
+    expect(fileMediaFields({ ...file, mediaType: "model/gltf" }, blobs, described).mediaType).toBe(
+      "application",
+    );
+    expect(
+      fileMediaFields(file, blobs, { ...described, mediaDetails: { width: 10 } }).mediaDetails,
+    ).toEqual({ width: 10 });
   });
 });

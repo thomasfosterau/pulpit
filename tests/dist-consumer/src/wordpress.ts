@@ -24,7 +24,9 @@ import {
 import {
   bind,
   defineWordPress,
+  fileMediaFields,
   MAX_LIST_PARAMETER,
+  type MediaFields,
   type BoundPostType,
   type PostFields,
   type PostTypeBinding,
@@ -229,3 +231,7 @@ export type _WordPressHttp = Assert<
     >
   >
 >;
+
+// ── phase 3: media from a file leaf (pulpit#221) ────────────────────────
+
+export type _FileMediaFields = Assert<Equals<ReturnType<typeof fileMediaFields>, MediaFields>>;
