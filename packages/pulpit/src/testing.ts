@@ -1792,7 +1792,9 @@ export interface InMemorySocialStore extends SocialStore<InMemoryFollowing, neve
 /**
  * An in-memory {@link SocialStore}, keyed `(kind, from, to)` as the real
  * table is; `followingOf` and `silencedBy` return {@link InMemoryFollowing}
- * sets, where SQL's are subqueries. In memory only; not for production.
+ * sets, where SQL's are subqueries. `addFollow` and `addBlock` each run as
+ * one synchronous step, so they are atomic against each other as the seam
+ * requires. In memory only; not for production.
  *
  * @since 0.1.0
  */
@@ -1818,6 +1820,29 @@ export const makeInMemorySocialStore = (): InMemorySocialStore => {
         if (rows.some(matches(relationship.kind, relationship.from, relationship.to))) return false;
         rows = [...rows, relationship];
         return true;
+      }),
+    addFollow: (relationship) =>
+      Effect.sync(() => {
+        const { from, to } = relationship;
+        if (rows.some(matches("block", from, to)) || rows.some(matches("block", to, from))) {
+          return "blocked" as const;
+        }
+        if (rows.some(matches("follow", from, to))) return "present" as const;
+        rows = [...rows, relationship];
+        return "added" as const;
+      }),
+    addBlock: (relationship) =>
+      Effect.sync(() => {
+        const { from, to } = relationship;
+        const written = !rows.some(matches("block", from, to));
+        rows = [
+          ...Arr.filter(
+            rows,
+            (row) => !matches("follow", from, to)(row) && !matches("follow", to, from)(row),
+          ),
+          ...(written ? [relationship] : []),
+        ];
+        return written;
       }),
     remove: (kind, from, to) =>
       Effect.sync(() => {
