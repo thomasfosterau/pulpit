@@ -840,7 +840,43 @@ const readerOf = (query: Query, timeZone: string) => {
         return fallback;
       },
     });
-  return { bad, refuse, present, integer, oneOf, list, date, boolean };
+  /** The paging, order and id-list parameters every collection takes. */
+  const paging = (defaultOrder: "asc" | "desc") => ({
+    page: integer("page", 1, Number.MAX_SAFE_INTEGER, 1),
+    perPage: integer("per_page", 1, 100, 10),
+    offset: Option.map(query.scalar("offset"), () =>
+      integer("offset", 0, Number.MAX_SAFE_INTEGER, 0),
+    ),
+    order: oneOf("order", ["asc", "desc"] as const, defaultOrder),
+    include: list("include"),
+    exclude: Option.getOrElse(list("exclude"), () => []),
+    slug: list("slug"),
+  });
+  /** `context`, as `/terms` and `/users` read it (`edit` is refused by the handler). */
+  const context = (): "view" | "embed" =>
+    oneOf("context", ["view", "embed", "edit"] as const, "view") === "embed" ? "embed" : "view";
+  return { bad, refuse, present, integer, oneOf, list, date, boolean, paging, context };
+};
+
+/**
+ * A collection's parsed parameters, or the one `rest_invalid_param` naming
+ * every bad one, or core's error for `orderby=include` without `include`.
+ */
+const checked = <P extends { readonly orderby: string; readonly include: Option.Option<unknown> }>(
+  bad: ReadonlyArray<readonly [string, string]>,
+  params: P,
+): Effect.Effect<P, WpRestError> => {
+  if (Arr.isReadonlyArrayNonEmpty(bad)) return Effect.fail(invalidParams(Record.fromEntries(bad)));
+  if (params.orderby === "include" && Option.isNone(params.include)) {
+    return Effect.fail(
+      new WpRestError({
+        code: "rest_orderby_include_missing_include",
+        message: "You need to define an include parameter to order by include.",
+        status: 400,
+      }),
+    );
+  }
+  return Effect.succeed(params);
 };
 
 /**
@@ -855,7 +891,7 @@ const collectionParams = (
   taxonomies: ReadonlyArray<Taxonomy>,
 ): Effect.Effect<CollectionParams, WpRestError> =>
   Effect.suspend(() => {
-    const { bad, refuse, present, integer, oneOf, list, date } = readerOf(query, timeZone);
+    const { bad, refuse, present, integer, oneOf, list, date, paging } = readerOf(query, timeZone);
 
     Arr.filter(UNSUPPORTED, present).forEach((name) =>
       refuse(name, `${name} is not supported by this API.`),
@@ -914,16 +950,8 @@ const collectionParams = (
     );
     const params: CollectionParams = {
       context,
-      page: integer("page", 1, Number.MAX_SAFE_INTEGER, 1),
-      perPage: integer("per_page", 1, 100, 10),
-      offset: Option.map(query.scalar("offset"), () =>
-        integer("offset", 0, Number.MAX_SAFE_INTEGER, 0),
-      ),
-      order: oneOf("order", ["asc", "desc"] as const, "desc"),
+      ...paging("desc"),
       orderby: oneOf("orderby", orderbys, "date"),
-      include: list("include"),
-      exclude: Option.getOrElse(list("exclude"), () => []),
-      slug: list("slug"),
       statuses,
       author: list("author"),
       authorExclude: Option.getOrElse(list("author_exclude"), () => []),
@@ -941,18 +969,7 @@ const collectionParams = (
       terms,
       taxRelation: oneOf("tax_relation", ["AND", "OR"] as const, "AND"),
     };
-    if (Arr.isReadonlyArrayNonEmpty(bad))
-      return Effect.fail(invalidParams(Record.fromEntries(bad)));
-    if (params.orderby === "include" && Option.isNone(params.include)) {
-      return Effect.fail(
-        new WpRestError({
-          code: "rest_orderby_include_missing_include",
-          message: "You need to define an include parameter to order by include.",
-          status: 400,
-        }),
-      );
-    }
-    return Effect.succeed(params);
+    return checked(bad, params);
   });
 
 interface TermParams {
@@ -987,7 +1004,10 @@ const termParams = (
   timeZone: string,
 ): Effect.Effect<TermParams, WpRestError> =>
   Effect.suspend(() => {
-    const { bad, refuse, present, integer, oneOf, list, boolean } = readerOf(query, timeZone);
+    const { bad, refuse, present, integer, oneOf, boolean, paging, context } = readerOf(
+      query,
+      timeZone,
+    );
     if (present("search")) refuse("search", "search is not supported by this API.");
     if (present("parent") && (taxonomy !== "category" || columns.parent === undefined)) {
       refuse("parent", "parent is not supported for this taxonomy.");
@@ -1001,36 +1021,16 @@ const termParams = (
       },
     );
     const params: TermParams = {
-      context:
-        oneOf("context", ["view", "embed", "edit"] as const, "view") === "embed" ? "embed" : "view",
-      page: integer("page", 1, Number.MAX_SAFE_INTEGER, 1),
-      perPage: integer("per_page", 1, 100, 10),
-      offset: Option.map(query.scalar("offset"), () =>
-        integer("offset", 0, Number.MAX_SAFE_INTEGER, 0),
-      ),
-      order: oneOf("order", ["asc", "desc"] as const, "asc"),
+      context: context(),
+      ...paging("asc"),
       orderby,
-      include: list("include"),
-      exclude: Option.getOrElse(list("exclude"), () => []),
-      slug: list("slug"),
       hideEmpty: boolean("hide_empty", false),
       parent: Option.map(query.scalar("parent"), () =>
         integer("parent", 0, Number.MAX_SAFE_INTEGER, 0),
       ),
       post: Option.map(query.scalar("post"), () => integer("post", 0, Number.MAX_SAFE_INTEGER, 0)),
     };
-    if (Arr.isReadonlyArrayNonEmpty(bad))
-      return Effect.fail(invalidParams(Record.fromEntries(bad)));
-    if (params.orderby === "include" && Option.isNone(params.include)) {
-      return Effect.fail(
-        new WpRestError({
-          code: "rest_orderby_include_missing_include",
-          message: "You need to define an include parameter to order by include.",
-          status: 400,
-        }),
-      );
-    }
-    return Effect.succeed(params);
+    return checked(bad, params);
   });
 
 interface UserParams {
@@ -1066,7 +1066,7 @@ const UNSUPPORTED_USER_PARAMS = [
  */
 const userParams = (query: Query, timeZone: string): Effect.Effect<UserParams, WpRestError> =>
   Effect.suspend(() => {
-    const { bad, refuse, present, integer, oneOf, list } = readerOf(query, timeZone);
+    const { bad, refuse, present, oneOf, paging, context } = readerOf(query, timeZone);
     Arr.filter(UNSUPPORTED_USER_PARAMS, present).forEach((name) =>
       refuse(name, `${name} is not supported by this API.`),
     );
@@ -1080,14 +1080,8 @@ const userParams = (query: Query, timeZone: string): Effect.Effect<UserParams, W
       refuse("orderby", `orderby ${requested} is not supported by this API.`);
     }
     const params: UserParams = {
-      context:
-        oneOf("context", ["view", "embed", "edit"] as const, "view") === "embed" ? "embed" : "view",
-      page: integer("page", 1, Number.MAX_SAFE_INTEGER, 1),
-      perPage: integer("per_page", 1, 100, 10),
-      offset: Option.map(query.scalar("offset"), () =>
-        integer("offset", 0, Number.MAX_SAFE_INTEGER, 0),
-      ),
-      order: oneOf("order", ["asc", "desc"] as const, "asc"),
+      context: context(),
+      ...paging("asc"),
       orderby: Option.getOrElse(
         Arr.findFirst(USER_ORDERS, (order) => order === requested),
         () => "name" as const,
@@ -1095,22 +1089,8 @@ const userParams = (query: Query, timeZone: string): Effect.Effect<UserParams, W
       forbiddenOrderby: Option.liftPredicate(requested, (order) =>
         Arr.contains<string>(FORBIDDEN_USER_ORDERS, order),
       ),
-      include: list("include"),
-      exclude: Option.getOrElse(list("exclude"), () => []),
-      slug: list("slug"),
     };
-    if (Arr.isReadonlyArrayNonEmpty(bad))
-      return Effect.fail(invalidParams(Record.fromEntries(bad)));
-    if (params.orderby === "include" && Option.isNone(params.include)) {
-      return Effect.fail(
-        new WpRestError({
-          code: "rest_orderby_include_missing_include",
-          message: "You need to define an include parameter to order by include.",
-          status: 400,
-        }),
-      );
-    }
-    return Effect.succeed(params);
+    return checked(bad, params);
   });
 
 // ── Status ────────────────────────────────────────────────────────────
@@ -1975,6 +1955,25 @@ export const defineWordPress = <R, Following = never>(
 
   // ── Handlers ────────────────────────────────────────────────────────
 
+  /** One path id decoded, or `missing` (unknown to the codec, or no id at all: `SEC-AUTH-ENUM-001`). */
+  const decodeOne = (
+    wireIds: WireIds<WireId, unknown, unknown, R>,
+    rawId: string,
+    missing: () => WpRestError,
+  ) =>
+    Effect.flatMap(internal(wireIds.decode([rawId])), (decoded) =>
+      Effect.fromOption(Option.flatten(Arr.head(decoded))).pipe(Effect.mapError(missing)),
+    );
+
+  /** The row the read gate lets through, or `missing` exactly as for an unknown id. */
+  const shownOr = <A>(
+    read: Effect.Effect<Option.Option<A>, unknown, R>,
+    missing: () => WpRestError,
+  ) =>
+    Effect.flatMap(internal(read), (shown) =>
+      Effect.fromOption(shown).pipe(Effect.mapError(missing)),
+    );
+
   const getItem = (
     type: PostType,
     binding: BoundPostType<R, Following>,
@@ -1982,13 +1981,8 @@ export const defineWordPress = <R, Following = never>(
     query: Query,
   ) =>
     Effect.gen(function* () {
-      const decodedIds = yield* internal(ids.decode([rawId]));
-      const id = yield* Effect.fromOption(Option.flatten(Arr.head(decodedIds))).pipe(
-        Effect.mapError(invalidId),
-      );
-      const item = yield* Effect.fromOption(yield* internal(binding.get(id))).pipe(
-        Effect.mapError(invalidId),
-      );
+      const id = yield* decodeOne(ids, rawId, invalidId);
+      const item = yield* shownOr(binding.get(id), invalidId);
       const viewer = yield* config.viewer;
       // The 404 comes first, so a refused context never confirms the row.
       if (Option.contains(query.scalar("context"), "edit")) {
@@ -2225,13 +2219,8 @@ export const defineWordPress = <R, Following = never>(
     query: Query,
   ) =>
     Effect.gen(function* () {
-      const decodedIds = yield* internal(ids.decode([rawId]));
-      const id = yield* Effect.fromOption(Option.flatten(Arr.head(decodedIds))).pipe(
-        Effect.mapError(invalidTerm),
-      );
-      const term = yield* Effect.fromOption(yield* internal(binding.get(id))).pipe(
-        Effect.mapError(invalidTerm),
-      );
+      const id = yield* decodeOne(ids, rawId, invalidTerm);
+      const term = yield* shownOr(binding.get(id), invalidTerm);
       const viewer = yield* config.viewer;
       if (Option.contains(query.scalar("context"), "edit")) {
         return yield* editRefused(viewer, "Sorry, you are not allowed to edit this term.");
@@ -2452,10 +2441,7 @@ export const defineWordPress = <R, Following = never>(
 
   const getUser = (rawId: string, query: Query) =>
     Effect.gen(function* () {
-      const decodedIds = yield* internal(authors.ids.decode([rawId]));
-      const id = yield* Effect.fromOption(Option.flatten(Arr.head(decodedIds))).pipe(
-        Effect.mapError(invalidUser),
-      );
+      const id = yield* decodeOne(authors.ids, rawId, invalidUser);
       const owners = yield* readableAuthors(Option.some([id]));
       if (!Arr.contains(owners, id)) return yield* invalidUser();
       const profile = yield* Effect.fromOption(
