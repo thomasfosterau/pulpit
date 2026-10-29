@@ -910,28 +910,20 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     return Option.some(following);
   });
 
-  const memberFilter = Effect.fn(`${type}.memberFilter`)(function* (
-    end: string,
-    otherIds: ReadonlyArray<string>,
-  ) {
-    const following = yield* readableMembers(end, otherIds);
-    return Option.match(following, {
-      onNone: (): ListFilter<Following> => never,
-      onSome: (set): ListFilter<Following> => isIn("id", set),
+  /** A membership filter traced as `${type}.<name>`: `whenNone` for no set, `wrap` over the readable members. */
+  const membershipFilter = (
+    name: string,
+    whenNone: ListFilter<Following>,
+    wrap: (set: Following) => ListFilter<Following>,
+  ) =>
+    Effect.fn(`${type}.${name}`)(function* (end: string, otherIds: ReadonlyArray<string>) {
+      const following = yield* readableMembers(end, otherIds);
+      return Option.match(following, { onNone: () => whenNone, onSome: wrap });
     });
-  });
 
-  const nonMemberFilter = Effect.fn(`${type}.nonMemberFilter`)(function* (
-    end: string,
-    otherIds: ReadonlyArray<string>,
-  ) {
-    const following = yield* readableMembers(end, otherIds);
-    // An exclusion fails closed by excluding nothing.
-    return Option.match(following, {
-      onNone: (): ListFilter<Following> => always,
-      onSome: (set): ListFilter<Following> => isNotIn("id", set),
-    });
-  });
+  const memberFilter = membershipFilter("memberFilter", never, (set) => isIn("id", set));
+  // An exclusion fails closed by excluding nothing.
+  const nonMemberFilter = membershipFilter("nonMemberFilter", always, (set) => isNotIn("id", set));
 
   const countBy = Effect.fn(`${type}.countBy`)(function* (
     end: string,
