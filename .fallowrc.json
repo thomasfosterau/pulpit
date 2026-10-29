@@ -18,6 +18,7 @@
     "packages/pulpit/src/reactions.ts",
     "packages/pulpit/src/blobs.ts",
     "packages/pulpit/src/paths.ts",
+    "packages/pulpit/src/collections.ts",
     "packages/pulpit/src/proposals.ts",
     "packages/pulpit/src/moderation.ts",
     "packages/pulpit/src/testing.ts",

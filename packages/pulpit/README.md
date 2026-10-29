@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`, `Cache`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`, `Cache`, `Collections`). |
 | **Content model** |  |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`, `localised`) and `validateRegistry`. |
@@ -36,6 +36,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | **Structure and routing** |  |
 | `./edges` | `defineEdgeOps`, the edge operations factory over an `EdgeStore` seam: relations between nodes, readable only when every end is, with declared cardinality limits. |
 | `./paths` | Routable content: `routable`, a leaf's path claims tied to its chain over a `PathStore` seam, the aliases a path change leaves behind, and the gated `resolve`. |
+| `./collections` | Ordered collections (`defineCollection` over a `CollectionStore` seam): positioned members of a parent node, with the order kept beside the chain (the default) or versioned with the parent. |
 | **Participation and user-generated content** |  |
 | `./budgets` | Write budgets: a declared ceiling on an account's writes of one kind in a rolling window, spent inside the write (`budgetHook` on a chain write; `bindBudget`'s `spend` on a proposal's `submit` or a report's `file`) over a `BudgetCounter` seam, refused as a rate-limited `WriteRejected` (the wire's 429). |
 | `./comments` | The comments family: threaded comments on any node as versioned owned leaves (`defineComments`), behind the target's read gate and the moderation gate, with a configurable reply depth. |
@@ -47,7 +48,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | **Discovery and search** |  |
 | `./search` | Hybrid search: reciprocal rank fusion (`fuseRankings`), a reranker seam, `hybridSearch` over `SearchBranch` seams that each apply the leaf's read scope, and the embedding pipeline (`enqueueEmbeddings`, `embedPending`, `sweepEmbeddings`) over `EmbeddingStore` and `Embedder` seams. |
 | **Testing** |  |
-| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy, purge, embedding and reaction stores, the budget counter and write counts, a versioned KV, an endpoint view, a follower seam, a search branch and its scope check), for tests only. Not on the root export. |
+| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy, purge, embedding, reaction and collection stores, the budget counter and write counts, a versioned KV, an endpoint view, a follower seam, a search branch and its scope check), for tests only. Not on the root export. |
 
 **Discovery and search** is also `./subtype`'s searchable projection, read scope and hit hydration (see [Search](#subtype) under `./subtype`), which `./search` builds on. **Localisation** is the version chain's locale level (`./version-chain`, `./subtype`'s `getLocalised` and `./filter`'s `locale` arm), not a module of its own.
 
@@ -634,6 +635,42 @@ Free-form redirects (patterns, a 404 log) are the site's. The path's syntax is t
 | `PathStore`, `PathEntry` | The path-table seam and one stored path (its node, canonical or alias). |
 | `PathTaken`, `PathNotFound` | Another node holds the path canonically (409); no node the viewer can read answers to it (404). |
 
+## `./collections`
+
+Ordered collections (pulpit#193): positioned members of a parent node, such as a list's items, an album's media, a byline's authors or a menu's entries.
+
+```ts
+import { defineCollection } from "@thomasfosterau/pulpit/collections";
+
+const items = defineCollection({
+  type: "list-items",
+  parent: listOps, // the parent leaf's `defineSubtype` operations
+  members: itemOps, // the member leaf's
+  store: collectionStore,
+  mode: { kind: "mutable" }, // the default; or { kind: "versioned", column: "memberOrder", chain: listChain }
+});
+
+items.append(listId, itemId);
+items.move(listId, itemId, 0);
+items.list(listId, { limit: 50, offset: 0 }); // { rows: [{ memberId, index, resource }], total }
+```
+
+- **Both models, one store** (owner decision on pulpit#193). A family picks its model:
+  - **`mutable`** (the default) keeps the order beside the chain, like an edge: a write changes the store and nothing else.
+  - **`versioned`** also appends a parent version through the parent leaf's own `update` on every write. The version records the whole order (the member ids, in order) in a declared parent column, so `VERSION-CHAIN-001` covers it and history shows each reorder. After the parent's `restoreVersion`, `resync(parentId)` replaces the store's order with the one the restored version records.
+- **The gates.**
+  - A read passes the parent's read gate: a hidden parent is `NodeNotFound`, never `Forbidden` (`SEC-AUTH-ENUM-001`).
+  - Each member is read through the member leaf's own `getMany`. A member the viewer can't read is omitted from the page and from its total, as `EDGE-001` omits an edge with a hidden end, and `index` counts only the members shown.
+  - A write passes the parent's write gate (`authorize`), and the member it adds must be one the writer can read (`NodeNotFound` otherwise).
+- **Bounded** (`SEC-INPUT-003`). A collection holds at most `MAX_COLLECTION_SIZE` (1000) members (`CollectionFull` past it), so every read and reorder reads the whole order once. Pages are clamped to `MAX_PAGE_LIMIT`.
+- **Failures.** Adding a member twice is `AlreadyMember` (409); moving or removing one that isn't there is `NotMember` (404). `move` clamps the index to the order's bounds.
+
+| Export | What it is |
+| --- | --- |
+| `defineCollection(definition)`, `CollectionDefinition`, `CollectionOps`, `CollectionMode`, `CollectionMember` | The factory, its declaration, the operations (`list`, `append`, `move`, `remove`, `resync`), the two models and a listed member. |
+| `CollectionStore`, `CollectionEntry`, `MAX_COLLECTION_SIZE` | The membership table seam (see [Seams](#seams)), one member's place and the size bound. |
+| `AlreadyMember`, `NotMember`, `CollectionFull` | The failures: 409, 404, 409. |
+
 ## `./moderation`
 
 The moderation workflow (pulpit#51). The kernel owns the rules; the transport (a queue, running the classifier, an API-call ledger, moderator notifications) stays the application's. A leaf's moderation state is a column of its version row (`ModerationState`: `pending | approved | rejected`), so every decision is an appended version.
@@ -951,6 +988,7 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | `makeInMemoryEmbeddingStore()`, `InMemoryEmbeddingStore` | [`EmbeddingStore`](#searchbranchfollowing-e-r-and-embeddingstoree-r-search-and-embeddings), a queue in insertion order (idempotent `enqueue`; a hash with a vector is never queued again). | `queued()`, `vectors()`. |
 | `makeInMemoryReactionStore()`, `InMemoryReactionStore` | [`ReactionStore`](#reactionstoree-r-the-reaction-table), keyed `(nodeId, accountId)`: `upsert` replaces, `tally` groups by node and kind, `byAccount` is newest first. | `rows()`. |
 | `makeInMemoryVersionedKv()`, `InMemoryVersionedKv` | [`VersionedKv`](#versionedkve-r-the-caches-key-value-store), comparing and writing in one step; an entry past its TTL reads as absent (the Effect `Clock`, so `TestClock` steers expiry). | `peek(key)`, `poke(key, entry)` (a corrupt value). |
+| `makeInMemoryCollectionStore()`, `InMemoryCollectionStore` | [`CollectionStore`](#collectionstoree-r-the-membership-table), each parent's entries replaced whole and read back by position, then member id. | `rows()`. |
 | `makeInMemoryFollowers(table)`, `InMemoryFollowing` | [`FollowerSeam`](#the-viewer-the-role-axes-and-the-follower-seam) over an explicit table of who follows whom; the `in` set is a `HashSet` of account ids, where SQL's is a subquery. |  |
 
 `now` is the instant the list filter's `published` / `notPublished` compare against (and, for the edge store, the base of the minted `createdAt`s). Pass a fixed `Date` for a deterministic suite; left out, each call reads the Effect `Clock`, so `TestClock` steers it. The role ladder and the `AccessPolicy` are the application's, so `./testing` ships none.
@@ -1170,6 +1208,16 @@ Filled by the application, for `./cache`'s `makeResourceCache` (pulpit#205). Eac
   - SQL, as `INSERT … ON CONFLICT (key) DO UPDATE … WHERE cache.version <= EXCLUDED.version`.
 
   Workers KV alone has no conditional write, so it can't fill this seam. The store applies no policy.
+
+### `CollectionStore<E, R>`: the membership table
+
+Filled by the application over its own membership table:
+
+- **Columns:** `parent_id` and `member_id` (foreign keys to `core.node`, `ON DELETE CASCADE`) and `position` (`integer`), with primary key `(parent_id, member_id)` and an index on `(parent_id, position)`.
+- **`entries(parentId, limit)`** is `ORDER BY position, member_id LIMIT $limit`.
+- **`replace(parentId, entries)`** rewrites the parent's order in one statement: a `DELETE` of the parent's rows and an `INSERT` of the new ones, in the caller's transaction.
+
+It applies no policy and never opens a transaction. A versioned family's parent column is a `jsonb` array of member ids on the parent's version table.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 

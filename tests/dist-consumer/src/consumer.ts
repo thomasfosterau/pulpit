@@ -24,6 +24,7 @@ import {
   Search,
   Reactions,
   Cache,
+  Collections,
   Proposals,
   Registry,
   WorkingCopy,
@@ -222,6 +223,11 @@ import {
   type Tally,
 } from "@thomasfosterau/pulpit/reactions";
 import { makeResourceCache, type ResourceCache } from "@thomasfosterau/pulpit/cache";
+import {
+  defineCollection,
+  type CollectionMember,
+  type CollectionOps,
+} from "@thomasfosterau/pulpit/collections";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -1326,5 +1332,17 @@ export type _CacheGet = Assert<
   Equals<
     ReturnType<ResourceCache<string, Transaction>["get"]>,
     Effect.Effect<Option.Option<string>, never, Transaction>
+  >
+>;
+
+// ── collections (pulpit#193) ─────────────────────────────────────────────
+
+export type _CollectionsBarrel = Assert<
+  Equals<typeof Collections.defineCollection, typeof defineCollection>
+>;
+export type _CollectionList = Assert<
+  Equals<
+    ReturnType<CollectionOps<string, StoreFailure, Transaction>["list"]>,
+    Effect.Effect<Page<CollectionMember<string>>, NodeNotFound | StoreFailure, Transaction>
   >
 >;

@@ -137,3 +137,10 @@ export * as Reactions from "./reactions.ts";
  * (`makeResourceCache` over a `VersionedKv`).
  */
 export * as Cache from "./cache.ts";
+
+/**
+ * Ordered collections: positioned members of a parent node, the order kept
+ * beside the chain or versioned with the parent (`defineCollection` over a
+ * `CollectionStore`).
+ */
+export * as Collections from "./collections.ts";
