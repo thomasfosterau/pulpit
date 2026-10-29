@@ -341,6 +341,7 @@ const window = (request: SocialPageRequest) => ({
  * ```ts
  * import { strictEqual } from "node:assert";
  * import * as Effect from "effect/Effect";
+ * import * as Option from "effect/Option";
  * import { defineSocial } from "@thomasfosterau/pulpit/social";
  * import { makeInMemorySocialStore } from "@thomasfosterau/pulpit/testing";
  *
@@ -352,7 +353,8 @@ const window = (request: SocialPageRequest) => ({
  *   yield* social.follow("u-2");
  *   return yield* social.following("u-1", { limit: 10, offset: 0 });
  * });
- * strictEqual(Effect.runSync(program).total, 1);
+ * // No AccountVisibility seam, so the total is the store's.
+ * strictEqual(Option.getOrElse(Effect.runSync(program).total, () => 0), 1);
  * ```
  *
  * @since 0.1.0
