@@ -36,6 +36,7 @@ export const renameColumns = <Following>(
       isNull: (node): ListFilter<Following> => ({ ...node, column: rename(node.column) }),
       published: (node): ListFilter<Following> => ({ ...node, column: rename(node.column) }),
       notPublished: (node): ListFilter<Following> => ({ ...node, column: rename(node.column) }),
+      locale: (node): ListFilter<Following> => ({ ...node, column: rename(node.column) }),
       and: (node): ListFilter<Following> => ({
         kind: "and",
         filters: node.filters.map((part) => renameColumns(part, rename)),
