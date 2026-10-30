@@ -66,7 +66,7 @@ catalog:
   # vite-plus: pin it to the `vitest` entry below (vite-plus 1.4.0 → 5.0.5),
   # never ahead of it (pulpit#119).
   "@vitest/coverage-istanbul": 5.0.5
-  effect: 4.0.6
+  effect: 4.1.0
   fallow: 3.37.0
   # The runtime `@effect/docgen` executes examples under.
   tsx: ^4.23.13
