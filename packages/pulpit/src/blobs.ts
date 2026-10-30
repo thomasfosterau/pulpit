@@ -193,7 +193,7 @@ export const fileUrl = <E, R>(
   file: { readonly contentHash: ContentHash; readonly bytesPending: boolean },
   blobs: Pick<BlobStore<E, R>, "publicUrl">,
 ): Option.Option<string> =>
-  file.bytesPending === false ? blobs.publicUrl(blobKey(file.contentHash)) : Option.none();
+  !file.bytesPending ? blobs.publicUrl(blobKey(file.contentHash)) : Option.none();
 
 // ── The commit-ordered write ──────────────────────────────────────────
 

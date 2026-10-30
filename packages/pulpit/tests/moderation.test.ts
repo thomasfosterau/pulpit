@@ -307,7 +307,7 @@ const comments = () => {
     followers: makeInMemoryFollowers([]),
     toResource: (row: LeafRow) => row,
     hooks: Effect.succeed({
-      before: [moderationHook<never, never>(declaration, gardeneriaPolicy)],
+      before: [moderationHook(declaration, gardeneriaPolicy)],
       after: [],
     }),
   });

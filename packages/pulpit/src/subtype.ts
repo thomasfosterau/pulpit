@@ -96,6 +96,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
+import * as HashSet from "effect/HashSet";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -2888,7 +2889,7 @@ export interface LocalisedResource<Resource> {
 }
 
 /** The names a view keeps for itself: no translated column may take one. */
-const RESERVED_COLUMNS: ReadonlyArray<string> = ["id", "version", "action", LOCALE_COLUMN];
+const RESERVED_COLUMNS = HashSet.make("id", "version", "action", LOCALE_COLUMN);
 
 /**
  * The columns a leaf's read gate reads (pulpit#56): none of them may be
@@ -2999,7 +3000,7 @@ export const defineLocaleLevel = (declaration: {
     throw new SubtypeDeclarationError({ message: `locales names '${repeated.value}' twice` });
   }
   const reserved = Array.findFirst(declaration.columns, (column) =>
-    RESERVED_COLUMNS.includes(column),
+    HashSet.has(RESERVED_COLUMNS, column),
   );
   if (Option.isSome(reserved)) {
     throw new SubtypeDeclarationError({

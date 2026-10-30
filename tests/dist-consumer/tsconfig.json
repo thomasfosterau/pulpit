@@ -1,27 +1,17 @@
 {
-  "extends": "../../tsconfig.base.json",
+  // The tsconfig oxlint-tsgolint reads for type-aware lint and `typeCheck`
+  // (it types each file with its nearest `tsconfig.json`). It maps the two
+  // package names to their `src/`, so `vp check` needs no build first (CI
+  // lints before it builds). The declaration-emit gate itself is
+  // tsconfig.check.json, which maps them to the EMITTED `dist/` declarations
+  // and is what this package's `check` task (`vp run check`) runs.
+  "extends": "./tsconfig.check.json",
   "compilerOptions": {
-    "types": ["node"],
-    // `skipLibCheck` stays ON: with it off, effect-jsonapi's and effect's own
-    // declarations fail under these compiler options, which is noise. The
-    // declaration-emit hazard is caught differently — an unbound type name in
-    // an emitted `.d.ts` resolves to the error type, i.e. `any`, and every
-    // `Equals<…>` assertion in src/consumer.ts is false against `any`.
-    "skipLibCheck": true,
-    // Resolve each package name to the EMITTED declarations rather than the
-    // workspace `exports` (which point at `src/` for the in-repo dev loop) —
-    // which is also why this package declares no dependency on either: the
-    // mapping below is the whole resolution. Keep it that way: with a
-    // `workspace:*` dependency, a subpath missing from `dist/` would fall
-    // through to the `node_modules` link and on to `src/`, and the check
-    // would pass. That is why `.fallowrc.json` ignores the two names instead.
-    // Relative to this file; TypeScript 7 removed `baseUrl`.
     "paths": {
-      "@thomasfosterau/pulpit": ["../../packages/pulpit/dist/index.d.ts"],
-      "@thomasfosterau/pulpit/*": ["../../packages/pulpit/dist/*.d.ts"],
-      "@thomasfosterau/pulpit-wordpress": ["../../packages/pulpit-wordpress/dist/index.d.ts"],
-      "@thomasfosterau/pulpit-wordpress/*": ["../../packages/pulpit-wordpress/dist/*.d.ts"]
+      "@thomasfosterau/pulpit": ["../../packages/pulpit/src/index.ts"],
+      "@thomasfosterau/pulpit/*": ["../../packages/pulpit/src/*.ts"],
+      "@thomasfosterau/pulpit-wordpress": ["../../packages/pulpit-wordpress/src/index.ts"],
+      "@thomasfosterau/pulpit-wordpress/*": ["../../packages/pulpit-wordpress/src/*.ts"]
     }
-  },
-  "include": ["src"]
+  }
 }

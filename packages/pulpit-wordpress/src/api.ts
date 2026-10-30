@@ -351,7 +351,7 @@ export const fileMediaFields = <E, R>(
     sourceUrl: Option.getOrElse(fileUrl(file, blobs), () => ""),
     mediaDetails: described.mediaDetails ?? {},
     fileSize: Option.some(file.byteSize),
-    bytesPending: file.bytesPending !== false,
+    bytesPending: file.bytesPending,
   };
 };
 

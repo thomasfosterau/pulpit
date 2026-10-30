@@ -45,12 +45,15 @@ jobs:
           key: vp-task-v1-${{ runner.os }}-${{ github.sha }}
           restore-keys: |
             vp-task-v1-${{ runner.os }}-
+      # Format + lint, type-aware through oxlint-tsgolint (`lint.options` in
+      # vite.config.ts), so this also runs the `typescript/*` and
+      # `effecttsgo/*` type-aware rules and TypeScript's diagnostics.
       - name: Format and lint
-        run: vp check
+        run: pnpm exec vp check
       - name: Type gates (packages + emitted declarations)
-        run: vp run --concurrency-limit 2 check
+        run: pnpm exec vp run --concurrency-limit 2 check
       - name: Unit tests
-        run: vp run -r test:unit
+        run: pnpm exec vp run -r test:unit
       # Every package's suite under its own coverage thresholds (90 / 85 /
       # 90 / 90, `vite.package.ts`), plus the root's merged Istanbul map (the
       # one `fallow audit` reads), so a package that drops below its
@@ -60,11 +63,11 @@ jobs:
       # toolchain bump that leaves the pin behind fails here, not on a
       # contributor's machine (pulpit#119).
       - name: Coverage (each package's thresholds)
-        run: vp run -r test:coverage
+        run: pnpm exec vp run -r test:coverage
       - name: Build
-        run: vp run -r build
+        run: pnpm exec vp run -r build
       # Type-checks AND runs every JSDoc @example, and generates the API docs.
       - name: Verify documentation examples (docgen)
-        run: vp run -r docgen
+        run: pnpm exec vp run -r docgen
       - name: Audit
         run: pnpm audit --audit-level high

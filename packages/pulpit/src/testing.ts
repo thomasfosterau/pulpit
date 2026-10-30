@@ -765,11 +765,7 @@ export const makeInMemoryEdgeStore = (options: InMemoryEdgeStoreOptions): InMemo
         },
         { concurrency: 1 },
       ),
-      (nodes) =>
-        Option.map(
-          Option.all(nodes),
-          Arr.reduce<FilterRow, FilterRow>(row, (acc, node) => ({ ...acc, ...node })),
-        ),
+      (nodes) => Option.map(Option.all(nodes), (all): FilterRow => Object.assign({}, row, ...all)),
     );
 
   /** The stored edges whose join satisfies `where`, in the list's total order. */

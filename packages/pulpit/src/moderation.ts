@@ -50,8 +50,10 @@
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Formatter from "effect/Formatter";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
+import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -259,7 +261,9 @@ const decided = (decision: {
   const { column } = declaration;
   if (Option.isNone(moderator)) return Result.fail(`${column} is the moderate rung's to change`);
   if (!isModerationState(asked) || !isModerationTransition(decision.from, asked)) {
-    return Result.fail(`${column} can't move to ${String(asked)}`);
+    return Result.fail(
+      `${column} can't move to ${Predicate.isString(asked) ? asked : Formatter.format(asked)}`,
+    );
   }
   return Result.succeed(
     decision.event.action === "restoreVersion"

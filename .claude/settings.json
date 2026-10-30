@@ -44,6 +44,16 @@
     "claude-md-management@claude-plugins-official": true,
     "commit-commands@claude-plugins-official": true,
     "pr-review-toolkit@claude-plugins-official": true,
-    "code-simplifier@claude-plugins-official": true
+    "code-simplifier@claude-plugins-official": true,
+    "enfect@enfect": true
+  },
+  "extraKnownMarketplaces": {
+    "enfect": {
+      "source": {
+        "source": "github",
+        "repo": "mpsuesser/enfect",
+        "ref": "47b9e241915be41b60bec0bcc543b1c3ac6d4b47"
+      }
+    }
   }
 }

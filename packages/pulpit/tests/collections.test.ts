@@ -223,10 +223,7 @@ describe("defineCollection — order versioned with the parent", () => {
     const mine = await create(items.ops, "private");
     await run(as(me, collection.append(list, mine)));
     // The chain records the order, so resync can read it back...
-    const head = lists.chain
-      .rows()
-      .filter((row) => row.id === list)
-      .at(-1);
+    const head = lists.chain.rows().findLast((row) => row.id === list);
     expect(head?.state["memberOrder"]).toEqual([mine]);
     // ...but another reader of the public list never sees the private member's id.
     const seen = await run(as(Option.some(otherMember), lists.ops.get(list)));

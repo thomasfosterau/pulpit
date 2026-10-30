@@ -7,7 +7,7 @@ export default defineConfig({
       // depends on each package's build so `vp run check` at the root always
       // exercises fresh `dist/` output.
       check: {
-        command: "tsc -p tsconfig.json",
+        command: "tsc -p tsconfig.check.json",
         dependsOn: ["@thomasfosterau/pulpit#build", "@thomasfosterau/pulpit-wordpress#build"],
         cache: {
           input: [

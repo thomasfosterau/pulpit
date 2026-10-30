@@ -910,8 +910,8 @@ describe("the wp/v2 read API — every parameter's check", () => {
     const wp = site();
     const anonymous = await wp.get("/wp/v2/posts", [["context", "edit"]]);
     expect([anonymous.status, codeOf(anonymous)]).toEqual([401, "rest_forbidden_context"]);
-    const member_ = await wp.get("/wp/v2/posts", [["context", "edit"]], Option.some(member));
-    expect([member_.status, codeOf(member_)]).toEqual([403, "rest_forbidden_context"]);
+    const signedIn = await wp.get("/wp/v2/posts", [["context", "edit"]], Option.some(member));
+    expect([signedIn.status, codeOf(signedIn)]).toEqual([403, "rest_forbidden_context"]);
   });
 
   it("answers an orderby whose column is unbound or unsortable as rest_invalid_param", async () => {
