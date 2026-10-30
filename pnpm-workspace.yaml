@@ -34,7 +34,7 @@ catalog:
   # type-checks the examples with the `tsc` on PATH (the native one below) and
   # runs them under `tsx`, hence that entry. Its `typescript >=5.8.2 <7` peer
   # is met by the TS6 alias below, so it needs no `peerDependencyRules` entry.
-  "@effect/docgen": ^4.0.6
+  "@effect/docgen": ^4.1.0
   "@effect/language-service": ^0.87.5
   # The Effect lint rules (`effect/*`, the anti-slop set included) the root
   # vite.config.ts extends with `configs.recommended`. It loads as an oxlint
