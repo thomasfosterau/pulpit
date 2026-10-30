@@ -1009,7 +1009,7 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
       Arr.flatMap(["public", "followers", "private"], (visibility) =>
         Arr.map([false, true], (draft) =>
           node(
-            `${String(visibility)}-${String(draft)}-${ownerId === ABSENT ? "absent" : String(ownerId)}`,
+            `${visibility}-${String(draft)}-${ownerId === ABSENT ? "absent" : String(ownerId)}`,
             ownerId === ABSENT ? { visibility, draft } : { ownerId, visibility, draft },
           ),
         ),

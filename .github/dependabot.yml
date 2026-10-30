@@ -15,10 +15,11 @@
 #   and hard-errors (UnsupportedTargetPackageVersionError) on any pairing its
 #   components table lacks, failing `pnpm install` itself. The TS6 alias
 #   (`typescript`, published as `@typescript/typescript6`) and the Effect lint
-#   plugin ride along. When this group's PR goes red on install, pick the
-#   @effect/tsgo release whose `components` table (node_modules/@effect/tsgo/
-#   dist/effect-tsgo.cjs) covers the new oxlint / tsgolint / TypeScript, by
-#   hand on the same branch (see the catalog comments in pnpm-workspace.yaml).
+#   plugin (`@enfect/oxlint`, an oxlint JS plugin) ride along. When this
+#   group's PR goes red on install, pick the @effect/tsgo release whose
+#   `components` table (node_modules/@effect/tsgo/dist/effect-tsgo.cjs)
+#   covers the new oxlint / tsgolint / TypeScript, by hand on the same
+#   branch (see the catalog comments in pnpm-workspace.yaml).
 # - `effect`: the Effect 4 release line is one lockstep-versioned singleton
 #   set (the `effect` override forces one copy). Excludes @effect/tsgo
 #   (toolchain) and @effect/docgen (docgen).
@@ -34,13 +35,20 @@
 # Everything else shares one `minor-and-patch` group; a major outside the
 # lockstep sets stays its own PR.
 #
-# The security floors in pnpm-workspace.yaml's `overrides` (shell-quote,
-# source-map-js, launch-editor) are transitive pins Dependabot does not bump:
-# they move by hand, and are deleted once their parents' ranges carry the fix
-# (AGENTS.md → Common pitfalls).
+# By hand, because Dependabot cannot move them (AGENTS.md → Common pitfalls):
+# - the npm-alias catalog entries: `vite` (`npm:@voidzero-dev/vite-plus-core@…`,
+#   always the `vite-plus` version), and `typescript` / `@typescript/native`
+#   (a pairing `@effect/tsgo`'s components table supports). Set them on the
+#   toolchain group's branch.
+# - the security floors in pnpm-workspace.yaml's `overrides` (undici,
+#   shell-quote, source-map-js, launch-editor): transitive pins, deleted once
+#   their parents' ranges carry the fix.
 #
-# `cooldown` mirrors pnpm-workspace.yaml's `minimumReleaseAge` (1 day), with
-# the first-party `@thomasfosterau/*` exempt as `minimumReleaseAgeExclude` is.
+# `cooldown` is 1 day (Dependabot takes whole days only), longer than
+# pnpm-workspace.yaml's `minimumReleaseAge` of 480 minutes (8 hours), so a
+# Dependabot PR never proposes a version pnpm would still refuse. The
+# first-party `@thomasfosterau/*` is exempt from both, as
+# `minimumReleaseAgeExclude` is.
 version: 2
 updates:
   - package-ecosystem: "npm"
@@ -73,7 +81,7 @@ updates:
           - "@typescript/native"
           - "typescript"
           - "@typescript/typescript6"
-          - "@mpsuesser/oxlint-plugin-effect"
+          - "@enfect/oxlint"
         update-types: ["major", "minor", "patch"]
       docgen:
         applies-to: version-updates
@@ -116,7 +124,7 @@ updates:
           - "@typescript/native"
           - "typescript"
           - "@typescript/typescript6"
-          - "@mpsuesser/oxlint-plugin-effect"
+          - "@enfect/oxlint"
           - "effect"
           - "@effect/*"
           - "tsx"
@@ -126,7 +134,10 @@ updates:
         update-types: ["minor", "patch"]
 
   - package-ecosystem: "github-actions"
-    directory: "/"
+    # The workflows and the composite setup action both pin actions by SHA.
+    directories:
+      - "/"
+      - "/.github/actions/setup"
     target-branch: "trunk"
     schedule:
       interval: "weekly"
@@ -136,6 +147,8 @@ updates:
       - "dependencies"
     commit-message:
       prefix: "chore"
+    cooldown:
+      default-days: 1
     groups:
       github-actions:
         patterns:

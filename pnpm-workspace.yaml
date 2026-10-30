@@ -36,22 +36,26 @@ catalog:
   # is met by the TS6 alias below, so it needs no `peerDependencyRules` entry.
   "@effect/docgen": ^4.0.6
   "@effect/language-service": ^0.87.5
+  # The Effect lint rules (`effect/*`, the anti-slop set included) the root
+  # vite.config.ts extends with `configs.recommended`. It loads as an oxlint
+  # JS plugin, so it moves with the vite-plus-carried oxlint (toolchain
+  # group). It depends on `effect` 4.1.0 exactly, but lints through whatever
+  # copy the `effect` override below forces; the dev pin is not bumped for it.
+  "@enfect/oxlint": ^0.9.0
   # Effect Language Service as a native (TypeScript-Go) binary — the TS7 side
   # of the 6/7 split. `effect-tsgo patch` overwrites the native `tsc` binary
   # with an Effect-patched build matched by gitHead, so this pins in lockstep
-  # with `@typescript/native` below (0.55.0 ships against typescript 7.0.2,
-  # 7.1.0-beta and 7.1.0-dev.20261020.3) and with the `oxlint` and
+  # with `@typescript/native` below (0.63.0 ships against typescript 7.0.2,
+  # 7.1.0-beta and 7.1.0-dev.20261028.1) and with the `oxlint` and
   # `oxlint-tsgolint` that `vite-plus` pulls in: each @effect/tsgo release
   # ships artifacts for an explicit set of component versions and hard-errors
   # (UnsupportedTargetPackageVersionError) on anything else, failing `pnpm
-  # install` itself rather than a later task. 0.55.0 supports oxlint
-  # 1.87.0–1.89.0 and oxlint-tsgolint 7.0.2003 / 7.0.2004, so vite-plus 1.3.0
-  # (oxlint 1.88.0, tsgolint 7.0.2004) is the pairing; vite-plus 0.3.x
-  # (oxlint 1.83.0) is no longer supported. Read the `components` table in
-  # node_modules/@effect/tsgo/dist/effect-tsgo.cjs before bumping any of the
-  # three.
-  "@effect/tsgo": 0.57.0
-  "@mpsuesser/oxlint-plugin-effect": ^0.6.0
+  # install` itself rather than a later task. 0.63.0 supports oxlint
+  # 1.88.0–1.90.0 and oxlint-tsgolint 7.0.2004 / 7.0.2005, so vite-plus 1.4.0
+  # (oxlint 1.89.0, tsgolint 7.0.2004) is the pairing. Read the `components`
+  # table in node_modules/@effect/tsgo/dist/effect-tsgo.cjs before bumping any
+  # of the three.
+  "@effect/tsgo": 0.63.0
   # The JSON:API model layer the `./content` and `./registry` subpaths build on.
   "@thomasfosterau/effect-jsonapi": ^0.19.0
   "@types/node": ^26.6.5
@@ -59,11 +63,11 @@ catalog:
   # own vitest and refuses to start a coverage run unless the provider's
   # version EQUALS that bundled vitest exactly (`assertCoverageProviderVersionMatch`
   # in node_modules/vite-plus/dist/define-config-*.js), so this moves only with
-  # vite-plus: pin it to the `vitest` entry below (vite-plus 1.3.0 → 5.0.5),
+  # vite-plus: pin it to the `vitest` entry below (vite-plus 1.4.0 → 5.0.5),
   # never ahead of it (pulpit#119).
   "@vitest/coverage-istanbul": 5.0.5
   effect: 4.0.6
-  fallow: 3.36.0
+  fallow: 3.37.0
   # The runtime `@effect/docgen` executes examples under.
   tsx: ^4.23.13
   # TypeScript 6/7 side-by-side: TS7 (the native Go compiler) ships no JS API
@@ -77,15 +81,16 @@ catalog:
   # vite-plus pins `oxlint`, `oxfmt`, `oxlint-tsgolint` and `vitest` to exact
   # versions, so this entry — not a catalog entry of its own — is what decides
   # the oxlint version `effect-tsgo patch --oxlint` has to support (see the
-  # @effect/tsgo note above): 0.3.3 carries oxlint 1.83.0, 1.1.0 1.87.0, 1.3.0
-  # 1.88.0. 1.x moved each task's `env` / `input` / `output` under `cache`
-  # (vite.package.ts). `vite` is the same release under its aliased core
-  # package, and `vitest` must match vite-plus's exact pin (1.3.0 → 5.0.5)
-  # because the
-  # `vitest: "catalog:"` override forces every resolution to the catalog
-  # singleton, as must `@vitest/coverage-istanbul` (above).
+  # @effect/tsgo note above): 1.3.0 carries oxlint 1.88.0, 1.4.0 1.89.0 (with
+  # oxfmt 0.74.0, oxlint-tsgolint 7.0.2004, vitest 5.0.5). 1.x moved each
+  # task's `env` / `input` / `output` under `cache` (vite.package.ts). `vite`
+  # is the same release under its aliased core package (an npm alias, so
+  # Dependabot cannot bump it: set it to the `vite-plus` version by hand in
+  # the toolchain PR), and `vitest` must match vite-plus's exact pin (1.4.0 →
+  # 5.0.5) because the `vitest: "catalog:"` override forces every resolution
+  # to the catalog singleton, as must `@vitest/coverage-istanbul` (above).
   vite-plus: 1.4.0
-  vite: npm:@voidzero-dev/vite-plus-core@1.3.0
+  vite: npm:@voidzero-dev/vite-plus-core@1.4.0
   vitest: 5.0.5
 
 # Peer ranges the packages under `packages/*` declare (the adapter's peer on
@@ -139,9 +144,11 @@ peerDependencyRules:
     vite: "*"
     vitest: "*"
 
-# Supply-chain delay (owner's policy, gardeneria #1149): hold newly published
-# versions for 1 day (unit: MINUTES) before pnpm will install them.
-minimumReleaseAge: 1440
+# Supply-chain delay (owner's policy, gardeneria #1149, relaxed to 8 hours on
+# 2026-10-30): hold newly published versions for 480 MINUTES (8 hours) before
+# pnpm will install them. Dependabot's `cooldown` (whole days only) is 1 day,
+# longer than this, so it never proposes a version pnpm would still refuse.
+minimumReleaseAge: 480
 minimumReleaseAgeExclude:
   # @thomasfosterau/* is first-party — exempt so our own releases install immediately.
   - "@thomasfosterau/*"

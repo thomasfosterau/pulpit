@@ -22,7 +22,9 @@ import { makeInMemoryIdCodec } from "../src/testing.ts";
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runSync(effect);
 
 /** What a hostile input or a broken callback throws. */
-class Boom {}
+class Boom {
+  readonly reason = "boom";
+}
 
 class CodecDown extends Schema.TaggedError<CodecDown>()("CodecDown", {}) {}
 

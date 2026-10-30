@@ -12,7 +12,7 @@ See [AGENTS.md → Branches and pull requests](AGENTS.md#branches-and-pull-reque
 
 ## Git hooks
 
-Hooks are managed by Vite+; the editable [.vite-hooks/pre-commit](.vite-hooks/pre-commit) is committed. **pre-commit** runs `vp staged` (format + lint on staged files). There is no pre-push hook.
+Hooks are managed by Vite+; the editable [.vite-hooks/pre-commit](.vite-hooks/pre-commit) is committed. **pre-commit** runs `vp staged`: `vp check --fix --no-lint` (format, with fixes), then `vp check --no-fmt` (lint, without fixes, so no type-aware autofix lands in a commit unverified). There is no pre-push hook.
 
 ## CI expectations
 

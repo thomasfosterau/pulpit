@@ -12,12 +12,20 @@
 
 import { defineConfig } from "vite-plus";
 import { recommended } from "@effect/tsgo/oxlint-presets";
-import effect from "@mpsuesser/oxlint-plugin-effect";
+import effect from "@enfect/oxlint";
 
 export default defineConfig({
-  // Staged-file checks run by `vp staged` (pre-commit).
+  // Staged-file checks run by `vp staged` (pre-commit): format with fixes,
+  // then lint WITHOUT fixes. With type-aware lint on, `vp check --fix` would
+  // silently apply type-aware autofixes (even of rules at `warn`) to the
+  // staged files at commit time, so the commit would differ from the tree
+  // that was verified. `--no-error-on-unmatched-pattern` keeps a commit that
+  // stages only files the linter skips (Markdown, JSON) from failing.
   staged: {
-    "*.{js,ts,css,json,md}": "vp check --fix",
+    "*.{js,ts,css,json,md}": [
+      "vp check --fix --no-lint",
+      "vp check --no-fmt --no-error-on-unmatched-pattern",
+    ],
   },
   fmt: {
     ignorePatterns: ["**/dist/**", "**/docs/**", "**/coverage/**"],
@@ -33,8 +41,12 @@ export default defineConfig({
   lint: {
     ignorePatterns: ["**/dist/**", "**/docs/**", "**/coverage/**", "**/node_modules/**"],
     extends: [recommended, effect.configs.recommended],
+    // oxlint's default plugins plus `import`, `promise`, `vitest` and `jsdoc`.
+    plugins: ["eslint", "typescript", "unicorn", "oxc", "import", "promise", "vitest", "jsdoc"],
     categories: {
       correctness: "error",
+      suspicious: "error",
+      perf: "error",
     },
     rules: {
       "eslint/no-unused-vars": [
@@ -45,6 +57,50 @@ export default defineConfig({
         },
       ],
       "eslint/prefer-const": "warn",
+      // `_tag` is the discriminant of every Effect tagged value and error;
+      // `_links` and `_embedded` are the WordPress REST API's own (HAL) wire
+      // members, which pulpit-wordpress must emit under exactly those names.
+      "eslint/no-underscore-dangle": ["error", { allow: ["_tag", "_links", "_embedded"] }],
+      // Effect code builds its operations, handlers, layers and schema
+      // transformations as closures over their factory's arguments, and the
+      // tests build their fixtures inside the `describe` they read as part
+      // of; hoisting each one would scatter one definition across a module
+      // (94 sites when the category was turned on).
+      "unicorn/consistent-function-scoping": "off",
+      // The module-as-namespace convention (`Option`, `Schema`, `Effect`, …)
+      // and the generic `R` / `A` / `E` parameters mean names deliberately
+      // recur in nested scopes.
+      "eslint/no-shadow": "off",
+      // Matches every `.map` call, `Effect.map` / `Option.map` over a single
+      // value included, and spreading into a fresh object is how this library
+      // builds its immutable records; mutating in place would break the
+      // readonly types the rule's fix needs.
+      "oxc/no-map-spread": "off",
+      // Reports every spread of `Schema.JsonObject` (a plain-object index
+      // signature, never a class instance) in the WordPress body builders as
+      // a class spread: a false positive with no code-level fix.
+      "typescript/no-misused-spread": "off",
+      // `return yield* new SomeError(…)` is Effect's early-failure idiom in an
+      // `Effect.fn` generator; the rule reads its `never` as a returned value
+      // and then demands one on the success path too, where the operation's
+      // published success type is `void`.
+      "typescript/consistent-return": "off",
+      // Its "explicit `undefined` is unnecessary on an optional parameter"
+      // check contradicts the workspace convention (AGENTS.md → Conventions):
+      // an optional parameter is spelled `x?: T | undefined`, like an
+      // optional field, so a caller can forward its own optional value.
+      "typescript/no-duplicate-type-constituents": "off",
+      // Every type assertion here carries a `// SAFETY:` comment stating its
+      // invariant, which `effect/require-safety-comment-for-type-assertion`
+      // enforces; this rule would report each audited one again.
+      "typescript/no-unsafe-type-assertion": "off",
+      // Reports the exact-type-identity idiom (`<X>() => X extends A ? 1 : 2`)
+      // the type-level tests and the dist-consumer check are built on, and
+      // `asMemberTuple`'s deliberate generic return target in registry.ts.
+      "typescript/no-unnecessary-type-parameters": "off",
+      // The suites assert through helpers named `expect…` (`expectAgreement`
+      // in tests/subtype.test.ts) as well as `expect` itself.
+      "vitest/expect-expect": ["error", { assertFunctionNames: ["expect", "expect*"] }],
       // The `Buffer` global is typed `any` wherever a consumer loads
       // @cloudflare/workers-types next to @types/node (every application this
       // library serves), so every call on it is unchecked there. The library
@@ -93,6 +149,32 @@ export default defineConfig({
           "effect/effect-run-in-body": "off",
         },
       },
+      // The same boundary, seen by `@effect/tsgo`'s rules (raised from the
+      // preset's level by the `suspicious` category): a test is the entry
+      // point where its layer is provided, a fault-injection helper takes
+      // whatever effect the case hands it (its error is the case's, not the
+      // helper's), and a fixture row is `Record<string, unknown>` whose
+      // columns the test itself wrote as strings, so `String(row[…])` is a
+      // read, not a stringification of an object.
+      {
+        files: ["**/tests/**/*.ts"],
+        rules: {
+          "effecttsgo/strict-effect-provide": "off",
+          "effecttsgo/any-unknown-in-error-context": "off",
+          "typescript/no-base-to-string": "off",
+        },
+      },
+      // The WordPress adapter's bindings are application callbacks whose
+      // failures it cannot name: each binding's error channel is `unknown`
+      // by contract (a published type), and `internal` turns every such
+      // failure into a 500 `WpRestError` before it leaves the adapter, so
+      // the `unknown` never reaches a caller.
+      {
+        files: ["packages/pulpit-wordpress/src/api.ts"],
+        rules: {
+          "effecttsgo/any-unknown-in-error-context": "off",
+        },
+      },
       // Build/test configs are evaluated by Vite and Vitest in bare Node,
       // before any Effect runtime exists — there is no `Config` provider to
       // read from and no `FileSystem` service to call, so `process.env` and
@@ -101,23 +183,24 @@ export default defineConfig({
       // `vite.package.ts`, the config the packages' `vite.config.ts` share).
       {
         files: ["**/vite.config.ts", "**/vitest.config.ts", "vite.package.ts"],
+        // Only the rule with a site (2, `VITEST_MAX_WORKERS` in
+        // vite.package.ts) stays off; the other service rules had none.
         rules: {
-          "effect/avoid-node-imports": "off",
-          "effect/avoid-sync-fs": "off",
           "effect/avoid-process-env": "off",
-          "effect/use-console-service": "off",
-          "effect/use-filesystem-service": "off",
-          "effect/use-path-service": "off",
-          "effect/avoid-native-fetch": "off",
-          "effect/effect-promise-vs-trypromise": "off",
         },
       },
     ],
-    // Type-aware linting is intentionally disabled: type checking stays the
-    // `check` tasks' job (native tsc, Effect-patched).
+    // Type-aware linting through oxlint-tsgolint (bundled with Vite+, patched
+    // by `effect-tsgo patch --oxlint`): `typeAware` turns on the rules that
+    // need type information, `typeCheck` reports TypeScript diagnostics in
+    // `vp check` too. The `check` tasks (native, Effect-patched tsc) stay the
+    // type gate of record and add the Effect diagnostics. tsgolint types a
+    // file with its nearest `tsconfig.json`; each package's covers `src/` and
+    // `tests/`, and the package names resolve through `exports` to `src/`, so
+    // no build is needed first.
     options: {
-      typeAware: false,
-      typeCheck: false,
+      typeAware: true,
+      typeCheck: true,
     },
     jsPlugins: [
       {

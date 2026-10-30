@@ -617,7 +617,7 @@ describe("defineSubtype — an owned leaf", () => {
         await run(actAs(who, ops.list({ limit: 50, offset: 0, includeDeleted, where: always })))
       ).rows.map((row) => row.id);
     expect(await listed(anonymous)).toEqual([open]);
-    const sorted = Arr.sort(Order.String);
+    const sorted = Arr.sortBy(Order.String);
     expect(sorted(await listed(as(follower)))).toEqual(sorted([open, followersOnly]));
     expect(sorted(await listed(as(member)))).toEqual(sorted([open, followersOnly, hidden]));
     const many = await run(
@@ -2369,13 +2369,13 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     operation === "compare absent from" ||
     operation === "compare absent to";
   /** The operations that write nothing: a refusal they answer can only be the gate's. */
-  const historyReads: ReadonlyArray<Operation> = [
+  const historyReads = HashSet.make<ReadonlyArray<Operation>>(
     "getVersion",
     "compare",
     "getVersion absent",
     "compare absent from",
     "compare absent to",
-  ];
+  );
 
   /** A leaf declaring the followers column the `curatorId` seeds fill (pulpit#92). */
   const curated: Extract<LeafAccess, { kind: "reference" }> = {
@@ -2579,7 +2579,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
       expect(
         results.filter(
           (result) =>
-            historyReads.includes(result.operation) &&
+            HashSet.has(historyReads, result.operation) &&
             Option.exists(result.answer, (tag) => tag !== "VersionNotFound") &&
             result.read,
         ),
@@ -2594,7 +2594,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
           (result) => [`${result.operation} ${result.label}`, result.answer] as const,
         ),
       );
-    const hiddenFromContributor = [
+    const hiddenFromContributor = HashSet.make(
       "private",
       "followers",
       "followers of the member",
@@ -2606,14 +2606,14 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
       "tombstoned public",
       "tombstoned private",
       "missing",
-    ];
+    );
     // Every operation on every row: only the two rows `get` serves it reach the chain.
     expect(await answers(contributor)).toEqual(
       Record.fromEntries(
         Arr.flatMap(operations, (operation) =>
           Arr.map([...seeds.map((seed) => seed.label), "missing"], (label) => [
             `${operation} ${label}`,
-            hiddenFromContributor.includes(label)
+            HashSet.has(hiddenFromContributor, label)
               ? Option.some("NodeNotFound")
               : absentVersion(operation)
                 ? Option.some("VersionNotFound")

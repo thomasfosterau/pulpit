@@ -153,7 +153,7 @@ const world = (maxDepth?: number) => {
     followers,
     toResource: (row) => row,
     hooks: Effect.succeed({
-      before: [moderationHook<never, never>(moderation, gardeneriaPolicy)],
+      before: [moderationHook(moderation, gardeneriaPolicy)],
       after: [],
     }),
   });

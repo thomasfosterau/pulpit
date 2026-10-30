@@ -22,8 +22,11 @@ jobs:
     name: Version or publish
     # Never run on forks (they have neither the environment nor the trusted
     # publisher binding, so a fork cannot publish on your behalf).
-    if: github.repository == 'thomasfosterau/pulpit'
+    # Never for Dependabot either: this job holds `id-token: write`, and only
+    # the owner's merges to `trunk` may version or publish.
+    if: github.repository == 'thomasfosterau/pulpit' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Requires manual approval via a protected GitHub Environment named
     # "release". See PUBLISHING.md for the one-time setup.
     environment: release
@@ -60,6 +63,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          # The pinned major, never `latest` (which setup-node resolves to the
+          # newest nodejs.org entry, pre-releases included).
           node-version: 22.x
           cache: pnpm
           registry-url: https://registry.npmjs.org

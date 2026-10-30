@@ -79,6 +79,7 @@
 
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
+import * as Formatter from "effect/Formatter";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
@@ -119,6 +120,10 @@ import {
   type ViewerAccount,
 } from "./subtype.ts";
 import { NodeNotFound, type ColumnValue } from "./version-chain.ts";
+
+/** A column value as text for an error: a string as itself, anything else formatted (never `[object Object]`). */
+const columnText = (value: ColumnValue): string =>
+  Predicate.isString(value) ? value : Formatter.format(value);
 
 // ── Errors ────────────────────────────────────────────────────────────
 
@@ -1017,7 +1022,7 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
         Effect.flatMap(liveNode(end, viewer, values), (node) =>
           Option.match(node, {
             onNone: () =>
-              Effect.fail(new NodeNotFound({ type: end.type, id: String(values[end.column]) })),
+              Effect.fail(new NodeNotFound({ type: end.type, id: columnText(values[end.column]) })),
             onSome: (row) => Effect.succeed({ alias, end, nodeId: row.id }),
           }),
         ),
