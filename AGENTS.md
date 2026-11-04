@@ -74,7 +74,7 @@ Never guess at an Effect API: read the installed package. `node_modules/effect/A
 
 ## Agent sessions
 
-`.claude/hooks/session-start.sh` (SessionStart) installs dependencies against the lockfile with pnpm (through corepack when available), puts `vp` (a re-exec shim), `fallow` and `tsx` (docgen's example runner) on PATH for non-interactive shells, and repairs a broken bare `node`. It hydrates no secrets, and none are needed: every gate above runs offline. A PostToolUse hook runs `vp fmt <file> --write` after every Write / Edit, and a PreToolUse hook (`.claude/hooks/fallow-gate.sh`) runs `fallow audit --base origin/trunk` on every `git commit` / `git push` and blocks on a `fail` verdict. A worktree needs its own `pnpm install` before `vp` resolves the worktree's own vitest. `.claude/settings.json` enables the `@enfect/claude` plugin (Effect guidance, skills and post-write pattern checks), pinned by `ref` to a reviewed `mpsuesser/enfect` commit; moving it is a reviewed edit of that SHA.
+`.claude/hooks/session-start.sh` (SessionStart) installs dependencies against the lockfile with pnpm (through corepack when available), puts `vp` (a re-exec shim), `fallow` and `tsx` (docgen's example runner) on PATH for non-interactive shells, and repairs a broken bare `node`. It hydrates no secrets, and none are needed: every gate above runs offline. A PostToolUse hook runs `vp fmt <file> --write` after every Write / Edit, and a PreToolUse hook (`.claude/hooks/fallow-gate.sh`) runs `fallow audit --base origin/trunk` on every `git commit` / `git push` and blocks on a `fail` verdict. A worktree needs its own `pnpm install` before `vp` resolves the worktree's own vitest.
 
 ## Documentation surfaces
 
