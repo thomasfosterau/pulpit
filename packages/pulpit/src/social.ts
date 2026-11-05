@@ -86,17 +86,20 @@ export interface Relationship {
  *
  * @since 0.1.0
  */
-export class InteractionBlocked extends Schema.TaggedError<InteractionBlocked>()(
-  "InteractionBlocked",
-  { accountId: Schema.String },
-) {}
+export class InteractionBlocked extends Schema.TaggedError<
+  InteractionBlocked,
+  { readonly brand: unique symbol }
+>()("InteractionBlocked", { accountId: Schema.String }) {}
 
 /**
  * A relationship with oneself: the wire's 422.
  *
  * @since 0.1.0
  */
-export class SelfRelationship extends Schema.TaggedError<SelfRelationship>()("SelfRelationship", {
+export class SelfRelationship extends Schema.TaggedError<
+  SelfRelationship,
+  { readonly brand: unique symbol }
+>()("SelfRelationship", {
   kind: RelationshipKind,
 }) {}
 

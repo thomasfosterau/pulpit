@@ -163,7 +163,7 @@ export interface BlobStore<E, R> {
  */
 export const fileResourceFields = {
   contentHash: Resource.readOnlyAttribute(ContentHash),
-  byteSize: Resource.readOnlyAttribute(Schema.Number),
+  byteSize: Resource.readOnlyAttribute(Schema.Finite),
   mediaType: Resource.readOnlyAttribute(Schema.String),
   filename: Resource.readOnlyAttribute(Schema.String),
   bytesPending: Resource.readOnlyAttribute(Schema.Boolean),

@@ -18,7 +18,6 @@ import { MAX_SET_VALUES } from "@thomasfosterau/pulpit/filter";
 import { integerIds, stringIds, UnencodableNodeId, type IdCodec } from "../src/ids.ts";
 import { makeInMemoryIdCodec } from "../src/testing.ts";
 
-// oxlint-disable-next-line effect/effect-run-in-body -- the test harness is the runtime boundary the rule asks for
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runSync(effect);
 
 /** What a hostile input or a broken callback throws. */
@@ -26,7 +25,10 @@ class Boom {
   readonly reason = "boom";
 }
 
-class CodecDown extends Schema.TaggedError<CodecDown>()("CodecDown", {}) {}
+class CodecDown extends Schema.TaggedError<CodecDown, { readonly brand: unique symbol }>()(
+  "CodecDown",
+  {},
+) {}
 
 /** A codec whose every read fails, so a test can show it was never read. */
 const failingCodec: IdCodec<CodecDown, never> = {
@@ -46,7 +48,6 @@ const none = Option.none();
 
 /** Whether an effect dies (a defect), rather than failing or throwing. */
 const dies = <A, E>(effect: Effect.Effect<A, E>): boolean => {
-  // oxlint-disable-next-line effect/effect-run-in-body -- the test harness is the runtime boundary the rule asks for
   const exit = Effect.runSyncExit(effect);
   return Exit.isFailure(exit) && Cause.hasDies(exit.cause);
 };

@@ -22,10 +22,13 @@ import * as Schema from "effect/Schema";
  * A WordPress REST error, answered as `{ code, message, data: { status } }`
  * (plus `data.params` for `rest_invalid_param`), as `WP_REST_Server` does.
  */
-export class WpRestError extends Schema.TaggedError<WpRestError>()("WpRestError", {
+export class WpRestError extends Schema.TaggedError<
+  WpRestError,
+  { readonly brand: unique symbol }
+>()("WpRestError", {
   code: Schema.String,
   message: Schema.String,
-  status: Schema.Number,
+  status: Schema.Finite,
   params: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 }) {}
 

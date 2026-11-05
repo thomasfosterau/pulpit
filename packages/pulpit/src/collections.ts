@@ -85,7 +85,10 @@ export const MAX_COLLECTION_SIZE = MAX_PAGE_LIMIT;
  *
  * @since 0.1.0
  */
-export class AlreadyMember extends Schema.TaggedError<AlreadyMember>()("AlreadyMember", {
+export class AlreadyMember extends Schema.TaggedError<
+  AlreadyMember,
+  { readonly brand: unique symbol }
+>()("AlreadyMember", {
   parentId: Schema.String,
   memberId: Schema.String,
 }) {}
@@ -95,10 +98,13 @@ export class AlreadyMember extends Schema.TaggedError<AlreadyMember>()("AlreadyM
  *
  * @since 0.1.0
  */
-export class NotMember extends Schema.TaggedError<NotMember>()("NotMember", {
-  parentId: Schema.String,
-  memberId: Schema.String,
-}) {}
+export class NotMember extends Schema.TaggedError<NotMember, { readonly brand: unique symbol }>()(
+  "NotMember",
+  {
+    parentId: Schema.String,
+    memberId: Schema.String,
+  },
+) {}
 
 /**
  * The collection already holds {@link MAX_COLLECTION_SIZE} members: the
@@ -106,9 +112,12 @@ export class NotMember extends Schema.TaggedError<NotMember>()("NotMember", {
  *
  * @since 0.1.0
  */
-export class CollectionFull extends Schema.TaggedError<CollectionFull>()("CollectionFull", {
+export class CollectionFull extends Schema.TaggedError<
+  CollectionFull,
+  { readonly brand: unique symbol }
+>()("CollectionFull", {
   parentId: Schema.String,
-  max: Schema.Number,
+  max: Schema.Finite,
 }) {}
 
 // ── The seam ──────────────────────────────────────────────────────────

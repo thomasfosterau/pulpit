@@ -74,7 +74,7 @@ const images = () => {
     access: ownedAccess(),
     chain,
     leaves,
-    viewer: Effect.succeed(Option.some(member)),
+    viewer: Effect.succeedSome(member),
     policy: gardeneriaPolicy,
     followers: makeInMemoryFollowers([]),
     toResource: (row: LeafRow) => row,

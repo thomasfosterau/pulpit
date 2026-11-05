@@ -133,7 +133,10 @@ const columnText = (value: ColumnValue): string =>
  *
  * @since 0.1.0
  */
-export class EdgeNotFound extends Schema.TaggedError<EdgeNotFound>()("EdgeNotFound", {
+export class EdgeNotFound extends Schema.TaggedError<
+  EdgeNotFound,
+  { readonly brand: unique symbol }
+>()("EdgeNotFound", {
   type: Schema.String,
   id: Schema.String,
 }) {}
@@ -150,7 +153,10 @@ export class EdgeNotFound extends Schema.TaggedError<EdgeNotFound>()("EdgeNotFou
  *
  * @since 0.1.0
  */
-export class EdgeConflict extends Schema.TaggedError<EdgeConflict>()("EdgeConflict", {
+export class EdgeConflict extends Schema.TaggedError<
+  EdgeConflict,
+  { readonly brand: unique symbol }
+>()("EdgeConflict", {
   type: Schema.String,
 }) {}
 
@@ -161,19 +167,19 @@ export class EdgeConflict extends Schema.TaggedError<EdgeConflict>()("EdgeConfli
  *
  * @since 0.1.0
  */
-export class EdgeCardinalityExceeded extends Schema.TaggedError<EdgeCardinalityExceeded>()(
-  "EdgeCardinalityExceeded",
-  {
-    /** The edge family's wire type. */
-    type: Schema.String,
-    /** The end (its alias in the declaration) whose limit was reached. */
-    end: Schema.String,
-    /** The node at that end, which already holds `max` edges the caller can read. */
-    nodeId: Schema.String,
-    /** The declared limit. */
-    max: Schema.Int,
-  },
-) {}
+export class EdgeCardinalityExceeded extends Schema.TaggedError<
+  EdgeCardinalityExceeded,
+  { readonly brand: unique symbol }
+>()("EdgeCardinalityExceeded", {
+  /** The edge family's wire type. */
+  type: Schema.String,
+  /** The end (its alias in the declaration) whose limit was reached. */
+  end: Schema.String,
+  /** The node at that end, which already holds `max` edges the caller can read. */
+  nodeId: Schema.String,
+  /** The declared limit. */
+  max: Schema.Int,
+}) {}
 
 /**
  * An edge family declared against the rules: an end's alias contains a `.`,
@@ -185,10 +191,10 @@ export class EdgeCardinalityExceeded extends Schema.TaggedError<EdgeCardinalityE
  *
  * @since 0.1.0
  */
-export class EdgeDeclarationError extends Schema.TaggedError<EdgeDeclarationError>()(
-  "EdgeDeclarationError",
-  { message: Schema.String },
-) {}
+export class EdgeDeclarationError extends Schema.TaggedError<
+  EdgeDeclarationError,
+  { readonly brand: unique symbol }
+>()("EdgeDeclarationError", { message: Schema.String }) {}
 
 // ── The ends ──────────────────────────────────────────────────────────
 
@@ -598,7 +604,10 @@ export interface EdgeValidity {
  *
  * @since 0.1.0
  */
-export class InvalidValidity extends Schema.TaggedError<InvalidValidity>()("InvalidValidity", {
+export class InvalidValidity extends Schema.TaggedError<
+  InvalidValidity,
+  { readonly brand: unique symbol }
+>()("InvalidValidity", {
   type: Schema.String,
   reason: Schema.String,
 }) {}
@@ -919,15 +928,13 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
   const storedEdge =
     (node: typeof readableNode) =>
     (viewer: Viewer, id: string): Effect.Effect<Option.Option<Row>, E, R> =>
-      Effect.flatMap(edges.get(id), (row) =>
-        Option.isNone(row)
-          ? Effect.succeed(row)
-          : Effect.map(
-              Effect.forEach(endEntries, ([, end]) => node(end, viewer, row.value), {
-                concurrency: 1,
-              }),
-              (found) => (Arr.every(found, Option.isSome) ? row : Option.none<Row>()),
-            ),
+      Effect.filterOrElse(edges.get(id), Option.isNone, (row) =>
+        Effect.map(
+          Effect.forEach(endEntries, ([, end]) => node(end, viewer, row.value), {
+            concurrency: 1,
+          }),
+          (found) => (Arr.every(found, Option.isSome) ? row : Option.none<Row>()),
+        ),
       );
 
   /** The stored edge, if the viewer may read it (`EDGE-001`: every end's node is readable). */
@@ -1003,7 +1010,7 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
           from.value.value.getTime() > to.value.value.getTime();
         return reversed
           ? Effect.fail(new InvalidValidity({ type, reason: "validity starts after it ends" }))
-          : Effect.succeed(Option.some([from.value, to.value] as const));
+          : Effect.succeedSome([from.value, to.value] as const);
       },
     });
 

@@ -111,13 +111,13 @@ export type WireId = number | string;
  *
  * @since 0.1.0
  */
-export class UnencodableNodeId extends Schema.TaggedError<UnencodableNodeId>()(
-  "UnencodableNodeId",
-  {
-    nodeId: Schema.String,
-    reason: Schema.Literals(["unmapped", "invalid-integer", "duplicate-integer"]),
-  },
-) {}
+export class UnencodableNodeId extends Schema.TaggedError<
+  UnencodableNodeId,
+  { readonly brand: unique symbol }
+>()("UnencodableNodeId", {
+  nodeId: Schema.String,
+  reason: Schema.Literals(["unmapped", "invalid-integer", "duplicate-integer"]),
+}) {}
 
 /**
  * The name of the id mode whose wire id is `W`: `integer` for `number`,

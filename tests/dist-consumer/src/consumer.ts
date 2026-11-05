@@ -669,7 +669,7 @@ export type _Evaluate = Assert<
 declare const leaves: LeafStore<LeafRow, Subquery, StoreFailure, Transaction>;
 /** The viewer seams both factories take: an anonymous viewer, no rung, nobody following. */
 const anonymousSeams = {
-  viewer: Effect.succeed(Option.none()),
+  viewer: Effect.succeedNone,
   policy: {
     canViewPrivate: () => false,
     canViewDeleted: () => false,

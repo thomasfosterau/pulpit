@@ -441,25 +441,25 @@ const site = (options: SiteOptions = {}) => {
 const decodeBody =
   <S extends Schema.ConstraintDecoder<unknown>>(schema: S) =>
   (response: WordPressResponse): S["Type"] =>
-    Schema.decodeUnknownSync(schema)(Option.getOrNull(response.body));
+    Schema.decodeSync(schema)(Option.getOrNull(response.body));
 
 const ErrorBody = Schema.Struct({
   code: Schema.String,
   data: Schema.Struct({
-    status: Schema.Number,
+    status: Schema.Finite,
     params: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   }),
 });
 const codeOf = (response: WordPressResponse) => decodeBody(ErrorBody)(response).code;
 
-const Embedded = Schema.Record(Schema.String, Schema.Array(Schema.Struct({ id: Schema.Number })));
+const Embedded = Schema.Record(Schema.String, Schema.Array(Schema.Struct({ id: Schema.Finite })));
 const Item = Schema.Struct({
-  id: Schema.Number,
+  id: Schema.Finite,
   status: Schema.String,
   date: Schema.String,
   date_gmt: Schema.NullOr(Schema.String),
-  featured_media: Schema.optionalKey(Schema.Number),
-  parent: Schema.optionalKey(Schema.Number),
+  featured_media: Schema.optionalKey(Schema.Finite),
+  parent: Schema.optionalKey(Schema.Finite),
   _links: Schema.Record(Schema.String, Schema.Json),
   _embedded: Schema.optionalKey(Embedded),
 });
@@ -1244,15 +1244,15 @@ describe("the wp/v2 read API — the wire forms WordPress core answers in (golde
 // ── Phase 2: taxonomies and authors ─────────────────────────────────────
 
 const Term = Schema.Struct({
-  id: Schema.Number,
-  count: Schema.optionalKey(Schema.Number),
-  parent: Schema.optionalKey(Schema.Number),
+  id: Schema.Finite,
+  count: Schema.optionalKey(Schema.Finite),
+  parent: Schema.optionalKey(Schema.Finite),
   slug: Schema.String,
   _links: Schema.Record(Schema.String, Schema.Json),
 });
 const termOf = decodeBody(Term);
 const termsOf = decodeBody(Schema.Array(Term));
-const User = Schema.Struct({ id: Schema.Number, slug: Schema.String });
+const User = Schema.Struct({ id: Schema.Finite, slug: Schema.String });
 const usersOf = decodeBody(Schema.Array(User));
 const sorted = (values: ReadonlyArray<number>) => Arr.sort(values, Order.Number);
 
@@ -1446,14 +1446,14 @@ describe("the wp/v2 read API — items and their terms (phase 2)", () => {
   it("shows an item's readable terms, its wp:term link and its embedded terms, one read per taxonomy", async () => {
     const { wp, news, hot, open, theirs } = await taxonomySite();
     const Shown = Schema.Struct({
-      id: Schema.Number,
-      categories: Schema.Array(Schema.Number),
-      tags: Schema.Array(Schema.Number),
+      id: Schema.Finite,
+      categories: Schema.Array(Schema.Finite),
+      tags: Schema.Array(Schema.Finite),
       _links: Schema.Struct({
         "wp:term": Schema.Array(Schema.Struct({ taxonomy: Schema.String })),
       }),
       _embedded: Schema.Struct({
-        "wp:term": Schema.Array(Schema.Array(Schema.Struct({ id: Schema.Number }))),
+        "wp:term": Schema.Array(Schema.Array(Schema.Struct({ id: Schema.Finite }))),
       }),
     });
     const before = wp.termReads.length;
@@ -1482,7 +1482,7 @@ describe("the wp/v2 read API — items and their terms (phase 2)", () => {
   it("never shows a term through an item the viewer can't read", async () => {
     const { wp, draft } = await taxonomySite();
     expect(codeOf(await wp.get(`/wp/v2/posts/${draft.wireId}`))).toBe("rest_post_invalid_id");
-    const own = decodeBody(Schema.Struct({ categories: Schema.Array(Schema.Number) }))(
+    const own = decodeBody(Schema.Struct({ categories: Schema.Array(Schema.Finite) }))(
       await wp.get(`/wp/v2/posts/${draft.wireId}`, [], Option.some(member)),
     );
     expect(own.categories).toHaveLength(2);

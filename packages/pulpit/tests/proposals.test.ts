@@ -342,7 +342,7 @@ describe("defineProposals — the operations", () => {
   it("submit refuses an account below the propose rung", async () => {
     const chain = makeInMemoryChainStore();
     const leaves = makeInMemoryLeafStore(chain, { columns: ["title"], now: NOW });
-    const viewer = Effect.succeed(Option.some(member));
+    const viewer = Effect.succeedSome(member);
     const ops = defineProposals({
       type: "pages",
       target: defineSubtype({

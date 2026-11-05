@@ -49,9 +49,12 @@ import type { ChainWrite, VersionChainStore } from "./version-chain.ts";
  *
  * @since 0.1.0
  */
-export class PathTaken extends Schema.TaggedError<PathTaken>()("PathTaken", {
-  path: Schema.String,
-}) {}
+export class PathTaken extends Schema.TaggedError<PathTaken, { readonly brand: unique symbol }>()(
+  "PathTaken",
+  {
+    path: Schema.String,
+  },
+) {}
 
 /**
  * No node the viewer can read answers to the path: the wire's 404. A path
@@ -60,7 +63,10 @@ export class PathTaken extends Schema.TaggedError<PathTaken>()("PathTaken", {
  *
  * @since 0.1.0
  */
-export class PathNotFound extends Schema.TaggedError<PathNotFound>()("PathNotFound", {
+export class PathNotFound extends Schema.TaggedError<
+  PathNotFound,
+  { readonly brand: unique symbol }
+>()("PathNotFound", {
   path: Schema.String,
 }) {}
 

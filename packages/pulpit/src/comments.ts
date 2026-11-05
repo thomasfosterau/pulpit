@@ -80,10 +80,14 @@ import {
  *
  * @since 0.1.0
  */
-export class CommentDepthExceeded extends Schema.TaggedError<CommentDepthExceeded>()(
-  "CommentDepthExceeded",
-  { type: Schema.String, parentId: Schema.String, maxDepth: Schema.Number },
-) {}
+export class CommentDepthExceeded extends Schema.TaggedError<
+  CommentDepthExceeded,
+  { readonly brand: unique symbol }
+>()("CommentDepthExceeded", {
+  type: Schema.String,
+  parentId: Schema.String,
+  maxDepth: Schema.Finite,
+}) {}
 
 /**
  * A comments family declared against the rules: a `maxDepth` that is not
@@ -92,10 +96,10 @@ export class CommentDepthExceeded extends Schema.TaggedError<CommentDepthExceede
  *
  * @since 0.1.0
  */
-export class CommentDeclarationError extends Schema.TaggedError<CommentDeclarationError>()(
-  "CommentDeclarationError",
-  { message: Schema.String },
-) {}
+export class CommentDeclarationError extends Schema.TaggedError<
+  CommentDeclarationError,
+  { readonly brand: unique symbol }
+>()("CommentDeclarationError", { message: Schema.String }) {}
 
 // ── The moderation gate ───────────────────────────────────────────────
 

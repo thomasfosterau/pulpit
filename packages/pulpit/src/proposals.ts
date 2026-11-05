@@ -199,7 +199,10 @@ export interface ProposalDecision {
  *
  * @since 0.1.0
  */
-export class ProposalNotFound extends Schema.TaggedError<ProposalNotFound>()("ProposalNotFound", {
+export class ProposalNotFound extends Schema.TaggedError<
+  ProposalNotFound,
+  { readonly brand: unique symbol }
+>()("ProposalNotFound", {
   id: Schema.String,
 }) {}
 
@@ -209,7 +212,10 @@ export class ProposalNotFound extends Schema.TaggedError<ProposalNotFound>()("Pr
  *
  * @since 0.1.0
  */
-export class ProposalClosed extends Schema.TaggedError<ProposalClosed>()("ProposalClosed", {
+export class ProposalClosed extends Schema.TaggedError<
+  ProposalClosed,
+  { readonly brand: unique symbol }
+>()("ProposalClosed", {
   id: Schema.String,
   status: ProposalStatus,
 }) {}
@@ -222,7 +228,10 @@ export class ProposalClosed extends Schema.TaggedError<ProposalClosed>()("Propos
  *
  * @since 0.1.0
  */
-export class ProposalConflict extends Schema.TaggedError<ProposalConflict>()("ProposalConflict", {
+export class ProposalConflict extends Schema.TaggedError<
+  ProposalConflict,
+  { readonly brand: unique symbol }
+>()("ProposalConflict", {
   id: Schema.String,
   attributes: Schema.Array(Schema.String),
   /** The conflicting translated columns, by locale (pulpit#184); `{}` when none. */
@@ -236,10 +245,10 @@ export class ProposalConflict extends Schema.TaggedError<ProposalConflict>()("Pr
  *
  * @since 0.1.0
  */
-export class InvalidProposalPatch extends Schema.TaggedError<InvalidProposalPatch>()(
-  "InvalidProposalPatch",
-  { type: Schema.String, reason: Schema.String },
-) {}
+export class InvalidProposalPatch extends Schema.TaggedError<
+  InvalidProposalPatch,
+  { readonly brand: unique symbol }
+>()("InvalidProposalPatch", { type: Schema.String, reason: Schema.String }) {}
 
 // ── Classification ────────────────────────────────────────────────────
 
@@ -823,10 +832,7 @@ export const defineProposals = <Resource, E, R>(
   /** The target's head entry, or `NodeNotFound`. */
   const headOf = (targetId: string) =>
     Effect.flatMap(definition.chain.head(targetId), (head) =>
-      Option.match(head, {
-        onNone: () => Effect.fail(new NodeNotFound({ type, id: targetId })),
-        onSome: Effect.succeed,
-      }),
+      Effect.fromOption(head, () => new NodeNotFound({ type, id: targetId })),
     );
 
   /** Re-validate the stored patch and classify it, through the target's gated `compare`. */

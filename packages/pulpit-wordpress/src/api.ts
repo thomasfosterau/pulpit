@@ -2668,23 +2668,23 @@ export const defineWordPress = <R, Following = never>(
     if (Option.isSome(taxonomy)) {
       const [found, binding] = taxonomy.value;
       return Option.match(id, {
-        onNone: () => Effect.map(listTerms(found, binding, query), Option.some),
+        onNone: () => Effect.asSome(listTerms(found, binding, query)),
         onSome: (rawId) =>
           ids.mode === "integer" && !/^\d+$/.test(rawId)
             ? Effect.fail(noRoute())
-            : Effect.map(getTerm(found, binding, decodeURIComponent(rawId), query), Option.some),
+            : Effect.asSome(getTerm(found, binding, decodeURIComponent(rawId), query)),
       });
     }
     if (Option.contains(base, "users") && servesUsers()) {
       return Option.match(id, {
-        onNone: () => Effect.map(listUsers(query), Option.some),
+        onNone: () => Effect.asSome(listUsers(query)),
         onSome: (rawId) =>
           authors.ids.mode === "integer" && !/^\d+$/.test(rawId)
             ? Effect.fail(noRoute())
-            : Effect.map(getUser(decodeURIComponent(rawId), query), Option.some),
+            : Effect.asSome(getUser(decodeURIComponent(rawId), query)),
       });
     }
-    return Effect.succeed(Option.none());
+    return Effect.succeedNone;
   };
 
   /** `/users` is routed when any post type is bound: its authors are the only accounts it lists. */

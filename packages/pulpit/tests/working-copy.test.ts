@@ -117,10 +117,9 @@ describe("defineWorkingCopy", () => {
       Effect.forEach(
         operations,
         (operation) =>
-          Effect.all(
-            [actAs(Option.some(otherMember), operation), actAs(Option.none(), operation)].map(
-              (refused) => Effect.map(Effect.flip(refused), (error) => error._tag),
-            ),
+          Effect.forEach(
+            [actAs(Option.some(otherMember), operation), actAs(Option.none(), operation)],
+            (refused) => Effect.map(Effect.flip(refused), (error) => error._tag),
             { concurrency: 1 },
           ),
         { concurrency: 1 },

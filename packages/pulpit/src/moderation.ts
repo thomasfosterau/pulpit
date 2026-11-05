@@ -555,7 +555,10 @@ export interface ReportStore<E, R> {
  *
  * @since 0.1.0
  */
-export class ReportNotFound extends Schema.TaggedError<ReportNotFound>()("ReportNotFound", {
+export class ReportNotFound extends Schema.TaggedError<
+  ReportNotFound,
+  { readonly brand: unique symbol }
+>()("ReportNotFound", {
   id: Schema.String,
 }) {}
 
@@ -564,7 +567,10 @@ export class ReportNotFound extends Schema.TaggedError<ReportNotFound>()("Report
  *
  * @since 0.1.0
  */
-export class ReportClosed extends Schema.TaggedError<ReportClosed>()("ReportClosed", {
+export class ReportClosed extends Schema.TaggedError<
+  ReportClosed,
+  { readonly brand: unique symbol }
+>()("ReportClosed", {
   id: Schema.String,
   status: ReportStatus,
 }) {}

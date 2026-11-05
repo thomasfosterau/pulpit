@@ -225,14 +225,20 @@ export const nobodyFollows = <Following>(nobody: Following): FollowerSeam<Follow
  *
  * @since 0.1.0
  */
-export class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthorized", {}) {}
+export class Unauthorized extends Schema.TaggedError<
+  Unauthorized,
+  { readonly brand: unique symbol }
+>()("Unauthorized", {}) {}
 
 /**
  * A signed-in viewer below the rung a write needs: the wire's 403. Never used to hide a row.
  *
  * @since 0.1.0
  */
-export class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
+export class Forbidden extends Schema.TaggedError<Forbidden, { readonly brand: unique symbol }>()(
+  "Forbidden",
+  {},
+) {}
 
 /**
  * A list order the leaf does not sort by: a key whose column is not sortable
@@ -249,7 +255,10 @@ export class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) 
  *
  * @since 0.1.0
  */
-export class InvalidListOrder extends Schema.TaggedError<InvalidListOrder>()("InvalidListOrder", {
+export class InvalidListOrder extends Schema.TaggedError<
+  InvalidListOrder,
+  { readonly brand: unique symbol }
+>()("InvalidListOrder", {
   type: Schema.String,
   column: Schema.String,
 }) {}
@@ -263,10 +272,10 @@ export class InvalidListOrder extends Schema.TaggedError<InvalidListOrder>()("In
  *
  * @since 0.1.0
  */
-export class SubtypeDeclarationError extends Schema.TaggedError<SubtypeDeclarationError>()(
-  "SubtypeDeclarationError",
-  { message: Schema.String },
-) {}
+export class SubtypeDeclarationError extends Schema.TaggedError<
+  SubtypeDeclarationError,
+  { readonly brand: unique symbol }
+>()("SubtypeDeclarationError", { message: Schema.String }) {}
 
 // ── Read scope and the row predicate ──────────────────────────────────
 
@@ -519,18 +528,13 @@ const publicOrAll = <Following>(viewer: Viewer, policy: AccessPolicy): ReadScope
 // ── The write gates ───────────────────────────────────────────────────
 
 const signedIn = (viewer: Viewer): Effect.Effect<ViewerAccount, Unauthorized> =>
-  Option.match(viewer, {
-    onNone: () => Effect.fail(new Unauthorized()),
-    onSome: Effect.succeed,
-  });
+  Effect.fromOption(viewer, () => new Unauthorized());
 
 const atRung = (
   viewer: Viewer,
   admits: (account: ViewerAccount) => boolean,
 ): Effect.Effect<ViewerAccount, Unauthorized | Forbidden> =>
-  Effect.flatMap(signedIn(viewer), (account) =>
-    admits(account) ? Effect.succeed(account) : Effect.fail(new Forbidden()),
-  );
+  Effect.filterOrFail(signedIn(viewer), admits, () => new Forbidden());
 
 /**
  * The gate for a CREATE: reference data → the corpus-write rung; owned → any signed-in account.
@@ -909,7 +913,10 @@ export interface PublicationWrite {
  *
  * @since 0.1.0
  */
-export class NotPublished extends Schema.TaggedError<NotPublished>()("NotPublished", {
+export class NotPublished extends Schema.TaggedError<
+  NotPublished,
+  { readonly brand: unique symbol }
+>()("NotPublished", {
   type: Schema.String,
   id: Schema.String,
 }) {}
@@ -996,7 +1003,10 @@ export interface PublicationOps<E, R> {
  *
  * @since 0.1.0
  */
-export class WriteRejected extends Schema.TaggedError<WriteRejected>()("WriteRejected", {
+export class WriteRejected extends Schema.TaggedError<
+  WriteRejected,
+  { readonly brand: unique symbol }
+>()("WriteRejected", {
   type: Schema.String,
   id: Schema.String,
   action: Schema.String,
@@ -1788,9 +1798,9 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
    */
   const chosenRow = (viewer: Viewer, head: Row): Effect.Effect<Option.Option<Row>, E, R> =>
     Option.match(publication, {
-      onNone: () => Effect.succeed(Option.some(head)),
+      onNone: () => Effect.succeedSome(head),
       onSome: ({ live }) =>
-        readsHeadOf(viewer, head) ? Effect.succeed(Option.some(head)) : live.get(head.id),
+        readsHeadOf(viewer, head) ? Effect.succeedSome(head) : live.get(head.id),
     });
 
   /**
@@ -3019,7 +3029,10 @@ export const defineLocaleLevel = (declaration: {
  *
  * @since 0.1.0
  */
-export class OwnerSetTooLarge extends Schema.TaggedError<OwnerSetTooLarge>()("OwnerSetTooLarge", {
+export class OwnerSetTooLarge extends Schema.TaggedError<
+  OwnerSetTooLarge,
+  { readonly brand: unique symbol }
+>()("OwnerSetTooLarge", {
   type: Schema.String,
 }) {}
 

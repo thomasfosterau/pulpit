@@ -81,10 +81,10 @@ export interface WorkingCopyStore<E, R> {
  *
  * @since 0.1.0
  */
-export class WorkingCopyNotFound extends Schema.TaggedError<WorkingCopyNotFound>()(
-  "WorkingCopyNotFound",
-  { type: Schema.String, id: Schema.String },
-) {}
+export class WorkingCopyNotFound extends Schema.TaggedError<
+  WorkingCopyNotFound,
+  { readonly brand: unique symbol }
+>()("WorkingCopyNotFound", { type: Schema.String, id: Schema.String }) {}
 
 type Gate = Unauthorized | Forbidden | NodeNotFound;
 

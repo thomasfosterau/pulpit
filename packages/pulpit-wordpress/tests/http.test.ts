@@ -6,7 +6,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
-import * as Option from "effect/Option";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { defineWordPress, type WordPressRequest } from "../src/api.ts";
 import { wordPressHttp } from "../src/http.ts";
@@ -16,7 +15,7 @@ const seen: Array<WordPressRequest> = [];
 const base = defineWordPress({
   site: { url: "https://example.org", name: "Example", description: "", timezone: "UTC" },
   ids: stringIds(),
-  viewer: Effect.succeed(Option.none()),
+  viewer: Effect.succeedNone,
   policy: {
     canViewPrivate: () => false,
     canViewDeleted: () => false,

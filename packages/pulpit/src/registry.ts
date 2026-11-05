@@ -153,10 +153,10 @@ export const root: Option.Option<never> = Option.none();
  *
  * @since 0.1.0
  */
-export class RegistryDeclarationError extends Schema.TaggedError<RegistryDeclarationError>()(
-  "RegistryDeclarationError",
-  { message: Schema.String },
-) {}
+export class RegistryDeclarationError extends Schema.TaggedError<
+  RegistryDeclarationError,
+  { readonly brand: unique symbol }
+>()("RegistryDeclarationError", { message: Schema.String }) {}
 
 /**
  * An application-supplied per-entry invariant, run by {@link validateRegistry}
