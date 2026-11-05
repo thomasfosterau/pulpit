@@ -94,10 +94,10 @@ export interface WriteBudget {
  *
  * @since 0.1.0
  */
-export class BudgetDeclarationError extends Schema.TaggedError<BudgetDeclarationError>()(
-  "BudgetDeclarationError",
-  { type: Schema.String, reason: Schema.String },
-) {}
+export class BudgetDeclarationError extends Schema.TaggedError<
+  BudgetDeclarationError,
+  { readonly brand: unique symbol }
+>()("BudgetDeclarationError", { type: Schema.String, reason: Schema.String }) {}
 
 /**
  * What a {@link BudgetCounter} is asked: whether the account may make one

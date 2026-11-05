@@ -958,8 +958,8 @@ export const makeInMemoryProposalStore = (options: {
     get: (id) =>
       Effect.suspend(() =>
         Option.match(table.find(id), {
-          onNone: () => Effect.succeed(Option.none()),
-          onSome: (row) => Effect.map(listingOf(row), Option.some),
+          onNone: () => Effect.succeedNone,
+          onSome: (row) => Effect.asSome(listingOf(row)),
         }),
       ),
     lock: table.lock,
@@ -1048,10 +1048,10 @@ export const makeInMemoryReportStore = (): InMemoryReportStore => {
  *
  * @since 0.1.0
  */
-export class InMemoryBlobFailure extends Schema.TaggedError<InMemoryBlobFailure>()(
-  "InMemoryBlobFailure",
-  { key: Schema.String },
-) {}
+export class InMemoryBlobFailure extends Schema.TaggedError<
+  InMemoryBlobFailure,
+  { readonly brand: unique symbol }
+>()("InMemoryBlobFailure", { key: Schema.String }) {}
 
 /**
  * One object in an {@link InMemoryBlobStore}.

@@ -2743,7 +2743,10 @@ describe("subtypeHandlers — the handlers seam", () => {
 
 describe("subtypeHandlers — a write that hides the row from its own writer evicts the cached resource (pulpit#107)", () => {
   /** A store failure the re-read can hit after the write committed. */
-  class StoreDown extends Schema.TaggedError<StoreDown>()("StoreDown", {}) {}
+  class StoreDown extends Schema.TaggedError<StoreDown, { readonly brand: unique symbol }>()(
+    "StoreDown",
+    {},
+  ) {}
 
   /**
    * A cache step held open: it signals `entered`, then waits for `release`

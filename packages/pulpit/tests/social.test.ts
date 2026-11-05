@@ -145,7 +145,7 @@ describe("defineSocial — follows, mutes and blocks", () => {
     };
     const social = defineSocial({
       store: racing,
-      viewer: Effect.succeed(Option.some({ id: "u-a", role: "user" })),
+      viewer: Effect.succeedSome({ id: "u-a", role: "user" }),
     });
     expect(await tagOf(social.follow("u-b"))).toEqual(Option.some("InteractionBlocked"));
     expect(inner.rows().filter((row) => row.kind === "follow")).toEqual([]);

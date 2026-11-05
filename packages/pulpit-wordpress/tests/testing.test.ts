@@ -9,7 +9,6 @@ import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
 import { makeInMemoryIdCodec } from "../src/testing.ts";
 
-// oxlint-disable-next-line effect/effect-run-in-body -- the test harness is the runtime boundary the rule asks for
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runSync(effect);
 
 describe("makeInMemoryIdCodec", () => {

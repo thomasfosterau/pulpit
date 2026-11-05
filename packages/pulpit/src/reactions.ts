@@ -65,10 +65,10 @@ export interface ReactionKinds {
  *
  * @since 0.1.0
  */
-export class ReactionDeclarationError extends Schema.TaggedError<ReactionDeclarationError>()(
-  "ReactionDeclarationError",
-  { message: Schema.String },
-) {}
+export class ReactionDeclarationError extends Schema.TaggedError<
+  ReactionDeclarationError,
+  { readonly brand: unique symbol }
+>()("ReactionDeclarationError", { message: Schema.String }) {}
 
 /**
  * Declare a family's reaction vocabulary. Throws
@@ -109,10 +109,10 @@ export const reactionKinds = (kinds: ReadonlyArray<string>): ReactionKinds => {
  *
  * @since 0.1.0
  */
-export class InvalidReactionKind extends Schema.TaggedError<InvalidReactionKind>()(
-  "InvalidReactionKind",
-  { type: Schema.String, kind: Schema.String },
-) {}
+export class InvalidReactionKind extends Schema.TaggedError<
+  InvalidReactionKind,
+  { readonly brand: unique symbol }
+>()("InvalidReactionKind", { type: Schema.String, kind: Schema.String }) {}
 
 // ── The seam ──────────────────────────────────────────────────────────
 

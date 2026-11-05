@@ -209,7 +209,10 @@ export interface ChainWrite {
  *
  * @since 0.1.0
  */
-export class NodeNotFound extends Schema.TaggedError<NodeNotFound>()("NodeNotFound", {
+export class NodeNotFound extends Schema.TaggedError<
+  NodeNotFound,
+  { readonly brand: unique symbol }
+>()("NodeNotFound", {
   type: Schema.String,
   id: Schema.String,
 }) {}
@@ -219,7 +222,10 @@ export class NodeNotFound extends Schema.TaggedError<NodeNotFound>()("NodeNotFou
  *
  * @since 0.1.0
  */
-export class VersionNotFound extends Schema.TaggedError<VersionNotFound>()("VersionNotFound", {
+export class VersionNotFound extends Schema.TaggedError<
+  VersionNotFound,
+  { readonly brand: unique symbol }
+>()("VersionNotFound", {
   type: Schema.String,
   id: Schema.String,
   version: Schema.BigInt,
@@ -230,10 +236,10 @@ export class VersionNotFound extends Schema.TaggedError<VersionNotFound>()("Vers
  *
  * @since 0.1.0
  */
-export class NodeAlreadyExists extends Schema.TaggedError<NodeAlreadyExists>()(
-  "NodeAlreadyExists",
-  { type: Schema.String, id: Schema.String },
-) {}
+export class NodeAlreadyExists extends Schema.TaggedError<
+  NodeAlreadyExists,
+  { readonly brand: unique symbol }
+>()("NodeAlreadyExists", { type: Schema.String, id: Schema.String }) {}
 
 /**
  * The store refused an append because `(id, version)` is already taken — a
@@ -244,7 +250,10 @@ export class NodeAlreadyExists extends Schema.TaggedError<NodeAlreadyExists>()(
  *
  * @since 0.1.0
  */
-export class VersionConflict extends Schema.TaggedError<VersionConflict>()("VersionConflict", {
+export class VersionConflict extends Schema.TaggedError<
+  VersionConflict,
+  { readonly brand: unique symbol }
+>()("VersionConflict", {
   id: Schema.String,
   version: Schema.BigInt,
 }) {}
@@ -262,7 +271,10 @@ export class VersionConflict extends Schema.TaggedError<VersionConflict>()("Vers
  *
  * @since 0.1.0
  */
-export class StaleVersion extends Schema.TaggedError<StaleVersion>()("StaleVersion", {
+export class StaleVersion extends Schema.TaggedError<
+  StaleVersion,
+  { readonly brand: unique symbol }
+>()("StaleVersion", {
   type: Schema.String,
   id: Schema.String,
   /** The version the caller expected the head to be. */
@@ -278,7 +290,10 @@ export class StaleVersion extends Schema.TaggedError<StaleVersion>()("StaleVersi
  *
  * @since 0.1.0
  */
-export class BrokenChain extends Schema.TaggedError<BrokenChain>()("BrokenChain", {
+export class BrokenChain extends Schema.TaggedError<
+  BrokenChain,
+  { readonly brand: unique symbol }
+>()("BrokenChain", {
   type: Schema.String,
   id: Schema.String,
   version: Schema.BigInt,

@@ -113,10 +113,14 @@ export default defineConfig({
             "The `Buffer` global is typed `any` wherever @cloudflare/workers-types is loaded. Use Uint8Array/DataView.",
         },
       ],
-      // `casting-awareness` is an awareness prompt, not a defect rule — it
+      // `casting-awareness` is an awareness prompt, not a defect rule: it
       // fires on every `as`, including the narrowings a generic seam
-      // structurally requires. Stays visible as a warning.
-      "effect/casting-awareness": "warn",
+      // structurally requires (a member tuple rebuilt from its entries, a
+      // record whose key union `Record.fromEntries` erases, both in
+      // registry.ts). Every `as` here is already audited at `error` by
+      // `effect/require-safety-comment-for-type-assertion`, which demands the
+      // `// SAFETY:` invariant this rule only prompts for.
+      "effect/casting-awareness": "off",
       // Hard-codes abbreviations (`Arr`, `P`, `R`, …) with no options, so it is
       // unsatisfiable under the full-name convention (`import * as Option from
       // "effect/Option"`) this library shares with its consumers.
@@ -162,6 +166,20 @@ export default defineConfig({
           "effecttsgo/strict-effect-provide": "off",
           "effecttsgo/any-unknown-in-error-context": "off",
           "typescript/no-base-to-string": "off",
+        },
+      },
+      // The adapter's HTTP surface is `effect/http`, which the pinned Effect
+      // marks unstable as a whole; there is no stable module to serve a
+      // request with. `@effect/tsgo`'s `unstable-api-usage` would report
+      // every use of the module the file exists to wrap.
+      {
+        files: [
+          "packages/pulpit-wordpress/src/http.ts",
+          "packages/pulpit-wordpress/tests/http.test.ts",
+          "tests/dist-consumer/src/wordpress.ts",
+        ],
+        rules: {
+          "effecttsgo/unstable-api-usage": "off",
         },
       },
       // The WordPress adapter's bindings are application callbacks whose

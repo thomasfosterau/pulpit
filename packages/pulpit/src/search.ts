@@ -300,7 +300,10 @@ export interface SearchBranch<Following, E, R> {
  *
  * @since 0.1.0
  */
-export class SearchScopeLeak extends Schema.TaggedError<SearchScopeLeak>()("SearchScopeLeak", {
+export class SearchScopeLeak extends Schema.TaggedError<
+  SearchScopeLeak,
+  { readonly brand: unique symbol }
+>()("SearchScopeLeak", {
   branch: Schema.String,
   id: Schema.String,
 }) {}
@@ -429,10 +432,10 @@ export interface Embedder<E, R> {
  *
  * @since 0.1.0
  */
-export class EmbeddingMismatch extends Schema.TaggedError<EmbeddingMismatch>()(
-  "EmbeddingMismatch",
-  { expected: Schema.Number, received: Schema.Number },
-) {}
+export class EmbeddingMismatch extends Schema.TaggedError<
+  EmbeddingMismatch,
+  { readonly brand: unique symbol }
+>()("EmbeddingMismatch", { expected: Schema.Finite, received: Schema.Finite }) {}
 
 /**
  * The document store with embedding enqueued on a document's first insert:
