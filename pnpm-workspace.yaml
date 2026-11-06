@@ -42,7 +42,7 @@ catalog:
   # pins it and Dependabot updates it alone. It depends on `effect` 4.1.0
   # exactly, but lints through whatever copy the `effect` override below
   # forces; the dev pin is not bumped for it.
-  "@enfect/oxlint": ^0.9.0
+  "@enfect/oxlint": ^0.10.0
   # Effect Language Service as a native (TypeScript-Go) binary — the TS7 side
   # of the 6/7 split. `effect-tsgo patch` overwrites the native `tsc` binary
   # with an Effect-patched build matched by gitHead, so this pins in lockstep
