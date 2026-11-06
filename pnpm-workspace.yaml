@@ -67,7 +67,7 @@ catalog:
   # never ahead of it (pulpit#119).
   "@vitest/coverage-istanbul": 5.0.5
   effect: 4.0.6
-  fallow: 3.37.0
+  fallow: 3.38.1
   # The runtime `@effect/docgen` executes examples under.
   tsx: ^4.23.13
   # TypeScript 6/7 side-by-side: TS7 (the native Go compiler) ships no JS API
