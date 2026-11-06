@@ -68,7 +68,7 @@ catalog:
   # never ahead of it (pulpit#119).
   "@vitest/coverage-istanbul": 5.0.5
   effect: 4.1.2
-  fallow: 3.38.1
+  fallow: 3.39.0
   # Exists only for @effect/docgen, which requires `tsx` as a peer and spawns
   # its binary itself to run the compiled examples. Scripts use `vpx`.
   tsx: ^4.23.13
