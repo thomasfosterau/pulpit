@@ -70,7 +70,7 @@ Steps 1–6 are what CI runs (`.github/workflows/ci.yml`), and CI runs step 7's 
 
 ## Effect
 
-Never guess at an Effect API: read the installed package. `node_modules/effect/AGENTS.md` and `node_modules/effect/ai-docs/` are the pinned release's own guides, `node_modules/effect/dist/*.d.ts` its signatures and `node_modules/effect/src` its source. The pinned version is the `effect` entry in `pnpm-workspace.yaml`. It spells the tagged-error constructor `Schema.TaggedError<Self>()(tag, fields)`; `Schema.TaggedErrorClass`, which older guides show, does not exist in it. HTTP modules are `effect/http/*`; there are no `effect/unstable/*` paths.
+Never guess at an Effect API: read the installed package. `node_modules/effect/AGENTS.md` and `node_modules/effect/ai-docs/` are the pinned release's own guides, `node_modules/effect/dist/*.d.ts` its signatures and `node_modules/effect/src` its source. The pinned version is the `effect` entry in `pnpm-workspace.yaml`. The published `effect` peer (`catalogs.peers`) is `^4.0.0`; raise it only when a dependency requires a newer one, naming the dependency in the catalog comment, and prove a floor by running the gates with the pin set to it. The pin spells the tagged-error constructor `Schema.TaggedError<Self>()(tag, fields)`; `Schema.TaggedErrorClass`, which older guides show, does not exist in it. HTTP modules are `effect/http/*`; there are no `effect/unstable/*` paths.
 
 ## Agent sessions
 

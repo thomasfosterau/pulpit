@@ -97,13 +97,16 @@ catalog:
 
 # Peer ranges the packages under `packages/*` declare (the adapter's peer on
 # the kernel is `workspace:^` instead). Kept as a named catalog so the
-# strict catalog mode still governs them while they stay ranges (an exact
-# `4.0.0-rc.118` peer would reject a consumer on a later prerelease). `pnpm publish`
+# strict catalog mode still governs them while they stay ranges. `pnpm publish`
 # replaces `catalog:peers` with these ranges in each published manifest.
+# `effect` is `^4.0.0` by policy: raise it only when a dependency requires a
+# newer one, naming that dependency here (none does: effect-jsonapi peers on
+# `effect >=4.0.0-rc.118`). Proved by running `vp run check` and the unit
+# suites with the `effect` pin above set to 4.0.0.
 catalogs:
   peers:
     "@thomasfosterau/effect-jsonapi": ">=0.17.0"
-    effect: ">=4.0.0-rc.118"
+    effect: ^4.0.0
 
 overrides:
   # undici <8.12.2 — GHSA-xjj6-f33q-929c (high): an unhandled error on a
