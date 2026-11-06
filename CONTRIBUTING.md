@@ -38,5 +38,5 @@ vp run -r test:coverage                    # each package's coverage thresholds,
 vp test run tests/some.test.ts             # single file (from inside the package)
 vp run -r build                            # emit dist/
 vp run -r docgen                           # build, then type-check and run every JSDoc @example
-fallow audit --base origin/trunk           # change-set review (not a CI gate)
+vp exec fallow audit --base origin/trunk   # change-set review (not a CI gate)
 ```

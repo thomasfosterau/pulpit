@@ -33,7 +33,7 @@ The kernel's own invariants, terms and import boundary, including the seams-befo
 - `vp run -r test:coverage` — the coverage gate: each package's suite under its own thresholds (90 / 85 / 90 / 90 for statements / branches / functions / lines, `vite.package.ts`), plus the root's merged map above. Never lower a threshold to pass it; add the tests.
 - `vp run -r build` — emit each package's `dist/`.
 - `vp run -r docgen` — build, then type-check and execute every JSDoc `@example` and generate the API docs under each package's `docs/` (gitignored).
-- `fallow audit --base origin/trunk` — the fallow gate over your change set.
+- `vp exec fallow audit --base origin/trunk` — the fallow gate over your change set.
 - `pnpm changeset` — add a changeset (see Branches and pull requests).
 
 Invoke everything through `vp` (`vp exec` instead of `npx`; `vp run <task>` instead of bare `pnpm`). CI installs as `pnpm install --frozen-lockfile`.
@@ -48,7 +48,7 @@ Before you report work as done, run the gates below in order and quote each comm
 4. `vp run -r build`
 5. `vp run -r docgen`
 6. `pnpm audit --audit-level high`
-7. `vp run -r test:coverage`, then `fallow audit --base origin/trunk`
+7. `vp run -r test:coverage`, then `vp exec fallow audit --base origin/trunk`
 
 Steps 1–6 are what CI runs (`.github/workflows/ci.yml`), and CI runs step 7's `vp run -r test:coverage` too, after the unit tests, so each package's coverage thresholds are enforced (pulpit#119, pulpit#166). CI holds a read-only token and no secret or OIDC (so Dependabot PRs run it safely), pins every action to a commit SHA, never persists checkout credentials outside the Release job, sets up Node as `"*"` with `check-latest` (never `latest`, which can be a pre-release), and the Release job never runs for Dependabot; `uvx zizmor --offline .github` audits the workflows (`.github/zizmor.yml`). step 7's `fallow audit` is the fallow gate the PreToolUse hook also runs on commit and push. The hook reads the merged coverage map on disk and never refreshes it, so run `vp run -r test:coverage` (or `vp run test:coverage`, the map alone) first. For CI parity from a clean tree, first run `rm -rf node_modules packages/*/node_modules tests/*/node_modules && pnpm install --frozen-lockfile`: a warm tree hides a peer that a dependency requires but a package's `package.json` does not declare (declare it under `peerDependencies` via `catalog:peers`, or `workspace:^` for the kernel).
 
@@ -74,7 +74,7 @@ Never guess at an Effect API: read the installed package. `node_modules/effect/A
 
 ## Agent sessions
 
-`.claude/hooks/session-start.sh` (SessionStart) installs dependencies against the lockfile with pnpm (through corepack when available), puts `vp` (a re-exec shim), `fallow` and `tsx` (docgen's example runner) on PATH for non-interactive shells, and repairs a broken bare `node`. It hydrates no secrets, and none are needed: every gate above runs offline. A PostToolUse hook runs `vp fmt <file> --write` after every Write / Edit, and a PreToolUse hook (`.claude/hooks/fallow-gate.sh`) runs `fallow audit --base origin/trunk` on every `git commit` / `git push` and blocks on a `fail` verdict. A worktree needs its own `pnpm install` before `vp` resolves the worktree's own vitest.
+`.claude/hooks/session-start.sh` (SessionStart) installs the global Vite+ CLI at the catalog's `vite-plus` pin with the official installer (npm-provenance and SHA-512 checked; it needs `vite.plus` and `viteplus.dev` on the environment's allowlist), links `vp` and `vpx` into `~/.local/bin`, installs dependencies with `vp install --frozen-lockfile` (pnpm through corepack only when the global CLI is absent), and repairs a broken bare `node`. The global `vp` delegates to each checkout's own `vite-plus` (worktrees included); everything else goes through it: `vp exec fallow …` for fallow, `vpx <file>.ts` for scripts. Nothing else is put on PATH, and the hook removes the `fallow` / `tsx` links and the walking `vp` shim earlier versions made. `tsx` is installed only because `@effect/docgen` requires it as a peer and runs it itself; never invoke it directly. If the installer can't run, `vp` falls back to this checkout's `node_modules` copy. It hydrates no secrets, and none are needed: the gates above need no credential (the installer and `pnpm audit` need the network). A PostToolUse hook runs `vp fmt <file> --write` after every Write / Edit, and a PreToolUse hook (`.claude/hooks/fallow-gate.sh`) runs `fallow audit --base origin/trunk` through `vp exec fallow` on every `git commit` / `git push` and blocks on a `fail` verdict; it runs only in this checkout and its `.claude/worktrees/*`, and anywhere else runs none of that tree's tooling and skips the audit with a notice. A worktree needs its own `vp install` before `vp` resolves the worktree's own vitest.
 
 ## Documentation surfaces
 
