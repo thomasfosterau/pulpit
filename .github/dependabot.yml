@@ -1,39 +1,30 @@
 # Dependabot version updates. The `npm` ecosystem at `/` reads the pnpm
 # workspace, its catalogs and pnpm-lock.yaml.
 #
-# Dependabot puts a dependency in the FIRST group that matches it, so the
-# groups run specific → general, and `exclude-patterns` keep each package out
-# of a broader group it would otherwise also match.
-#
-# Lockstep groups (every update type, majors included, because a partial move
-# breaks the build):
+# A group exists only where its members must move at the same time (one
+# release train, or a hard compatibility table); everything else, each
+# GitHub Action included, updates on its own PR. Dependabot puts a
+# dependency in the FIRST group that matches it, so `exclude-patterns` keep
+# `@effect/tsgo` out of `effect`. Both groups take every update type, majors
+# included, because a partial move breaks the build:
 # - `toolchain`: vite-plus pins the `vite` core, `vitest`, `oxlint`, `oxfmt`
 #   and `oxlint-tsgolint` it carries to exact versions; `@vitest/coverage-
 #   istanbul` must equal that vitest (vite-plus refuses a coverage run
 #   otherwise, pulpit#119); and `effect-tsgo patch` (the root `prepare`)
 #   matches the native `tsc` (`@typescript/native`) and that oxlint by gitHead
 #   and hard-errors (UnsupportedTargetPackageVersionError) on any pairing its
-#   components table lacks, failing `pnpm install` itself. The TS6 alias
-#   (`typescript`, published as `@typescript/typescript6`) and the Effect lint
-#   plugin (`@enfect/oxlint`, an oxlint JS plugin) ride along. When this
-#   group's PR goes red on install, pick the @effect/tsgo release whose
-#   `components` table (node_modules/@effect/tsgo/dist/effect-tsgo.cjs)
-#   covers the new oxlint / tsgolint / TypeScript, by hand on the same
-#   branch (see the catalog comments in pnpm-workspace.yaml).
+#   components table lacks, failing `pnpm install` itself. When this group's
+#   PR goes red on install, pick the @effect/tsgo release whose `components`
+#   table (node_modules/@effect/tsgo/dist/effect-tsgo.cjs) covers the new
+#   oxlint / tsgolint / TypeScript, by hand on the same branch (see the
+#   catalog comments in pnpm-workspace.yaml). The Effect lint plugin
+#   (`@enfect/oxlint`) is not in it: it ranges `@oxlint/plugins` `^1.85.0`,
+#   so no oxlint pins it.
 # - `effect`: the Effect 4 release line is one lockstep-versioned singleton
-#   set (the `effect` override forces one copy). Excludes @effect/tsgo
-#   (toolchain) and @effect/docgen (docgen).
-# - `docgen`: @effect/docgen executes every `@example` under `tsx` and parses
-#   `src/` with the ts-morph it bundles.
-# - `changesets`: the CLI and its changelog formatter.
-# - `fallow`: alone, because the PreToolUse gate (.claude/hooks/fallow-gate.sh)
-#   and the AGENTS.md fallow blocks are hand-maintained against a checked
-#   fallow version; check a bump against them (AGENTS.md → Fallow local gate)
-#   and never regenerate them with `fallow hooks install` / `setup-hooks` /
-#   `agent install`.
-#
-# Everything else shares one `minor-and-patch` group; a major outside the
-# lockstep sets stays its own PR.
+#   set (the `effect` override forces one copy). `@effect/docgen` is in it:
+#   it ships on the same version line and depends on `effect` `^<its own
+#   version>`, so it must not run ahead of the pin. `tsx` (docgen's peer)
+#   and `@effect/language-service` update on their own.
 #
 # By hand, because Dependabot cannot move them (AGENTS.md → Common pitfalls):
 # - the npm-alias catalog entries: `vite` (`npm:@voidzero-dev/vite-plus-core@…`,
@@ -67,6 +58,7 @@ updates:
       exclude:
         - "@thomasfosterau/*"
     groups:
+      # vite-plus pins vite / vitest / oxlint; the tsgo patch pairs with them.
       toolchain:
         applies-to: version-updates
         patterns:
@@ -74,22 +66,12 @@ updates:
           - "vite"
           - "vitest"
           - "@vitest/*"
-          - "oxlint"
-          - "oxfmt"
-          - "oxlint-tsgolint"
           - "@effect/tsgo"
           - "@typescript/native"
           - "typescript"
           - "@typescript/typescript6"
-          - "@enfect/oxlint"
         update-types: ["major", "minor", "patch"]
-      docgen:
-        applies-to: version-updates
-        patterns:
-          - "@effect/docgen"
-          - "tsx"
-          - "ts-morph"
-        update-types: ["major", "minor", "patch"]
+      # One release train; @effect/docgen depends on `effect` at its version.
       effect:
         applies-to: version-updates
         patterns:
@@ -97,41 +79,8 @@ updates:
           - "@effect/*"
         exclude-patterns:
           - "@effect/tsgo"
-          - "@effect/docgen"
+          - "@effect/language-service"
         update-types: ["major", "minor", "patch"]
-      changesets:
-        applies-to: version-updates
-        patterns:
-          - "@changesets/*"
-        update-types: ["major", "minor", "patch"]
-      fallow:
-        applies-to: version-updates
-        patterns:
-          - "fallow"
-        update-types: ["major", "minor", "patch"]
-      minor-and-patch:
-        applies-to: version-updates
-        patterns:
-          - "*"
-        exclude-patterns:
-          - "vite-plus"
-          - "vite"
-          - "vitest"
-          - "@vitest/*"
-          - "oxlint"
-          - "oxfmt"
-          - "oxlint-tsgolint"
-          - "@typescript/native"
-          - "typescript"
-          - "@typescript/typescript6"
-          - "@enfect/oxlint"
-          - "effect"
-          - "@effect/*"
-          - "tsx"
-          - "ts-morph"
-          - "@changesets/*"
-          - "fallow"
-        update-types: ["minor", "patch"]
 
   - package-ecosystem: "github-actions"
     # The workflows and the composite setup action both pin actions by SHA.
@@ -147,9 +96,6 @@ updates:
       - "dependencies"
     commit-message:
       prefix: "chore"
+    # No groups: each action updates on its own PR.
     cooldown:
       default-days: 1
-    groups:
-      github-actions:
-        patterns:
-          - "*"
