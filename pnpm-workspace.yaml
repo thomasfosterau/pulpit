@@ -68,7 +68,8 @@ catalog:
   "@vitest/coverage-istanbul": 5.0.5
   effect: 4.0.6
   fallow: 3.38.1
-  # The runtime `@effect/docgen` executes examples under.
+  # Exists only for @effect/docgen, which requires `tsx` as a peer and spawns
+  # its binary itself to run the compiled examples. Scripts use `vpx`.
   tsx: ^4.23.13
   # TypeScript 6/7 side-by-side: TS7 (the native Go compiler) ships no JS API
   # until 7.1, so JS-API consumers (@effect/language-service) stay on TS6 while
