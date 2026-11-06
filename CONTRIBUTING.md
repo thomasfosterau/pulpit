@@ -4,6 +4,8 @@ Maintained by Thomas Foster, with a workflow meant to be approachable for both h
 
 ## Setup
 
+Open in a Codespace or Dev Container: `.devcontainer/` provisions it with the same hook as agent sessions.
+
 `pnpm install` installs dependencies, the Vite+ git hooks and, through the root `prepare` script, the Effect-patched `tsc` / `oxlint`.
 
 ## Branch model

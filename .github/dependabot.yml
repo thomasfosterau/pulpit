@@ -99,3 +99,19 @@ updates:
     # No groups: each action updates on its own PR.
     cooldown:
       default-days: 1
+  # The Dev Container features in .devcontainer/devcontainer.json. No group:
+  # each feature updates on its own PR. The image tag is a hand move (it
+  # follows the catalog's `vite-plus` pin; see the comment beside it).
+  - package-ecosystem: "devcontainers"
+    directory: "/"
+    target-branch: "trunk"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore"
+    cooldown:
+      default-days: 1
