@@ -4,7 +4,7 @@ Maintained by Thomas Foster, with a workflow meant to be approachable for both h
 
 ## Setup
 
-Open in a Codespace or Dev Container: `.devcontainer/` provisions it with the same hook as agent sessions.
+Open in a Codespace or Dev Container: `.devcontainer/` provisions it with the same hook as agent sessions. The `Dev Container` workflow (`.github/workflows/devcontainer.yml`) builds it in CI whenever its inputs change; to try a change locally, `pnpm dlx @devcontainers/cli@0.89.0 up --workspace-folder .` (needs Docker).
 
 `pnpm install` installs dependencies, the Vite+ git hooks and, through the root `prepare` script, the Effect-patched `tsc` / `oxlint`.
 
