@@ -157,6 +157,7 @@
   "devDependencies": {
     "@effect/docgen": "catalog:",
     "@effect/language-service": "catalog:",
+    "@thomasfosterau/effect-auth": "catalog:",
     "@thomasfosterau/effect-jsonapi": "catalog:",
     "@types/node": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
