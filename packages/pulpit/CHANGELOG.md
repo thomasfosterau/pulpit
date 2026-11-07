@@ -1,5 +1,22 @@
 # @thomasfosterau/pulpit
 
+## 0.2.0
+
+### Minor Changes
+
+- [#270](https://github.com/thomasfosterau/pulpit/pull/270) [`0cae9da`](https://github.com/thomasfosterau/pulpit/commit/0cae9dabee7b8aa3b77378f62d5335325ad87792) Thanks [@thomasfosterau](https://github.com/thomasfosterau)! - Add audience visibility (pulpit#194): share a row with a named group.
+
+  - `Visibility` gains `group` (`public | followers | group | private`).
+  - `FollowerSeam` gains the optional audience pair `isMember` / `groups`, and `ReadScope`'s `member` scope carries `groups` when the seam answers it. Without them no `group` row opens beyond its owner and the view-private rung.
+  - `LeafAccess` (both kinds) gains an optional `groupColumn`, and `ownedAccess({ group: true })` names `groupId`. A `group` row reads, when published, to the members of the group that column names, through `get`, `getMany`, `list`, search scope and `./edges`' endpoint checks alike; a non-string value (a deleted group) leaves it `private`. It is never cache-serveable (`CACHE-AUTH-005`).
+  - New `./audience` module: `defineAudience` over a `MembershipStore` (add, remove and re-role members as the group's owner or an admin; leave; the member list; delete a group's memberships), `audienceSeam`, and `makeInMemoryMembershipStore` in `./testing`.
+
+- [#267](https://github.com/thomasfosterau/pulpit/pull/267) [`80e53cb`](https://github.com/thomasfosterau/pulpit/commit/80e53cb7a7287d2dd4efd6df565d8db7a752a94a) Thanks [@thomasfosterau](https://github.com/thomasfosterau)! - Add `./pages`, the page recipe's resolution read (pulpit#201): `resolveLocalised` resolves a path and a requested locale over a routable, localised leaf to the node in the best locale it carries (`localeFallbacks`: the tag, its base language, then the family's default), a redirect from an alias, or `PathNotFound`. A hidden, unpublished, scheduled or tombstoned page answers as a missing path does.
+
+### Patch Changes
+
+- [#262](https://github.com/thomasfosterau/pulpit/pull/262) [`5c1d3b6`](https://github.com/thomasfosterau/pulpit/commit/5c1d3b66199c99d22ffa732f72fca8521a54e359) Thanks [@thomasfosterau](https://github.com/thomasfosterau)! - Ship `CHANGELOG.md` in the npm tarball, so consumers can read the release notes from `node_modules`.
+
 ## 0.1.0
 
 ### Minor Changes
