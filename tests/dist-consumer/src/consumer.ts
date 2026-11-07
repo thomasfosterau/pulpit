@@ -26,6 +26,7 @@ import {
   Cache,
   Collections,
   Social,
+  Discovery,
   Proposals,
   Registry,
   WorkingCopy,
@@ -238,6 +239,13 @@ import {
   type SocialOps,
   type SocialStore,
 } from "@thomasfosterau/pulpit/social";
+import {
+  defineDiscovery,
+  purgeHintHook,
+  type DiscoveryOps,
+  type DiscoveryPage,
+  type PurgeHint,
+} from "@thomasfosterau/pulpit/discovery";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -1378,3 +1386,21 @@ export type _SocialFollowers = Assert<
   >
 >;
 export const socialSeam = socialFollowers(socialStore);
+
+// ── discovery (pulpit#203) ───────────────────────────────────────────────
+
+export type _DiscoveryBarrel = Assert<
+  Equals<typeof Discovery.defineDiscovery, typeof defineDiscovery>
+>;
+export type _DiscoveryFeed = Assert<
+  Equals<
+    ReturnType<DiscoveryOps<string, StoreFailure, Transaction>["feed"]>,
+    Effect.Effect<DiscoveryPage<string>, StoreFailure, Transaction>
+  >
+>;
+export type _PurgeHintEmit = Assert<
+  Equals<
+    Parameters<typeof purgeHintHook<string, StoreFailure, Transaction>>[0]["emit"],
+    (hint: PurgeHint) => Effect.Effect<void, StoreFailure, Transaction>
+  >
+>;
