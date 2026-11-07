@@ -30,10 +30,11 @@
  * items than its limit, but the next page starts after the last row read,
  * so paging is stable and never skips or repeats a node.
  *
- * Serialisation is not the kernel's: JSON Feed, RSS (effect-web's
- * `effect-rss-feed`), Atom (`effect-atom-feed`) and the sitemap
- * (`effect-sitemap`) are built by the application from the items and
- * their {@link DiscoveryMetadata}.
+ * Serialisation is not the kernel's: JSON Feed, RSS, Atom and the sitemap
+ * are built by the application from the items and their
+ * {@link DiscoveryMetadata}, for example with effect-ext's
+ * `@thomasfosterau/effect-ext/JsonFeed`, `/RssFeed`, `/AtomFeed` and
+ * `/Sitemap` subpaths.
  *
  * @copyright Thomas Foster
  * @module pulpit/discovery

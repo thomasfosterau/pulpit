@@ -1046,6 +1046,8 @@ audience.leave(groupId); // any member but the owner
 Discovery (pulpit#203), after website's `packages/database/src/discovery.ts` and gardeneria's `lib/server/discovery.ts`: what a site's feeds and sitemap list. The kernel owns _what is discoverable_ and the metadata; the serialisers stay the application's.
 
 ```ts
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { defineDiscovery, lastModified, purgeHintHook } from "@thomasfosterau/pulpit/discovery";
 
 const discovery = defineDiscovery({
@@ -1062,12 +1064,15 @@ const discovery = defineDiscovery({
   }),
 });
 
-const page = yield * discovery.feed({ limit: 50 }); // { items, next }
-const more = yield * discovery.feed({ limit: 50, after: Option.getOrUndefined(page.next) });
-const urls = yield * discovery.sitemap({ limit: 1000 }); // by id; `lastModified(item.metadata)` is `lastmod`
+const pages = Effect.gen(function* () {
+  const page = yield* discovery.feed({ limit: 50 }); // { items, next }
+  const more = yield* discovery.feed({ limit: 50, after: Option.getOrUndefined(page.next) });
+  const urls = yield* discovery.sitemap({ limit: 1000 }); // by id; `lastModified(item.metadata)` is `lastmod`
+  return { page, more, urls };
+});
 
-// RSS / Atom / JSON Feed are built from the items, outside the kernel, e.g. with
-// effect-web's `effect-rss-feed` / `effect-atom-feed` (effect-ext's `RssFeed` / `AtomFeed`):
+// RSS / Atom / JSON Feed and the sitemap are built from the items, outside the kernel, e.g. with
+// effect-ext's `@thomasfosterau/effect-ext/RssFeed`, `/AtomFeed`, `/JsonFeed` and `/Sitemap`:
 // RssFeed.make({ …, items: page.items.map(({ path, metadata }) => ({ link: origin + path, title: metadata.title })) })
 
 // The purge hint, as one of the leaf's after hooks:
