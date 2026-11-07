@@ -13,10 +13,3 @@ rules:
     # `./.github/actions/setup` is the documented local-action path; the
     # `$/` spelling buys nothing for a single-repo composite action.
     disable: true
-  artipacked:
-    ignore:
-      # The Release job's checkout keeps its (job-scoped GITHUB_TOKEN)
-      # credentials on purpose: the Changesets action pushes the version
-      # branch and the release tags with them. CI's checkout sets
-      # `persist-credentials: false`.
-      - release.yml
