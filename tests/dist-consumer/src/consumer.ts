@@ -26,6 +26,7 @@ import {
   Cache,
   Collections,
   Social,
+  Relations,
   Proposals,
   Registry,
   WorkingCopy,
@@ -238,6 +239,14 @@ import {
   type SocialOps,
   type SocialStore,
 } from "@thomasfosterau/pulpit/social";
+import {
+  acceptedAnswerGate,
+  defineReshares,
+  nodeWriteGate,
+  type AnswerNotOfQuestion,
+  type ReshareOps,
+  type ReshareTarget,
+} from "@thomasfosterau/pulpit/relations";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -1378,3 +1387,34 @@ export type _SocialFollowers = Assert<
   >
 >;
 export const socialSeam = socialFollowers(socialStore);
+
+// ── relations (pulpit#200) ───────────────────────────────────────────
+
+export type _RelationsBarrel = Assert<
+  Equals<typeof Relations.defineReshares, typeof defineReshares>
+>;
+export type _TargetOf = Assert<
+  Equals<
+    ReturnType<ReshareOps<string, StoreFailure, Transaction>["targetOf"]>,
+    Effect.Effect<Option.Option<ReshareTarget<string>>, NodeNotFound | StoreFailure, Transaction>
+  >
+>;
+export type _TargetsOf = Assert<
+  Equals<
+    ReturnType<ReshareOps<string, StoreFailure, Transaction>["targetsOf"]>,
+    Effect.Effect<HashMap.HashMap<string, ReshareTarget<string>>, StoreFailure, Transaction>
+  >
+>;
+export type _NodeWriteGate = Assert<
+  Equals<
+    ReturnType<typeof nodeWriteGate<string, StoreFailure, Transaction>>,
+    EdgeWriteGate<StoreFailure, Transaction>
+  >
+>;
+export type _AcceptedAnswerGate = Assert<
+  Equals<
+    ReturnType<typeof acceptedAnswerGate<string, StoreFailure, Transaction>>,
+    EdgeWriteGate<StoreFailure | AnswerNotOfQuestion, Transaction>
+  >
+>;
+export type _AnswerTag = Assert<Equals<AnswerNotOfQuestion["_tag"], "AnswerNotOfQuestion">>;

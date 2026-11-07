@@ -56,6 +56,7 @@
     "./budgets": "./src/budgets.ts",
     "./reactions": "./src/reactions.ts",
     "./social": "./src/social.ts",
+    "./relations": "./src/relations.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -147,6 +148,10 @@
       "./social": {
         "types": "./dist/social.d.ts",
         "default": "./dist/social.js"
+      },
+      "./relations": {
+        "types": "./dist/relations.d.ts",
+        "default": "./dist/relations.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",

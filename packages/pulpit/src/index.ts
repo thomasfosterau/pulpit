@@ -151,3 +151,10 @@ export * as Collections from "./collections.ts";
  * (`defineSocial` over a `SocialStore`).
  */
 export * as Social from "./social.ts";
+
+/**
+ * UGC relation patterns: reshares with a placeholder for a hidden target,
+ * accepted answers gated on the question, and the write gates their edge
+ * families take (`defineReshares`, `acceptedAnswerGate`, `nodeWriteGate`).
+ */
+export * as Relations from "./relations.ts";
