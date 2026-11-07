@@ -28,6 +28,7 @@
     "src",
     "!src/**/*.test.ts",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "type": "module",
