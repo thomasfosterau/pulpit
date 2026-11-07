@@ -16,7 +16,7 @@ This repository's packages are published with a hardened, automated pipeline des
 - **Pinned actions.** All GitHub Actions are pinned to full commit SHAs, so a hijacked tag cannot inject malicious workflow code.
 - **Supply-chain delay.** `minimumReleaseAge` in `pnpm-workspace.yaml` holds a newly published third-party version for 480 minutes (8 hours) before pnpm will install it; Dependabot's `cooldown` waits 1 day (its smallest unit), so it never proposes a version pnpm would refuse.
 - **Least privilege.** Workflows default to `permissions: {}`; each job opts into only the scopes it needs. CI checks out with `persist-credentials: false`, needs no secret or OIDC (so Dependabot PRs run it safely), and the Release job never runs for Dependabot. Node is set up as `"*"` with `check-latest` (or the pinned major), never `latest`, which can resolve to a pre-release. `uvx zizmor --offline .github` audits the workflows (config in `.github/zizmor.yml`).
-- **Manual approval gate.** Publishing runs in a protected `release` environment that requires manual approval.
+- **Manual approval gate.** Publishing runs in a protected `release` environment that requires manual approval. The Release workflow splits versioning from publishing (changesets/action's `select-mode`, `version` and `publish` sub-actions): only its `publish` job runs in that environment and holds `id-token: write`, so refreshing the version PR needs no approval and cannot publish.
 - **Locked dependencies.** Installs use `pnpm install --frozen-lockfile` against the committed `pnpm-lock.yaml`; Dependabot proposes updates for review.
 
 ## Release pipeline
