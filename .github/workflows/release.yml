@@ -39,7 +39,7 @@ jobs:
     outputs:
       mode: ${{ steps.mode.outputs.mode }}
     env: &id001
-      pnpm_config_verify_deps_before_run: 'false'
+      pnpm_config_verify_deps_before_run: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
