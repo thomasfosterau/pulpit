@@ -1051,6 +1051,8 @@ describe("the wp/v2 read API — every filter and order", () => {
     const shown = await wp.create("posts", { slug: "shown" });
     const drafted = await wp.create("posts", { slug: "drafted", draft: true });
     const hidden = await wp.create("posts", { slug: "hidden", visibility: "private" });
+    // A `group` row is non-public, so its status is `private` too (pulpit#194).
+    const shared = await wp.create("posts", { slug: "shared", visibility: "group" });
     const owner = Option.some(member);
     const asc = [
       ["orderby", "slug"],
@@ -1059,11 +1061,14 @@ describe("the wp/v2 read API — every filter and order", () => {
     expect(listed(await wp.get("/wp/v2/posts", [...asc, ["status", "any"]], owner))).toEqual([
       drafted.wireId,
       hidden.wireId,
+      shared.wireId,
       shown.wireId,
     ]);
-    expect(listed(await wp.get("/wp/v2/posts", [["status", "private"]], owner))).toEqual([
+    expect(listed(await wp.get("/wp/v2/posts", [...asc, ["status", "private"]], owner))).toEqual([
       hidden.wireId,
+      shared.wireId,
     ]);
+    expect(itemOf(await wp.get(`/wp/v2/posts/${shared.wireId}`, [], owner)).status).toBe("private");
     expect(listed(await wp.get("/wp/v2/posts", [["status", "pending"]], owner))).toEqual([]);
   });
 

@@ -20,30 +20,36 @@
 import * as Effect from "effect/Effect";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
-import { always, and, eq, isIn, or, type ListFilter } from "../filter.ts";
+import * as Predicate from "effect/Predicate";
+import { always, and, eq, isIn, never, or, type ListFilter } from "../filter.ts";
 import type { ColumnValue } from "../version-chain.ts";
-import { ownedFacts } from "./owned-columns.ts";
+import {
+  inGroupAudience,
+  ownedFacts,
+  type Account,
+  type IsFollower,
+  type PrivateRung,
+} from "./owned-columns.ts";
 
 /** The reference access declaration, structurally (`./subtype`'s reference `LeafAccess` fits). */
 interface ReferenceColumns {
   // oxlint-disable-next-line effect/prefer-option-over-null -- mirrors `./subtype`'s reference `LeafAccess`, whose optional field is `?: T | undefined` (AGENTS.md → Conventions)
   readonly followersOfColumn?: string | undefined;
+  // oxlint-disable-next-line effect/prefer-option-over-null -- as `followersOfColumn`
+  readonly groupColumn?: string | undefined;
 }
 
-/** The parts of `./subtype`'s viewer, policy, follower seam and read scope the arm reads, structurally. */
-interface Account {
-  readonly id: string;
-}
-interface PrivateRung<A> {
-  readonly canViewPrivate: (account: A) => boolean;
-}
-interface IsFollower<R> {
-  readonly isFollower: (followerId: string, ownerId: string) => Effect.Effect<boolean, never, R>;
-}
+/** The read scope the arm reads, structurally (`./subtype`'s `ReadScope` fits). */
 type Scope<Following> =
   | { readonly kind: "all" }
   | { readonly kind: "public" }
-  | { readonly kind: "member"; readonly userId: string; readonly following: Following };
+  | {
+      readonly kind: "member";
+      readonly userId: string;
+      readonly following: Following;
+      // oxlint-disable-next-line effect/prefer-option-over-null -- mirrors `./subtype`'s `ReadScope`, whose optional field is `?: T | undefined` (AGENTS.md → Conventions)
+      readonly groups?: Following | undefined;
+    };
 
 /** The reference axis's one column; a view without it rides no privacy axis. */
 const VISIBILITY = "visibility";
@@ -62,6 +68,35 @@ const followersColumn = (
   );
 
 /**
+ * The column naming a `group` row's group, when the leaf declares one and
+ * the view carries it (pulpit#194). A declared column the view lacks reads
+ * as none: the group arm then matches nothing (fail closed).
+ */
+const groupColumnOf = (
+  access: ReferenceColumns,
+  viewColumns: ReadonlySet<string>,
+): Option.Option<string> =>
+  Option.filter(Option.fromUndefinedOr(access.groupColumn), (column) => viewColumns.has(column));
+
+/**
+ * The group arm of a member's list (pulpit#194): `<visibility> = 'group' AND
+ * <groupColumn> IN (<groups>)`, when the column is there and the read scope
+ * carries the viewer's groups; otherwise `never`. Shared by the owned and
+ * reference list filters.
+ *
+ * @internal
+ */
+export const groupArm = <Following>(
+  visibilityColumn: string,
+  groupColumn: Option.Option<string>,
+  groups: Option.Option<Following>,
+): ListFilter<Following> =>
+  Option.match(Option.all([groupColumn, groups]), {
+    onNone: (): ListFilter<Following> => never,
+    onSome: ([column, set]) => and<Following>(eq(visibilityColumn, "group"), isIn(column, set)),
+  });
+
+/**
  * The reference privacy arm as a list filter: `always` over a view without a
  * `visibility` column or for the view-private rung (`scope.kind === "all"`);
  * otherwise `visibility = 'public'`, and for a signed-in viewer also
@@ -69,7 +104,9 @@ const followersColumn = (
  * <followersOfColumn> IN (<following>))` when the leaf declares that column
  * and the view carries it (pulpit#92): the account the column names and its
  * followers read its `followers` rows. Its `private` rows stay the
- * view-private rung's alone. Never throws.
+ * view-private rung's alone. A `group` row lists for the members of the
+ * group its declared `groupColumn` names ({@link groupArm}, pulpit#194).
+ * Never throws.
  *
  * @internal
  */
@@ -85,17 +122,22 @@ export const referenceListFilter = <Following>(
       all: (): ListFilter<Following> => always,
       public: (): ListFilter<Following> => eq(VISIBILITY, "public"),
       member: (member): ListFilter<Following> =>
-        Option.match(column, {
-          onNone: (): ListFilter<Following> => eq(VISIBILITY, "public"),
-          onSome: (followed) =>
-            or<Following>(
-              eq(VISIBILITY, "public"),
+        or<Following>(
+          eq(VISIBILITY, "public"),
+          Option.match(column, {
+            onNone: (): ListFilter<Following> => never,
+            onSome: (followed) =>
               and<Following>(
                 eq(VISIBILITY, "followers"),
                 or<Following>(eq(followed, member.userId), isIn(followed, member.following)),
               ),
-            ),
-        }),
+          }),
+          groupArm(
+            VISIBILITY,
+            groupColumnOf(access, viewColumns),
+            Option.fromUndefinedOr(member.groups),
+          ),
+        ),
     }),
   );
 };
@@ -107,7 +149,9 @@ export const referenceListFilter = <Following>(
  * the view-private rung, or, when it is exactly `followers` and the leaf
  * declares a followers column the view carries, to the signed-in account
  * that column names and to its followers, as the follower seam answers
- * (pulpit#92). That account's `private` rows stay the view-private rung's
+ * (pulpit#92). A `group` row shows to the members of the group its
+ * declared `groupColumn` (one the view carries) names, as the audience
+ * seam's `isMember` answers (pulpit#194). That account's `private` rows stay the view-private rung's
  * alone. A column value that is not a string names no account, so it never
  * matches the viewer and the seam is never asked about it (pulpit#85,
  * pulpit#100). Anything else is hidden, which the
@@ -130,6 +174,15 @@ export const canViewReferenceRow = <A extends Account, R>(
   if (Option.isNone(viewer)) return Effect.succeed(false);
   const account = viewer.value;
   if (policy.canViewPrivate(account)) return Effect.succeed(true);
+  if (visibility === "group") {
+    return inGroupAudience(
+      followers,
+      account.id,
+      Option.flatMap(groupColumnOf(access, viewColumns), (column) =>
+        Option.liftPredicate(row[column], Predicate.isString),
+      ),
+    );
+  }
   if (visibility !== "followers") return Effect.succeed(false);
   return Option.match(followersColumn(access, viewColumns), {
     onNone: () => Effect.succeed(false),

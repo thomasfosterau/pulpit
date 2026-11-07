@@ -23,6 +23,9 @@ interface OwnedColumns {
   readonly visibilityColumn: string;
   readonly draftColumn: Option.Option<string>;
   readonly moderationColumn: Option.Option<string>;
+  /** The group column a `group` row's audience is read from (pulpit#194); absent, no `group` row opens beyond the owner and the rung. */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- mirrors `./subtype`'s owned `LeafAccess`, whose optional field is `?: T | undefined` (AGENTS.md → Conventions)
+  readonly groupColumn?: string | undefined;
 }
 
 /**
@@ -36,18 +39,55 @@ interface OwnedRowFacts {
   readonly draft: boolean;
   /** Under review or rejected: a moderated row whose state is not exactly `approved` (pulpit#154). */
   readonly unapproved: boolean;
+  /**
+   * The group a `group` row is shared with (pulpit#194): the declared group
+   * column's value when it holds a string, else none (no column declared, or
+   * the group was deleted and the column cleared), so the row reads as
+   * `private`.
+   */
+  readonly groupId: Option.Option<string>;
 }
 
-/** The parts of `./subtype`'s viewer, policy and follower seam the predicate reads, structurally. */
-interface Account {
+/**
+ * The parts of `./subtype`'s viewer, policy and follower seam the owned and
+ * reference readings read, structurally.
+ *
+ * @internal
+ */
+export interface Account {
   readonly id: string;
 }
-interface PrivateRung<A> {
+/** @internal */
+export interface PrivateRung<A> {
   readonly canViewPrivate: (account: A) => boolean;
 }
-interface IsFollower<R> {
+/** @internal */
+export interface IsFollower<R> {
   readonly isFollower: (followerId: string, ownerId: string) => Effect.Effect<boolean, never, R>;
+  /* oxlint-disable effect/prefer-option-over-null -- mirrors `./subtype`'s `FollowerSeam`, whose optional member is `?: T | undefined` (AGENTS.md → Conventions) */
+  readonly isMember?:
+    | ((accountId: string, groupId: string) => Effect.Effect<boolean, never, R>)
+    | undefined;
+  /* oxlint-enable effect/prefer-option-over-null */
 }
+
+/**
+ * Whether a signed-in account is in a `group` row's audience: the member
+ * check of the audience seam, asked only for a group the row names. A row
+ * naming no group, or a seam without `isMember`, opens to nobody (fail
+ * closed, pulpit#194).
+ *
+ * @internal
+ */
+export const inGroupAudience = <R>(
+  seam: IsFollower<R>,
+  accountId: string,
+  groupId: Option.Option<string>,
+): Effect.Effect<boolean, never, R> => {
+  const { isMember } = seam;
+  if (isMember === undefined || Option.isNone(groupId)) return Effect.succeed(false);
+  return isMember(accountId, groupId.value);
+};
 
 const isVisibility = Schema.is(Visibility);
 
@@ -66,6 +106,7 @@ export const declaresColumns = (access: OwnedColumns, viewColumns: ReadonlySet<s
     access.visibilityColumn,
     ...Option.toArray(access.draftColumn),
     ...Option.toArray(access.moderationColumn),
+    ...(access.groupColumn === undefined ? [] : [access.groupColumn]),
   ].every((column) => viewColumns.has(column));
 
 /**
@@ -80,7 +121,8 @@ export const declaresColumns = (access: OwnedColumns, viewColumns: ReadonlySet<s
  * axis reads `draft: false`. A moderation column holding anything but
  * exactly `"approved"` reads as unapproved, since the filter's
  * `eq(moderation, "approved")` arms list only `approved`; a leaf without the
- * axis reads `unapproved: false`. An owner column holding anything but a string
+ * axis reads `unapproved: false`. A group column holding anything but a
+ * string, or none declared, names no group (pulpit#194). An owner column holding anything but a string
  * (a `NULL`, an absent key, a value outside the type) reads as no owner,
  * never as its `String` form (pulpit#85; see pulpit#75): its `eq(owner, …)`
  * and `in(owner, following)` arms match no `NULL`. Callers check
@@ -105,12 +147,17 @@ export const ownedFacts = (
     onNone: () => false,
     onSome: (column) => row[column] !== "approved",
   }),
+  groupId: Option.flatMap(Option.fromUndefinedOr(access.groupColumn), (column) =>
+    Option.liftPredicate(row[column], Predicate.isString),
+  ),
 });
 
 /**
  * The owned-material read predicate over {@link ownedFacts}: `canViewOwned`
  * in `./subtype` is this with a present owner, and `defineSubtype`'s
  * `get` / `getMany` and `./edges`' `canViewEndpoint` call it directly. A
+ * `group` row is read by its owner, the rung and, when published, the
+ * members of the group it names ({@link inGroupAudience}; pulpit#194). A
  * row with no owner skips the owner arm and the follower check, so no
  * viewer's id matches it and the follower seam is never asked about it:
  * it is visible only when it is `public`, not a draft and not unapproved, or to the
@@ -133,6 +180,7 @@ export const canViewOwnedRow = <A extends Account, R>(
   // Not the owner, not privileged: a draft, or a row not approved, is hidden whatever its visibility.
   if (row.draft || row.unapproved) return Effect.succeed(false);
   if (row.visibility === "private") return Effect.succeed(false);
+  if (row.visibility === "group") return inGroupAudience(followers, account.id, row.groupId);
   return Option.match(row.ownerId, {
     onNone: () => Effect.succeed(false),
     onSome: (ownerId) => followers.isFollower(account.id, ownerId),

@@ -86,6 +86,7 @@ import {
 import type { ReactionRow, ReactionStore } from "./reactions.ts";
 import type { KvEntry, VersionedKv } from "./cache.ts";
 import type { CollectionEntry, CollectionStore } from "./collections.ts";
+import type { Membership, MembershipStore } from "./audience.ts";
 import type { Relationship, SocialStore } from "./social.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
 import type { ReportRow, ReportStore } from "./moderation.ts";
@@ -1868,6 +1869,98 @@ export const makeInMemorySocialStore = (): InMemorySocialStore => {
         rows = Arr.filter(rows, (row) => row.from !== accountId && row.to !== accountId);
         return before - rows.length;
       }),
+    rows: () => rows,
+  };
+};
+
+// ── Audiences ─────────────────────────────────────────────────────────
+
+/**
+ * An in-memory {@link MembershipStore}, plus the rows a test reads. In
+ * memory only; not for production.
+ *
+ * @since 0.2.0
+ */
+export interface InMemoryMembershipStore extends MembershipStore<InMemoryFollowing, never, never> {
+  /** Every stored membership, in insertion order. */
+  readonly rows: () => ReadonlyArray<Membership>;
+}
+
+/**
+ * An in-memory {@link MembershipStore}: the seam's contract (README → Seams
+ * → the membership store) over an array of memberships keyed
+ * `(groupId, accountId)`. `groupsOf` returns {@link InMemoryFollowing}, the
+ * set the list filter's `in` node takes in memory. In memory only; not for
+ * production.
+ *
+ * @example
+ * ```ts
+ * import { strictEqual } from "node:assert";
+ * import * as Effect from "effect/Effect";
+ * import * as HashSet from "effect/HashSet";
+ * import { makeInMemoryMembershipStore } from "@thomasfosterau/pulpit/testing";
+ *
+ * const store = makeInMemoryMembershipStore();
+ * Effect.runSync(store.add({ groupId: "g-1", accountId: "u-1", role: "admin", at: new Date(0) }));
+ * strictEqual(HashSet.has(store.groupsOf("u-1"), "g-1"), true);
+ * ```
+ *
+ * @since 0.2.0
+ */
+export const makeInMemoryMembershipStore = (): InMemoryMembershipStore => {
+  let rows: ReadonlyArray<Membership> = [];
+  const matches = (groupId: string, accountId: string) => (row: Membership) =>
+    row.groupId === groupId && row.accountId === accountId;
+  const removeWhere = (drop: (row: Membership) => boolean) =>
+    Effect.sync(() => {
+      const before = rows.length;
+      rows = Arr.filter(rows, (row) => !drop(row));
+      return before - rows.length;
+    });
+  const oldestFirst = Order.combine(
+    Order.mapInput(Order.Number, (row: Membership) => row.at.getTime()),
+    Order.mapInput(byCodePoint, (row: Membership) => row.accountId),
+  );
+  return {
+    add: (membership) =>
+      Effect.sync(() => {
+        if (rows.some(matches(membership.groupId, membership.accountId))) return false;
+        rows = [...rows, membership];
+        return true;
+      }),
+    setRole: (groupId, accountId, role) =>
+      Effect.sync(() => {
+        const changed = rows.some((row) => matches(groupId, accountId)(row) && row.role !== role);
+        rows = Arr.map(rows, (row) => (matches(groupId, accountId)(row) ? { ...row, role } : row));
+        return changed;
+      }),
+    remove: (groupId, accountId) =>
+      Effect.map(removeWhere(matches(groupId, accountId)), (count) => count > 0),
+    roleOf: (groupId, accountId) =>
+      Effect.sync(() =>
+        Option.map(Arr.findFirst(rows, matches(groupId, accountId)), (row) => row.role),
+      ),
+    list: ({ groupId, limit, offset }) =>
+      Effect.sync(() => {
+        const members = Arr.map(
+          Arr.sort(
+            Arr.filter(rows, (row) => row.groupId === groupId),
+            oldestFirst,
+          ),
+          ({ accountId, role, at }) => ({ accountId, role, at }),
+        );
+        return { rows: members.slice(offset, offset + limit), total: members.length };
+      }),
+    removeGroup: (groupId) => removeWhere((row) => row.groupId === groupId),
+    isMember: (accountId, groupId) => Effect.sync(() => rows.some(matches(groupId, accountId))),
+    groupsOf: (accountId) =>
+      HashSet.fromIterable(
+        Arr.map(
+          Arr.filter(rows, (row) => row.accountId === accountId),
+          (row) => row.groupId,
+        ),
+      ),
+    eraseAccount: (accountId) => removeWhere((row) => row.accountId === accountId),
     rows: () => rows,
   };
 };

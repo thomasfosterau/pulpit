@@ -121,7 +121,11 @@ import {
 } from "./filter.ts";
 import { byCodePoint } from "./internal/list-order.ts";
 import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
-import { canViewReferenceRow, referenceListFilter } from "./internal/reference-columns.ts";
+import {
+  canViewReferenceRow,
+  groupArm,
+  referenceListFilter,
+} from "./internal/reference-columns.ts";
 import {
   defineVersionChain,
   NodeNotFound,
@@ -195,6 +199,13 @@ export interface AccessPolicy {
  * `isFollower` answers one row's question; `following` answers a list's, as
  * whatever the list filter's `in` node takes (a subquery in SQL, #1107).
  *
+ * It is also the **audience seam** (pulpit#194): the optional `isMember` /
+ * `groups` pair answers the `group` visibility state's question, whether an
+ * account is a member of the group a row names, in the same two readings.
+ * A seam without them opens no `group` row to anyone but its owner and the
+ * view-private rung (fail closed). `./audience`'s `audienceSeam` builds the
+ * pair from a membership store; spread it into the follower seam.
+ *
  * @since 0.1.0
  */
 export interface FollowerSeam<Following, R> {
@@ -205,6 +216,25 @@ export interface FollowerSeam<Following, R> {
    * subquery in SQL, never a materialised array).
    */
   readonly following: (followerId: string) => Following;
+  /* oxlint-disable effect/prefer-option-over-null -- optional members are `?: T | undefined` (AGENTS.md → Conventions), so every existing follower seam (effect-auth's `IsFollower` included) still fits; the omitted key is "no group audience", read as such by every reader */
+  /**
+   * Whether `accountId` is a member of `groupId`: the single-row question a
+   * `group` row asks. Absent, no account is.
+   *
+   * @since 0.2.0
+   */
+  readonly isMember?:
+    | ((accountId: string, groupId: string) => Effect.Effect<boolean, never, R>)
+    | undefined;
+  /**
+   * The groups `accountId` is a member of, as the list filter's `in` set (a
+   * subquery in SQL: `select group_id from memberships where account_id =
+   * $viewer`). Absent, a list shows no `group` row by membership.
+   *
+   * @since 0.2.0
+   */
+  readonly groups?: ((accountId: string) => Following) | undefined;
+  /* oxlint-enable effect/prefer-option-over-null */
 }
 
 /**
@@ -287,14 +317,39 @@ export class SubtypeDeclarationError extends Schema.TaggedError<
  * - `all` — the view-private rung: no visibility filter;
  * - `public` — anonymous: `visibility = 'public'` only;
  * - `member` — a signed-in account: `public`, OR their own rows, OR
- *   `followers` rows whose owner they follow.
+ *   `followers` rows whose owner they follow, OR `group` rows shared with a
+ *   group they belong to (`groups`, present when the seam answers it,
+ *   pulpit#194).
  *
  * @since 0.1.0
  */
 export type ReadScope<Following> =
   | { readonly kind: "all" }
   | { readonly kind: "public" }
-  | { readonly kind: "member"; readonly userId: string; readonly following: Following };
+  | {
+      readonly kind: "member";
+      readonly userId: string;
+      readonly following: Following;
+      /**
+       * The groups the account belongs to, as the list filter's `in` set;
+       * absent when the seam has no `groups`, and then no `group` row lists
+       * by membership.
+       *
+       * @since 0.2.0
+       */
+      // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no group audience"
+      readonly groups?: Following | undefined;
+    };
+
+/** A signed-in account's member scope; `groups` only when the seam answers it, so its absence is the key's. */
+const memberScope = <Following>(
+  userId: string,
+  seam: FollowerSeam<Following, unknown>,
+): ReadScope<Following> => {
+  const following = seam.following(userId);
+  if (seam.groups === undefined) return { kind: "member", userId, following };
+  return { kind: "member", userId, following, groups: seam.groups(userId) };
+};
 
 /**
  * Resolve a viewer's {@link ReadScope}.
@@ -309,9 +364,7 @@ export const readScopeFor = <Following>(
   Option.match(viewer, {
     onNone: (): ReadScope<Following> => ({ kind: "public" }),
     onSome: (account): ReadScope<Following> =>
-      policy.canViewPrivate(account)
-        ? { kind: "all" }
-        : { kind: "member", userId: account.id, following: followers.following(account.id) },
+      policy.canViewPrivate(account) ? { kind: "all" } : memberScope(account.id, followers),
   });
 
 /**
@@ -328,6 +381,14 @@ export interface OwnedFacts {
    * `false` for a leaf without the axis.
    */
   readonly unapproved: boolean;
+  /**
+   * The group a `group` row is shared with (pulpit#194); absent, the row
+   * names no group and reads as `private`.
+   *
+   * @since 0.2.0
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no group"
+  readonly groupId?: string | undefined;
 }
 
 /**
@@ -338,6 +399,7 @@ export interface OwnedFacts {
  * | ----------- | -------------------------------------------------------------- |
  * | `public`    | everyone, anonymous included                                   |
  * | `followers` | the owner; the owner's followers; the view-private rung        |
+ * | `group`     | the owner; the members of the row's group; the view-private rung |
  * | `private`   | the owner; the view-private rung                               |
  *
  * `draft: true` narrows whatever `visibility` allows down to the owner and
@@ -361,7 +423,11 @@ export const canViewOwned = <R>(
   followers: FollowerSeam<unknown, R>,
   row: OwnedFacts,
 ): Effect.Effect<boolean, never, R> =>
-  canViewOwnedRow(viewer, policy, followers, { ...row, ownerId: Option.some(row.ownerId) });
+  canViewOwnedRow(viewer, policy, followers, {
+    ...row,
+    ownerId: Option.some(row.ownerId),
+    groupId: Option.fromUndefinedOr(row.groupId),
+  });
 
 // ── Leaf access and the list filters ──────────────────────────────────
 
@@ -394,6 +460,17 @@ export type LeafAccess =
        */
       // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so the existing `{ kind: "reference" }` declarations keep compiling and a caller can forward its own `undefined`; the omitted key is the absence, read as such by every reader
       readonly followersOfColumn?: string | undefined;
+      /**
+       * The view column naming the group a `group` row is shared with
+       * (pulpit#194): the members of that group, as the audience seam's
+       * `isMember` answers, read the row. Absent, naming a column the view
+       * lacks, or holding a value that is not a string, a `group` row is
+       * hidden below the view-private rung.
+       *
+       * @since 0.2.0
+       */
+      // oxlint-disable-next-line effect/prefer-option-over-null -- as `followersOfColumn`
+      readonly groupColumn?: string | undefined;
     }
   | {
       readonly kind: "owned";
@@ -410,6 +487,19 @@ export type LeafAccess =
        * @since 0.1.0
        */
       readonly moderationColumn: Option.Option<string>;
+      /**
+       * The view column naming the group a `group` row is shared with
+       * (pulpit#194). Declared, the members of that group read the row when
+       * it is not a draft and approved; a value that is not a string (the
+       * group was deleted and the column cleared) names no group, so the row
+       * reads as `private`. A declared column the view lacks fails closed
+       * like the others: the leaf reads no row. Absent, a `group` row reads
+       * as `private`.
+       *
+       * @since 0.2.0
+       */
+      // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so the existing owned declarations keep compiling; the omitted key is "no group column"
+      readonly groupColumn?: string | undefined;
     };
 
 /**
@@ -423,20 +513,28 @@ export const ownedAccess = (
     readonly draft?: boolean | undefined;
     // oxlint-disable-next-line effect/prefer-option-over-null -- as `draft`: the omitted key is "no moderation column"
     readonly moderation?: boolean | undefined;
+    /** Declare the `groupId` group column (pulpit#194). */
+    // oxlint-disable-next-line effect/prefer-option-over-null -- as `draft`: the omitted key is "no group column"
+    readonly group?: boolean | undefined;
   } = {},
-): Extract<LeafAccess, { kind: "owned" }> => ({
-  kind: "owned",
-  ownerColumn: "ownerId",
-  visibilityColumn: "visibility",
-  draftColumn: options.draft === true ? Option.some("draft") : Option.none(),
-  moderationColumn: options.moderation === true ? Option.some("moderationState") : Option.none(),
-});
+): Extract<LeafAccess, { kind: "owned" }> => {
+  const access: Extract<LeafAccess, { kind: "owned" }> = {
+    kind: "owned",
+    ownerColumn: "ownerId",
+    visibilityColumn: "visibility",
+    draftColumn: options.draft === true ? Option.some("draft") : Option.none(),
+    moderationColumn: options.moderation === true ? Option.some("moderationState") : Option.none(),
+  };
+  if (options.group !== true) return access;
+  return { ...access, groupColumn: "groupId" };
+};
 
 /**
  * The owned-leaf LIST filter — {@link ReadScope} rendered over the leaf's
  * declared view columns. When the leaf carries a draft column, every
  * non-owner arm additionally requires `draft = false`, and when it carries a
- * moderation column, `moderation = 'approved'`; the owner's own arm never
+ * moderation column, `moderation = 'approved'`; a `group` row lists for the
+ * members of the group its declared `groupColumn` names (pulpit#194); the owner's own arm never
  * does, so a member lists their own drafts and unapproved rows. Columns the view lacks
  * fail closed.
  *
@@ -468,6 +566,13 @@ export const ownedListFilter = <Following>(
             and(
               eq(access.visibilityColumn, "followers"),
               isIn(access.ownerColumn, member.following),
+            ),
+          ),
+          published(
+            groupArm(
+              access.visibilityColumn,
+              Option.fromUndefinedOr(access.groupColumn),
+              Option.fromUndefinedOr(member.groups),
             ),
           ),
         ),

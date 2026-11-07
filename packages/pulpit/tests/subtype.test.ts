@@ -108,10 +108,12 @@ import {
   type ColumnValue,
   type Precondition,
 } from "../src/version-chain.ts";
+import { audienceSeam } from "../src/audience.ts";
 import { isPubliclyServeable } from "../src/publication.ts";
 import {
   makeInMemoryChainStore,
   makeInMemoryFollowers,
+  makeInMemoryMembershipStore,
   makeInMemoryLeafStore,
   makeInMemoryPublication,
   makeInMemoryResourceCache,
@@ -245,6 +247,21 @@ describe("readScopeFor", () => {
     expect(readScopeFor(as(moderator), gardeneriaPolicy, follows)).toEqual({ kind: "all" });
     // The rung is the policy's: website's admin-only axis puts a moderator in `member`.
     expect(readScopeFor(as(moderator), websitePolicy, follows).kind).toBe("member");
+  });
+
+  it("carries the member's groups when the seam answers them (pulpit#194)", () => {
+    const memberships = makeInMemoryMembershipStore();
+    Effect.runSync(
+      memberships.add({ groupId: "g-1", accountId: follower.id, role: "member", at: NOW }),
+    );
+    expect(
+      readScopeFor(as(follower), gardeneriaPolicy, { ...follows, ...audienceSeam(memberships) }),
+    ).toEqual({
+      kind: "member",
+      userId: follower.id,
+      following: HashSet.make(member.id),
+      groups: HashSet.make("g-1"),
+    });
   });
 });
 
@@ -1633,7 +1650,7 @@ const showColumn = (seed: Seed, column: string): string =>
   });
 
 const labelOf = (seed: Seed): string =>
-  `visibility ${showColumn(seed, "visibility")}, draft ${showColumn(seed, "draft")}, owner ${seed.unstamped === true ? showColumn(seed, "ownerId") : seed.owner.id}${Record.has(seed.state, "curatorId") ? `, curator ${showColumn(seed, "curatorId")}` : ""}${seed.deleted ? ", deleted" : ""}`;
+  `visibility ${showColumn(seed, "visibility")}, draft ${showColumn(seed, "draft")}, owner ${seed.unstamped === true ? showColumn(seed, "ownerId") : seed.owner.id}${Record.has(seed.state, "curatorId") ? `, curator ${showColumn(seed, "curatorId")}` : ""}${Record.has(seed.state, "groupId") ? `, group ${showColumn(seed, "groupId")}` : ""}${seed.deleted ? ", deleted" : ""}`;
 
 /** A leaf over the in-memory seams, seeded through the factory's own `create` and `delete`. */
 const seededLeaf = (
@@ -2094,6 +2111,204 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
         expectAgreement(await leaf.reads(viewer));
       },
     );
+  });
+});
+
+describe("defineSubtype — a `group` row reads to its group's members (pulpit#194)", () => {
+  /** `follower` belongs to `g-1`; nobody belongs to anything else. */
+  const memberships = makeInMemoryMembershipStore();
+  Effect.runSync(
+    memberships.add({ groupId: "g-1", accountId: follower.id, role: "member", at: NOW }),
+  );
+  const audience: FollowerSeam<Following, never> = { ...follows, ...audienceSeam(memberships) };
+  /** A group, another, `null` (a deleted group, its column cleared), a non-string, no key at all. */
+  const groupIds: ReadonlyArray<Seeded> = ["g-1", "g-2", null, 7, ABSENT];
+  const groupVisibilities: ReadonlyArray<Seeded> = ["public", "group", "private"];
+  const ownedSeeds: ReadonlyArray<Seed> = Arr.flatMap(groupVisibilities, (visibility) =>
+    Arr.flatMap([false, true], (draft) =>
+      Arr.flatMap(groupIds, (groupId) =>
+        Arr.flatMap([member, otherMember], (owner) =>
+          Arr.map([false, true], (deleted): Seed => ({
+            owner,
+            state: { title: "t", visibility, draft, groupId },
+            deleted,
+          })),
+        ),
+      ),
+    ),
+  );
+  const referenceSeeds: ReadonlyArray<Seed> = Arr.flatMap(groupVisibilities, (visibility) =>
+    Arr.flatMap(groupIds, (groupId) =>
+      Arr.map([false, true], (deleted): Seed => ({
+        // The admin reads every row, so the seeding `delete` passes the read gate (pulpit#101).
+        owner: admin,
+        state: { visibility, groupId },
+        deleted,
+      })),
+    ),
+  );
+  const ownedColumns = ["title", "visibility", "draft", "groupId"];
+  const referenceAccess: LeafAccess = { kind: "reference", groupColumn: "groupId" };
+  const viewersWithMember = [...matrixViewers, ["a group member", as(follower)] as const];
+  const cases = Arr.flatMap(
+    [
+      {
+        variant: "an owned leaf, with the audience seam",
+        access: ownedAccess({ draft: true, group: true }),
+        columns: ownedColumns,
+        seeds: ownedSeeds,
+        seam: audience,
+      },
+      {
+        variant: "an owned leaf, without the audience seam",
+        access: ownedAccess({ draft: true, group: true }),
+        columns: ownedColumns,
+        seeds: ownedSeeds,
+        seam: follows,
+      },
+      {
+        variant: "an owned leaf declaring a group column the view lacks",
+        access: ownedAccess({ draft: true, group: true }),
+        columns: ["title", "visibility", "draft"],
+        seeds: ownedSeeds,
+        seam: audience,
+      },
+      {
+        variant: "an owned leaf declaring no group column",
+        access: ownedAccess({ draft: true }),
+        columns: ownedColumns,
+        seeds: ownedSeeds,
+        seam: audience,
+      },
+      {
+        variant: "a reference leaf, with the audience seam",
+        access: referenceAccess,
+        columns: ["visibility", "groupId"],
+        seeds: referenceSeeds,
+        seam: audience,
+      },
+      {
+        variant: "a reference leaf declaring a group column the view lacks",
+        access: referenceAccess,
+        columns: ["visibility"],
+        seeds: referenceSeeds,
+        seam: audience,
+      },
+    ],
+    (variant) =>
+      Arr.flatMap(matrixPolicies, ([policyName, policy]) =>
+        Arr.map(viewersWithMember, ([viewerName, viewer]) => ({
+          ...variant,
+          policyName,
+          policy,
+          viewerName,
+          viewer,
+        })),
+      ),
+  );
+
+  it.each(cases)(
+    "$variant, $policyName policy, for $viewerName",
+    async ({ access, columns, seeds, seam, policy, viewer }) => {
+      const leaf = await seededLeaf(access, columns, policy, seeds, seam);
+      expectAgreement(await leaf.reads(viewer));
+    },
+  );
+
+  const isOpenGroupRow = (seed: Seed) =>
+    seed.state["visibility"] === "group" && seed.state["groupId"] === "g-1";
+
+  it("is not vacuous: on an owned leaf the member reads exactly the live, published rows public or shared with their group", async () => {
+    const leaf = await seededLeaf(
+      ownedAccess({ draft: true, group: true }),
+      ownedColumns,
+      gardeneriaPolicy,
+      ownedSeeds,
+      audience,
+    );
+    const open = ownedSeeds
+      .filter(
+        (seed) =>
+          !seed.deleted &&
+          seed.state["draft"] === false &&
+          (seed.state["visibility"] === "public" || isOpenGroupRow(seed)),
+      )
+      .map(labelOf);
+    expect(open.filter((label) => label.includes('group "g-1"'))).toHaveLength(4);
+    expect(listedRows(await leaf.reads(as(follower)))).toEqual(open);
+    // A stranger reads no `group` row; the owner reads all of their own, a
+    // deleted group's included (`private` to them).
+    expect(
+      listedRows(await leaf.reads(as(otherMember))).filter((label) =>
+        label.startsWith('visibility "group"'),
+      ),
+    ).toEqual(
+      ownedSeeds
+        .filter(
+          (seed) =>
+            seed.owner === otherMember && !seed.deleted && seed.state["visibility"] === "group",
+        )
+        .map(labelOf),
+    );
+  });
+
+  it("is not vacuous: on a reference leaf the member reads the group rows of their group, a stranger none", async () => {
+    const leaf = await seededLeaf(
+      referenceAccess,
+      ["visibility", "groupId"],
+      gardeneriaPolicy,
+      referenceSeeds,
+      audience,
+    );
+    const live = referenceSeeds.filter((seed) => !seed.deleted);
+    expect(listedRows(await leaf.reads(as(follower)))).toEqual(
+      live
+        .filter((seed) => seed.state["visibility"] === "public" || isOpenGroupRow(seed))
+        .map(labelOf),
+    );
+    expect(listedRows(await leaf.reads(as(otherMember)))).toEqual(
+      live.filter((seed) => seed.state["visibility"] === "public").map(labelOf),
+    );
+  });
+
+  it("a group row is never cache-serveable (CACHE-AUTH-005)", () => {
+    expect(
+      isPubliclyServeable(
+        { attributes: { visibility: "group", draft: false, groupId: "g-1" } },
+        { owned: true },
+      ),
+    ).toBe(false);
+  });
+
+  it("declares the group column only when asked, by its conventional name", () => {
+    expect(ownedAccess({ group: undefined })).toEqual(ownedAccess());
+    expect(ownedAccess({ group: true }).groupColumn).toBe("groupId");
+  });
+
+  it("renders the reference group arm only for a column the view carries", () => {
+    const scope = readScopeFor(as(follower), gardeneriaPolicy, audience);
+    expect(
+      referencePrivacyFilter(
+        as(follower),
+        gardeneriaPolicy,
+        viewOf("visibility", "groupId"),
+        Option.some({ access: { kind: "reference", groupColumn: "groupId" }, followers: audience }),
+      ),
+    ).toEqual(
+      or(
+        eq("visibility", "public"),
+        and(eq("visibility", "group"), isIn("groupId", HashSet.make("g-1"))),
+      ),
+    );
+    expect(scope.kind).toBe("member");
+    expect(
+      referencePrivacyFilter(
+        as(follower),
+        gardeneriaPolicy,
+        viewOf("visibility"),
+        Option.some({ access: { kind: "reference", groupColumn: "groupId" }, followers: audience }),
+      ),
+    ).toEqual(eq("visibility", "public"));
   });
 });
 

@@ -158,3 +158,10 @@ export * as Collections from "./collections.ts";
  * (`defineSocial` over a `SocialStore`).
  */
 export * as Social from "./social.ts";
+
+/**
+ * Audiences: named groups a row can be shared with (the `group` visibility
+ * state), their membership gates, and the audience seam filled from them
+ * (`defineAudience` over a `MembershipStore`).
+ */
+export * as Audience from "./audience.ts";

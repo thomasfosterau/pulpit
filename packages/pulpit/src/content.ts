@@ -24,13 +24,17 @@ import * as Schema from "effect/Schema";
 
 /**
  * Visibility — the explicit access axis the publication policy reads,
- * independent of soft-delete and the draft flag. Three states, because the
+ * independent of soft-delete and the draft flag. Four states, because the
  * kernel is multi-tenant:
  *
  * - `public` — anyone, signed in or not; the only state the KV read-through
  *   cache may ever hold (`isPubliclyServeable` in `./publication`);
  * - `followers` — the owner, the owner's followers (the follower seam in
  *   `./subtype`), and the privileged rung;
+ * - `group` — the owner, the members of the group the row's declared
+ *   `groupColumn` names (the audience seam's `isMember`, `./audience`;
+ *   pulpit#194), and the privileged rung. A row whose group column names no
+ *   group (the group was deleted) reads as `private`;
  * - `private` — the owner and the privileged rung only.
  *
  * The predicate lives in ONE place — `canViewOwned` in `./subtype` — and
@@ -41,9 +45,9 @@ import * as Schema from "effect/Schema";
  *
  * @since 0.1.0
  */
-export const Visibility = Schema.Literals(["public", "followers", "private"]);
+export const Visibility = Schema.Literals(["public", "followers", "group", "private"]);
 /**
- * The {@link Visibility} literal union: `"public" | "followers" | "private"`.
+ * The {@link Visibility} literal union: `"public" | "followers" | "group" | "private"`.
  *
  * @since 0.1.0
  */
