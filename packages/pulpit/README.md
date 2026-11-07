@@ -1069,14 +1069,30 @@ The rendering contract is the table under [`./filter`](#filter). `Following` is 
 
 ### The viewer, the role axes and the follower seam
 
-Expected to come from effect-auth once it publishes (pulpit#5). Its default branch already has them, unpublished (release PR effect-auth#177): `OwnedAccess` (`canView`, `readScope`, the `IsFollower` service, read fail-closed, `serveableAxes`), `Guard` (`Unauthorized`, `Forbidden`, and the kit `Guard.make` returns: `requireRoleAtLeast`, `requireOwnerOrRole`), `Ladder` and `Cacheability.publiclyServeable`, plus `ownedListFilter` in `@thomasfosterau/effect-auth-drizzle`. Until it publishes, the application supplies:
+effect-auth publishes the same rules as of 0.1.0: `OwnedAccess` (`canView`, `readScope`, the `IsFollower` service, read fail-closed, `serveableAxes`), `Guard` (`Unauthorized`, `Forbidden`, and the kit `Guard.make` returns: `requireRoleAtLeast`, `requireOwnerOrRole`), `Ladder` and `Cacheability.publiclyServeable`, plus `ownedListFilter` in `@thomasfosterau/effect-auth-drizzle`. The kernel doesn't import effect-auth (its peers are `effect` and `effect-jsonapi` only); the application fills these seams, from effect-auth's guards or from its own:
 
 - `Viewer = Option<{ id, role }>`: the request's signed-in account, or none for an anonymous request (effect-auth's session context).
 - `AccessPolicy`: four predicates over a signed-in account (`canViewPrivate`, `canViewDeleted`, `canModerate`, `canWriteCorpus`). Each compares the account's role against an application-named rung on its role ladder (effect-auth's `Ladder.make`, checked through the `Guard.make` kit's `hasRoleAtLeast` / `requireRoleAtLeast`). Each must fail closed on an unknown role.
 - `FollowerSeam<Following, R>`: `isFollower(followerId, ownerId)` answers one row's question, and `following(followerId)` returns the list filter's `in` set (effect-auth's `IsFollower`). `nobodyFollows(nobody)` is the fail-closed default when a runtime provides none (effect-auth's `isFollowerNever`).
 - **A reference leaf's followers column.** A reference leaf that carries `followers` rows declares `followersOfColumn` on its `LeafAccess`: a column of its current-version view (the `LeafStore`'s `columns` must include it) holding the id of the account that, with its followers, may read the row, in the same id space the follower seam takes. It is the application's column, under any name; pulpit adds no id brand for it. The list renders it as `visibility = 'followers' AND (<column> = <viewer> OR <column> IN (<following>))` and `get` shows the row when the column is the viewer's id or `isFollower(viewer, <column>)` answers true, so a `NULL` (or any non-string) value names nobody: it matches no viewer and is never asked of the seam. The named account and its followers read its `followers` rows; its `private` rows are read only at the view-private rung. A declared column the view lacks opens no `followers` row.
-- `ReadScope` and `canViewOwned` (effect-auth's `OwnedReadScope` / `OwnedAccess.readScope` and `OwnedAccess.canView`) live here until effect-auth publishes its own; then pulpit consumes its read scope and keeps only the rendering into `ListFilter`.
-- `Unauthorized` / `Forbidden` (effect-auth's `Guard` errors) are defined here until effect-auth publishes them.
+- `ReadScope` and `canViewOwned` are the kernel's spelling of effect-auth's `OwnedReadScope` / `OwnedAccess.readScope` and `OwnedAccess.canView`, extended with the moderation axis (`unapproved`, pulpit#154) and the no-owner reading (pulpit#85), which effect-auth's row shape has no field for.
+- `Unauthorized` / `Forbidden` are the kernel's own tagged errors, the same tags as effect-auth's `Guard` errors.
+
+From effect-auth 0.1.0's guards, the wiring is:
+
+```ts
+const guards = Guard.make({ ladder: Roles, viewer: CurrentViewer });
+const policy: AccessPolicy = {
+  canViewPrivate: (account) => guards.decideRole(account, "moderator"),
+  canViewDeleted: (account) => guards.decideRole(account, "moderator"),
+  canModerate: (account) => guards.decideRole(account, "moderator"),
+  canWriteCorpus: (account) => guards.decideRole(account, "contributor"),
+};
+const viewer: Effect<Viewer, never, CurrentViewer> = guards.viewer;
+// The `OwnedAccess.IsFollower` service is a `FollowerSeam<OwnedAccess.FollowingSet, never>` as it stands.
+```
+
+`tests/effect-auth.test.ts` (effect-auth is a dev dependency only) pins that this wiring makes `canViewOwned` and `readScopeFor` agree with `OwnedAccess.make({ guards, viewPrivate })`'s `canView` and `readScope` for every visibility × draft × viewer × follows cell, and that `isPubliclyServeable` agrees with `Cacheability.publiclyServeable(OwnedAccess.serveableAxes)` (`CACHE-AUTH-005`).
 
 ### `SubtypeHandlers`: the handler record
 
