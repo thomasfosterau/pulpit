@@ -1,6 +1,6 @@
 {
   "name": "@thomasfosterau/pulpit",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "The versioned-content kernel for an Effect headless CMS: Content model fields and registry flags on effect-jsonapi, the append-only node/version chain operations, the subtype operation factory with owned/reference access, and the publication / moderation / cache-serveability predicates.",
   "keywords": [
     "cms",
