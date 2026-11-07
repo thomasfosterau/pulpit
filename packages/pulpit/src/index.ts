@@ -82,6 +82,13 @@ export * as Blobs from "./blobs.ts";
 export * as Paths from "./paths.ts";
 
 /**
+ * The page recipe: a routable, localised leaf's one resolution read
+ * (`resolveLocalised`, a path and a locale to a node in the best locale it
+ * carries, a redirect, or not-found) and its `localeFallbacks` order.
+ */
+export * as Pages from "./pages.ts";
+
+/**
  * The moderation workflow: the transition rules as a before hook
  * (`moderationHook`), the decision (`defineModeration`), the review-queue
  * filter, threshold grading (`gradeScores`) and member reports
