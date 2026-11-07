@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`, `Cache`, `Collections`, `Social`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Pages`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`, `Cache`, `Collections`, `Social`). |
 | **Content model** |  |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`, `localised`) and `validateRegistry`. |
@@ -36,6 +36,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | **Structure and routing** |  |
 | `./edges` | `defineEdgeOps`, the edge operations factory over an `EdgeStore` seam: relations between nodes, readable only when every end is, with declared cardinality limits. |
 | `./paths` | Routable content: `routable`, a leaf's path claims tied to its chain over a `PathStore` seam, the aliases a path change leaves behind, and the gated `resolve`. |
+| `./pages` | The page recipe: `resolveLocalised`, a routable, localised leaf's one resolution read (a path and a locale to the node in the best locale it carries, a redirect from an alias, or not-found), and its `localeFallbacks` order. |
 | `./collections` | Ordered collections (`defineCollection` over a `CollectionStore` seam): positioned members of a parent node, with the order kept beside the chain (the default) or versioned with the parent. |
 | **Participation and user-generated content** |  |
 | `./budgets` | Write budgets: a declared ceiling on an account's writes of one kind in a rolling window, spent inside the write (`budgetHook` on a chain write; `bindBudget`'s `spend` on a proposal's `submit` or a report's `file`) over a `BudgetCounter` seam, refused as a rate-limited `WriteRejected` (the wire's 429). |
@@ -638,6 +639,52 @@ Free-form redirects (patterns, a 404 log) are the site's. The path's syntax is t
 | `Resolution` | What a path resolves to: `{ kind: "node", id, resource }` or `{ kind: "redirect", id, path }`. |
 | `PathStore`, `PathEntry` | The path-table seam and one stored path (its node, canonical or alias). |
 | `PathTaken`, `PathNotFound` | Another node holds the path canonically (409); no node the viewer can read answers to it (404). |
+
+## `./pages`
+
+The page recipe (pulpit#201): standalone, routable, localised documents (an About page, help, terms, a landing page) assembled from the existing modules, plus the one read that joins them. Nothing here is a new store or a new read rule.
+
+- **The leaf.** A `defineSubtype` leaf, usually a reference leaf (corpus material written at the corpus-write rung; gardeneria's pages are moderator+), with a locale level (`defineLocaleLevel`) for the translated columns and, for drafts and scheduled pages, the publication pointer (`publication`, pulpit#46). The path column is shared, never translated: a claim lives on the root node, so one page is one path in every locale.
+- **The collection.** A page collection (a path namespace) is a root claim in `./paths`: one `PathStore` per collection, each wrapped with `routable`. There is no namespace concept beyond that (owner decision on pulpit#201).
+- **The read.** `resolveLocalised(pages, { defaultLocale })` returns `(path, locale) => …`. It resolves the path through the leaf's gated `resolve` and reads the node through `getLocalised` in the order `localeFallbacks(locale, defaultLocale)` gives: the requested tag, each shorter prefix of it (`pt-BR` → `pt`), then the default.
+
+```ts
+import { resolveLocalised } from "@thomasfosterau/pulpit/pages";
+import { routable } from "@thomasfosterau/pulpit/paths";
+import { defineLocaleLevel, defineSubtype } from "@thomasfosterau/pulpit/subtype";
+
+const pageOps = defineSubtype({
+  type: "pages",
+  access: { kind: "reference" },
+  chain,
+  leaves: publication.leaves, // the live view: readers see the published version
+  publication: { live: publication.live, facts: publication.facts },
+  locales: defineLocaleLevel({ columns: ["title", "body"] }),
+  viewer,
+  policy,
+  followers,
+  toResource,
+});
+const pages = routable(pageOps, { column: "slug", paths: helpPaths, chain }); // one PathStore per collection
+const resolve = resolveLocalised(pages, { defaultLocale: "en" });
+
+resolve("about", "pt-BR");
+// { kind: "node", id, locale: "pt", resource } — render it
+// { kind: "redirect", id, path }               — 301 to `path`
+// PathNotFound                                 — 404
+```
+
+- **Not-found, never forbidden** (`SEC-AUTH-ENUM-001`). Every rule is the leaf's own. A private page, a draft or one never published, a scheduled page whose stamp hasn't arrived, a tombstoned page, an alias to any of these, and a page that carries none of the fallback locales all resolve as `PathNotFound`, exactly as a path nobody claims. The owner and the view-private rung read the head, as `get` does.
+- **An alias redirects without reading a locale.** The canonical path is the node's and is shared by every locale.
+- **Tags are compared exactly.** BCP 47 is case-insensitive, but the locale rows are not, so normalise a tag's case before it reaches the read.
+
+Navigation menus come later, as an ordered collection over `./collections` (pulpit#266), and there is no page builder.
+
+| Export | What it is |
+| --- | --- |
+| `resolveLocalised(ops, config)`, `LocalisedRoutes`, `LocalisedRoutesConfig` | The page resolution read over a routable, localised leaf, the two reads it joins, and its default locale. |
+| `LocalisedResolution` | What it answers: `{ kind: "node", id, locale, resource }` or `{ kind: "redirect", id, path }`. |
+| `localeFallbacks(requested, defaultLocale)` | The locale order a read tries. |
 
 ## `./collections`
 

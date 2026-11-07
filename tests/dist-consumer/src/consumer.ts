@@ -18,6 +18,7 @@ import {
   Content,
   Documents,
   Edges,
+  Pages,
   Paths,
   Purge,
   Moderation,
@@ -194,6 +195,11 @@ import {
   type Resolution,
   type RoutableOps,
 } from "@thomasfosterau/pulpit/paths";
+import {
+  localeFallbacks,
+  resolveLocalised,
+  type LocalisedResolution,
+} from "@thomasfosterau/pulpit/pages";
 
 import type { PublicationFact, PublicationOps, SubtypeOps } from "@thomasfosterau/pulpit/subtype";
 import { defineWorkingCopy } from "@thomasfosterau/pulpit/working-copy";
@@ -1153,6 +1159,47 @@ export type _BlobsBarrel = Assert<Equals<typeof Blobs.defineFileWrites, typeof d
 export type _FileUrl = Assert<Equals<ReturnType<typeof fileUrl>, Option.Option<string>>>;
 export type _FileWrite = Assert<Equals<FileWrite["bytesPending"], boolean>>;
 export type _FileWriteVersion = Assert<Equals<FileWrite["version"], bigint>>;
+
+// ── pages (pulpit#201) ───────────────────────────────────────────────────
+
+export type _PagesBarrel = Assert<Equals<typeof Pages.resolveLocalised, typeof resolveLocalised>>;
+export type _LocaleFallbacks = Assert<
+  Equals<
+    typeof localeFallbacks,
+    (requested: string, defaultLocale: string) => ReadonlyArray<string>
+  >
+>;
+export type _LocalisedResolution = Assert<
+  Equals<
+    LocalisedResolution<PostDoc>,
+    | {
+        readonly kind: "node";
+        readonly id: string;
+        readonly locale: string;
+        readonly resource: PostDoc;
+      }
+    | { readonly kind: "redirect"; readonly id: string; readonly path: string }
+  >
+>;
+export type _ResolveLocalised = Assert<
+  Equals<
+    ReturnType<typeof resolveLocalised<PostDoc, StoreFailure, Transaction>>,
+    (
+      path: string,
+      locale: string,
+    ) => Effect.Effect<LocalisedResolution<PostDoc>, PathNotFound | StoreFailure, Transaction>
+  >
+>;
+export type _RoutableFitsPages = Assert<
+  Equals<
+    RoutableOps<PostDoc, StoreFailure, Transaction> extends Parameters<
+      typeof resolveLocalised<PostDoc, StoreFailure | PathTaken, Transaction>
+    >[0]
+      ? true
+      : false,
+    true
+  >
+>;
 
 // ── paths (pulpit#57) ────────────────────────────────────────────────────
 
