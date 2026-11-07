@@ -539,6 +539,19 @@ export interface ReportStore<E, R> {
   readonly lock: (id: string) => Effect.Effect<Option.Option<ReportRow>, E, R>;
   readonly close: (id: string, resolution: ReportResolution) => Effect.Effect<void, E, R>;
   /**
+   * Account erasure (pulpit#207), at most `limit` rows per call
+   * (`PERF-DB-001`): delete the reports the account filed, and on any
+   * report it resolved replace `resolvedBy` with `replacement` (the
+   * application's tombstone account). Returns how many rows it deleted or
+   * rewrote, so `./erasure` calls it again until it answers fewer than
+   * `limit`.
+   */
+  readonly eraseReporter: (query: {
+    readonly accountId: string;
+    readonly replacement: string;
+    readonly limit: number;
+  }) => Effect.Effect<number, E, R>;
+  /**
    * The page under `where`, newest first (`filed_at DESC, id DESC`), with
    * the unpaged total. `where` reads `reporterId`, `targetId`, `targetType`
    * and `status`.

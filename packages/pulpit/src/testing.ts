@@ -57,6 +57,7 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as P from "effect/Predicate";
 import * as R from "effect/Record";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { sha256Hex, type BlobHead, type BlobStore } from "./blobs.ts";
 import type { BudgetCounter, BudgetRequest, WriteCountStore } from "./budgets.ts";
@@ -77,6 +78,7 @@ import {
   type ListFilter,
 } from "./filter.ts";
 import { byCodePoint, rowOrder } from "./internal/list-order.ts";
+import type { AccountErasureStore, AttributionColumn } from "./erasure.ts";
 import type { ErasedReferences, PurgeStore } from "./purge.ts";
 import {
   SearchScopeLeak,
@@ -261,6 +263,19 @@ export interface InMemoryVersionChain extends VersionChain<never, never> {
   readonly dropState: (id: string, version: bigint) => void;
   /** Simulate a concurrent writer: the next append for `id` finds its version taken. */
   readonly raceNextAppend: (id: string) => void;
+  /**
+   * Rewrite one attribution column (`actorId` or `proposedBy`) on at most
+   * `limit` of the rows where it names `accountId`, to `to`, and return the
+   * rows rewritten: what {@link makeInMemoryAccountErasureStore} reattributes
+   * through, and nothing else may call. It rewrites no other column
+   * (`VERSION-CHAIN-001/002`; erasure, pulpit#207).
+   */
+  readonly reattribute: (query: {
+    readonly accountId: string;
+    readonly column: AttributionColumn;
+    readonly to: Option.Option<string>;
+    readonly limit: number;
+  }) => ReadonlyArray<VersionRow>;
 }
 
 /** The write clock: the current instant, as the `Date` a version row stores. */
@@ -492,6 +507,14 @@ export const makeInMemoryVersionChain = (type: string): InMemoryVersionChain => 
     },
     raceNextAppend: (id) => {
       raced = HashSet.add(raced, id);
+    },
+    reattribute: ({ accountId, column, to, limit }) => {
+      const touched = Arr.take(
+        Arr.filter(log, (row) => Option.contains(row[column], accountId)),
+        limit,
+      );
+      log = Arr.map(log, (row) => (touched.includes(row) ? { ...row, [column]: to } : row));
+      return touched;
     },
   };
 };
@@ -1627,6 +1650,24 @@ const plainRowTable = <Row extends PlainRow>(options: {
           row.id === id && row.status === options.open ? closed(row) : row,
         );
       }),
+    /**
+     * Account erasure: apply `erase` to at most `limit` rows it touches (a
+     * row it answers `"delete"` for goes, one it returns a new row for is
+     * replaced, one it answers `"keep"` for is untouched); how many changed.
+     */
+    erase: (limit: number, erase: (row: Row) => Row | "delete" | "keep") =>
+      Effect.sync(() => {
+        const touched = Arr.take(
+          Arr.filter(rows, (row) => erase(row) !== "keep"),
+          limit,
+        );
+        rows = Arr.filterMap(rows, (row) => {
+          if (!touched.includes(row)) return Result.succeed(row);
+          const next = erase(row);
+          return next === "delete" ? Result.failVoid : Result.succeed(next === "keep" ? row : next);
+        });
+        return touched.length;
+      }),
     matching: (where: ListFilter<never>) =>
       Arr.sort(
         Arr.filter(rows, (row) => evaluate(where, options.filterRow(row), context)),
@@ -1705,6 +1746,18 @@ export const makeInMemoryProposalStore = (options: {
         decisionNote: decision.decisionNote,
         appliedVersion: decision.appliedVersion,
       })),
+    eraseAuthor: ({ accountId, replacement, limit }) =>
+      table.erase(limit, (row) => {
+        if (row.authorId === accountId && row.status !== "accepted") return "delete";
+        const author = row.authorId === accountId;
+        const decider = Option.contains(row.decidedBy, accountId);
+        if (!author && !decider) return "keep";
+        return {
+          ...row,
+          authorId: author ? replacement : row.authorId,
+          decidedBy: decider ? Option.some(replacement) : row.decidedBy,
+        };
+      }),
     list: ({ where, limit, offset }) =>
       Effect.suspend(() => {
         const matching = table.matching(where);
@@ -1765,6 +1818,13 @@ export const makeInMemoryReportStore = (): InMemoryReportStore => {
         resolvedBy: Option.some(resolution.resolvedBy),
         resolutionNote: resolution.resolutionNote,
       })),
+    eraseReporter: ({ accountId, replacement, limit }) =>
+      table.erase(limit, (row) => {
+        if (row.reporterId === accountId) return "delete";
+        return Option.contains(row.resolvedBy, accountId)
+          ? { ...row, resolvedBy: Option.some(replacement) }
+          : "keep";
+      }),
     list: ({ where, limit, offset }) =>
       Effect.sync(() => {
         const matching = table.matching(where);
@@ -2035,6 +2095,15 @@ export const makeInMemoryWorkingCopyStore = (): InMemoryWorkingCopyStore => {
       Effect.sync(() => {
         copies = HashMap.remove(copies, keyOf(key));
       }),
+    eraseAccount: (userId, limit) =>
+      Effect.sync(() => {
+        const erased = Arr.take(
+          Arr.filter(HashMap.keys(copies), (key) => key.endsWith(`:${userId}`)),
+          limit,
+        );
+        copies = HashMap.removeMany(copies, erased);
+        return erased.length;
+      }),
     copies: () => copies,
   };
 };
@@ -2128,6 +2197,72 @@ export const makeInMemoryPurgeStore = (
         return deleted;
       }),
     unreferencedBlobs: (hashes) => Effect.sync(() => unreferenced(hashes, blobColumns)),
+  };
+};
+
+// ── Account erasure (pulpit#207) ──────────────────────────────────────
+
+/**
+ * One leaf an {@link makeInMemoryAccountErasureStore} reads: its wire
+ * type, its chain and its owner stamps.
+ *
+ * @since 0.2.0
+ */
+export interface InMemoryErasureLeaf {
+  readonly type: string;
+  readonly chain: InMemoryVersionChain;
+  readonly leaves: InMemoryLeafStore;
+}
+
+/**
+ * An in-memory {@link AccountErasureStore} over in-memory leaves: the
+ * seam's contract (README → Seams → `AccountErasureStore`). `ownedNodes`
+ * reads a leaf's owner stamps in id order, `setOwner` restamps or drops
+ * one, and `reattribute` rewrites one attribution column of the leaf's
+ * version rows through {@link InMemoryVersionChain.reattribute}. In memory
+ * only; not for production.
+ *
+ * @since 0.2.0
+ */
+export const makeInMemoryAccountErasureStore = (
+  leaves: ReadonlyArray<InMemoryErasureLeaf>,
+): AccountErasureStore<never, never> => {
+  const leafOf = (type: string) => Arr.findFirst(leaves, (leaf) => leaf.type === type);
+  return {
+    ownedNodes: ({ accountId, type, limit }) =>
+      Effect.sync(() =>
+        Option.match(leafOf(type), {
+          onNone: () => [],
+          onSome: (leaf) =>
+            Arr.take(
+              Arr.sort(
+                Arr.filterMap(HashMap.toEntries(leaf.leaves.owners()), ([id, owner]) =>
+                  owner === accountId ? Result.succeed(id) : Result.failVoid,
+                ),
+                byCodePoint,
+              ),
+              limit,
+            ),
+        }),
+      ),
+    setOwner: ({ type, id, ownerId }) =>
+      Effect.suspend(() =>
+        Option.match(leafOf(type), {
+          onNone: () => Effect.void,
+          onSome: (leaf) =>
+            Option.match(ownerId, {
+              onNone: () => Effect.sync(() => leaf.leaves.dropOwner(id)),
+              onSome: (owner) => leaf.leaves.stampOwner(id, owner),
+            }),
+        }),
+      ),
+    reattribute: ({ accountId, type, column, to, limit }) =>
+      Effect.sync(() =>
+        Option.match(leafOf(type), {
+          onNone: () => 0,
+          onSome: (leaf) => leaf.chain.reattribute({ accountId, column, to, limit }).length,
+        }),
+      ),
   };
 };
 
@@ -2415,11 +2550,14 @@ export const makeInMemoryReactionStore = (): InMemoryReactionStore => {
           newestFirst,
         ).slice(offset, offset + limit),
       ),
-    eraseAccount: (accountId) =>
+    eraseAccount: (accountId, limit) =>
       Effect.sync(() => {
-        const before = rows.length;
-        rows = Arr.filter(rows, (row) => row.accountId !== accountId);
-        return before - rows.length;
+        const erased = Arr.take(
+          Arr.filter(rows, (row) => row.accountId === accountId),
+          limit,
+        );
+        rows = Arr.filter(rows, (row) => !erased.includes(row));
+        return erased.length;
       }),
     rows: () => rows,
   };
@@ -2598,11 +2736,14 @@ export const makeInMemorySocialStore = (): InMemorySocialStore => {
       Effect.sync(() => rows.some(matches("follow", follower, followed))),
     followingOf: (follower) => toIds(follower, ["follow"]),
     silencedBy: (viewer) => toIds(viewer, ["mute", "block"]),
-    eraseAccount: (accountId) =>
+    eraseAccount: (accountId, limit) =>
       Effect.sync(() => {
-        const before = rows.length;
-        rows = Arr.filter(rows, (row) => row.from !== accountId && row.to !== accountId);
-        return before - rows.length;
+        const erased = Arr.take(
+          Arr.filter(rows, (row) => row.from === accountId || row.to === accountId),
+          limit,
+        );
+        rows = Arr.filter(rows, (row) => !erased.includes(row));
+        return erased.length;
       }),
     rows: () => rows,
   };

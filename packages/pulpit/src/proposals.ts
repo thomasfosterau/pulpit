@@ -581,6 +581,20 @@ export interface ProposalStore<E, R> {
   /** Close a pending row: write its terminal status, decider and provenance. */
   readonly close: (id: string, decision: ProposalDecision) => Effect.Effect<void, E, R>;
   /**
+   * Account erasure (pulpit#207), at most `limit` rows per call
+   * (`PERF-DB-001`): delete the account's `pending`, `rejected` and
+   * `withdrawn` proposals, and on its `accepted` ones (whose patch is
+   * already in the target's chain) replace `authorId` with `replacement`
+   * (the application's tombstone account); on any row it decided, replace
+   * `decidedBy` the same way. Returns how many rows it deleted or rewrote,
+   * so `./erasure` calls it again until it answers fewer than `limit`.
+   */
+  readonly eraseAuthor: (query: {
+    readonly accountId: string;
+    readonly replacement: string;
+    readonly limit: number;
+  }) => Effect.Effect<number, E, R>;
+  /**
    * The page under `where`, newest first (`submitted_at DESC, id DESC`,
    * a total order), with the unpaged total. `where` reads the columns
    * `authorId`, `targetId`, `targetType`, `status` and `targetOwnerId`

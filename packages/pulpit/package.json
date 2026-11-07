@@ -53,6 +53,7 @@
     "./working-copy": "./src/working-copy.ts",
     "./comments": "./src/comments.ts",
     "./purge": "./src/purge.ts",
+    "./erasure": "./src/erasure.ts",
     "./search": "./src/search.ts",
     "./budgets": "./src/budgets.ts",
     "./reactions": "./src/reactions.ts",
@@ -138,6 +139,10 @@
       "./purge": {
         "types": "./dist/purge.d.ts",
         "default": "./dist/purge.js"
+      },
+      "./erasure": {
+        "types": "./dist/erasure.d.ts",
+        "default": "./dist/erasure.js"
       },
       "./search": {
         "types": "./dist/search.d.ts",

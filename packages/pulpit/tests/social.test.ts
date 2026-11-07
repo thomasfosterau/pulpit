@@ -161,7 +161,7 @@ describe("defineSocial — follows, mutes and blocks", () => {
     await run(as("u-a", social.follow("u-b")));
     await run(as("u-b", social.follow("u-a")));
     await run(as("u-c", social.mute("u-a")));
-    expect(await run(store.eraseAccount("u-a"))).toBe(3);
+    expect(await run(store.eraseAccount("u-a", 10))).toBe(3);
     expect(store.rows()).toEqual([]);
   });
 });
