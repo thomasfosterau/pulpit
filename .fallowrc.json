@@ -18,6 +18,7 @@
     "packages/pulpit/src/reactions.ts",
     "packages/pulpit/src/social.ts",
     "packages/pulpit/src/audience.ts",
+    "packages/pulpit/src/discovery.ts",
     "packages/pulpit/src/blobs.ts",
     "packages/pulpit/src/paths.ts",
     "packages/pulpit/src/pages.ts",

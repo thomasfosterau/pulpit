@@ -165,3 +165,11 @@ export * as Social from "./social.ts";
  * (`defineAudience` over a `MembershipStore`).
  */
 export * as Audience from "./audience.ts";
+
+/**
+ * Discovery: the keyset-paged enumeration of what a leaf's feeds and
+ * sitemap list (anonymously readable, publicly serveable, live, routable),
+ * the per-family metadata projection, and the purge-hint after hook
+ * (`defineDiscovery`, `purgeHintHook`).
+ */
+export * as Discovery from "./discovery.ts";

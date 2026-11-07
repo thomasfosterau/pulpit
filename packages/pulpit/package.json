@@ -58,6 +58,7 @@
     "./reactions": "./src/reactions.ts",
     "./social": "./src/social.ts",
     "./audience": "./src/audience.ts",
+    "./discovery": "./src/discovery.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -157,6 +158,10 @@
       "./audience": {
         "types": "./dist/audience.d.ts",
         "default": "./dist/audience.js"
+      },
+      "./discovery": {
+        "types": "./dist/discovery.d.ts",
+        "default": "./dist/discovery.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",

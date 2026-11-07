@@ -28,6 +28,7 @@ import {
   Collections,
   Social,
   Audience,
+  Discovery,
   Proposals,
   Registry,
   WorkingCopy,
@@ -253,6 +254,13 @@ import {
   type GroupNotFound,
   type MembershipStore,
 } from "@thomasfosterau/pulpit/audience";
+import {
+  defineDiscovery,
+  purgeHintHook,
+  type DiscoveryOps,
+  type DiscoveryPage,
+  type PurgeHint,
+} from "@thomasfosterau/pulpit/discovery";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -1460,3 +1468,21 @@ export const groupAudience: FollowerSeam<Subquery, Transaction> = {
   ...socialSeam,
   ...audienceSeam(membershipStore),
 };
+
+// ── discovery (pulpit#203) ───────────────────────────────────────────────
+
+export type _DiscoveryBarrel = Assert<
+  Equals<typeof Discovery.defineDiscovery, typeof defineDiscovery>
+>;
+export type _DiscoveryFeed = Assert<
+  Equals<
+    ReturnType<DiscoveryOps<string, StoreFailure, Transaction>["feed"]>,
+    Effect.Effect<DiscoveryPage<string>, StoreFailure, Transaction>
+  >
+>;
+export type _PurgeHintEmit = Assert<
+  Equals<
+    Parameters<typeof purgeHintHook<string, StoreFailure, Transaction>>[0]["emit"],
+    (hint: PurgeHint) => Effect.Effect<void, StoreFailure, Transaction>
+  >
+>;
