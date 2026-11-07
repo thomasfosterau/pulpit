@@ -1231,7 +1231,8 @@ const statusFilter = (type: PostType, columns: PostColumns, status: string): Lis
     Match.when("private", () =>
       Option.match(visibilityColumn, {
         onNone: () => never,
-        onSome: (column) => and<never>(live, notDraft, anyOf(column, ["private", "followers"])),
+        onSome: (column) =>
+          and<never>(live, notDraft, anyOf(column, ["private", "followers", "group"])),
       }),
     ),
     Match.when("trash", () => eq("action", "delete")),

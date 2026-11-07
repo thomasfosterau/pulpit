@@ -42,6 +42,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./comments` | The comments family: threaded comments on any node as versioned owned leaves (`defineComments`), behind the target's read gate and the moderation gate, with a configurable reply depth. |
 | `./reactions` | Reactions (`defineReactions` over a `ReactionStore` seam): one per account per node, a kind from the family's own vocabulary, behind the target's read gate, with a grouped tally for a page of nodes. |
 | `./social` | The social graph (`defineSocial` over a `SocialStore` seam): follow, mute and block between accounts, the follower seam filled from it (`socialFollowers`), and the opt-in read filter over the authors a viewer silenced. |
+| `./audience` | Audiences (`defineAudience` over a `MembershipStore` seam): named groups a row can be shared with (the `group` visibility), who manages and who may leave them, and the audience seam filled from them (`audienceSeam`). |
 | **Media** |  |
 | `./blobs` | File and media leaves: the `BlobStore` seam keyed by content hash, the file field spread, the commit-ordered byte write (`defineFileWrites`, with its `bytesPending` marker) and the usage index's edge ends. |
 | **Erasure** |  |
@@ -49,7 +50,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | **Discovery and search** |  |
 | `./search` | Hybrid search: reciprocal rank fusion (`fuseRankings`), a reranker seam, `hybridSearch` over `SearchBranch` seams that each apply the leaf's read scope, and the embedding pipeline (`enqueueEmbeddings`, `embedPending`, `sweepEmbeddings`) over `EmbeddingStore` and `Embedder` seams. |
 | **Testing** |  |
-| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy, purge, embedding, reaction, collection and social stores, the budget counter and write counts, a versioned KV, an endpoint view, a follower seam, a search branch and its scope check), for tests only. Not on the root export. |
+| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy, purge, embedding, reaction, collection, social and membership stores, the budget counter and write counts, a versioned KV, an endpoint view, a follower seam, a search branch and its scope check), for tests only. Not on the root export. |
 
 **Discovery and search** is also `./subtype`'s searchable projection, read scope and hit hydration (see [Search](#subtype) under `./subtype`), which `./search` builds on. **Localisation** is the version chain's locale level (`./version-chain`, `./subtype`'s `getLocalised` and `./filter`'s `locale` arm), not a module of its own.
 
@@ -228,7 +229,7 @@ Some inputs are outside the contract: SQL and `evaluate` can't be made to agree 
 `defineSubtype` binds a leaf's CRUD, version history and list over the chain store, a current-version `LeafStore`, and the viewer seam (`viewer`, `AccessPolicy`, `FollowerSeam`), gated by `LeafAccess`:
 
 - `reference` — writes at the corpus-write rung; when the view has a `visibility` column, reads only `public` rows below the view-private rung, apart from soft-delete. A leaf whose rows may be `followers`-visible declares the view column that plays the owner's part, `{ kind: "reference", followersOfColumn: "curatorId" }` (see [Seams](#the-viewer-the-role-axes-and-the-follower-seam)): a `followers` row is then also read by the account that column names and by its followers, and by nobody else below the view-private rung (that account's `private` rows stay the rung's alone). Without the declaration a `followers` row is the rung's alone. A write or history read to an existing row also needs the caller to be able to `get` it: a row `get` hides from them (or a missing one) fails `NodeNotFound` before the chain is reached, so only the view-deleted rung can `restore` a tombstone.
-- `owned` — creates at any account (stamping the owner); other writes at owner-or-moderator; reads through `canViewOwned` (three-state visibility plus `draft` and, on a moderated leaf, the moderation state), lists through `ownedListFilter`, the same facts as a `ListFilter`. A leaf declaring `moderationColumn` (`ownedAccess({ moderation: true })` names `moderationState`) shows a row whose state isn't exactly `approved` only to its owner and the view-private rung, as it does a draft (pulpit#154). A row whose owner column holds no string (a `NULL`) has no owner: no viewer owns it and the follower seam is never asked about it, so it reads only when `public` and not a draft, or at the view-private rung.
+- `owned` — creates at any account (stamping the owner); other writes at owner-or-moderator; reads through `canViewOwned` (four-state visibility plus `draft` and, on a moderated leaf, the moderation state), lists through `ownedListFilter`, the same facts as a `ListFilter`. A leaf declaring `moderationColumn` (`ownedAccess({ moderation: true })` names `moderationState`) shows a row whose state isn't exactly `approved` only to its owner and the view-private rung, as it does a draft (pulpit#154). A row whose owner column holds no string (a `NULL`) has no owner: no viewer owns it and the follower seam is never asked about it, so it reads only when `public` and not a draft, or at the view-private rung. A leaf declaring `groupColumn` (`ownedAccess({ group: true })` names `groupId`) opens a `group` row, when published, to the members of the group that column names, as the audience seam answers (pulpit#194); a value that isn't a string (a deleted group's cleared column) names no group, so the row reads as `private`.
 
 `get`, `getMany` and `list` treat a row the viewer may not see as missing (`NodeNotFound`, never `Forbidden`). So do a reference leaf's write and history operations. An owned leaf's don't, deliberately (pulpit#24): their gate answers `Forbidden` for an existing owned row the caller doesn't own, whatever its visibility, draft or delete state, so it confirms existence to a signed-in caller; see [SECURITY.md → Existence disclosure by the write gates](https://github.com/thomasfosterau/pulpit/blob/trunk/SECURITY.md#existence-disclosure-by-the-write-gates). `subtypeHandlers(ops, { transact, cache })` wraps the operations as the handler record a JSON:API server is expected to accept (see [Seams](#seams)), writing every mutation through the resource cache.
 
@@ -289,7 +290,7 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
 | `subtypeResourceHandlers(handlers, config)`, `SubtypeResourceHandlersConfig` | The record as effect-jsonapi's `ResourceHandlers.make` CRUD handlers, with the decoded-input mappings (see [Seams](#subtypehandlers-the-handler-record)). |
 | `LifecycleHooks`, `BeforeWriteHook`, `BeforeWriteEvent`, `AfterWriteHook`, `AfterWriteEvent`, `WriteRejected` | The lifecycle hook seam: a leaf's before hooks (inside the write; may transform the patch or refuse with `WriteRejected`) and after hooks (after the commit; never fail the write), and their events. |
 | `composeHooks(...sets)`, `noHooks()`, `cacheWriteThrough(cache)` | Concatenate hook sets in order; the empty set; the resource cache's write-through as an after hook. |
-| `LeafAccess`, `ownedAccess(options?)` | The gate selector (`reference`, with an optional `followersOfColumn`, / `owned` with its view columns, the draft and moderation columns among them), and the owned declaration with the conventional column names (`{ draft?, moderation? }`). |
+| `LeafAccess`, `ownedAccess(options?)` | The gate selector (`reference`, with an optional `followersOfColumn` and `groupColumn`, / `owned` with its view columns, the draft, moderation and group columns among them), and the owned declaration with the conventional column names (`{ draft?, moderation?, group? }`). |
 | `Viewer`, `ViewerAccount`, `AccessPolicy` | The viewer seam and the four role axes (`canViewPrivate`, `canViewDeleted`, `canModerate`, `canWriteCorpus`). |
 | `FollowerSeam`, `nobodyFollows(nobody)` | The follower seam and its fail-closed default. |
 | `ReadScope`, `readScopeFor(viewer, policy, followers)` | A viewer's owned-material read scope (`all` / `public` / `member`). |
@@ -959,6 +960,39 @@ social.silencedFilter("ownerId"); // the opt-in read filter: drop the authors th
 | `SocialStore`, `Relationship`, `RelationshipKind`, `AccountVisibility` | The relationship table seam (see [Seams](#seams)), one relationship, its kinds, and the application's account visibility. |
 | `InteractionBlocked`, `SelfRelationship` | The failures: 403 and 422. |
 
+## `./audience`
+
+Audiences (pulpit#194), after in-the-dark's groups and gardeneria's `social.group_memberships`: named groups of accounts a row can be shared with, as the `group` visibility state.
+
+```ts
+import { audienceSeam, defineAudience } from "@thomasfosterau/pulpit/audience";
+
+const audience = defineAudience({ store: membershipStore, groups: { ownerOf }, viewer });
+const posts = defineSubtype({
+  …,
+  access: ownedAccess({ draft: true, group: true }), // the `groupId` column names the row's group
+  followers: { ...socialFollowers(socialStore), ...audienceSeam(membershipStore) },
+});
+
+audience.addMember(groupId, accountId); // { changed }; the owner or a group admin
+audience.leave(groupId); // any member but the owner
+```
+
+- **A group is the application's.** The kernel reads its owner through `GroupOwnership.ownerOf` (none: `GroupNotFound`, 404) and keeps only its memberships, keyed `(groupId, accountId)` with the role `member | admin`.
+- **The owner and the admins manage members** (`addMember`, `removeMember`, `setRole`; anyone else signed in is `Forbidden`). A member may only `leave`. The owner can't leave, be removed or be re-roled (`GroupOwnerMembership`, 409). Members are added directly, by account id (owner decision on pulpit#194); invitations and consent are pulpit#227.
+- **The member list** is the owner's and the members'; anyone else gets `GroupNotFound`, never `Forbidden`, so it confirms no group (`SEC-AUTH-ENUM-001`). Oldest first, `LIMIT`ed (`MAX_PAGE_LIMIT`).
+- **The audience is the membership rows.** `audienceSeam(store)` is the `isMember` / `groups` pair of `./subtype`'s `FollowerSeam`; spread it into the seam a leaf or an edge family takes. The owner reads their own rows anyway; to read rows others share with the group, they need a membership too, so record one when the group is created.
+- **Deleting a group** (owner decision on pulpit#194): `removeGroup` (the owner only) deletes every membership, so its `group` rows open to nobody but their owners and the view-private rung, and read as `private`. Clear the rows' group column in the same transaction (in-the-dark's `ON DELETE SET NULL`); a column naming no group reads the same.
+- **Never cache-serveable.** A `group` row isn't `public`, so `isPubliclyServeable` refuses it (`CACHE-AUTH-005`).
+- **Account erasure** (pulpit#207) deletes an account's memberships through the store's `eraseAccount`.
+
+| Export | What it is |
+| --- | --- |
+| `defineAudience(definition)`, `AudienceDefinition`, `AudienceOps`, `MembersPageRequest` | The factory, its declaration, the operations and a page request. |
+| `audienceSeam(store)`, `AudienceSeam` | The audience half of the follower seam, over the membership store. |
+| `MembershipStore`, `GroupOwnership`, `Membership`, `MembershipRole` | The membership table seam (see [Seams](#seams)), the application's group owners, one membership and its roles. |
+| `GroupNotFound`, `MemberNotFound`, `GroupOwnerMembership` | The failures: 404, 404 and 409. |
+
 ## `./testing`
 
 In-memory fakes of the kernel's seams, for tests: an adapter's or an application's suite can run the real operations (`defineVersionChain`, `defineSubtype`, `defineEdgeOps`, …) over them without a database. Each fake implements its seam's contract as stated under [Seams](#seams), in memory and with no SQL, and enforces what the real table's schema enforces (a primary or unique key) and nothing the operations are responsible for. They are the fakes the kernel's own suites run against, so they are its reference semantics for each seam.
@@ -1024,6 +1058,7 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | `makeInMemoryVersionedKv()`, `InMemoryVersionedKv` | [`VersionedKv`](#versionedkve-r-the-caches-key-value-store), comparing and writing in one step; an entry past its TTL reads as absent (the Effect `Clock`, so `TestClock` steers expiry). | `peek(key)`, `poke(key, entry)` (a corrupt value). |
 | `makeInMemoryCollectionStore()`, `InMemoryCollectionStore` | [`CollectionStore`](#collectionstoree-r-the-membership-table), each parent's entries replaced whole and read back by position, then member id. | `rows()`. |
 | `makeInMemorySocialStore()`, `InMemorySocialStore` | [`SocialStore`](#socialstorefollowing-e-r-the-relationship-table), keyed `(kind, from, to)`; `followingOf` and `silencedBy` are `HashSet`s. | `rows()`. |
+| `makeInMemoryMembershipStore()`, `InMemoryMembershipStore` | [`MembershipStore`](#membershipstorefollowing-e-r-the-membership-table), keyed `(groupId, accountId)`; `groupsOf` is a `HashSet`. | `rows()`. |
 | `makeInMemoryFollowers(table)`, `InMemoryFollowing` | [`FollowerSeam`](#the-viewer-the-role-axes-and-the-follower-seam) over an explicit table of who follows whom; the `in` set is a `HashSet` of account ids, where SQL's is a subquery. |  |
 
 `now` is the instant the list filter's `published` / `notPublished` compare against (and, for the edge store, the base of the minted `createdAt`s). Pass a fixed `Date` for a deterministic suite; left out, each call reads the Effect `Clock`, so `TestClock` steers it. The role ladder and the `AccessPolicy` are the application's, so `./testing` ships none.
@@ -1074,6 +1109,8 @@ effect-auth publishes the same rules as of 0.1.0: `OwnedAccess` (`canView`, `rea
 - `Viewer = Option<{ id, role }>`: the request's signed-in account, or none for an anonymous request (effect-auth's session context).
 - `AccessPolicy`: four predicates over a signed-in account (`canViewPrivate`, `canViewDeleted`, `canModerate`, `canWriteCorpus`). Each compares the account's role against an application-named rung on its role ladder (effect-auth's `Ladder.make`, checked through the `Guard.make` kit's `hasRoleAtLeast` / `requireRoleAtLeast`). Each must fail closed on an unknown role.
 - `FollowerSeam<Following, R>`: `isFollower(followerId, ownerId)` answers one row's question, and `following(followerId)` returns the list filter's `in` set (effect-auth's `IsFollower`). `nobodyFollows(nobody)` is the fail-closed default when a runtime provides none (effect-auth's `isFollowerNever`).
+- **The audience seam** (pulpit#194): the follower seam's optional `isMember(accountId, groupId)` and `groups(accountId)` answer the `group` visibility state, one row and one list at a time. `groups` is the list filter's `in` set, a subquery that is never materialised (`group_id IN (SELECT group_id FROM memberships WHERE account_id = $viewer)`). Without them no `group` row opens beyond its owner and the view-private rung. `./audience`'s `audienceSeam(store)` fills both.
+- **A leaf's group column.** A leaf that carries `group` rows declares `groupColumn` on its `LeafAccess` (both kinds): a view column holding the id of the group the row is shared with, in the id space the audience seam takes. The list renders `visibility = 'group' AND <column> IN (<groups>)` (with `draft = false` and `moderation = 'approved'` on an owned leaf that declares them), and `get` shows the row when `isMember(viewer, <column>)` answers true; a non-string value names no group and is never asked of the seam. On an owned leaf a declared column the view lacks fails closed like the other declared columns (the leaf reads no row); on a reference leaf it opens no `group` row.
 - **A reference leaf's followers column.** A reference leaf that carries `followers` rows declares `followersOfColumn` on its `LeafAccess`: a column of its current-version view (the `LeafStore`'s `columns` must include it) holding the id of the account that, with its followers, may read the row, in the same id space the follower seam takes. It is the application's column, under any name; pulpit adds no id brand for it. The list renders it as `visibility = 'followers' AND (<column> = <viewer> OR <column> IN (<following>))` and `get` shows the row when the column is the viewer's id or `isFollower(viewer, <column>)` answers true, so a `NULL` (or any non-string) value names nobody: it matches no viewer and is never asked of the seam. The named account and its followers read its `followers` rows; its `private` rows are read only at the view-private rung. A declared column the view lacks opens no `followers` row.
 - `ReadScope` and `canViewOwned` are the kernel's spelling of effect-auth's `OwnedReadScope` / `OwnedAccess.readScope` and `OwnedAccess.canView`, extended with the moderation axis (`unapproved`, pulpit#154) and the no-owner reading (pulpit#85), which effect-auth's row shape has no field for.
 - `Unauthorized` / `Forbidden` are the kernel's own tagged errors, the same tags as effect-auth's `Guard` errors.
@@ -1273,6 +1310,10 @@ It applies no policy and never opens a transaction. A versioned family's parent 
 ### `SocialStore<Following, E, R>`: the relationship table
 
 Filled by the application over its own relationship table (gardeneria's `social.follows`, widened by a `kind`): `kind` (`follow | mute | block`), `from_id` and `to_id` (account foreign keys, `ON DELETE CASCADE`), `at` (`timestamptz NOT NULL DEFAULT now()`), primary key `(kind, from_id, to_id)`, with indexes on `(kind, to_id, at DESC)` and `(kind, from_id, at DESC)`. `add` (a mute) is `INSERT … ON CONFLICT DO NOTHING RETURNING`; `addFollow` and `addBlock` first take one lock on the unordered account pair in the caller's transaction (`pg_advisory_xact_lock` on it), so the two are atomic against each other: `addFollow` is `INSERT … SELECT … WHERE NOT EXISTS (a block either way) ON CONFLICT DO NOTHING`, answering `blocked` when a block stands, and `addBlock` inserts the block and deletes both follows; `remove` is `DELETE … RETURNING`; `has` is an `EXISTS`; `list` is one page by `from_id` or `to_id`, `ORDER BY at DESC`, then the other account's id, with the window total; `isFollowing` is the follower seam's `EXISTS` (a failure reads as `false`, failing closed); `followingOf(follower)` is the subquery `SELECT to_id … WHERE kind = 'follow' AND from_id = $follower`, and `silencedBy(viewer)` the same over `kind IN ('mute', 'block')`, both never materialised; `eraseAccount` deletes every row from or to the account. It applies no policy and never opens a transaction.
+
+### `MembershipStore<Following, E, R>`: the membership table
+
+Filled by the application over its own membership table (in-the-dark's `group_members`, gardeneria's `social.group_memberships`): `group_id` (a foreign key to the app's group table, `ON DELETE CASCADE`), `account_id` (`ON DELETE CASCADE`), `role` (`member | admin`), `at` (`timestamptz NOT NULL DEFAULT now()`), primary key `(group_id, account_id)`, with an index on `(account_id)`. `add` is `INSERT … ON CONFLICT DO NOTHING RETURNING`; `setRole` is `UPDATE … SET role = $role WHERE … AND role <> $role RETURNING`; `remove` is `DELETE … RETURNING`; `roleOf` reads one row's role; `list` is one page `ORDER BY at, account_id` with the window total; `removeGroup` is `DELETE … WHERE group_id = $id`; `isMember` is the audience seam's `EXISTS` (a failure reads as `false`, failing closed); `groupsOf(account)` is the subquery `SELECT group_id … WHERE account_id = $account`, never materialised; `eraseAccount` deletes the account's rows. It applies no policy and never opens a transaction.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 

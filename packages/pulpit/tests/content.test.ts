@@ -54,8 +54,8 @@ const TaxonResource = Resource.make("taxa", {
 });
 
 describe("Visibility", () => {
-  it("is the three-state axis", () => {
-    expect(Visibility.literals).toEqual(["public", "followers", "private"]);
+  it("is the four-state axis (pulpit#194)", () => {
+    expect(Visibility.literals).toEqual(["public", "followers", "group", "private"]);
     expect(decodes(Visibility, "draft")).toBe(false);
   });
 });

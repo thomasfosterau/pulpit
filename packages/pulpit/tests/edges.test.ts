@@ -2491,3 +2491,150 @@ describe("memberFilter through the member leaf's own list (pulpit#189)", () => {
     },
   );
 });
+
+describe("EDGE-001: a `group` end reads to its group's members, filter and predicate alike (pulpit#194)", () => {
+  /** `follower` is a member of `g-1`; nobody belongs to anything else. */
+  const audience: FollowerSeam<Following, never> = {
+    ...follows,
+    isMember: (accountId, groupId) =>
+      Effect.succeed(accountId === follower.id && groupId === "g-1"),
+    groups: (accountId) => (accountId === follower.id ? HashSet.make("g-1") : HashSet.empty()),
+  };
+  const groupIds: ReadonlyArray<ColumnValue | typeof ABSENT> = ["g-1", "g-2", null, 7, ABSENT];
+  const showGroup = (groupId: ColumnValue | typeof ABSENT) =>
+    groupId === ABSENT ? "absent" : String(groupId);
+  const withGroup = (
+    columns: { readonly [column: string]: ColumnValue },
+    groupId: ColumnValue | typeof ABSENT,
+  ) => (groupId === ABSENT ? columns : { ...columns, groupId });
+
+  const ownedRows = Arr.flatMap(actions, (action) =>
+    Arr.flatMap(["public", "group", "private"], (visibility) =>
+      Arr.flatMap([false, true], (draft) =>
+        Arr.flatMap(groupIds, (groupId) =>
+          Arr.map([member.id, otherMember.id], (ownerId) =>
+            node(
+              `${action}-${visibility}-${String(draft)}-${showGroup(groupId)}-${ownerId}`,
+              withGroup({ ownerId, visibility, draft }, groupId),
+              action,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  const ownedGroupEnd = (columns: ReadonlyArray<string>): EdgeEnd<never, never> => ({
+    column: "entryId",
+    type: "entries",
+    access: ownedAccess({ draft: true, group: true }),
+    nodes: makeInMemoryNodes(columns),
+  });
+  const referenceRows = Arr.flatMap(actions, (action) =>
+    Arr.flatMap(["public", "group", "private"], (visibility) =>
+      Arr.map(groupIds, (groupId) =>
+        node(
+          `${action}-${visibility}-${showGroup(groupId)}`,
+          withGroup({ visibility }, groupId),
+          action,
+        ),
+      ),
+    ),
+  );
+  const referenceGroupEnd = (columns: ReadonlyArray<string>): EdgeEnd<never, never> => ({
+    column: "subjectId",
+    type: "subjects",
+    access: { kind: "reference", groupColumn: "groupId" },
+    nodes: makeInMemoryNodes(columns),
+  });
+  const everyone = [...viewers, ["an admin", as(admin)] as const];
+  const cases = Arr.flatMap(
+    [
+      [
+        "an owned end",
+        () => ownedGroupEnd(["ownerId", "visibility", "draft", "groupId"]),
+        ownedRows,
+      ],
+      ["a reference end", () => referenceGroupEnd(["visibility", "groupId"]), referenceRows],
+    ] as const,
+    ([kind, end, rows]) =>
+      Arr.flatMap(
+        [
+          ["with the audience seam", audience],
+          ["without it", follows],
+        ] as const,
+        ([seamName, seam]) =>
+          Arr.map(everyone, ([name, viewer]) => ({
+            label: `${kind}, ${seamName}, for ${name}`,
+            end,
+            rows,
+            seam,
+            viewer,
+          })),
+      ),
+  );
+
+  it.each(cases)("$label", async ({ end, rows, seam, viewer }) => {
+    const seen = await readings(end(), viewer, rows, seam);
+    expect(seen.map(({ id, listed }) => [id, listed])).toEqual(
+      seen.map(({ id, readable }) => [id, readable]),
+    );
+  });
+
+  it("is not vacuous: the member reads exactly the live, published group rows of their group", async () => {
+    const live = (row: LeafRow) => row.action !== "delete";
+    const owned = await readings(
+      ownedGroupEnd(["ownerId", "visibility", "draft", "groupId"]),
+      as(follower),
+      ownedRows,
+      audience,
+    );
+    expect(owned.filter(({ readable }) => readable).map(({ id }) => id)).toEqual(
+      ownedRows
+        .filter(
+          (row) =>
+            live(row) &&
+            row["draft"] === false &&
+            (row["visibility"] === "public" ||
+              (row["visibility"] === "group" && row["groupId"] === "g-1")),
+        )
+        .map((row) => row.id),
+    );
+    const reference = await readings(
+      referenceGroupEnd(["visibility", "groupId"]),
+      as(follower),
+      referenceRows,
+      audience,
+    );
+    expect(reference.filter(({ readable }) => readable).map(({ id }) => id)).toEqual(
+      referenceRows
+        .filter(
+          (row) =>
+            live(row) &&
+            (row["visibility"] === "public" ||
+              (row["visibility"] === "group" && row["groupId"] === "g-1")),
+        )
+        .map((row) => row.id),
+    );
+  });
+
+  it("a declared group column the view lacks: an owned end reads nothing, a reference end only its public rows", async () => {
+    const owned = await readings(
+      ownedGroupEnd(["ownerId", "visibility", "draft"]),
+      as(moderator),
+      ownedRows,
+      audience,
+    );
+    expect(owned.some(({ listed, readable }) => listed || readable)).toBe(false);
+    const reference = await readings(
+      referenceGroupEnd(["visibility"]),
+      as(follower),
+      referenceRows,
+      audience,
+    );
+    expect(reference.filter(({ listed }) => listed).map(({ id }) => id)).toEqual(
+      referenceRows
+        .filter((row) => row.action !== "delete" && row["visibility"] === "public")
+        .map((row) => row.id),
+    );
+  });
+});

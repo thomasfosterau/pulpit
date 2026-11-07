@@ -26,6 +26,7 @@ import {
   Cache,
   Collections,
   Social,
+  Audience,
   Proposals,
   Registry,
   WorkingCopy,
@@ -238,6 +239,14 @@ import {
   type SocialOps,
   type SocialStore,
 } from "@thomasfosterau/pulpit/social";
+import {
+  audienceSeam,
+  defineAudience,
+  type AudienceOps,
+  type AudienceSeam,
+  type GroupNotFound,
+  type MembershipStore,
+} from "@thomasfosterau/pulpit/audience";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -245,7 +254,7 @@ type Equals<A, B> =
 
 // ── content ──────────────────────────────────────────────────────────────
 
-export type _Visibility = Assert<Equals<Visibility, "public" | "followers" | "private">>;
+export type _Visibility = Assert<Equals<Visibility, "public" | "followers" | "group" | "private">>;
 export type _Barrel = Assert<Equals<typeof Content.Visibility, typeof Visibility>>;
 
 const UserResource = Resource.make("users", { attributes: { name: Schema.String } });
@@ -267,7 +276,7 @@ export type _PostAttributes = Assert<
       readonly createdAt: Date;
       readonly updatedAt: Date;
       readonly deletedAt?: Date;
-      readonly visibility: "public" | "followers" | "private";
+      readonly visibility: "public" | "followers" | "group" | "private";
       readonly draft: boolean;
       readonly title: string;
     }
@@ -283,7 +292,7 @@ export type _PostCreate = Assert<
   Equals<
     typeof Post.createInput.Type,
     {
-      readonly visibility?: "public" | "followers" | "private" | undefined;
+      readonly visibility?: "public" | "followers" | "group" | "private" | undefined;
       readonly draft?: boolean | undefined;
       readonly title: string;
     }
@@ -1378,3 +1387,29 @@ export type _SocialFollowers = Assert<
   >
 >;
 export const socialSeam = socialFollowers(socialStore);
+
+// ── audience (pulpit#194) ────────────────────────────────────────────────
+
+export type _AudienceBarrel = Assert<Equals<typeof Audience.defineAudience, typeof defineAudience>>;
+export type _Members = Assert<
+  Equals<
+    ReturnType<AudienceOps<StoreFailure, Transaction>["members"]>,
+    Effect.Effect<
+      Page<{ readonly accountId: string; readonly role: "member" | "admin"; readonly at: Date }>,
+      Unauthorized | GroupNotFound | StoreFailure,
+      Transaction
+    >
+  >
+>;
+declare const membershipStore: MembershipStore<Subquery, StoreFailure, Transaction>;
+export type _AudienceSeam = Assert<
+  Equals<
+    ReturnType<typeof audienceSeam<Subquery, StoreFailure, Transaction>>,
+    AudienceSeam<Subquery, Transaction>
+  >
+>;
+// The audience pair spreads into a follower seam, which still type-checks as one.
+export const groupAudience: FollowerSeam<Subquery, Transaction> = {
+  ...socialSeam,
+  ...audienceSeam(membershipStore),
+};
