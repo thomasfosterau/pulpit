@@ -505,11 +505,21 @@ export const makeInMemoryPathStore = (): InMemoryPathStore => {
  * @since 0.1.0
  */
 export interface InMemoryResourceCache<Resource> extends ResourceCacheSeam<Resource, never> {
-  /** The resource the cache would serve for `id`: none when evicted, refused or never set. */
-  readonly get: (id: string) => Option.Option<Resource>;
+  /**
+   * The resource the cache would serve for `id` (in `locale`, on a
+   * localised leaf): none when evicted, refused or never set.
+   */
+  readonly get: (
+    id: string,
+    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter is `?: T | undefined` (AGENTS.md → Conventions), as `ResourceCacheSeam.set` takes the locale; the omitted argument is the id's unlocalised entry
+    locale?: string | undefined,
+  ) => Option.Option<Resource>;
   /** The highest version the cache holds for `id`, set or evicted, or none. */
   readonly versionOf: (id: string) => Option.Option<bigint>;
 }
+
+/** The key of an unlocalised entry: no locale tag is empty (`defineLocaleLevel`'s writes refuse one). */
+const NO_LOCALE = "";
 
 /**
  * An in-memory {@link ResourceCacheSeam}: the seam's compare-on-set contract
@@ -518,7 +528,10 @@ export interface InMemoryResourceCache<Resource> extends ResourceCacheSeam<Resou
  * `set` at or above it stores the resource when `serveable` admits it and
  * evicts it otherwise, and a `delete` evicts and raises the version. Each
  * call compares and writes in one step, as the real cache's conditional write
- * must. In memory only; not for production.
+ * must. A localised leaf's entries are keyed by locale under the one
+ * per-id version (pulpit#184): a `set` above the held version drops the id's
+ * other locales, and a `delete` evicts them all. In memory only; not for
+ * production.
  *
  * @since 0.1.0
  */
@@ -527,26 +540,38 @@ export const makeInMemoryResourceCache = <Resource>(
 ): InMemoryResourceCache<Resource> => {
   let entries = HashMap.empty<
     string,
-    { readonly version: bigint; readonly resource: Option.Option<Resource> }
+    { readonly version: bigint; readonly resources: HashMap.HashMap<string, Resource> }
   >();
   const versionOf = (id: string) => Option.map(HashMap.get(entries, id), (entry) => entry.version);
   const behind = (id: string, version: bigint) =>
     Option.exists(versionOf(id), (held) => version < held);
   return {
-    set: (id, resource, version) =>
+    set: (id, resource, version, locale) =>
       Effect.sync(() => {
         if (behind(id, version)) return;
+        // The same version keeps the id's other locales; a newer one drops them.
+        const kept = Option.match(HashMap.get(entries, id), {
+          onNone: () => HashMap.empty<string, Resource>(),
+          onSome: (entry) =>
+            entry.version === version ? entry.resources : HashMap.empty<string, Resource>(),
+        });
+        const key = locale ?? NO_LOCALE;
         entries = HashMap.set(entries, id, {
           version,
-          resource: serveable(resource) ? Option.some(resource) : Option.none(),
+          resources: serveable(resource)
+            ? HashMap.set(kept, key, resource)
+            : HashMap.remove(kept, key),
         });
       }),
     delete: (id, version) =>
       Effect.sync(() => {
         if (behind(id, version)) return;
-        entries = HashMap.set(entries, id, { version, resource: Option.none() });
+        entries = HashMap.set(entries, id, { version, resources: HashMap.empty() });
       }),
-    get: (id) => Option.flatMap(HashMap.get(entries, id), (entry) => entry.resource),
+    get: (id, locale) =>
+      Option.flatMap(HashMap.get(entries, id), (entry) =>
+        HashMap.get(entry.resources, locale ?? NO_LOCALE),
+      ),
     versionOf,
   };
 };

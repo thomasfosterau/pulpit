@@ -272,6 +272,39 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
 - **Declaration.** `defineLocaleLevel` throws `SubtypeDeclarationError` at import for no column, a repeat, or a name the view keeps for itself (`id`, `version`, `action`, `locale`). `defineSubtype` throws when a translated column, or `locale`, is not a view column, and when a translated column is one the read gate reads (an owned leaf's owner, visibility, draft and moderation columns; a reference leaf's `visibility` and `followersOfColumn`; a publish-gated leaf's `draft` and `publishedAt`). Access is the node's, never a locale's.
 - **Writes.** `create` takes `locales`, the whole level at version 0; `update` and `restore` take `locales`, a `LocalePatch` (a patch updates that locale, `null` drops it, an absent key carries it forward). Every write appends one version of the whole node, however few locales it touches. `restoreVersion` restores every locale together with the shared columns, and a tombstone carries them forward. A write fails `WriteRejected`, after the gate and with nothing appended, when its shared patch names a translated column, a locale's patch names a shared column, a locale tag is empty, or the leaf has no locale level.
 - **Before hooks see every locale, and fail closed.** A `BeforeWriteHook` declares a `locales` pass beside `run`: it is shown the write's locale patch and returns the one the write applies, so a hook that validates or rewrites a column does so in every locale. A write that carries a locale change through a hook with no `locales` pass is refused with `WriteRejected`, so writing a column per locale never bypasses a hook. A hook with nothing to do per locale passes the patch through: `locales: (event) => Effect.succeed(event.locales ?? {})`.
+- **On the wire** (pulpit#184; owner decision there: the locale travels in `Accept-Language` / `Content-Language`, never a query parameter). Pass `subtypeResourceHandlers` a `LocaleWire` as its third argument: the leaf's `level`, its `defaultLocale`, the request's `acceptLanguage` and `contentLanguage` headers as effects, and `served(locale)`, called once a read has found its locale. `get` answers through `getLocalised` with the request's `Content-Language` first (a write's response answers in the locale it wrote), then `acceptLanguage(header)`'s tags by weight, each followed by its shorter prefixes, then the default (`localePreferences`), and a node in none of them is `NodeNotFound`. `create` and `update` split the payload: the level's translated columns land in the `Content-Language` locale (its first tag; the default without one), the rest stay shared, one version of the whole node. effect-jsonapi's handlers see only the decoded params, query and payload, so the application reads the headers from its request context and sets the response's own in `served`: `Content-Language: <locale>` and `Vary: Accept-Language`. Configure `subtypeHandlers` with `localised: true` too, so writes evict every locale's cache entry rather than writing the shared row through (see [Seams](#resourcecacheseam-and-the-serveable-hook-the-resource-cache)). `list` is unchanged (one row per `(id, locale)`; a per-node fallback list is pulpit#272).
+
+  ```ts
+  import * as HttpEffect from "effect/http/HttpEffect";
+  import * as HttpServerRequest from "effect/http/HttpServerRequest";
+  import * as HttpServerResponse from "effect/http/HttpServerResponse";
+
+  const header = (name: string) =>
+    Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
+      Option.fromUndefinedOr(request.headers[name]),
+    );
+  const wire: LocaleWire<HttpServerRequest.HttpServerRequest> = {
+    level: pageLocales,
+    defaultLocale: "en",
+    acceptLanguage: header("accept-language"),
+    contentLanguage: header("content-language"),
+    served: (locale) =>
+      HttpEffect.appendPreResponseHandler((_, response) =>
+        Effect.succeed(
+          HttpServerResponse.setHeaders(response, {
+            "content-language": locale,
+            vary: "Accept-Language",
+          }),
+        ),
+      ),
+  };
+  const handlers = subtypeResourceHandlers(
+    subtypeHandlers(ops, { ...config, localised: true }),
+    pageConfig,
+    wire,
+  );
+  ```
+
 - **Reads.** The leaf's view has one row per `(id, locale)` the version carries, with the shared columns joined in and the tag in `locale` (a node carrying no locale is one row with a `NULL` locale). `list` reads those rows, so narrow it with the `locale([...])` filter arm. `get` / `getMany` read the node's shared row. `getLocalised(id, locales)` is the fallback read: after the node's own read gate, exactly as `get` runs it, one read of the requested locales' rows from the version the viewer reads (the head, or the live version on a publish-gated leaf), and the first locale in the caller's order the node carries, as `{ locale, resource }`. Each locale row passes the read gate again, so a store that joined one onto other access facts serves none. A node that is missing, hidden or carries none of the locales fails `NodeNotFound` (`SEC-AUTH-ENUM-001`).
 - **History.** `compare` reports the shared columns' `changes` and the per-locale `locales` (`diffLocales`).
 
@@ -286,7 +319,8 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
 | --- | --- |
 | `defineSubtype(definition)`, `SubtypeDefinition`, `SubtypeOps` | The factory, its declaration (type, access, stores, viewer seams, row → resource mapper) and the operations it produces. |
 | `subtypeHandlers(ops, config)`, `SubtypeHandlers`, `SubtypeHandlersConfig`, `ResourceCacheSeam` | The handler record with cache write-through, its `transact` boundary, the `inTransaction` signal that turns the write-through into an eviction inside an outer transaction (pulpit#124), and the cache's write side. |
-| `subtypeResourceHandlers(handlers, config)`, `SubtypeResourceHandlersConfig` | The record as effect-jsonapi's `ResourceHandlers.make` CRUD handlers, with the decoded-input mappings (see [Seams](#subtypehandlers-the-handler-record)). |
+| `subtypeResourceHandlers(handlers, config, locale?)`, `SubtypeResourceHandlersConfig` | The record as effect-jsonapi's `ResourceHandlers.make` CRUD handlers, with the decoded-input mappings (see [Seams](#subtypehandlers-the-handler-record)); given a `LocaleWire`, a localised leaf's (see Localisation, above). |
+| `acceptLanguage(header)`, `localePreferences(requested, defaultLocale)`, `LocaleWire` | The locale on the wire (pulpit#184): an `Accept-Language` header's tags by weight, the fallback order a read tries (each tag, its prefixes, the default), and the request-header seam the localised handlers read. |
 | `LifecycleHooks`, `BeforeWriteHook`, `BeforeWriteEvent`, `AfterWriteHook`, `AfterWriteEvent`, `WriteRejected` | The lifecycle hook seam: a leaf's before hooks (inside the write; may transform the patch or refuse with `WriteRejected`) and after hooks (after the commit; never fail the write), and their events. |
 | `composeHooks(...sets)`, `noHooks()`, `cacheWriteThrough(cache)` | Concatenate hook sets in order; the empty set; the resource cache's write-through as an after hook. |
 | `LeafAccess`, `ownedAccess(options?)` | The gate selector (`reference`, with an optional `followersOfColumn`, / `owned` with its view columns, the draft and moderation columns among them), and the owned declaration with the conventional column names (`{ draft?, moderation? }`). |
@@ -350,6 +384,7 @@ postCache.get(id); // Option<Post>
 - **Serveability on both sides** (`CACHE-AUTH-005`). `set` refuses, and evicts, a resource the policy doesn't serve. `get` checks again and evicts, so a policy change never serves a stale cached private row.
 - **Decode or evict.** `get` decodes with the resource's schema, and a stored value that no longer decodes is evicted and read as a miss. Bump `prefix` with the schema to start a fresh generation.
 - **A TTL backstop** on every value write (`ttlSeconds`), so an entry no write evicted still expires.
+- **No locale keys yet** (pulpit#184, pulpit#271). It keeps one entry per id, so a `set` that names a locale (a localised leaf's read-through fill) evicts the id at its version instead of caching: a localised leaf served through it is never cached, rather than answered from another locale's entry.
 - **Never fails.** A KV failure reads as a miss and skips a write: the store stays the source of truth.
 
 | Export | What it is |
@@ -1013,7 +1048,7 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | `makeInMemoryBudgetCounter()`, `InMemoryBudgetCounter` | An atomic [`BudgetCounter`](#budgetcountere-r-and-writecountstoree-r-the-write-budget-counter): it counts the spends it admitted in the window and records one only when it answers `true`. | `spends()` (every admitted spend). |
 | `makeInMemoryWriteCountStore()`, `InMemoryWriteCountStore`, `RecordedWrite` | [`WriteCountStore`](#budgetcountere-r-and-writecountstoree-r-the-write-budget-counter), counting the recorded writes at or after `since`. | `record(write)` (the row a write inserts). |
 | `makeInMemoryReportStore()`, `InMemoryReportStore` | [`ReportStore`](#reportstoree-r-the-member-report-table), evaluating the filter in memory, newest first with `id` descending on a tie. | `rows()` (every report as it now stands). |
-| `makeInMemoryResourceCache(serveable)`, `InMemoryResourceCache` | [`ResourceCacheSeam`](#resourcecacheseam-and-the-serveable-hook-the-resource-cache), with compare-on-set: a `set` below the highest version held for an id is a no-op, and a `delete` raises it. | `get(id)` (what it would serve), `versionOf(id)` (the version held, set or evicted). |
+| `makeInMemoryResourceCache(serveable)`, `InMemoryResourceCache` | [`ResourceCacheSeam`](#resourcecacheseam-and-the-serveable-hook-the-resource-cache), with compare-on-set: a `set` below the highest version held for an id is a no-op, and a `delete` raises it. A localised leaf's entries are keyed by locale under the one per-id version (pulpit#184). | `get(id, locale?)` (what it would serve), `versionOf(id)` (the version held, set or evicted). |
 | `makeInMemoryPublication({ chain, leaves, now? })`, `InMemoryPublication` | [`PublicationStore`](#publicationstoree-r-and-liveviewrow-following-e-r-the-live-pointer) and `LiveView` over an in-memory chain and leaf store, plus the gated leaf's current-version view with `draft` computed from the log. | `recorded()` (every fact). |
 | `makeInMemoryWorkingCopyStore()`, `InMemoryWorkingCopyStore` | [`WorkingCopyStore`](#workingcopystoree-r-the-autosave-buffer), one copy per `(id, userId)`. | `copies()`. |
 | `makeInMemoryPurgeStore({ chains, documents?, documentColumns?, blobColumns?, dependents? })`, `InMemoryPurgeStoreOptions` | [`PurgeStore`](#purgestoree-r-erasure), erasing a node's rows from every chain (and, through `dependents`, from other fakes) and reading a hash as referenced while any remaining row carries it in a declared column. |  |
@@ -1276,9 +1311,11 @@ Filled by the application over its own relationship table (gardeneria's `social.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 
-Filled by the application: a read-through resource cache it owns (pulpit#5, pulpit#6). No library is expected to provide one; effect-web dropped its Cloudflare package, and with it the planned cache (effect-web#33). The cache's write side is `set(id, resource, version)` / `delete(id, version)`, both never failing (the cache swallows a store fault).
+Filled by the application: a read-through resource cache it owns (pulpit#5, pulpit#6). No library is expected to provide one; effect-web dropped its Cloudflare package, and with it the planned cache (effect-web#33). The cache's write side is `set(id, resource, version, locale?)` / `delete(id, version)`, both never failing (the cache swallows a store fault).
 
 **Compare-on-set** (pulpit#121). Each call carries the node version it speaks for: the version the write landed at for the handlers' write-through and eviction, and the head version its read saw for a read-through fill, which goes through `set` too. The cache keeps, per id, the highest version either call has given it. A `set` below that version is a no-op; a `set` at or above it stores the resource (or, when not serveable, evicts it and keeps the version); a `delete` evicts and raises the version. The kept version must outlive the entry it evicted, at least as long as an entry lives. That way neither a racing writer's late write-through nor a fill that read before a hiding write can re-cache a resource older than one already evicted or replaced (`CACHE-AUTH-005`). The compare and the write are one atomic step: a conditional write (a SQL `INSERT … ON CONFLICT … DO UPDATE … WHERE cached.version <= excluded.version`, a Durable Object, a compare-and-swap). A store without one, such as Workers KV, which is eventually consistent and has no conditional put, cannot honour this seam on its own. `makeInMemoryResourceCache` in [`./testing`](#testing) is the reference.
+
+**A localised leaf's entries are keyed by locale** (pulpit#184; owner decision there: the cache's key includes the locale). One entry per `(id, locale)` a reader was served, so `Accept-Language` never answers one locale from another's entry; the read-through fill passes the locale it served as `set`'s fourth argument. A version covers every locale of a node, so the compare-on-set version is kept per id across them: a `set` of any locale below it is a no-op, a `set` above it drops the id's other locales (older versions), and `delete` evicts every locale of the id. The kernel never writes a localised leaf through: its writer's re-read is the node's shared row, no locale's representation, so with `SubtypeHandlersConfig.localised: true` the handlers evict at every write's version instead. `makeInMemoryResourceCache` keys by locale; `./cache`'s `makeResourceCache` doesn't yet and evicts instead (pulpit#271).
 
 **Only committed writes are cached** (pulpit#124). `transact` is always-open, so inside an outer transaction it is a SAVEPOINT and its return is not a commit. `SubtypeHandlersConfig.inTransaction` says which: over `effect/sql`, `Effect.map(Effect.serviceOption(client.transactionService), Option.isSome)`, read once `transact` has returned. When it reads true, the handlers evict at the write's version instead of writing through, so an outer rollback leaves no cached entry; the eviction raises the cache's version, so a read-through fill below it is refused until the next write or a fill at that version, which is the safe side. Once `transact` offers an after-commit hook, the write-through moves onto it.
 

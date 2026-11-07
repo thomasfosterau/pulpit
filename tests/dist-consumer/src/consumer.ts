@@ -115,6 +115,10 @@ import {
   type VersionMeta,
   subtypeResourceHandlers,
   type SubtypeResourceHandlersConfig,
+  acceptLanguage,
+  localePreferences,
+  type LocaleLevel,
+  type LocaleWire,
   defineSearchProjection,
   hydrateSearchHits,
   searchScopeFilter,
@@ -783,6 +787,23 @@ export type _ResourceHandlerNames = Assert<
     "list" | "get" | "create" | "update" | "delete"
   >
 >;
+// The locale on the JSON:API wire (pulpit#184).
+export type _AcceptLanguage = Assert<
+  Equals<typeof acceptLanguage, (header: string | undefined) => ReadonlyArray<string>>
+>;
+export type _LocalePreferences = Assert<
+  Equals<
+    typeof localePreferences,
+    (requested: ReadonlyArray<string>, defaultLocale: string) => ReadonlyArray<string>
+  >
+>;
+export type _LocaleWireKeys = Assert<
+  Equals<
+    keyof LocaleWire<never>,
+    "level" | "defaultLocale" | "acceptLanguage" | "contentLanguage" | "served"
+  >
+>;
+export type _LocaleWireLevel = Assert<Equals<LocaleWire<never>["level"], LocaleLevel>>;
 interface PostQuery {
   readonly offset: number;
   readonly limit: number;
