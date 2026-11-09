@@ -63,7 +63,7 @@ catalog:
   # seams (`canViewOwned`, `readScopeFor`, `isPubliclyServeable`) agree with
   # effect-auth's `OwnedAccess` / `Cacheability` (pulpit#5). The kernel never
   # imports it (packages/pulpit/CLAUDE.md → Boundary).
-  "@thomasfosterau/effect-auth": ^0.1.0
+  "@thomasfosterau/effect-auth": ^0.2.0
   "@types/node": ^26.6.6
   # The coverage provider for `vp run -r test:coverage`. vite-plus bundles its
   # own vitest and refuses to start a coverage run unless the provider's
