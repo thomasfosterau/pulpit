@@ -61,7 +61,7 @@ jobs:
         with:
           version-file: pnpm-workspace.yaml
           # Never `latest`, which resolves to a Node.js pre-release (see
-          # .github/actions/setup/action.yml).
+          # ci.yml).
           node-version: lts
           run-install: false
       # `up` fails when the image, a feature or `postCreateCommand` fails.

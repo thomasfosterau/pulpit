@@ -84,10 +84,9 @@ updates:
     assignees:
       - thomasfosterau
   - package-ecosystem: "github-actions"
-    # The workflows and the composite setup action both pin actions by SHA.
+    # The workflows pin every action by SHA.
     directories:
       - "/"
-      - "/.github/actions/setup"
     target-branch: "trunk"
     schedule:
       interval: "weekly"
