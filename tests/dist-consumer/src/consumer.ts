@@ -32,6 +32,7 @@ import {
   Audience,
   Discovery,
   Relations,
+  Translation,
   Proposals,
   Registry,
   WorkingCopy,
@@ -290,6 +291,14 @@ import {
   type ReshareOps,
   type ReshareTarget,
 } from "@thomasfosterau/pulpit/relations";
+import {
+  defineTranslation,
+  humanLineageHook,
+  lineageOf,
+  type LocaleLineage,
+  type SweepSummary,
+  type TranslationOps,
+} from "@thomasfosterau/pulpit/translation";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -1622,3 +1631,17 @@ export type _ForbiddenIsEffectAuths = Assert<Equals<Forbidden, Guard.Forbidden>>
 export type _AccessPolicyFromGuards = Assert<
   Equals<ReturnType<typeof accessPolicyFromGuards>, AccessPolicy>
 >;
+
+// ── translation (pulpit#208) ─────────────────────────────────────────────
+
+export type _TranslationBarrel = Assert<
+  Equals<typeof Translation.defineTranslation, typeof defineTranslation>
+>;
+export type _TranslationSweep = Assert<
+  Equals<
+    ReturnType<TranslationOps<StoreFailure, Transaction>["sweep"]>,
+    Effect.Effect<SweepSummary, StoreFailure, Transaction>
+  >
+>;
+export type _LineageOf = Assert<Equals<ReturnType<typeof lineageOf>, Option.Option<LocaleLineage>>>;
+export type _HumanLineageHook = Assert<Equals<ReturnType<typeof humanLineageHook>["name"], string>>;

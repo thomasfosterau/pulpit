@@ -42,6 +42,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./budgets` | Write budgets: a declared ceiling on an account's writes of one kind in a rolling window, spent inside the write (`budgetHook` on a chain write; `bindBudget`'s `spend` on a proposal's `submit` or a report's `file`) over a `BudgetCounter` seam, refused as a rate-limited `WriteRejected` (the wire's 429). |
 | `./comments` | The comments family: threaded comments on any node as versioned owned leaves (`defineComments`), behind the target's read gate and the moderation gate, with a configurable reply depth. |
 | `./reactions` | Reactions (`defineReactions` over a `ReactionStore` seam): one per account per node, a kind from the family's own vocabulary, behind the target's read gate, with a grouped tally for a page of nodes. |
+| `./translation` | Translation lineage and staleness on a localised leaf (`lineageOf`, `defineTranslation`'s `pending`), the `Translator` and `TranslationCandidates` seams, the sweep that lands machine translations directly or as proposals, and `humanLineageHook`. |
 | `./discovery` | Discovery (`defineDiscovery`): the keyset-paged feed and sitemap enumeration of a leaf's anonymously readable, publicly serveable, live, routable nodes, the per-family metadata projection, and the purge-hint after hook (`purgeHintHook`). |
 | `./social` | The social graph (`defineSocial` over a `SocialStore` seam): follow, mute and block between accounts, the follower seam filled from it (`socialFollowers`), and the opt-in read filter over the authors a viewer silenced. |
 | `./audience` | Audiences (`defineAudience` over a `MembershipStore` seam): named groups a row can be shared with (the `group` visibility), who manages and who may leave them, and the audience seam filled from them (`audienceSeam`). |
@@ -1261,6 +1262,52 @@ const byline = defineCollection({ type: "post-authors", parent: posts, members: 
 | `nodeWriteGate(column, type, leaf)` | An edge write gate admitting whoever may write the node at one end. |
 | `acceptedAnswerGate(declaration)`, `AcceptedAnswerDeclaration`, `AnswerNotOfQuestion` | The accepted-answer write gate and its 422. |
 
+## `./translation`
+
+Translation lineage and staleness (pulpit#208), after website's machine translation (`packages/jobs/src/translation/`, the `derivedFromId` lineage and the daily sweep). For a localised leaf (see [Localisation](#subtype)).
+
+```ts
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import { defineTranslation, humanLineageHook } from "@thomasfosterau/pulpit/translation";
+
+const declaration = {
+  type: "pages",
+  columns: ["title", "body"],
+  sourceLocale: "en",
+  targets: ["fr", "de"],
+};
+const translation = defineTranslation({
+  ...declaration,
+  chain: pagesChain, // the leaf's VersionChain port: the sweep reads `head` / `getVersion`
+  candidates, // the nodes the sweep may send to the model, by id
+  translator, // the application's model
+  landing: { kind: "direct", update: pagesOps.update, actorId: Option.some(botId) },
+  // or: { kind: "proposal", submit: botProposals.submit, hasPending }
+});
+const hooks = { before: [humanLineageHook(declaration)], after: [] }; // the leaf's LifecycleHooks
+
+const nightly = Effect.gen(function* () {
+  const page = yield* translation.sweep({ after: Option.none(), limit: 100 }); // { landed, skipped, conflicts, next }
+  return page.next; // the cursor for the next page
+});
+```
+
+- **Lineage is three locale columns.** Each locale records the locale it was derived from, the node version whose source text it translates (a decimal string, so it stays JSON inside a proposal's locale patch), and the method, `human` or `machine` (`LineageColumns`, default `derivedFrom` / `derivedFromVersion` / `derivation`). Declare them in the leaf's `LocaleLevel` beside the translated columns, and list only the translatable ones in the declaration's `columns`. As ordinary locale columns they travel through every write path (the `VersionChain` port's `locales`, `SubtypeOps.update`, a proposal, `restoreVersion`), and new lineage is always a new version (`VERSION-CHAIN-001/002`). `lineageOf` reads them and fails closed: a missing or malformed column reads as an **original** locale, never stale.
+- **Stale and missing.** A derived locale is `stale` when its source's translatable columns at the head differ from those at the version it records, or that version can't be read. A target the node lacks, while the source locale is present, is `missing`. `pending` lists both for one keyset page of candidate nodes (`limit` clamped to `[1, MAX_PAGE_LIMIT]`): a chain read for the head, one for its snapshot, and one per distinct source version. A tombstoned node, a source the node dropped and a shared-column edit list nothing.
+- **A privileged sweep read.** The sweep reads the chain directly, without a read gate: it is a server job that never serves what it reads. **Which nodes may reach a model is the application's**: `TranslationCandidates.nodes` is where it leaves out owned or private content it must not send to a third party.
+- **Landing (owner decision on pulpit#208): per family.** `direct` writes one version per node through the leaf's hooked `update`, attributed to the bot, marked `machine`, and pinned to the head the sweep read (`expectedVersion`), so a concurrent edit is a `CONFLICT` entry, never overwritten. `proposal` submits one proposal per node through a `./proposals` instance whose viewer is the bot, so a person reviews it. `hasPending`, when given, skips a locale whose bot proposal is still pending, so a re-run doesn't propose it twice. A refused landing is a conflict entry named by its error's tag; a translator returning a column outside the family's is `TRANSLATOR_COLUMNS`. The translator's own failure stops the page, and a re-run from the same cursor resumes.
+- **Human edits.** `humanLineageHook(declaration)` is a before hook: a write that sets a derived locale's translatable column, but no lineage column, is stamped `human`, keeping its source and source version, so a person's revision still goes stale when the source moves on. `stampHumanLineage` is the same transform for a chain-level `ChainHooks.beforeAppendLocales`.
+- **Documents.** The `Translator` seam takes the source locale's translatable column values as they are. A ProseKit document column is the application's to translate segment by segment, without the model ever seeing its structure (prosekit-utilities; owner decision on pulpit#202).
+
+| Export | What it is |
+| --- | --- |
+| `defineTranslation(definition)`, `TranslationDeclaration`, `TranslationOps` | The factory, its declaration and the two operations (`pending`, `sweep`). |
+| `TranslationPair`, `TranslationPageRequest`, `PendingPage`, `SweepSummary`, `SweepConflict` | One pending locale, a page request, a page of pairs, a sweep page's summary and its conflict entries. |
+| `Translator`, `TranslationCandidates`, `TranslationLanding` | The model seam, the candidate-node seam and the landing mode. |
+| `LineageColumns`, `defaultLineageColumns`, `LocaleLineage`, `TranslationMethod`, `lineageOf`, `lineagePatch` | The lineage columns, their default names, a read lineage, its method, and its read and write. |
+| `humanLineageHook(declaration)`, `stampHumanLineage` | The before hook that marks a person's edit, and its pure transform. |
+
 ## `./testing`
 
 In-memory fakes of the kernel's seams, for tests: an adapter's or an application's suite can run the real operations (`defineVersionChain`, `defineSubtype`, `defineEdgeOps`, …) over them without a database. Each fake implements its seam's contract as stated under [Seams](#seams), in memory and with no SQL, and enforces what the real table's schema enforces (a primary or unique key) and nothing the operations are responsible for. They are the fakes the kernel's own suites run against, so they are its reference semantics for each seam.
@@ -1343,7 +1390,7 @@ One leaf's chain, at the level of its operations (pulpit#246): `create`, `update
 
 Expected to be `@thomasfosterau/pulpit-drizzle-pg` (pulpit#247), delegating to `-pg/chain` over the tables effect-drizzle-ext derives from the application's tree:
 
-- `create` / `update` / `restore` / `delete` / `restoreVersion` / `getVersion` / `history` / `head` are `-pg/chain`'s own, with the kernel's errors one to one (`NodeAlreadyExists`, `NodeNotFound`, `VersionNotFound`, `StaleVersion`, `VersionConflict`; `BrokenChain` a defect). `actorId` maps to the root version row's actor; `proposedBy` (the contributor whose accepted proposal a version applies, pulpit#49) to a root version extra (`versionColumns: { proposedBy }`, passed per write as `root`); `locales` to the chain's keyed level (`keyed`), keyed by tag, which `getVersion` returns as `locales`, omitting the key for a version that carries none.
+- `create` / `update` / `restore` / `delete` / `restoreVersion` / `getVersion` / `history` / `head` are `-pg/chain`'s own, with the kernel's errors one to one (`NodeAlreadyExists`, `NodeNotFound`, `VersionNotFound`, `StaleVersion`, `VersionConflict`; `BrokenChain` a defect). `actorId` maps to the root version row's actor; `proposedBy` (the contributor whose accepted proposal a version applies, pulpit#49) to a root version extra (`versionColumns: { proposedBy }`, passed per write as `root`); `locales` to the chain's keyed level (`keyed`), keyed by tag, which `getVersion` returns as `locales`, omitting the key for a version that carries none. A family's translation lineage (pulpit#208, [`./translation`](#translation)) is three ordinary columns of that keyed level (`derivedFrom`, `derivedFromVersion` as text, `derivation`), so it needs nothing of the port beyond the locale level round-tripping every column it is given.
 - `purge(id)` deletes the node's identity row, which cascades through every level of its chain (effect-drizzle-ext#145), as [`./purge`](#purge)'s erasure, the documented exception to `VERSION-CHAIN-001/002`. It is a no-op for an unknown id.
 
 The kernel keeps what is not storage: `defineVersionChain` runs a leaf's before-append hooks over the port (reading `head` and `getVersion`, then appending with `expectedVersion` pinned to that head), and `compare` is two `getVersion` reads and `diffStates`.

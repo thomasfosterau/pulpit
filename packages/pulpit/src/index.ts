@@ -188,3 +188,10 @@ export * as Discovery from "./discovery.ts";
  * families take (`defineReshares`, `acceptedAnswerGate`, `nodeWriteGate`).
  */
 export * as Relations from "./relations.ts";
+
+/**
+ * Translation: lineage and staleness on a localised leaf's locales, the
+ * translator seam, and the sweep that lands machine translations directly
+ * or as proposals (`defineTranslation`, `humanLineageHook`).
+ */
+export * as Translation from "./translation.ts";

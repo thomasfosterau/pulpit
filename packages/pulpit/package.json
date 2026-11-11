@@ -61,6 +61,7 @@
     "./audience": "./src/audience.ts",
     "./discovery": "./src/discovery.ts",
     "./relations": "./src/relations.ts",
+    "./translation": "./src/translation.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -172,6 +173,10 @@
       "./relations": {
         "types": "./dist/relations.d.ts",
         "default": "./dist/relations.js"
+      },
+      "./translation": {
+        "types": "./dist/translation.d.ts",
+        "default": "./dist/translation.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",
