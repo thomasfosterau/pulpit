@@ -41,7 +41,7 @@ jobs:
       # (the `pnpm …` steps below) and the dependencies, installed from the
       # lockfile; the pnpm store is cached on pnpm-lock.yaml (pulpit#280).
       - name: Setup Vite+ and install dependencies
-        uses: voidzero-dev/setup-vp@0072dab61af1caed438a55cb90c8d6dc0dfa09ce # v1.22.0
+        uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
         with:
           version-file: pnpm-workspace.yaml
           # Never `latest`: Vite+ resolves it to the newest entry of the
