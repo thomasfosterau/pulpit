@@ -25,7 +25,7 @@ import { always } from "../src/filter.ts";
 import { acceptedAnswerGate, defineReshares, nodeWriteGate } from "../src/relations.ts";
 import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/subtype.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryCollectionStore,
   makeInMemoryEdgeStore,
   makeInMemoryFollowers,
@@ -49,7 +49,7 @@ const world = () => {
   let viewer: Viewer = anonymous;
   const viewerOf = Effect.sync(() => viewer);
   const leaf = (type: string, columns: ReadonlyArray<string>) => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain(type);
     const leaves = makeInMemoryLeafStore(chain, { columns, now: NOW });
     const ops = defineSubtype({
       type,
