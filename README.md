@@ -27,6 +27,12 @@ The kernel depends on `effect` and `@thomasfosterau/effect-jsonapi` alone. Anyth
 
 Further optional packages are proposed under [pulpit#212](https://github.com/thomasfosterau/pulpit/issues/212): a document-grammar package (allow-lists, serialisers and reference extractors for ProseKit documents, [pulpit#202](https://github.com/thomasfosterau/pulpit/issues/202)) and a UI package for the editorial surfaces ([pulpit#211](https://github.com/thomasfosterau/pulpit/issues/211)). Each is an owner decision still open on its issue.
 
+## Repository
+
+A pnpm workspace with two packages: `packages/pulpit` (the published kernel) and `packages/pulpit-wordpress` (the adapter, `"private": true` until the owner sets up its publishing), plus `tests/dist-consumer`, a private check of both packages' emitted declarations. The adapter peers on the kernel and the kernel never imports the adapter; every later optional package follows the same layering.
+
+The kernel is extracted from two applications, `thomasfosterau/website` (the foundation) and `thomasfosterau/gardeneria` (the newer, multi-tenant copy), as scoped by the epics and the decisions on website#2015. Those applications, with in-the-dark and preferenceflow, are its consumers. Its toolchain (pnpm + Vite+ (`vp`), a strict catalog, the TypeScript 6/7 split, the Effect oxlint preset, fallow) is copied from them via `thomasfosterau/effect-drizzle-ext` and `thomasfosterau/effect-jsonapi`, so the library builds against exactly what they run.
+
 ## Install
 
 ```bash
@@ -61,7 +67,7 @@ Effect.runPromise(program).then(({ changes }) => console.log(changes));
 
 ## Links
 
-- [Contributing](CONTRIBUTING.md): setup, hooks and the individual checks. Agent conventions are in [AGENTS.md](AGENTS.md).
+- [Contributing](CONTRIBUTING.md): setup, commands, CI, branches and pull requests. The conventions and the gates are in [AGENTS.md](AGENTS.md); Claude Code's session notes in [.claude/CLAUDE.md](.claude/CLAUDE.md).
 - [Publishing](PUBLISHING.md): the changesets release pipeline.
 - [Security](SECURITY.md): reporting a vulnerability, the supply-chain posture and the invariant IDs.
 

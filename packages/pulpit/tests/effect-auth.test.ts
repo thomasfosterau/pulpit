@@ -16,7 +16,7 @@
  *
  * The bridge here (`policyFor`, `viewerFrom`) is how an application wires
  * effect-auth's guards into the kernel's seams; the kernel itself never
- * imports effect-auth (packages/pulpit/CLAUDE.md → Boundary).
+ * imports effect-auth (packages/pulpit/AGENTS.md → Boundary).
  *
  * @module tests/effect-auth
  */

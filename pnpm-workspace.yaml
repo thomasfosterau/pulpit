@@ -62,7 +62,7 @@ catalog:
   # Dev-only: `tests/effect-auth.test.ts` checks that the kernel's own access
   # seams (`canViewOwned`, `readScopeFor`, `isPubliclyServeable`) agree with
   # effect-auth's `OwnedAccess` / `Cacheability` (pulpit#5). The kernel never
-  # imports it (packages/pulpit/CLAUDE.md → Boundary).
+  # imports it (packages/pulpit/AGENTS.md → Boundary).
   "@thomasfosterau/effect-auth": ^0.2.0
   "@types/node": ^26.6.6
   # The coverage provider for `vp run -r test:coverage`. vite-plus bundles its
