@@ -44,7 +44,7 @@ import {
 import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/subtype.ts";
 import {
   makeInMemoryBlobStore,
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryCollectionStore,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
@@ -97,7 +97,7 @@ const setup = () => {
   let viewer: Viewer = Option.some(member);
   const viewerOf = Effect.sync(() => viewer);
   const leaf = (type: string, columns: ReadonlyArray<string> = MEDIA_COLUMNS) => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain(type);
     const ops = defineSubtype({
       type,
       access: ownedAccess(),
