@@ -45,7 +45,6 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./discovery` | Discovery (`defineDiscovery`): the keyset-paged feed and sitemap enumeration of a leaf's anonymously readable, publicly serveable, live, routable nodes, the per-family metadata projection, and the purge-hint after hook (`purgeHintHook`). |
 | `./social` | The social graph (`defineSocial` over a `SocialStore` seam): follow, mute and block between accounts, the follower seam filled from it (`socialFollowers`), and the opt-in read filter over the authors a viewer silenced. |
 | `./audience` | Audiences (`defineAudience` over a `MembershipStore` seam): named groups a row can be shared with (the `group` visibility), who manages and who may leave them, and the audience seam filled from them (`audienceSeam`). |
-| `./relations` | UGC relation patterns over `./edges` and `./collections`: reshares whose hidden target shows as a placeholder (`defineReshares`), accepted answers gated on the question (`acceptedAnswerGate`), an edge gate on one end's node (`nodeWriteGate`), and credit-only bylines. |
 | **Media** |  |
 | `./blobs` | File and media leaves: the `BlobStore` seam keyed by content hash, the file field spread, the commit-ordered byte write (`defineFileWrites`, with its `bytesPending` marker) and the usage index's edge ends. |
 | **Erasure** |  |
@@ -1119,7 +1118,7 @@ const hooks = { before: [], after: [purgeHintHook({ publishGated: true, emit: pu
 - **Keyset paging.** The feed orders by `feedColumn` descending, `NULL`s last, then `id` ascending; the sitemap by `id`. `next` is the cursor after the last row the page _read_, so a page the guards thinned may hold fewer items than `limit` (clamped to `MAX_PAGE_LIMIT`) and paging never skips or repeats a node. `feedColumn` must be a sortable column of the leaf (on a gated leaf one of `LeafStore.columns` the live view projects, such as `publishedAt`) holding a timestamp, text or number; anything else is a defect. Each item's path is one `PathStore.canonicalOf` read, so a page costs up to `limit` of them.
 - **The metadata projection** (`DiscoveryMetadata`: title, summary, image, schema.org type, published and modified dates) is per family, read from the anonymous resource, and is what the feed item, the page head and its JSON-LD all read, so one mapping serves the three. `lastModified(metadata)` is the sitemap's `lastmod`.
 - **Purge hints.** `purgeHintHook({ publishGated, emit })` is an after hook (it runs once the write has committed) emitting `{ type, id, tags: ["discovery:<type>", "node:<type>:<id>"] }` for every write that can change what the family lists: on a gated leaf `publish`, `unpublish`, `delete`, `restore` and `restoreVersion` (a `create` or `update` touches only the head); on any other leaf, every write. A scheduled publication whose stamp arrives later fires no hook: purge from the sweep over `./publication`'s `duePublications`.
-- **A localised leaf is refused** (`DiscoveryDeclarationError`) for now: per-locale enumeration and `hreflang` alternates are pulpit#265.
+- **A localised leaf** (pulpit#265) lists one item per `(node, locale)` its view lists, each carrying its `locale` (none for a node whose version carries no locale), under the same three checks on that locale's row: on a publish-gated leaf, a locale only the unpublished head carries is not listed. The **feed** orders by `feedColumn`, then the locale (`NULL`s last), then `id`, and its cursor carries the locale, so a page may end inside a node's locales without a skip or a repeat; `request.locale` narrows it to one language (`./filter`'s `locale` arm). The **sitemap** orders by node and never splits a node's locales across pages (a page that would end inside a node ends before it; a page holding only that node holds all of its locales, even past `limit`), so each item's `alternates`, the node's other listed locales by code point, is complete: the sitemap's `hreflang` set. The canonical path stays per node (pulpit#57) and is read once per node; each alternate's URL is the application's to build from the path and the locale.
 
 | Export | What it is |
 | --- | --- |
@@ -1127,73 +1126,7 @@ const hooks = { before: [], after: [purgeHintHook({ publishGated: true, emit: pu
 | `DiscoveryRequest`, `DiscoveryCursor`, `DiscoveryPage`, `DiscoveryItem` | A page request, its cursor, a page and one item. |
 | `DiscoveryMetadata`, `DiscoveryImage`, `lastModified` | The metadata projection and the sitemap's `lastmod`. |
 | `purgeHintHook(options)`, `PurgeHint` | The purge-hint after hook and its event. |
-| `DiscoveryDeclarationError` | Thrown at declaration (a localised leaf), and the defect for a feed column that doesn't order. |
-
-## `./relations`
-
-Three UGC relation patterns (pulpit#200), after gardeneria's posts (`sharedId`), questions and answers, and `blog_post_authors`. Each is a recipe over `./edges` or `./collections` plus a small helper; none adds a read rule, so every node is read through its own leaf's gate.
-
-```ts
-import { defineEdgeOps } from "@thomasfosterau/pulpit/edges";
-import { defineCollection } from "@thomasfosterau/pulpit/collections";
-import {
-  acceptedAnswerGate,
-  defineReshares,
-  nodeWriteGate,
-} from "@thomasfosterau/pulpit/relations";
-
-// A reshare: an edge family with one target per sharing post, written by whoever may write the post.
-const reshareEdges = defineEdgeOps({
-  type: "reshares",
-  ends: {
-    sharer: { column: "sharerId", type: "posts", access, nodes: postLeaves, maxEdges: 1 },
-    target: { column: "targetId", type: "posts", access, nodes: postLeaves },
-  },
-  writeGate: nodeWriteGate("sharerId", "posts", posts),
-  …
-});
-const reshares = defineReshares({
-  type: "reshares",
-  sharer: posts,
-  target: posts,
-  edges: reshareStore,
-  sharerColumn: "sharerId",
-  targetColumn: "targetId",
-});
-reshares.targetOf(postId); // Option<{ _tag: "Visible", target } | { _tag: "Unavailable" }>
-reshares.targetsOf(pageOfPostIds); // the same, for a feed page, in three bounded reads
-
-// An accepted answer: one per question, written by the question's writer, for one of its own answers.
-const accepted = defineEdgeOps({
-  type: "accepted-answers",
-  ends: {
-    question: { column: "questionId", type: "questions", access, nodes: questionLeaves, maxEdges: 1 },
-    answer: { column: "answerId", type: "answers", access, nodes: answerLeaves },
-  },
-  writeGate: acceptedAnswerGate({
-    questionType: "questions",
-    questions,
-    questionColumn: "questionId",
-    answerColumn: "answerId",
-    answers: answerLeaves,
-    parentColumn: "questionId", // the answer view's column naming its question
-  }),
-  …
-});
-
-// A byline: the post's credited authors, in order, over the app's profile leaf.
-const byline = defineCollection({ type: "post-authors", parent: posts, members: profiles, store });
-```
-
-- **Reshares** (owner decision on pulpit#200). The reshare edge family keeps `EDGE-001`: its `list` and `get` hide an edge whose target the viewer can't read, and its `create` refuses a target the writer can't read. A reshare of a node that has _since_ become unreadable is still shown, as a placeholder: `defineReshares` reads the stored edge itself, outside `EDGE-001`, for a sharing node the viewer can read (`NodeNotFound` otherwise, as its `get`), and answers the target through the target leaf's own `getMany`, so a private, draft, unpublished or tombstoned target is `{ _tag: "Unavailable" }`, carrying neither its id nor its content. What a reader of the sharing node learns is only that it reshared _something_. A target that has been purged leaves no edge (its row is gone), so the post reads as resharing nothing. A quote is the same family with a body on the sharing node.
-- **Accepted answers.** `acceptedAnswerGate` runs after `./edges` has checked that the viewer can read both ends. It is the question's own write gate (`authorize`: its owner or the moderate rung on an owned question, the corpus-write rung on a reference one), then the constraint that the answer's `parentColumn` names the question (`AnswerNotOfQuestion`, 422, otherwise; only a writer of the question learns it). `maxEdges: 1` at the question holds one accepted answer; changing it is a delete (gated the same way) and a create.
-- **Bylines are credit only** (owner decision on pulpit#200). They are an ordered collection (`./collections`) of the accounts' profile nodes, read through the profile leaf's own gate and written through the post's write gate. A credited co-author gets no write right: the post's `requireWriter` reads the owner record, never the byline, so a co-author's `update` is `Forbidden`, and so is their edit of the byline.
-
-| Export | What it is |
-| --- | --- |
-| `defineReshares(definition)`, `ReshareDefinition`, `ReshareOps`, `ReshareTarget` | The reshare reads: the target through its own gate, or the placeholder. |
-| `nodeWriteGate(column, type, leaf)` | An edge write gate admitting whoever may write the node at one end. |
-| `acceptedAnswerGate(declaration)`, `AcceptedAnswerDeclaration`, `AnswerNotOfQuestion` | The accepted-answer write gate and its 422. |
+| `DiscoveryDeclarationError` | The defect for a feed column that doesn't order. |
 
 ## `./testing`
 

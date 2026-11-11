@@ -11,6 +11,11 @@
  * - Keyset paging: every page size walks the same order with no node
  *   skipped or repeated, ties and `NULL` keys included, and a page the
  *   guards thin still carries the cursor on.
+ * - A localised leaf (pulpit#265): every listed `(node, locale)` exactly
+ *   once in the feed and the sitemap, for every page size; a locale only
+ *   the unpublished head carries is not listed; the per-locale feed; the
+ *   sitemap's alternates, complete even when a page would end inside a
+ *   node.
  * - The declaration's refusals, and the purge hint per write.
  *
  * @module tests/discovery
@@ -20,11 +25,13 @@ import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Order from "effect/Order";
+import * as R from "effect/Record";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 import {
   defineDiscovery,
-  DiscoveryDeclarationError,
+  type DiscoveryItem,
   lastModified,
   purgeHintHook,
   type DiscoveryCursor,
@@ -38,6 +45,7 @@ import {
   ownedAccess,
   type LeafRow,
   type SubtypeDefinition,
+  type SubtypeOps,
   type Viewer,
   type ViewerAccount,
 } from "../src/subtype.ts";
@@ -335,18 +343,6 @@ describe("a publish-gated leaf", () => {
 });
 
 describe("the declaration", () => {
-  it("refuses a localised leaf", () => {
-    const { leaf, paths } = fixture({ gated: false, sortable: Option.none() });
-    expect(() =>
-      defineDiscovery({
-        leaf: { ...leaf, locales: defineLocaleLevel({ columns: ["title"] }) },
-        paths,
-        feedColumn: "createdAt",
-        project,
-      }),
-    ).toThrow(DiscoveryDeclarationError);
-  });
-
   it("a feed column the leaf can't sort by is a defect", async () => {
     const exit = await run(
       Effect.exit(
@@ -459,5 +455,150 @@ describe("purgeHintHook", () => {
     expect(emitted).toEqual(
       purges ? [{ type: "posts", id: "p-1", tags: ["discovery:posts", "node:posts:p-1"] }] : [],
     );
+  });
+});
+
+// ── A localised leaf (pulpit#265) ─────────────────────────────────────
+
+describe("a localised leaf", () => {
+  /** A localised, publish-gated owned leaf and its discovery. */
+  const site = Effect.fn("site")(function* () {
+    const chain = makeInMemoryVersionChain("posts");
+    const heads = makeInMemoryLeafStore(chain, {
+      columns: ["title", "visibility", "draft", "createdAt"],
+      localised: true,
+    });
+    const publication = makeInMemoryPublication({ chain, leaves: heads, now: NOW });
+    const paths = makeInMemoryPathStore();
+    const leaf: SubtypeDefinition<LeafRow, Resource, InMemoryFollowing, never, never> = {
+      type: "posts",
+      access: ownedAccess({ draft: true }),
+      chain,
+      leaves: publication.leaves,
+      viewer: Effect.succeed(as(member)),
+      policy: gardeneriaPolicy,
+      followers: makeInMemoryFollowers([]),
+      toResource,
+      locales: defineLocaleLevel({ columns: ["title"] }),
+      publication: { live: publication.live, facts: publication.facts },
+    };
+    const ops: SubtypeOps<Resource, never, never, InMemoryFollowing> = defineSubtype(leaf);
+    const publish = (id: string, when: Option.Option<Date> = Option.none()) =>
+      Effect.flatMap(Effect.fromOption(ops.publication), (live) =>
+        live.publish(id, Option.match(when, { onNone: () => ({}), onSome: (at) => ({ at }) })),
+      );
+    const node = (
+      id: string,
+      locales: ReadonlyArray<string>,
+      minutes: number,
+      visibility: "public" | "private" = "public",
+    ) =>
+      Effect.gen(function* () {
+        yield* ops.create({
+          id: Option.some(id),
+          state: { visibility, draft: false, createdAt: at(minutes) },
+          locales: R.fromEntries(Arr.map(locales, (tag) => [tag, { title: `${id}-${tag}` }])),
+        });
+        yield* paths.claim(id, `/${id}`);
+      });
+    // a and c tie on the feed key; d carries no locale; e gains `fr` only in
+    // its unpublished head; f is private; g is scheduled for later.
+    yield* node("a", ["en", "fr"], 5);
+    yield* node("b", ["en"], 3);
+    yield* node("c", ["de", "en", "fr"], 5);
+    yield* node("d", [], 1);
+    yield* node("e", ["en"], 2);
+    yield* node("f", ["en", "fr"], 4, "private");
+    yield* node("g", ["en"], 6);
+    yield* Effect.forEach(["a", "b", "c", "d", "e", "f"], (id) => publish(id), { concurrency: 1 });
+    yield* publish("g", Option.some(DateTime.toDate(DateTime.makeUnsafe(NOW.getTime() + 60_000))));
+    yield* ops.update({ id: "e", patch: {}, locales: { fr: { title: "e-fr" } } });
+    return defineDiscovery({ leaf, paths, feedColumn: "createdAt", project });
+  });
+
+  const pair = (item: DiscoveryItem<Resource>) =>
+    `${item.id}:${Option.getOrElse(item.locale, () => "-")}`;
+
+  /** Walk every page of a read, `limit` at a time, keeping each item. */
+  const walkItems = (
+    read: (request: DiscoveryRequest) => Effect.Effect<DiscoveryPage<Resource>>,
+    request: Omit<DiscoveryRequest, "after">,
+    after: Option.Option<DiscoveryCursor> = Option.none(),
+  ): Effect.Effect<ReadonlyArray<DiscoveryItem<Resource>>> =>
+    Effect.flatMap(read({ ...request, after: Option.getOrUndefined(after) }), (page) =>
+      Option.isNone(page.next)
+        ? Effect.succeed(page.items)
+        : Effect.map(walkItems(read, request, page.next), (rest) => [...page.items, ...rest]),
+    );
+
+  // Newest first by createdAt (d, e, b, then the a / c tie), the tie by locale, then node.
+  const feedOrder = ["d:-", "e:en", "b:en", "c:de", "a:en", "c:en", "a:fr", "c:fr"];
+
+  it.each([1, 2, 3, 1000])(
+    "the feed lists every live (node, locale) once, %i at a time",
+    async (limit) => {
+      const items = await run(
+        Effect.flatMap(site(), (discovery) => walkItems(discovery.feed, { limit })),
+      );
+      // A page may end inside a node's locales, and on a tie, without a skip or a repeat.
+      expect(Arr.map(items, pair)).toEqual(feedOrder);
+      expect(Arr.every(items, (item) => Arr.isReadonlyArrayEmpty(item.alternates))).toBe(true);
+    },
+  );
+
+  it("a locale only the unpublished head carries is not listed, nor a private or scheduled node", async () => {
+    const items = await run(
+      Effect.flatMap(site(), (discovery) => walkItems(discovery.feed, { limit: 1000 })),
+    );
+    const listed = Arr.map(items, pair);
+    expect(listed).not.toContain("e:fr");
+    expect(Arr.filter(listed, (value) => value.startsWith("f:") || value.startsWith("g:"))).toEqual(
+      [],
+    );
+  });
+
+  it("the per-locale feed lists one language", async () => {
+    const items = await run(
+      Effect.flatMap(site(), (discovery) => walkItems(discovery.feed, { limit: 1, locale: "fr" })),
+    );
+    expect(Arr.map(items, pair)).toEqual(["a:fr", "c:fr"]);
+  });
+
+  const sitemapAlternates = {
+    "a:en": ["fr"],
+    "a:fr": ["en"],
+    "b:en": [],
+    "c:de": ["en", "fr"],
+    "c:en": ["de", "fr"],
+    "c:fr": ["de", "en"],
+    "d:-": [],
+    "e:en": [],
+  };
+
+  it.each([1, 2, 3, 4, 1000])(
+    "the sitemap lists each node's locales once with complete alternates, %i at a time",
+    async (limit) => {
+      const items = await run(
+        Effect.flatMap(site(), (discovery) => walkItems(discovery.sitemap, { limit })),
+      );
+      expect(Arr.sort(Arr.map(items, pair), Order.String)).toEqual(R.keys(sitemapAlternates));
+      expect(R.fromEntries(Arr.map(items, (item) => [pair(item), item.alternates]))).toEqual(
+        sitemapAlternates,
+      );
+      expect(Arr.every(items, (item) => item.path === `/${item.id}`)).toBe(true);
+    },
+  );
+
+  it("a sitemap page never splits a node's locales", async () => {
+    const two = await run(Effect.flatMap(site(), (discovery) => discovery.sitemap({ limit: 2 })));
+    // a's two locales fill the page; the next page starts after a.
+    expect(Arr.map(two.items, pair)).toEqual(["a:en", "a:fr"]);
+    expect(Option.map(two.next, (cursor) => cursor.id)).toEqual(Option.some("a"));
+    const three = await run(Effect.flatMap(site(), (discovery) => discovery.sitemap({ limit: 4 })));
+    // a, b and part of c fit four rows: the page ends before c, which the next page holds whole.
+    expect(Arr.map(three.items, pair)).toEqual(["a:en", "a:fr", "b:en"]);
+    const one = await run(Effect.flatMap(site(), (discovery) => discovery.sitemap({ limit: 1 })));
+    // A page holding only one node holds all of its locales, past the limit.
+    expect(Arr.sort(Arr.map(one.items, pair), Order.String)).toEqual(["a:en", "a:fr"]);
   });
 });
