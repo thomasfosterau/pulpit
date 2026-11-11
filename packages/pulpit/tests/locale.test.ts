@@ -27,7 +27,7 @@ import {
 import {
   type InMemoryFollowing,
   type InMemoryLeafStore,
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
   makeInMemoryPublication,
@@ -87,7 +87,7 @@ describe("diffLocales", () => {
 
 describe("the version chain's locale level", () => {
   const setup = () => {
-    const store = makeInMemoryChainStore();
+    const store = makeInMemoryVersionChain("pages");
     return { store, chain: defineVersionChain("pages", store) };
   };
 
@@ -241,7 +241,7 @@ const pages = (
     ) => LeafStore<LeafRow, InMemoryFollowing, never, never>;
   } = {},
 ) => {
-  const chain = makeInMemoryChainStore();
+  const chain = makeInMemoryVersionChain("pages");
   const store = makeInMemoryLeafStore(chain, {
     columns: ["title", "colour", "visibility", "draft"],
     localised: true,
@@ -384,7 +384,7 @@ describe("a localised leaf's writes", () => {
   });
 
   it("refuse a locale on a leaf with no locale level", async () => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("posts");
     const ops = defineSubtype({
       type: "posts",
       access: ownedAccess(),
@@ -414,7 +414,7 @@ describe("defineLocaleLevel", () => {
   });
 
   it("is checked against the view by defineSubtype", () => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("pages");
     const declare = (localised: boolean, columns: ReadonlyArray<string>) => () =>
       defineSubtype({
         type: "pages",
@@ -485,7 +485,7 @@ describe("a localised leaf's before hooks (pulpit#56)", () => {
 
 describe("a localised leaf's read gate (pulpit#56)", () => {
   it("refuses a translated column the read gate reads", () => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("pages");
     const declare = (columns: ReadonlyArray<string>, gated: boolean) => () => {
       const leaves = makeInMemoryLeafStore(chain, {
         columns: ["title", "visibility", "draft", "moderationState", "publishedAt"],

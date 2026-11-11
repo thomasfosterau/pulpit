@@ -83,7 +83,7 @@ import {
 } from "../src/subtype.ts";
 import type { ColumnValue, VersionAction } from "../src/version-chain.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryEdgeStore,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
@@ -863,7 +863,7 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
           viewer = who;
           return effect;
         });
-      const chain = makeInMemoryChainStore();
+      const chain = makeInMemoryVersionChain("terms");
       const leaves = makeInMemoryLeafStore(chain, {
         columns: ["visibility", "curatorId"],
         now: NOW,
@@ -1298,7 +1298,7 @@ describe("EDGE-001: a tombstoned end hides its edges below the view-deleted rung
         viewer = who;
         return effect;
       });
-    const subjectChain = makeInMemoryChainStore();
+    const subjectChain = makeInMemoryVersionChain("subjects");
     const subjectLeaves = makeInMemoryLeafStore(subjectChain, {
       columns: ["visibility"],
       now: NOW,
@@ -1313,7 +1313,7 @@ describe("EDGE-001: a tombstoned end hides its edges below the view-deleted rung
       followers: noFollowers,
       toResource: (row: LeafRow) => row,
     });
-    const entryChain = makeInMemoryChainStore();
+    const entryChain = makeInMemoryVersionChain("entries");
     const entryLeaves = makeInMemoryLeafStore(entryChain, {
       columns: ["visibility", "draft"],
       now: NOW,
@@ -2324,7 +2324,7 @@ describe("nonMemberFilter: the complement of memberFilter under EDGE-001 (pulpit
 
 describe("memberFilter through the member leaf's own list (pulpit#189)", () => {
   it.each(viewers)("lists the members %s may read, and only them", async (_, viewer) => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("entries");
     const leaves = makeInMemoryLeafStore(chain, {
       columns: ["title", "visibility", "draft"],
       now: NOW,
@@ -2411,7 +2411,7 @@ describe("memberFilter through the member leaf's own list (pulpit#189)", () => {
   it.each(viewers)(
     "memberFilter and nonMemberFilter partition the rows %s may read (pulpit#191)",
     async (_, viewer) => {
-      const chain = makeInMemoryChainStore();
+      const chain = makeInMemoryVersionChain("entries");
       const leaves = makeInMemoryLeafStore(chain, {
         columns: ["title", "visibility", "draft"],
         now: NOW,

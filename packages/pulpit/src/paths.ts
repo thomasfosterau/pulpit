@@ -38,7 +38,8 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import type { SubtypeOps } from "./subtype.ts";
-import type { ChainWrite, VersionChainStore } from "./version-chain.ts";
+import type { ChainWrite, VersionChain } from "./version-chain.ts";
+import { snapshotOf } from "./internal/chain-reads.ts";
 
 // ── The path-store seam ───────────────────────────────────────────────
 
@@ -146,8 +147,8 @@ export interface RoutableConfig<E, R> {
   readonly column: string;
   /** The routable namespace's path table. */
   readonly paths: PathStore<E, R>;
-  /** The leaf's chain store, read (ungated) for the state a write landed at. */
-  readonly chain: VersionChainStore<E, R>;
+  /** The leaf's version chain, read (ungated) for the state a write landed at. */
+  readonly chain: VersionChain<E, R>;
 }
 
 /**
@@ -170,13 +171,13 @@ export interface RoutableConfig<E, R> {
  * import { routable } from "@thomasfosterau/pulpit/paths";
  * import { defineSubtype, nobodyFollows } from "@thomasfosterau/pulpit/subtype";
  * import {
- *   makeInMemoryChainStore,
+ *   makeInMemoryVersionChain,
  *   makeInMemoryLeafStore,
  *   makeInMemoryPathStore,
  * } from "@thomasfosterau/pulpit/testing";
  * import * as HashSet from "effect/HashSet";
  *
- * const chain = makeInMemoryChainStore();
+ * const chain = makeInMemoryVersionChain("pages");
  * const pages = routable(
  *   defineSubtype({
  *     type: "pages",
@@ -216,7 +217,7 @@ export const routable = <Resource, E, R>(
   // for a tombstone or a state whose path column holds no string.
   const follow = ({ id, version }: ChainWrite) =>
     Effect.gen(function* () {
-      const written = yield* chain.snapshot(id, version);
+      const written = yield* snapshotOf(chain, id, version);
       const path = Option.flatMap(written, (snapshot) =>
         snapshot.action === "delete"
           ? Option.none()

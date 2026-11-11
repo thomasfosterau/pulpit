@@ -26,14 +26,17 @@ import {
   type ResourceCacheSeam,
 } from "@thomasfosterau/pulpit/subtype";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
+  versionChainConformance,
+  type ConformanceHarness,
+  type ConformanceRunner,
   makeInMemoryDocumentStore,
   makeInMemoryEdgeStore,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
   makeInMemoryNodes,
   makeInMemoryResourceCache,
-  type InMemoryChainStore,
+  type InMemoryVersionChain,
   type InMemoryDocumentStore,
   type InMemoryEdgeStore,
   type InMemoryEdgeStoreOptions,
@@ -43,7 +46,7 @@ import {
   type InMemoryNodes,
   type InMemoryResourceCache,
 } from "@thomasfosterau/pulpit/testing";
-import type { VersionChainStore, VersionRow } from "@thomasfosterau/pulpit/version-chain";
+import type { VersionChain, VersionRow } from "@thomasfosterau/pulpit/version-chain";
 
 /** A compile-time assertion: `T` must be exactly `true`. */
 type Assert<T extends true> = T;
@@ -61,22 +64,33 @@ export type _Followers = Assert<
 
 // ── the version chain ────────────────────────────────────────────────────
 
-export type _Chain = Assert<Equals<ReturnType<typeof makeInMemoryChainStore>, InMemoryChainStore>>;
-export type _ChainSeam = Assert<Satisfies<InMemoryChainStore, VersionChainStore<never, never>>>;
+export type _Chain = Assert<
+  Equals<ReturnType<typeof makeInMemoryVersionChain>, InMemoryVersionChain>
+>;
+export type _ChainSeam = Assert<Satisfies<InMemoryVersionChain, VersionChain<never, never>>>;
 export type _ChainRows = Assert<
-  Equals<ReturnType<InMemoryChainStore["rows"]>, ReadonlyArray<VersionRow>>
+  Equals<ReturnType<InMemoryVersionChain["rows"]>, ReadonlyArray<VersionRow>>
 >;
 export type _ChainDrop = Assert<
-  Equals<InMemoryChainStore["dropState"], (id: string, version: bigint) => void>
+  Equals<InMemoryVersionChain["dropState"], (id: string, version: bigint) => void>
 >;
-export type _ChainRace = Assert<Equals<InMemoryChainStore["raceNextAppend"], (id: string) => void>>;
+export type _ChainRace = Assert<
+  Equals<InMemoryVersionChain["raceNextAppend"], (id: string) => void>
+>;
+// The conformance suite takes its runner as a parameter (pulpit#246): no test-runner peer.
+export type _Conformance = Assert<
+  Equals<
+    Parameters<typeof versionChainConformance<never, never>>,
+    [harness: ConformanceHarness<never, never>, runner: ConformanceRunner]
+  >
+>;
 
 // ── the leaf view ────────────────────────────────────────────────────────
 
 export type _Leaf = Assert<
   Equals<
     Parameters<typeof makeInMemoryLeafStore>,
-    [chain: InMemoryChainStore, options: InMemoryLeafStoreOptions]
+    [chain: InMemoryVersionChain, options: InMemoryLeafStoreOptions]
   >
 >;
 export type _LeafReturn = Assert<
@@ -102,7 +116,7 @@ export type _LeafNow = Assert<Equals<InMemoryLeafStoreOptions["now"], Date | und
 /* oxlint-enable effect/prefer-option-over-null */
 
 // The fakes compose into the kernel's factory with no services left over.
-const chain = makeInMemoryChainStore();
+const chain = makeInMemoryVersionChain("notes");
 export const notes = defineSubtype({
   type: "notes",
   access: { kind: "reference" },

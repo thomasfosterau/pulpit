@@ -17,7 +17,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { published } from "../src/filter.ts";
 import { defineVersionChain } from "../src/version-chain.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryEdgeStore,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
@@ -50,7 +50,7 @@ describe("makeInMemoryFollowers", () => {
 
 describe("makeInMemoryLeafStore", () => {
   it("merges the owner stamp into the view, and dropOwner removes it", async () => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("notes");
     const leaves = makeInMemoryLeafStore(chain, { columns: ["title"], now: NOW });
     const { id } = await run(
       defineVersionChain("notes", chain).create({
@@ -72,7 +72,7 @@ describe("makeInMemoryLeafStore", () => {
   });
 
   it("without a fixed now, reads published against the Effect Clock at each list", async () => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("notes");
     const leaves = makeInMemoryLeafStore(chain, { columns: ["publishedAt"] });
     const stamp = NOW.getTime();
     await run(

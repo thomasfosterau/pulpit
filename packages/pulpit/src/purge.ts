@@ -61,7 +61,7 @@ import {
   type Viewer,
   type ViewerAccount,
 } from "./subtype.ts";
-import { NodeNotFound, type VersionChainStore } from "./version-chain.ts";
+import { NodeNotFound, type VersionChain } from "./version-chain.ts";
 
 // ── The seam ──────────────────────────────────────────────────────────
 
@@ -80,19 +80,22 @@ export interface ErasedReferences {
  * The erasure seam an application supplies, over the same tables as its
  * other stores. Like them it applies no policy, fails only with its `E`,
  * and never opens a transaction: {@link definePurge} runs its three methods,
- * in order, inside the caller's `transact`.
+ * in order, inside the caller's `transact`, with the leaf's
+ * {@link VersionChain}`.purge` (which deletes the chain itself, pulpit#246)
+ * between the first and the second.
  *
  * @since 0.1.0
  */
 export interface PurgeStore<E, R> {
   /**
-   * Hard-delete node `id`: every version row on every level of its chain,
-   * its identity row and owner row, and every row the kernel's other seams
-   * keep for it (working copies, proposals, publication facts, path claims
-   * and aliases, reports, and each edge with the node at an end). Returns
-   * the document and content hashes the deleted version rows referenced
-   * (`DELETE … RETURNING`). An id with no rows deletes nothing and returns
-   * none.
+   * Read the document and content hashes node `id`'s version rows reference,
+   * then hard-delete every row the kernel's other seams keep for it: its
+   * owner row, working copies, proposals, publication facts, path claims and
+   * aliases, reports, and each edge with the node at an end. The version
+   * rows and the identity row are not this method's: {@link definePurge}
+   * deletes them next, through the leaf's `VersionChain.purge` (an identity
+   * delete that cascades, in the Drizzle store, which may take these rows
+   * with it). An id with no rows deletes nothing and returns none.
    */
   readonly eraseNode: (id: string) => Effect.Effect<ErasedReferences, E, R>;
   /**
@@ -164,8 +167,8 @@ export interface PurgeOps<E, R> {
 export interface PurgeDefinition<E, EB, R> {
   /** The leaf's JSON:API wire type: names spans and tags `NodeNotFound`. */
   readonly type: string;
-  /** The leaf's version-chain store: `head` says whether the node exists. */
-  readonly chain: VersionChainStore<E, R>;
+  /** The leaf's version chain: `head` says whether the node exists, and `purge` deletes it. */
+  readonly chain: VersionChain<E, R>;
   /** The erasure seam. */
   readonly store: PurgeStore<E, R>;
   /** The request's viewer (effect-auth's session context). */
@@ -211,12 +214,12 @@ export interface PurgeDefinition<E, EB, R> {
  * import { defineVersionChain } from "@thomasfosterau/pulpit/version-chain";
  * import { definePurge } from "@thomasfosterau/pulpit/purge";
  * import {
- *   makeInMemoryChainStore,
  *   makeInMemoryDocumentStore,
  *   makeInMemoryPurgeStore,
+ *   makeInMemoryVersionChain,
  * } from "@thomasfosterau/pulpit/testing";
  *
- * const chain = makeInMemoryChainStore();
+ * const chain = makeInMemoryVersionChain("notes");
  * const documents = makeInMemoryDocumentStore();
  * const notes = defineVersionChain("notes", chain);
  * const purge = definePurge({
@@ -268,6 +271,7 @@ export const definePurge = <E, EB, R>(definition: PurgeDefinition<E, EB, R>): Pu
       const head = yield* chain.head(id);
       if (Option.isNone(head)) return yield* new NodeNotFound({ type, id });
       const erased = yield* store.eraseNode(id);
+      yield* chain.purge(id);
       const documents = yield* store.deleteUnreferencedDocuments(Arr.dedupe(erased.documents));
       const freed = yield* store.unreferencedBlobs(Arr.dedupe(erased.blobs));
       return { head: head.value.version, documents, freed };

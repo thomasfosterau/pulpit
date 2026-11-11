@@ -20,7 +20,7 @@ import {
 } from "../src/collections.ts";
 import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/subtype.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryCollectionStore,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
@@ -39,7 +39,7 @@ const setup = (versioned = false) => {
   let viewer: Viewer = Option.some(member);
   const viewerOf = Effect.sync(() => viewer);
   const leaf = (type: string, columns: ReadonlyArray<string>) => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("list-items");
     const ops = defineSubtype({
       type,
       access: ownedAccess(),

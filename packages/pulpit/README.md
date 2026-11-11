@@ -26,7 +26,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./filter` | `ListFilter`, the read-predicate tree a store renders to SQL, and its in-memory `evaluate`. |
 | `./subtype` | `LeafAccess`, the read scope and viewer predicates, the write gates, `defineSubtype`, `subtypeHandlers`, and the lifecycle hook seam (before / after every write). |
 | **History and review** |  |
-| `./version-chain` | The append-only node/version chain operations over a `VersionChainStore` seam, and the field-level version compare (`diffStates`, `compare`). |
+| `./version-chain` | The append-only node/version chain: the operation-level `VersionChain` port, the before-append hook layer over it (`defineVersionChain`), and the field-level version compare (`diffStates`, `compare`). |
 | `./working-copy` | An editor's autosave buffer outside the version chain (`WorkingCopyStore`), committed as one ordinary version (`defineWorkingCopy`). |
 | `./proposals` | `defineProposals`, suggested edits over a `ProposalStore` seam: a contributor's patch against a base version, its two-tier stale / conflict classification, and accept (through the target's own update, recording `proposedBy`), reject and withdraw. |
 | `./moderation` | The moderation workflow: the transition rules as a before hook, the decision, the review-queue filter, threshold grading and member reports over a `ReportStore` seam. |
@@ -144,16 +144,16 @@ registryWireTypes(REGISTRY, ["content"]).owned; // ["posts"]
 
 ## `./version-chain`
 
-The append-only chain discipline, bound to a `VersionChainStore` the application supplies.
+The append-only chain, written and read through a `VersionChain` port the application supplies, one per leaf (pulpit#246): in production pulpit-drizzle-pg over effect-drizzle-ext's `-pg/chain`, in tests `./testing`'s `makeInMemoryVersionChain`. `defineVersionChain` binds a leaf's operations over it, running the leaf's before-append hooks and adding `compare`.
 
 ```ts
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { defineVersionChain, type VersionChainStore } from "@thomasfosterau/pulpit/version-chain";
+import { defineVersionChain, type VersionChain } from "@thomasfosterau/pulpit/version-chain";
 
-const program = <E, R>(store: VersionChainStore<E, R>) =>
+const program = <E, R>(port: VersionChain<E, R>) =>
   Effect.gen(function* () {
-    const chain = defineVersionChain("posts", store);
+    const chain = defineVersionChain("posts", port);
     const actorId = Option.none<string>();
     const { id } = yield* chain.create({ id: Option.none(), state: { title: "Hello" }, actorId });
     yield* chain.update({ id, patch: { title: "Hi", summary: null }, actorId }); // null clears; an absent key carries forward
@@ -164,17 +164,17 @@ const program = <E, R>(store: VersionChainStore<E, R>) =>
   });
 ```
 
-Every write lands at `N_max + 1`; nothing is rewritten. A plain `update` never resurrects a tombstone (`restore` and `restoreVersion` do). A create is never an upsert (`NodeAlreadyExists`). `restoreVersion` refuses a version that cannot be fully reconstructed before writing anything. `history` is bounded (`MAX_HISTORY_LIMIT`).
+These are the port's invariants, which every implementation holds and `./testing`'s `versionChainConformance` checks. Every write lands at `N_max + 1`; nothing is rewritten. A plain `update` never resurrects a tombstone (`restore` and `restoreVersion` do). A create is never an upsert (`NodeAlreadyExists`). `restoreVersion` refuses a version that cannot be fully reconstructed before writing anything. `history` is bounded (`MAX_HISTORY_LIMIT`).
 
-**Optimistic concurrency.** `update`, `restore`, `delete` and `restoreVersion` take an optional `expectedVersion` (a `Precondition`): the head version the caller last read. If the head has moved, the write fails `StaleVersion`, which carries the head it found (`current`), and nothing is written. Without one, a write extends whatever the head is, so a column that two patches both set is last-writer-wins. The check runs against the same head read the append extends, and the append lands at that head + 1. A writer that slips in between therefore takes the `(id, version)` key first, and the later append fails `VersionConflict`. The store's key is what makes the check atomic, so the seam needs nothing new. A delete over a tombstone stays idempotent whatever the precondition (the delete it asked for has happened). A missing node is still `NodeNotFound`, and a plain `update` over a tombstone is still `NodeNotFound`, whatever version it expects.
+**Optimistic concurrency.** `update`, `restore`, `delete` and `restoreVersion` take an optional `expectedVersion` (a `Precondition`): the head version the caller last read. If the head has moved, the write fails `StaleVersion`, which carries the head it found (`current`), and nothing is written. Without one, a write extends whatever the head is, so a column that two patches both set is last-writer-wins. The check runs against the same head read the append extends, and the append lands at that head + 1. A writer that slips in between therefore takes the `(id, version)` key first, and the later append fails `VersionConflict`. The `(id, version)` key is what makes the check atomic. **With hooks** (`defineVersionChain(type, port, hooks)`, which `./subtype`'s lifecycle hooks use) the kernel reads the head and its state, runs the hooks, and appends their patch with `expectedVersion` pinned to that head (the caller's own, when given), so the hooks always see the head the append extends; a writer that lands in between makes the write `StaleVersion` (both it and `VersionConflict` are the wire's 409), where an unhooked write without a precondition would report `VersionConflict`. A delete over a tombstone stays idempotent whatever the precondition (the delete it asked for has happened). A missing node is still `NodeNotFound`, and a plain `update` over a tombstone is still `NodeNotFound`, whatever version it expects.
 
 **Comparing versions.** `diffStates(from, to)` is the field-level change set between two states: one entry per column that is `added`, `removed` or `changed`, each with its `before` and `after` values. Unchanged columns are omitted, so equal states diff to `{}`. A `null` is a value, so a column cleared to `null` is `changed`, and only a column with no key is absent (`added` / `removed`). Values compare structurally with Effect's `Equal.equals`: JSON objects and arrays by content (ignoring key order), a `Date` by its instant, and a `bigint` by value. A content-addressed document is held as its hash (`documentRef`), so it compares by hash, and a textual diff of the document is the UI's job. `compare(id, from, to)` makes two `getVersion` reads and returns both snapshots with `changes: diffStates(from.state, to.state)`. It fails `VersionNotFound` for either version, checking `from` first. A tombstone is the version's `action`, never an attribute: a version compared with the tombstone after it has no changes, and `to.action === "delete"` says the node was deleted there. The chain's `compare`, like its `getVersion`, applies no gate; `./subtype`'s `compare` is the gated one (see [`./subtype`](#subtype)).
 
 | Export | What it is |
 | --- | --- |
-| `defineVersionChain(type, store, hooks?)` | The operations (`create`, `update`, `restore`, `delete`, `getVersion`, `compare`, `restoreVersion`, `history`) for one leaf type. |
-| `ChainHooks`, `ChainAppendEvent`, `WriteAction` | The chain's one hook point, `beforeAppend`: shown each write's action (`create`, `update`, `delete`, `restore`, `restoreVersion`), the head it extends and its patch, after the head read and before the append, and returning the patch to apply. `./subtype`'s before hooks run through it. |
-| `VersionChainStore<E, R>` | The persistence seam (see [Seams](#seams)). |
+| `defineVersionChain(type, chain, hooks?)` | The operations (`create`, `update`, `restore`, `delete`, `getVersion`, `compare`, `restoreVersion`, `history`) for one leaf type, over its `VersionChain`, running the before-append hooks. |
+| `ChainHooks`, `ChainAppendEvent`, `WriteAction` | The chain's one hook point, `beforeAppend`: shown each write's action (`create`, `update`, `delete`, `restore`, `restoreVersion`), the head it extends and its patch, after the head read and before the append, and returning the patch to apply. A hooked create without an id is shown a freshly minted UUID; a `restoreVersion` whose state the hook changes is appended through the port's `restore`; a hook may refuse a `delete` but not change it (a non-empty patch for one is a defect). `./subtype`'s before hooks run through it. |
+| `VersionChain<E, R>` | The operation-level port, one per leaf (see [Seams](#seams)). |
 | `ChainState`, `ChainPatch`, `applyPatch` | A leaf's state at one version, the tri-state patch over it (a value sets, `null` clears, `undefined` carries forward), and the merge. |
 | `LocaleStates`, `LocalePatch`, `applyLocalePatch`, `localesOf` | A localised leaf's locale level at one version (its translated columns per locale, beside the shared `state`), the per-locale tri-state patch over it (a patch updates a locale, `null` drops it, absent carries it forward), its merge, and a snapshot's level (`{}` for none). See [Localisation](#subtype). |
 | `diffLocales(from, to)`, `LocaleDiff`, `LocaleChange` | The per-locale change set (`added` / `removed` / `changed`, the last with its column `StateDiff`); `compare` returns it as `locales`, beside the shared `changes`. |
@@ -228,7 +228,7 @@ Some inputs are outside the contract: SQL and `evaluate` can't be made to agree 
 
 ## `./subtype`
 
-`defineSubtype` binds a leaf's CRUD, version history and list over the chain store, a current-version `LeafStore`, and the viewer seam (`viewer`, `AccessPolicy`, `FollowerSeam`), gated by `LeafAccess`:
+`defineSubtype` binds a leaf's CRUD, version history and list over its `VersionChain`, a current-version `LeafStore`, and the viewer seam (`viewer`, `AccessPolicy`, `FollowerSeam`), gated by `LeafAccess`:
 
 - `reference` — writes at the corpus-write rung; when the view has a `visibility` column, reads only `public` rows below the view-private rung, apart from soft-delete. A leaf whose rows may be `followers`-visible declares the view column that plays the owner's part, `{ kind: "reference", followersOfColumn: "curatorId" }` (see [Seams](#the-viewer-the-role-axes-and-the-follower-seam)): a `followers` row is then also read by the account that column names and by its followers, and by nobody else below the view-private rung (that account's `private` rows stay the rung's alone). Without the declaration a `followers` row is the rung's alone. A write or history read to an existing row also needs the caller to be able to `get` it: a row `get` hides from them (or a missing one) fails `NodeNotFound` before the chain is reached, so only the view-deleted rung can `restore` a tombstone.
 - `owned` — creates at any account (stamping the owner); other writes at owner-or-moderator; reads through `canViewOwned` (four-state visibility plus `draft` and, on a moderated leaf, the moderation state), lists through `ownedListFilter`, the same facts as a `ListFilter`. A leaf declaring `moderationColumn` (`ownedAccess({ moderation: true })` names `moderationState`) shows a row whose state isn't exactly `approved` only to its owner and the view-private rung, as it does a draft (pulpit#154). A row whose owner column holds no string (a `NULL`) has no owner: no viewer owns it and the follower seam is never asked about it, so it reads only when `public` and not a draft, or at the view-private rung. A leaf declaring `groupColumn` (`ownedAccess({ group: true })` names `groupId`) opens a `group` row, when published, to the members of the group that column names, as the audience seam answers (pulpit#194); a value that isn't a string (a deleted group's cleared column) names no group, so the row reads as `private`.
@@ -405,7 +405,7 @@ import { Resource } from "@thomasfosterau/effect-jsonapi";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { documentRef, type DocumentStore } from "@thomasfosterau/pulpit/documents";
-import { defineVersionChain, type VersionChainStore } from "@thomasfosterau/pulpit/version-chain";
+import { defineVersionChain, type VersionChain } from "@thomasfosterau/pulpit/version-chain";
 
 export const NoteResource = Resource.make("notes", {
   attributes: { ...documentRef("title"), ...documentRef("body") }, // each a DocumentHash
@@ -413,12 +413,12 @@ export const NoteResource = Resource.make("notes", {
 
 const program = <Document, E, R>(
   documents: DocumentStore<Document, E, R>,
-  store: VersionChainStore<E, R>,
+  port: VersionChain<E, R>,
   title: Document,
   body: Document,
 ) =>
   Effect.gen(function* () {
-    const chain = defineVersionChain("notes", store);
+    const chain = defineVersionChain("notes", port);
     const state = {
       title: (yield* documents.put(title)).hash,
       body: (yield* documents.put(body)).hash,
@@ -569,7 +569,7 @@ import { defineProposals } from "@thomasfosterau/pulpit/proposals";
 const pages = defineProposals({
   type: "pages",
   target: pageOps, // the leaf's defineSubtype operations
-  chain, // its chain store: the head a proposal is stamped with
+  chain, // the target leaf's VersionChain: the head a proposal is stamped with
   ownerOf: pageLeaves.ownerOf,
   proposals: proposalStore,
   viewer,
@@ -1140,12 +1140,12 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { defineSubtype, type LeafRow } from "@thomasfosterau/pulpit/subtype";
 import {
-  makeInMemoryChainStore,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
+  makeInMemoryVersionChain,
 } from "@thomasfosterau/pulpit/testing";
 
-const chain = makeInMemoryChainStore();
+const chain = makeInMemoryVersionChain("terms");
 const terms = defineSubtype({
   type: "terms",
   access: { kind: "reference" },
@@ -1171,7 +1171,8 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 
 | Export | Fakes | Test hooks |
 | --- | --- | --- |
-| `makeInMemoryChainStore()`, `InMemoryChainStore` | [`VersionChainStore`](#versionchainstoree-r-the-version-chain-persistence), with the `(id, version)` key (`VersionConflict`) and sequential UUID-shaped `mintId`s. | `rows()` (every appended row), `dropState(id, version)` (a partial chain), `raceNextAppend(id)` (a concurrent writer), `erase(id)` (the purge fake's hard delete). |
+| `makeInMemoryVersionChain(type)`, `InMemoryVersionChain` | [`VersionChain`](#versionchaine-r-the-version-chain-port) for one leaf, holding every chain invariant over an append log with the `(id, version)` key (`VersionConflict`), minting sequential UUID-shaped ids. | `rows()` (every appended row), `dropState(id, version)` (a partial chain), `raceNextAppend(id)` (a concurrent writer). |
+| `versionChainConformance(harness, runner)`, `ConformanceHarness`, `ConformanceChain`, `ConformanceRunner` | The `VersionChain` conformance suite: every invariant, registered through the `describe` / `it` / `expect` it is given (no test-runner dependency), against whatever `harness.make` returns. The kernel runs it against `makeInMemoryVersionChain`; pulpit-drizzle-pg runs it against its Drizzle chain. | `dropState` / `raceNextAppend` on a `ConformanceChain`, optional: the cases that need them are skipped without. |
 | `makeInMemoryLeafStore(chain, { columns, now?, localised? })`, `InMemoryLeafStore`, `InMemoryLeafStoreOptions` | [`LeafStore`](#leafstorerow-following-e-r-the-current-version-view), as the current-version view over an in-memory chain plus the owner stamps; `list` evaluates the `ListFilter` in memory and sorts by the list order contract (`NULLS LAST`, code-point strings, `id` last). With `localised: true`, the view gains `locale` and `list` reads one row per `(id, locale)`. `distinct` reads the same rows `list` does. | `owners()` (the stamps), `dropOwner(id)` (an ownerless owned node). |
 | `makeInMemoryDocumentStore()`, `InMemoryDocumentStore` | [`DocumentStore`](#documentstoredocument-e-r-the-content-addressed-document-store), hashing exactly as the hash contract says (SHA-256 over `./documents`' `canonicalText`, pinned to hashes taken from Postgres). | `stored()` (every document by hash), `writes()` (how many `put`s inserted), `remove(hashes)` (the purge fake's delete). |
 | `makeInMemoryEdgeStore({ ends, uniqueKey, now? })`, `InMemoryEdgeStore`, `InMemoryEdgeStoreOptions` | [`EdgeStore`](#edgestorerow-following-e-r-the-edge-table), with the unique key (`NULLS NOT DISTINCT`), the INNER JOIN of each end's view, and the window-column total. | `rows()` (every edge, hidden ones included), `raceNextInsert(winner)` (a concurrent writer). |
@@ -1202,15 +1203,16 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 
 The kernel is written against explicit interfaces, so that it doesn't depend on the packages that fill them before they publish. Each seam below states the shape its real implementation must have, and which package (if any) is expected to fill it; the issue numbers in parentheses are for maintainers and aren't needed to follow the contract. [`./testing`](#testing) has an in-memory fake of each store and of the follower seam, which implements the contract stated here.
 
-### `VersionChainStore<E, R>`: the version-chain persistence
+### `VersionChain<E, R>`: the version-chain port
 
-Expected to be a Drizzle store built over the application's version tables (effect-drizzle-ext's `./versioned-chain`, once it publishes; pulpit#4). Expected schema:
+One leaf's chain, at the level of its operations (pulpit#246): `create`, `update`, `restore`, `delete`, `restoreVersion`, `getVersion`, `history` and `head` with effect-drizzle-ext `-pg/chain`'s `LeafChain` names, error channels and expected-version precondition, in the kernel's input types (`CreateInput`, `UpdateInput`, `Precondition`: `actorId` an `Option`, `proposedBy`, `locales`), plus `purge`. Every invariant in [`./version-chain`](#version-chain) is the implementation's to hold, and `./testing`'s `versionChainConformance` is the suite it must pass; its errors name the leaf in `type`. `E` is the implementation's query error and `R` the ambient transaction; no operation opens a transaction itself.
 
-- a root version table (the apps' `core.node_version`) keyed `(id, version bigint)`, carrying `action` (`create | update | delete`, the single home of currency and tombstone state), `timestamp`, `user_id` (the row's `actorId`) and `proposed_by` (nullable: the row's `proposedBy`, the contributor whose accepted proposal the version applies; pulpit#49); plus the identity row (`core.node`: `id`, `type`) inserted at version 0;
-- one version table per chain level keyed `(id, version)` with the `(id, version)` → parent-version FK, carrying that level's domain columns (6NF fact tables for a fact-scoped level);
-- on a localised leaf (pulpit#56), the locale level: fact rows keyed `(id, version, locale)` with the `(id, version)` FK, carrying the translated columns. `append` inserts one per locale in `row.locales` (none when it is absent), and `snapshot` returns them as `locales`, keyed by tag, omitting the key for a version that carries none.
+Expected to be `@thomasfosterau/pulpit-drizzle-pg` (pulpit#247), delegating to `-pg/chain` over the tables effect-drizzle-ext derives from the application's tree:
 
-Method contract: `head` is `SELECT … ORDER BY version DESC LIMIT 1` on the root table; `snapshot` reads every level at `(id, version)` and returns none when ANY level is missing (no partial state); `append` inserts the root row and every level's row at the given version (at version 0 the identity row too) and maps a primary-key violation on `(id, version)` to `VersionConflict`; `entries` is `ORDER BY version ASC LIMIT $limit`; `mintId` is a UUID. `E` is the store's query error and `R` the ambient transaction (`EffectDrizzleQueryError` and `CurrentTransaction` for the Drizzle store). The store never opens a transaction itself.
+- `create` / `update` / `restore` / `delete` / `restoreVersion` / `getVersion` / `history` / `head` are `-pg/chain`'s own, with the kernel's errors one to one (`NodeAlreadyExists`, `NodeNotFound`, `VersionNotFound`, `StaleVersion`, `VersionConflict`; `BrokenChain` a defect). `actorId` maps to the root version row's actor; `proposedBy` (the contributor whose accepted proposal a version applies, pulpit#49) to a root version extra (`versionColumns: { proposedBy }`, passed per write as `root`); `locales` to the chain's keyed level (`keyed`), keyed by tag, which `getVersion` returns as `locales`, omitting the key for a version that carries none.
+- `purge(id)` deletes the node's identity row, which cascades through every level of its chain (effect-drizzle-ext#145), as [`./purge`](#purge)'s erasure, the documented exception to `VERSION-CHAIN-001/002`. It is a no-op for an unknown id.
+
+The kernel keeps what is not storage: `defineVersionChain` runs a leaf's before-append hooks over the port (reading `head` and `getVersion`, then appending with `expectedVersion` pinned to that head), and `compare` is two `getVersion` reads and `diffStates`.
 
 ### `LeafStore<Row, Following, E, R>`: the current-version view
 

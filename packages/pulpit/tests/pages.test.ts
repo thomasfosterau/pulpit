@@ -30,7 +30,7 @@ import {
   type ViewerAccount,
 } from "../src/subtype.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryLeafStore,
   makeInMemoryPathStore,
   makeInMemoryPublication,
@@ -49,7 +49,7 @@ interface Page {
 
 /** A routable, localised, publish-gated owned page leaf; `member` writes. */
 const site = () => {
-  const chain = makeInMemoryChainStore();
+  const chain = makeInMemoryVersionChain("pages");
   const store = makeInMemoryLeafStore(chain, {
     columns: ["slug", "title", "visibility", "draft"],
     localised: true,

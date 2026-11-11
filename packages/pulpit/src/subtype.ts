@@ -140,7 +140,7 @@ import {
   type Precondition,
   type StaleVersion,
   type VersionAction,
-  type VersionChainStore,
+  type VersionChain,
   type VersionComparison,
   type VersionConflict,
   type VersionNotFound,
@@ -151,6 +151,7 @@ import {
   MAX_HISTORY_LIMIT,
   VersionNotFound as VersionNotFoundError,
 } from "./version-chain.ts";
+import { snapshotOf } from "./internal/chain-reads.ts";
 
 /** The write clock: the current instant, as the `Date` a fact stores. */
 const nowDate: Effect.Effect<Date> = Effect.map(Clock.currentTimeMillis, (millis) =>
@@ -1417,8 +1418,8 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
   readonly type: string;
   /** How the leaf is gated: `reference` corpus material or `owned` per-member rows. */
   readonly access: LeafAccess;
-  /** The version-chain store the writes append through. */
-  readonly chain: VersionChainStore<E, R>;
+  /** The leaf's version chain, which every write appends through and every history read reads (pulpit#246). */
+  readonly chain: VersionChain<E, R>;
   /** The current-version view the reads and lists go through, plus the owner stamp. */
   readonly leaves: LeafStore<Row, Following, E, R>;
   /** The request's viewer (effect-auth's session context). */
@@ -2169,7 +2170,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
           if (!Array.isReadonlyArrayNonEmpty(before)) return;
           const head = yield* definition.chain.head(id);
           const prior = Option.isSome(head)
-            ? yield* definition.chain.snapshot(id, head.value.version)
+            ? yield* snapshotOf(definition.chain, id, head.value.version)
             : Option.none();
           yield* runBefore(before, {
             action,
@@ -2191,7 +2192,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
         return yield* new NodeNotFound({ type, id });
       }
       const version = options.version ?? head.value.version;
-      const snapshot = yield* definition.chain.snapshot(id, version);
+      const snapshot = yield* snapshotOf(definition.chain, id, version);
       if (Option.isNone(snapshot) || snapshot.value.action === "delete") {
         return yield* new VersionNotFoundError({ type, id, version });
       }

@@ -66,9 +66,10 @@ import {
 import {
   NodeNotFound,
   type StaleVersion,
-  type VersionChainStore,
+  type VersionChain,
   type VersionConflict,
 } from "./version-chain.ts";
+import { snapshotOf } from "./internal/chain-reads.ts";
 
 /**
  * The most members a collection holds (`SEC-INPUT-003`): every read and
@@ -175,8 +176,8 @@ export type CollectionMode<E, R> =
        * {@link hideRecordedOrder} (`EDGE-001`).
        */
       readonly column: string;
-      /** The parent leaf's chain store, read (ungated) by `resync` for the restored order. */
-      readonly chain: VersionChainStore<E, R>;
+      /** The parent leaf's version chain, read (ungated) by `resync` for the restored order. */
+      readonly chain: VersionChain<E, R>;
     };
 
 /**
@@ -405,7 +406,7 @@ export const defineCollection = <Parent, Member, E, R>(
     if (mode.kind !== "versioned") return;
     const head = yield* mode.chain.head(parentId);
     if (Option.isNone(head)) return;
-    const snapshot = yield* mode.chain.snapshot(parentId, head.value.version);
+    const snapshot = yield* snapshotOf(mode.chain, parentId, head.value.version);
     const recorded = Option.flatMap(snapshot, (version) => {
       const value = version.state[mode.column] ?? null;
       return Arr.isArray<unknown>(value) ? Option.some(value) : Option.none();

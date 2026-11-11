@@ -23,7 +23,7 @@ import {
 } from "../src/reactions.ts";
 import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/subtype.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
   makeInMemoryReactionStore,
@@ -39,7 +39,7 @@ const tagOf = async <A, E extends { readonly _tag: string }>(effect: Effect.Effe
 };
 
 const setup = (store = makeInMemoryReactionStore()) => {
-  const chain = makeInMemoryChainStore();
+  const chain = makeInMemoryVersionChain("posts");
   const leaves = makeInMemoryLeafStore(chain, { columns: ["visibility"], now: NOW });
   let viewer: Viewer = Option.none();
   const viewerOf = Effect.sync(() => viewer);

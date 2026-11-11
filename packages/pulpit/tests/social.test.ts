@@ -21,7 +21,7 @@ import { always, evaluate, type FilterRow } from "../src/filter.ts";
 import { defineSocial, socialFollowers, type SocialStore } from "../src/social.ts";
 import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/subtype.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryLeafStore,
   makeInMemorySocialStore,
   type InMemoryFollowing,
@@ -202,7 +202,7 @@ describe("the silenced-authors read filter (opt-in)", () => {
 describe("socialFollowers fills the follower seam end to end", () => {
   it("lets a follower read a followers row, and only while following", async () => {
     const store = makeInMemorySocialStore();
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("posts");
     const leaves = makeInMemoryLeafStore(chain, { columns: ["visibility"], now: NOW });
     let viewer: Viewer = Option.some(member);
     const viewerOf = Effect.sync(() => viewer);

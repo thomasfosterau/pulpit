@@ -18,7 +18,7 @@ import * as Option from "effect/Option";
 import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/subtype.ts";
 import { defineWorkingCopy } from "../src/working-copy.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
   makeInMemoryWorkingCopyStore,
@@ -37,7 +37,7 @@ const tagOf = async <A, E extends { readonly _tag: string }>(
 };
 
 const setup = async () => {
-  const chain = makeInMemoryChainStore();
+  const chain = makeInMemoryVersionChain("posts");
   const leaves = makeInMemoryLeafStore(chain, {
     columns: ["title", "body", "visibility"],
     now: NOW,

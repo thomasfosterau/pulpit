@@ -39,7 +39,7 @@ import {
   type Viewer,
 } from "../src/subtype.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
   makeInMemoryResourceCache,
@@ -114,7 +114,7 @@ const accepting = (header: string): Headers => ({ "accept-language": header });
 
 /** A localised `pages` leaf behind effect-jsonapi's handlers, with the request's headers in hand. */
 const localisedPages = () => {
-  const chain = makeInMemoryChainStore();
+  const chain = makeInMemoryVersionChain("pages");
   const leaves = makeInMemoryLeafStore(chain, {
     columns: ["title", "colour", "visibility"],
     localised: true,

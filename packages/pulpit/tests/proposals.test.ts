@@ -45,7 +45,7 @@ import type {
   VersionSnapshot,
 } from "../src/version-chain.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
   makeInMemoryProposalStore,
@@ -247,7 +247,7 @@ describe("defineProposals — the operations", () => {
   const curator: ViewerAccount = { id: "u-curator", role: "contributor" };
 
   const setup = () => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("pages");
     const leaves = makeInMemoryLeafStore(chain, {
       columns: ["title", "body", "visibility"],
       now: NOW,
@@ -340,7 +340,7 @@ describe("defineProposals — the operations", () => {
   });
 
   it("submit refuses an account below the propose rung", async () => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("pages");
     const leaves = makeInMemoryLeafStore(chain, { columns: ["title"], now: NOW });
     const viewer = Effect.succeedSome(member);
     const ops = defineProposals({
@@ -676,7 +676,7 @@ describe("over a localised leaf (pulpit#184)", () => {
     const curator: ViewerAccount = { id: "u-curator", role: "contributor" };
 
     const setup = () => {
-      const chain = makeInMemoryChainStore();
+      const chain = makeInMemoryVersionChain("pages");
       const leaves = makeInMemoryLeafStore(chain, {
         columns: ["title", "colour", "visibility"],
         localised: true,

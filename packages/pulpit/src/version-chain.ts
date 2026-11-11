@@ -49,15 +49,22 @@
  *   atomic. Without one, a write extends whatever the head is (last writer
  *   wins on a column two patches both set).
  *
- * ## The seam
+ * ## The port
  *
- * The chain is read and written through a {@link VersionChainStore} the
- * application supplies — in production, a Drizzle store over
- * effect-drizzle-ext's `./versioned-chain` tables and views, which is not yet
- * published (see the package README → Seams for the expected table shape).
- * The operations here own the discipline; the store owns persistence
- * and nothing else. Authorisation is not this module's concern either: the
- * subtype factory (`./subtype`) gates before it calls in.
+ * The chain is read and written through a {@link VersionChain} the
+ * application supplies, one per leaf: the operations above, each holding
+ * the invariants, plus a `head` read and the erasure's whole-chain `purge`
+ * (pulpit#246). In production it is `@thomasfosterau/pulpit-drizzle-pg`
+ * (pulpit#247) delegating to effect-drizzle-ext's `-pg/chain`, which owns
+ * the discipline over the tables; in the kernel's tests it is
+ * `./testing`'s `makeInMemoryVersionChain`, and `./testing`'s
+ * `versionChainConformance` is the suite both must pass, so they cannot
+ * drift. This module keeps what is the kernel's: the vocabulary, the tagged
+ * errors, the tri-state patch and the field-level compare, and
+ * {@link defineVersionChain}, which runs a leaf's before-append hooks
+ * (`./subtype`'s lifecycle hooks) over the port. Authorisation is not this
+ * module's concern either: the subtype factory (`./subtype`) gates before
+ * it calls in.
  *
  * @copyright Thomas Foster
  * @module pulpit/version-chain
@@ -65,11 +72,10 @@
  */
 
 import * as Array from "effect/Array";
-import * as Clock from "effect/Clock";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
+import * as Random from "effect/Random";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
@@ -187,7 +193,7 @@ export interface VersionRow extends VersionSnapshot {
    * The contributor whose accepted proposal this version applies
    * (`./proposals`), recorded beside the actor, who is the account that
    * accepted it; none for every other write. A store persists it with the
-   * version row (README → Seams → `VersionChainStore`).
+   * version row (README → Seams → `VersionChain`).
    */
   readonly proposedBy: Option.Option<string>;
 }
@@ -299,46 +305,104 @@ export class BrokenChain extends Schema.TaggedError<
   version: Schema.BigInt,
 }) {}
 
-// ── The seam ──────────────────────────────────────────────────────────
+// ── The port ──────────────────────────────────────────────────────────
 
 /**
- * The persistence seam the chain operations run over. `E` is the store's own
- * failure (a Drizzle store's `EffectDrizzleQueryError`); `R` its requirements
- * (a Drizzle store's `CurrentTransaction` — the operations never open a
- * transaction themselves: `transact` is always-open and the boundary belongs
- * to the caller, website #1883).
+ * One leaf's version chain: the operation-level port the kernel writes and
+ * reads every node of that leaf through (pulpit#246). `E` is the
+ * implementation's own failure (a Drizzle store's query error); `R` its
+ * requirements (a Drizzle store's `CurrentTransaction` — no operation opens
+ * a transaction itself: the boundary belongs to the caller, website #1883).
  *
- * Every method reads or writes exactly what it says and applies no policy.
+ * The operations and their error channels are effect-drizzle-ext `-pg/chain`'s
+ * `LeafChain` (`create`, `update`, `restore`, `delete`, `restoreVersion`,
+ * `getVersion`, `history`, `head`), in the kernel's own input types, plus
+ * `purge`. **Every invariant in the module doc is the implementation's
+ * contract**, checked by `./testing`'s `versionChainConformance`. Above all:
+ * an `expectedVersion` is checked against the head the append extends, and
+ * the append lands at that head + 1, so a writer that slips in between
+ * takes the `(id, version)` key first and this one fails
+ * {@link VersionConflict}; the key is what makes the check atomic. The
+ * errors name the implementation's leaf in their `type`.
  *
- * @since 0.1.0
+ * @since 0.2.0
  */
-export interface VersionChainStore<E, R> {
-  /** The node's latest version entry, or none for an id with no versions. */
-  readonly head: (id: string) => Effect.Effect<Option.Option<VersionChainEntry>, E, R>;
+export interface VersionChain<E, R> {
   /**
-   * The full state at `(id, version)`, or none when the version does not
-   * exist OR any level of the chain has no row there — a version that cannot
-   * be fully reconstructed is reported as absent, never as a partial state.
-   * On a localised leaf the snapshot carries its locale level too: every
-   * `(id, version, locale)` fact row, as `locales` (pulpit#56).
+   * Insert the node and its version 0 (`create`), minting an id when the
+   * input carries none. Fails {@link NodeAlreadyExists} on a taken id,
+   * never an upsert.
    */
-  readonly snapshot: (
+  readonly create: (
+    input: CreateInput,
+  ) => Effect.Effect<ChainWrite, E | NodeAlreadyExists | VersionConflict, R>;
+  /**
+   * Append an `update` version carrying the tri-state patch over the head's
+   * state (and the locale patch over its locale level), recording
+   * `actorId` and `proposedBy`. Fails {@link NodeNotFound} for an unknown
+   * id and for a tombstoned node (`VERSION-CHAIN-006`), and
+   * {@link StaleVersion} when `input.expectedVersion` is not the head.
+   */
+  readonly update: (
+    input: UpdateInput,
+  ) => Effect.Effect<ChainWrite, E | NodeNotFound | StaleVersion | VersionConflict, R>;
+  /** {@link VersionChain.update}, except a tombstone does not fail: the explicit restore surface (`VERSION-CHAIN-006`). */
+  readonly restore: (
+    input: UpdateInput,
+  ) => Effect.Effect<ChainWrite, E | NodeNotFound | StaleVersion | VersionConflict, R>;
+  /**
+   * Append a `delete` version carrying the head's state forward.
+   * Idempotent: on a tombstone it returns the existing one with
+   * `alreadyDeleted: true` and writes nothing, whatever the precondition
+   * says. Fails {@link NodeNotFound} for an unknown id and
+   * {@link StaleVersion} when a live node's head is not the expected one.
+   */
+  readonly delete: (
+    id: string,
+    actorId: Option.Option<string>,
+    precondition?: Precondition,
+  ) => Effect.Effect<
+    ChainWrite & { readonly alreadyDeleted: boolean },
+    E | NodeNotFound | StaleVersion | VersionConflict,
+    R
+  >;
+  /**
+   * Re-apply the full snapshot at `(id, version)`, its locale level
+   * included, as a new `update` version, over a tombstone too. Fails
+   * {@link VersionNotFound}, before writing anything, when any level has no
+   * row at that version (no partial restore), and {@link StaleVersion} when
+   * the head (not the restored version) is not the expected one.
+   */
+  readonly restoreVersion: (
     id: string,
     version: bigint,
-  ) => Effect.Effect<Option.Option<VersionSnapshot>, E, R>;
-  /**
-   * Append one version row — at version 0 together with the node's identity
-   * row, and one locale-level row per locale `row.locales` carries. Fails {@link VersionConflict} when `(id, version)` already exists
-   * (at version 0: the id already belongs to a node).
-   */
-  readonly append: (row: VersionRow) => Effect.Effect<void, E | VersionConflict, R>;
-  /** The chain's entries, oldest first, at most `limit` of them. */
-  readonly entries: (
+    actorId: Option.Option<string>,
+    precondition?: Precondition,
+  ) => Effect.Effect<ChainWrite, E | VersionNotFound | StaleVersion | VersionConflict, R>;
+  /** The reconstructed state at `(id, version)`. Fails {@link VersionNotFound} when any level has no row there. */
+  readonly getVersion: (
     id: string,
-    limit: number,
-  ) => Effect.Effect<ReadonlyArray<VersionChainEntry>, E, R>;
-  /** Mint a fresh node id (a UUID) when the caller supplies none. */
-  readonly mintId: Effect.Effect<string, E, R>;
+    version: bigint,
+  ) => Effect.Effect<VersionSnapshot, E | VersionNotFound, R>;
+  /**
+   * The chain, oldest first, at most `limit` entries (default and cap
+   * {@link MAX_HISTORY_LIMIT}, `PERF-DB-001`). Fails {@link NodeNotFound}
+   * when the id has no versions of this leaf.
+   */
+  readonly history: (
+    id: string,
+    limit?: number,
+  ) => Effect.Effect<ReadonlyArray<VersionChainEntry>, E | NodeNotFound, R>;
+  /** The node's latest version entry, or none for an id with no versions of this leaf. */
+  readonly head: (id: string) => Effect.Effect<Option.Option<VersionChainEntry>, E, R>;
+  /**
+   * Hard-delete the node's whole chain, every level and the identity row
+   * (the Drizzle store: one identity delete that cascades). The erasure's
+   * one write (`./purge`, pulpit#58), the documented exception to
+   * `VERSION-CHAIN-001/002`; nothing else calls it, and it never deletes
+   * part of a chain. A no-op for an id with no versions.
+   */
+  readonly purge: (id: string) => Effect.Effect<void, E, R>;
 }
 
 // ── The operations ────────────────────────────────────────────────────
@@ -641,54 +705,14 @@ export interface UpdateInput extends Precondition {
 }
 
 /**
- * The chain operations for one leaf type, bound to a store.
+ * The chain operations for one leaf type, as {@link defineVersionChain} binds
+ * them over its {@link VersionChain}: the port's writes and reads, run
+ * through the leaf's before-append hooks, plus the kernel's field-level
+ * `compare`.
  *
  * @since 0.1.0
  */
-export interface VersionChainOps<E, R> {
-  /** Insert the node and its version 0 (`create`). Fails {@link NodeAlreadyExists} on a taken id. */
-  readonly create: (
-    input: CreateInput,
-  ) => Effect.Effect<ChainWrite, E | NodeAlreadyExists | VersionConflict, R>;
-  /**
-   * Append an `update` version carrying the patch over the current state.
-   * Fails {@link NodeNotFound} for an unknown id and for a tombstoned node,
-   * and {@link StaleVersion} when `input.expectedVersion` is not the head.
-   */
-  readonly update: (
-    input: UpdateInput,
-  ) => Effect.Effect<ChainWrite, E | NodeNotFound | StaleVersion | VersionConflict, R>;
-  /**
-   * {@link update}, except a tombstone does not fail: the explicit restore
-   * surface (`VERSION-CHAIN-006`) — the node comes back live. Fails
-   * {@link NodeNotFound} for an unknown id and {@link StaleVersion} when
-   * `input.expectedVersion` is not the head.
-   */
-  readonly restore: (
-    input: UpdateInput,
-  ) => Effect.Effect<ChainWrite, E | NodeNotFound | StaleVersion | VersionConflict, R>;
-  /**
-   * Append a `delete` version carrying the state forward. Idempotent: on a
-   * tombstoned node it returns the existing tombstone with
-   * `alreadyDeleted: true` and writes nothing, whatever the precondition
-   * says (the delete it asked for has happened). Fails {@link NodeNotFound}
-   * for an unknown id and {@link StaleVersion} when a live node's head is
-   * not `precondition.expectedVersion`.
-   */
-  readonly delete: (
-    id: string,
-    actorId: Option.Option<string>,
-    precondition?: Precondition,
-  ) => Effect.Effect<
-    ChainWrite & { readonly alreadyDeleted: boolean },
-    E | NodeNotFound | StaleVersion | VersionConflict,
-    R
-  >;
-  /** The reconstructed state at `(id, version)`. Read-only. */
-  readonly getVersion: (
-    id: string,
-    version: bigint,
-  ) => Effect.Effect<VersionSnapshot, E | VersionNotFound, R>;
+export interface VersionChainOps<E, R> extends Omit<VersionChain<E, R>, "head" | "purge"> {
   /**
    * The field-level change set from version `from` to version `to` of one
    * node: two {@link VersionChainOps.getVersion} reads and {@link diffStates}.
@@ -704,29 +728,6 @@ export interface VersionChainOps<E, R> {
     from: bigint,
     to: bigint,
   ) => Effect.Effect<VersionComparison, E | VersionNotFound, R>;
-  /**
-   * Re-apply the full snapshot at `(id, version)` as a NEW `update` version —
-   * over a tombstone too. Fails {@link VersionNotFound}, before writing
-   * anything, when the version cannot be fully reconstructed, and
-   * {@link StaleVersion} when the head is not
-   * `precondition.expectedVersion` (the precondition is on the head the
-   * restore extends, not on the version it restores).
-   */
-  readonly restoreVersion: (
-    id: string,
-    version: bigint,
-    actorId: Option.Option<string>,
-    precondition?: Precondition,
-  ) => Effect.Effect<ChainWrite, E | VersionNotFound | StaleVersion | VersionConflict, R>;
-  /**
-   * The chain, oldest first, at most `limit` entries (default and cap
-   * {@link MAX_HISTORY_LIMIT}). Fails {@link NodeNotFound} when the id has no
-   * versions, so a caller surfaces the 404 a missing resource would.
-   */
-  readonly history: (
-    id: string,
-    limit?: number,
-  ) => Effect.Effect<ReadonlyArray<VersionChainEntry>, E | NodeNotFound, R>;
 }
 
 // ── The before-append hook ────────────────────────────────────────────
@@ -804,7 +805,7 @@ export interface ChainHooks<E, R> {
    * Runs after the head is read and before the row is appended, in the
    * caller's transaction: its patch replaces the event's, and a failure
    * (its `E`) fails the write with nothing appended. It sees the very head
-   * the append extends, so the expected-version check (`appendNext`) still
+   * the append extends, so the expected-version check (pinned to it) still
    * runs against that head after it. Absent, nothing extra is read.
    */
   /* oxlint-disable effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined`; the omitted key is "no hook", read as such by `defineVersionChain` */
@@ -824,173 +825,198 @@ export interface ChainHooks<E, R> {
   /* oxlint-enable effect/prefer-option-over-null */
 }
 
-const isVersionConflict = Schema.is(VersionConflict);
+/**
+ * A before-append hook returned a non-empty patch for a `delete`: a
+ * tombstone carries the head's state forward and nothing else, so the hook
+ * may refuse a delete but never change it. A defect (raised with
+ * `Effect.die`), never a typed failure.
+ */
+class DeleteHookPatch extends Schema.TaggedError<
+  DeleteHookPatch,
+  { readonly brand: unique symbol }
+>()("DeleteHookPatch", { type: Schema.String, id: Schema.String }) {}
 
-/** What a write stores: the shared state and, when it carries any locale, the locale level. */
-type Written = Pick<VersionSnapshot, "state" | "locales">;
+/** Whether a patch changes nothing: every key is absent or `undefined`. */
+const isEmptyPatch = (patch: ChainPatch): boolean =>
+  Record.isEmptyRecord(Record.filter(patch, (value) => value !== undefined));
 
-/** The write clock: the current instant, as the `Date` a version row stores. */
-const now: Effect.Effect<Date> = Effect.map(Clock.currentTimeMillis, (millis) =>
-  DateTime.toDate(DateTime.makeUnsafe(millis)),
+/** Whether a locale patch changes nothing: every locale is absent or `undefined`. */
+const isEmptyLocalePatch = (patch: LocalePatch): boolean =>
+  Record.isEmptyRecord(Record.filter(patch, (value) => value !== undefined));
+
+/** Two patches set the same keys to the same values (`Equal.equals`, so a `Date` compares by instant). */
+const samePatch = (left: ChainPatch, right: ChainPatch): boolean => {
+  const keys = Array.dedupe([...Record.keys(left), ...Record.keys(right)]);
+  return keys.every((key) => Equal.equals(left[key], right[key]));
+};
+
+/** One locale's columns in a level, or none when the level lacks it. */
+const localeIn = (level: LocaleStates, locale: string): Option.Option<ChainState> =>
+  Record.get(level, locale);
+
+/** Two locale levels carry the same locales, each with the same columns. */
+const sameLocales = (left: LocaleStates, right: LocaleStates): boolean =>
+  Array.dedupe([...Record.keys(left), ...Record.keys(right)]).every((locale) =>
+    Option.getOrElse(
+      Option.zipWith(localeIn(left, locale), localeIn(right, locale), samePatch),
+      () => false,
+    ),
+  );
+
+/** Two hex digits of a random byte. */
+const randomByte = Effect.map(Random.nextIntBetween(0, 255), (byte) =>
+  byte.toString(16).padStart(2, "0"),
 );
 
 /**
- * Bind the chain operations for one leaf `type` to a store. Every produced
- * operation is traced as `${type}.<operation>`. `hooks.beforeAppend`, when
- * given, runs before every append (see {@link ChainHooks}); its failure is
- * each write's `E`.
+ * A fresh RFC 4122 version-4 node id, for a hooked create that names none:
+ * the hook is shown the id the version will carry, so it is minted before
+ * the append rather than by the port.
+ */
+const mintNodeId: Effect.Effect<string> = Effect.map(
+  Effect.all(
+    Array.makeBy(16, () => randomByte),
+    { concurrency: 1 },
+  ),
+  (bytes) => {
+    const hex = [...bytes];
+    hex[6] = `4${hex[6]?.[1] ?? "0"}`;
+    hex[8] = ((Number.parseInt(hex[8] ?? "0", 16) & 0x3f) | 0x80).toString(16).padStart(2, "0");
+    const at = (from: number, to: number) => hex.slice(from, to).join("");
+    return `${at(0, 4)}-${at(4, 6)}-${at(6, 8)}-${at(8, 10)}-${at(10, 16)}`;
+  },
+);
+
+/**
+ * Bind the chain operations for one leaf `type` over its
+ * {@link VersionChain}. Every produced operation is traced as
+ * `${type}.<operation>`.
+ *
+ * Without hooks, each write is the port's own. With `hooks.beforeAppend` /
+ * `beforeAppendLocales` (see {@link ChainHooks}), each write reads the head
+ * and its state, runs the hooks over the event, and appends the hooks'
+ * patch through the port with `expectedVersion` pinned to the head it read
+ * (the caller's own, when it gave one), so the version written is the
+ * hooks' patch over exactly the head they were shown: a writer that lands
+ * in between fails the write {@link StaleVersion} (or, losing the race at
+ * the append, {@link VersionConflict}), both the wire's 409. Without a
+ * caller precondition a lost race therefore surfaces as `StaleVersion`
+ * where an unhooked write reports `VersionConflict`. A hook's failure is
+ * each write's `E`, with nothing appended.
+ *
+ * - `restoreVersion` reads the restored version first (an unreconstructable
+ *   one fails {@link VersionNotFound} before any hook runs); when the hooks
+ *   return its state unchanged, the port's own `restoreVersion` writes it,
+ *   and otherwise the hooks' state is appended through the port's `restore`
+ *   with the restored locale level (a locale the head has and the version
+ *   lacks is dropped).
+ * - `delete` shows the hooks an empty patch; a tombstone carries the head's
+ *   state forward and nothing else, so a hook may refuse a delete but not
+ *   change it: a non-empty patch for a delete is a defect.
+ *
+ * @example
+ * ```ts
+ * import { strictEqual } from "node:assert";
+ * import * as Effect from "effect/Effect";
+ * import * as Option from "effect/Option";
+ * import { defineVersionChain } from "@thomasfosterau/pulpit/version-chain";
+ * import { makeInMemoryVersionChain } from "@thomasfosterau/pulpit/testing";
+ *
+ * const notes = defineVersionChain("notes", makeInMemoryVersionChain("notes"), {
+ *   beforeAppend: (event) => Effect.succeed({ ...event.patch, stamped: event.action }),
+ * });
+ * const actorId = Option.none<string>();
+ * const program = Effect.gen(function* () {
+ *   const { id } = yield* notes.create({ id: Option.none(), state: { title: "Hi" }, actorId });
+ *   const written = yield* notes.getVersion(id, 0n);
+ *   return written.state["stamped"];
+ * });
+ * strictEqual(Effect.runSync(program), "create");
+ * ```
  *
  * @since 0.1.0
  */
 export const defineVersionChain = <E, R>(
   type: string,
-  store: VersionChainStore<E, R>,
+  chain: VersionChain<E, R>,
   hooks: ChainHooks<E, R> = {},
 ): VersionChainOps<E, R> => {
   const { beforeAppend, beforeAppendLocales } = hooks;
+  const hooked = beforeAppend !== undefined || beforeAppendLocales !== undefined;
 
-  /**
-   * The state a write stores: the hook's patch (or the caller's, without a
-   * hook) over `base`, the prior state or nothing.
-   */
-  const nextState = (
-    event: ChainAppendEvent,
-    base: Pick<VersionSnapshot, "state" | "locales">,
-  ): Effect.Effect<Written, E, R> =>
-    Effect.gen(function* () {
-      const patch = beforeAppend === undefined ? event.patch : yield* beforeAppend(event);
-      const localePatch =
-        beforeAppendLocales === undefined
-          ? (event.locales ?? {})
-          : yield* beforeAppendLocales(event);
-      const state = applyPatch(base.state, patch);
-      const locales = applyLocalePatch(localesOf(base), localePatch);
-      return Record.isEmptyRecord(locales) ? { state } : { state, locales };
-    });
+  /** The hooks' shared-column and locale patches for an event. */
+  const patches = (event: ChainAppendEvent) =>
+    Effect.all(
+      {
+        patch: beforeAppend === undefined ? Effect.succeed(event.patch) : beforeAppend(event),
+        locales:
+          beforeAppendLocales === undefined
+            ? Effect.succeed(event.locales ?? {})
+            : beforeAppendLocales(event),
+      },
+      { concurrency: 1 },
+    );
 
-  /**
-   * Append at `previous + 1`, after checking the precondition against that
-   * same `previous`. The check and the append's version come from one read,
-   * so a writer that lands in between takes `previous + 1` first and this
-   * append fails the store's `(id, version)` key ({@link VersionConflict}):
-   * success means the head was still `expectedVersion` when the row went in.
-   */
-  const appendNext = (
-    id: string,
-    previous: VersionChainEntry,
-    action: VersionAction,
-    content: Written,
-    actorId: Option.Option<string>,
-    precondition: Precondition,
-    proposedBy: Option.Option<string> = Option.none(),
-  ): Effect.Effect<ChainWrite, E | StaleVersion | VersionConflict, R> =>
-    Effect.gen(function* () {
-      const expected = precondition.expectedVersion;
-      if (expected !== undefined && expected !== previous.version) {
-        return yield* new StaleVersion({ type, id, expected, current: previous.version });
-      }
-      const version = previous.version + 1n;
-      const timestamp = yield* now;
-      yield* store.append({
-        id,
-        type,
-        version,
-        action,
-        timestamp,
-        ...content,
-        actorId,
-        proposedBy,
-      });
-      return { id, version };
-    });
-
-  /** The current state: the head's snapshot. A head without a snapshot is a broken chain — a defect, not a miss. */
+  /** The head and its full state. A head without a state is a broken chain: a defect, not a miss. */
   const current = (id: string) =>
     Effect.gen(function* () {
-      const head = yield* store.head(id);
-      if (Option.isNone(head)) return Option.none();
-      const snapshot = yield* store.snapshot(id, head.value.version);
-      if (Option.isNone(snapshot)) {
-        return yield* Effect.die(new BrokenChain({ type, id, version: head.value.version }));
-      }
-      return Option.some(snapshot.value);
+      const head = yield* chain.head(id);
+      if (Option.isNone(head)) return Option.none<VersionSnapshot>();
+      const snapshot = yield* Effect.catchTag(
+        chain.getVersion(id, head.value.version),
+        "VersionNotFound",
+        () => Effect.die(new BrokenChain({ type, id, version: head.value.version })),
+      );
+      return Option.some(snapshot);
     });
 
-  /**
-   * The head's full state for a hook to see, read only when there is a hook
-   * (`restoreVersion` otherwise needs the head entry alone).
-   */
-  const hookPrior = (id: string) =>
-    beforeAppend === undefined && beforeAppendLocales === undefined
-      ? Effect.succeed(Option.none<VersionSnapshot>())
-      : current(id);
+  /** The precondition a hooked write appends under: the caller's, else the head the hooks saw. */
+  const pinned = (precondition: Precondition, head: VersionSnapshot): Precondition => ({
+    expectedVersion: precondition.expectedVersion ?? head.version,
+  });
 
   const create = Effect.fn(`${type}.create`)(function* (input: CreateInput) {
-    const id = Option.isSome(input.id) ? input.id.value : yield* store.mintId;
-    if (Option.isSome(input.id) && Option.isSome(yield* store.head(id))) {
-      return yield* new NodeAlreadyExists({ type, id });
-    }
-    const content = yield* nextState(
-      {
-        action: "create",
-        id,
-        prior: Option.none(),
-        patch: input.state,
-        locales: input.locales ?? {},
-        actorId: input.actorId,
-      },
-      { state: {} },
-    );
-    const timestamp = yield* now;
-    yield* store
-      .append({
-        id,
-        type,
-        version: 0n,
-        action: "create",
-        timestamp,
-        ...content,
-        actorId: input.actorId,
-        proposedBy: Option.none(),
-      })
-      .pipe(
-        // A racing create that took the id between the check above and this
-        // append surfaces as the store's version-0 collision.
-        Effect.mapError((error) =>
-          isVersionConflict(error) && error.version === 0n
-            ? new NodeAlreadyExists({ type, id })
-            : error,
-        ),
-      );
-    return { id, version: 0n };
+    if (!hooked) return yield* chain.create(input);
+    const id = Option.isSome(input.id) ? input.id.value : yield* mintNodeId;
+    const written = yield* patches({
+      action: "create",
+      id,
+      prior: Option.none(),
+      patch: input.state,
+      locales: input.locales ?? {},
+      actorId: input.actorId,
+    });
+    const locales = applyLocalePatch({}, written.locales);
+    const next: CreateInput = {
+      id: Option.some(id),
+      state: applyPatch({}, written.patch),
+      actorId: input.actorId,
+    };
+    return yield* chain.create(Record.isEmptyRecord(locales) ? next : { ...next, locales });
   });
 
   const merge = (input: UpdateInput, allowDeleted: boolean) =>
     Effect.gen(function* () {
+      if (!hooked) return yield* allowDeleted ? chain.restore(input) : chain.update(input);
       const head = yield* current(input.id);
       if (Option.isNone(head) || (head.value.action === "delete" && !allowDeleted)) {
         return yield* new NodeNotFound({ type, id: input.id });
       }
-      const content = yield* nextState(
-        {
-          action: allowDeleted ? "restore" : "update",
-          id: input.id,
-          prior: head,
-          patch: input.patch,
-          locales: input.locales ?? {},
-          actorId: input.actorId,
-        },
-        head.value,
-      );
-      return yield* appendNext(
-        input.id,
-        head.value,
-        "update",
-        content,
-        input.actorId,
-        input,
-        input.proposedBy,
-      );
+      const written = yield* patches({
+        action: allowDeleted ? "restore" : "update",
+        id: input.id,
+        prior: head,
+        patch: input.patch,
+        locales: input.locales ?? {},
+        actorId: input.actorId,
+      });
+      const next: UpdateInput = {
+        ...input,
+        patch: written.patch,
+        locales: written.locales,
+        ...pinned(input, head.value),
+      };
+      return yield* allowDeleted ? chain.restore(next) : chain.update(next);
     });
 
   const update = Effect.fn(`${type}.update`)(function* (input: UpdateInput) {
@@ -1006,34 +1032,16 @@ export const defineVersionChain = <E, R>(
     actorId: Option.Option<string>,
     precondition: Precondition = {},
   ) {
+    if (!hooked) return yield* chain.delete(id, actorId, precondition);
     const head = yield* current(id);
     if (Option.isNone(head)) return yield* new NodeNotFound({ type, id });
-    if (head.value.action === "delete") {
-      return { id, version: head.value.version, alreadyDeleted: true };
+    // An already tombstoned node writes nothing and runs no hook.
+    if (head.value.action === "delete") return yield* chain.delete(id, actorId, precondition);
+    const written = yield* patches({ action: "delete", id, prior: head, patch: {}, actorId });
+    if (!isEmptyPatch(written.patch) || !isEmptyLocalePatch(written.locales)) {
+      return yield* Effect.die(new DeleteHookPatch({ type, id }));
     }
-    const content = yield* nextState(
-      { action: "delete", id, prior: head, patch: {}, actorId },
-      head.value,
-    );
-    const written = yield* appendNext(id, head.value, "delete", content, actorId, precondition);
-    return { ...written, alreadyDeleted: false };
-  });
-
-  const getVersion = Effect.fn(`${type}.getVersion`)(function* (id: string, version: bigint) {
-    const snapshot = yield* store.snapshot(id, version);
-    if (Option.isNone(snapshot)) return yield* new VersionNotFound({ type, id, version });
-    return snapshot.value;
-  });
-
-  const compare = Effect.fn(`${type}.compare`)(function* (id: string, from: bigint, to: bigint) {
-    const before = yield* getVersion(id, from);
-    const after = yield* getVersion(id, to);
-    return {
-      from: before,
-      to: after,
-      changes: diffStates(before.state, after.state),
-      locales: diffLocales(localesOf(before), localesOf(after)),
-    };
+    return yield* chain.delete(id, actorId, pinned(precondition, head.value));
   });
 
   const restoreVersion = Effect.fn(`${type}.restoreVersion`)(function* (
@@ -1042,42 +1050,60 @@ export const defineVersionChain = <E, R>(
     actorId: Option.Option<string>,
     precondition: Precondition = {},
   ) {
+    if (!hooked) return yield* chain.restoreVersion(id, version, actorId, precondition);
     // Read the whole historical state FIRST, so an unreconstructable version
-    // fails before the chain is touched at all.
-    const snapshot = yield* store.snapshot(id, version);
-    if (Option.isNone(snapshot)) return yield* new VersionNotFound({ type, id, version });
-    const prior = yield* hookPrior(id);
-    const head = Option.isSome(prior) ? prior : yield* store.head(id);
+    // fails before any hook runs or the chain is touched.
+    const restored = yield* chain.getVersion(id, version);
+    const head = yield* current(id);
     if (Option.isNone(head)) return yield* new VersionNotFound({ type, id, version });
-    // Every locale is restored together with the shared columns: the
-    // locale patch is the whole historical level, over nothing.
-    const content = yield* nextState(
-      {
-        action: "restoreVersion",
-        id,
-        prior,
-        patch: snapshot.value.state,
-        locales: localesOf(snapshot.value),
-        actorId,
-      },
-      { state: {} },
+    const restoredLocales = localesOf(restored);
+    const written = yield* patches({
+      action: "restoreVersion",
+      id,
+      prior: head,
+      patch: restored.state,
+      locales: restoredLocales,
+      actorId,
+    });
+    const expected = pinned(precondition, head.value);
+    const hookedLocales = applyLocalePatch({}, written.locales);
+    if (samePatch(written.patch, restored.state) && sameLocales(hookedLocales, restoredLocales)) {
+      return yield* chain.restoreVersion(id, version, actorId, expected);
+    }
+    // The hooks changed what is restored: append their state over the head
+    // through the explicit restore surface, with the restored locale level
+    // replacing the head's (a locale only the head carries is dropped).
+    const dropped = Record.fromEntries(
+      Array.map(
+        Array.filter(Record.keys(localesOf(head.value)), (locale) => !(locale in hookedLocales)),
+        (locale) => [locale, null] as const,
+      ),
     );
-    // `update`, not a fourth action: a restore is an ordinary edit whose
-    // content came from history, and `action` stays the currency / tombstone
-    // axis every fail-closed view reads (#864 A8).
-    return yield* appendNext(id, head.value, "update", content, actorId, precondition);
+    return yield* chain
+      .restore({
+        id,
+        patch: written.patch,
+        locales: { ...dropped, ...hookedLocales },
+        actorId,
+        ...expected,
+      })
+      .pipe(
+        // The head was read above, so a node gone since has no version to restore.
+        Effect.catchTag("NodeNotFound", () =>
+          Effect.fail(new VersionNotFound({ type, id, version })),
+        ),
+      );
   });
 
-  const history = Effect.fn(`${type}.history`)(function* (
-    id: string,
-    limit: number = MAX_HISTORY_LIMIT,
-  ) {
-    const bounded = Math.max(1, Math.min(Math.trunc(limit), MAX_HISTORY_LIMIT));
-    const entries = yield* store.entries(id, bounded);
-    return yield* Array.match(entries, {
-      onEmpty: () => Effect.fail(new NodeNotFound({ type, id })),
-      onNonEmpty: (nonEmpty) => Effect.succeed<ReadonlyArray<VersionChainEntry>>(nonEmpty),
-    });
+  const compare = Effect.fn(`${type}.compare`)(function* (id: string, from: bigint, to: bigint) {
+    const before = yield* chain.getVersion(id, from);
+    const after = yield* chain.getVersion(id, to);
+    return {
+      from: before,
+      to: after,
+      changes: diffStates(before.state, after.state),
+      locales: diffLocales(localesOf(before), localesOf(after)),
+    };
   });
 
   return {
@@ -1085,9 +1111,13 @@ export const defineVersionChain = <E, R>(
     update,
     restore,
     delete: softDelete,
-    getVersion,
+    getVersion: Effect.fn(`${type}.getVersion`)(function* (id: string, version: bigint) {
+      return yield* chain.getVersion(id, version);
+    }),
     compare,
     restoreVersion,
-    history,
+    history: Effect.fn(`${type}.history`)(function* (id: string, limit?: number) {
+      return yield* chain.history(id, limit);
+    }),
   };
 };
