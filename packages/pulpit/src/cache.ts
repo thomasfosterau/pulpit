@@ -31,12 +31,17 @@
  *   read as a miss.
  * - **A TTL backstop.** Every write carries the configured TTL, so an entry
  *   no write ever evicted still expires.
- * - **No locale keys yet.** It keeps one entry per id, so a `set` that names
- *   a locale (a localised leaf's read-through fill, pulpit#184; locale keys
- *   are pulpit#271) evicts the
- *   id at its version instead of caching: a localised leaf served through
- *   this cache is never cached, rather than answered from another locale's
- *   entry.
+ * - **Locale keys under one generation** (pulpit#271). A localised leaf's
+ *   entry (a `set` or `get` that names a locale, pulpit#184) lives at its own
+ *   `(id, locale)` key, and the id's own key holds the **generation**: the
+ *   rank of the newest write the id has seen. A locale `set` raises the
+ *   generation first, with the same conditional write, and writes its entry
+ *   only if that succeeded; a locale entry is served only while its rank
+ *   equals the generation. So a fill behind the id's version, in any locale,
+ *   is a no-op, a newer version in one locale retires every other locale's
+ *   entry, an eviction wins a tie in every locale, and `delete`, which raises
+ *   the generation, evicts every locale with one conditional write. An id's
+ *   unlocalised entry is the generation key's own value, exactly as before.
  * - **Never fails.** A KV failure reads as a miss and skips a write: the
  *   cache is an optimisation, and the store stays the source of truth.
  *
@@ -137,9 +142,15 @@ export interface ResourceCache<Resource, R> extends ResourceCacheSeam<Resource, 
   /**
    * The cached resource for `id`: none on a miss, an eviction, a value that
    * no longer decodes (evicted at its version) or one the policy no longer
-   * serves (evicted likewise). Never fails.
+   * serves (evicted likewise). On a localised leaf `locale` names the entry
+   * (since 0.2.0, pulpit#271), served only while it speaks for the id's
+   * newest version. Never fails.
    */
-  readonly get: (id: string) => Effect.Effect<Option.Option<Resource>, never, R>;
+  readonly get: (
+    id: string,
+    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter is `?: T | undefined` (AGENTS.md → Conventions); the omitted argument is "no locale"
+    locale?: string | undefined,
+  ) => Effect.Effect<Option.Option<Resource>, never, R>;
 }
 
 /**
@@ -184,6 +195,11 @@ export const makeResourceCache = <Resource, E, R>(
   const encode = Schema.encodeOption(options.schema);
   const decode = Schema.decodeUnknownOption(options.schema);
   const keyOf = (id: string) => `${prefix}${id}`;
+  // A locale entry's key: the id's key, the ASCII unit separator, the locale.
+  // An id holding U+001F could collide with another id's locale key; node ids
+  // (UUIDs, slugs) never do.
+  const localeKeyOf = (id: string, locale: string) => `${keyOf(id)}\u001f${locale}`;
+  const valueRank = (version: bigint) => version * 2n;
 
   /**
    * The conditional write at the entry's rank (`2·version`, plus one for a
@@ -200,29 +216,86 @@ export const makeResourceCache = <Resource, E, R>(
     );
   const evict = (id: string, version: bigint) => write(id, version, Option.none());
 
+  /**
+   * A locale entry's write: raise the id's generation to this version's value
+   * rank first (no value: the generation carries the rank alone, and an
+   * eviction already at this version outranks it), then write the entry at
+   * the same rank, a tombstone rank when it isn't serveable. Nothing is
+   * written to the entry when the generation is ahead, or its write failed.
+   */
+  const setLocale = (
+    id: string,
+    locale: string,
+    version: bigint,
+    encoded: Option.Option<Schema.Json>,
+  ) =>
+    Effect.gen(function* () {
+      const current = yield* Effect.orElseSucceed(
+        kv.putIfNotBehind(
+          keyOf(id),
+          { version: valueRank(version), value: Option.none() },
+          tombstoneTtl,
+        ),
+        () => false,
+      );
+      if (!current) return;
+      yield* Effect.ignore(
+        kv.putIfNotBehind(
+          localeKeyOf(id, locale),
+          { version: valueRank(version) + (Option.isNone(encoded) ? 1n : 0n), value: encoded },
+          Option.isNone(encoded) ? tombstoneTtl : ttl,
+        ),
+      );
+    });
+
   // oxlint-disable-next-line effect/prefer-option-over-null -- the seam's optional `locale` parameter, `?: T | undefined` (AGENTS.md → Conventions)
   const set = (id: string, resource: Resource, version: bigint, locale?: string | undefined) => {
-    // A localised entry evicts instead: this cache keys one entry per id, so
-    // caching a locale under it could answer another locale's reader
-    // (pulpit#184). Fail safe: a localised leaf through it is never cached.
-    if (locale !== undefined) return evict(id, version);
     // Refuse (and evict) what the policy doesn't serve, or what doesn't encode.
     const encoded = serveable(resource) ? encode(resource) : Option.none();
-    return write(id, version, encoded);
+    return locale === undefined
+      ? write(id, version, encoded)
+      : setLocale(id, locale, version, encoded);
   };
 
-  const get = (id: string) =>
+  const read = (key: string) => Effect.orElseSucceed(kv.get(key), () => Option.none<KvEntry>());
+
+  /** Serve a stored value, or evict it (with `evictIt`) when it no longer decodes or serves. */
+  const serve = (entry: KvEntry, evictIt: Effect.Effect<void, never, R>) =>
     Effect.gen(function* () {
-      const stored = yield* Effect.orElseSucceed(kv.get(keyOf(id)), () => Option.none<KvEntry>());
-      if (Option.isNone(stored) || Option.isNone(stored.value.value))
-        return Option.none<Resource>();
-      const resource = decode(stored.value.value.value);
+      if (Option.isNone(entry.value)) return Option.none<Resource>();
+      const resource = decode(entry.value.value);
       if (Option.isNone(resource) || !serveable(resource.value)) {
         // Decode or evict, and never serve what the policy now refuses (CACHE-AUTH-005).
-        yield* evict(id, stored.value.version / 2n);
+        yield* evictIt;
         return Option.none<Resource>();
       }
       return resource;
+    });
+
+  // oxlint-disable-next-line effect/prefer-option-over-null -- the optional `locale` parameter, `?: T | undefined` (AGENTS.md → Conventions)
+  const get = (id: string, locale?: string | undefined) =>
+    Effect.gen(function* () {
+      const generation = yield* read(keyOf(id));
+      if (Option.isNone(generation)) return Option.none<Resource>();
+      if (locale === undefined) {
+        return yield* serve(generation.value, evict(id, generation.value.version / 2n));
+      }
+      // A locale entry speaks for the id only at the generation's own value rank.
+      const entry = yield* read(localeKeyOf(id, locale));
+      if (Option.isNone(entry) || entry.value.version !== generation.value.version) {
+        return Option.none<Resource>();
+      }
+      const version = entry.value.version / 2n;
+      return yield* serve(
+        entry.value,
+        Effect.ignore(
+          kv.putIfNotBehind(
+            localeKeyOf(id, locale),
+            { version: valueRank(version) + 1n, value: Option.none() },
+            tombstoneTtl,
+          ),
+        ),
+      );
     });
 
   return { set, delete: evict, get };

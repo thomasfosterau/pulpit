@@ -319,53 +319,74 @@ describe("a localised leaf's cache, keyed by locale", () => {
     expect(cache.versionOf(after.id)).toEqual(Option.some(1n));
   });
 
-  it("keeps one compare-on-set version per id across its locales (pulpit#121)", () => {
-    const cache = makeInMemoryResourceCache<string>((resource) => resource !== "secret");
-    Effect.runSync(
-      Effect.gen(function* () {
-        yield* cache.set("p", "hello", 1n, "en");
-        yield* cache.set("p", "bonjour", 1n, "fr");
-        yield* cache.set("p", "secret", 1n, "de");
-      }),
-    );
-    expect([cache.get("p", "en"), cache.get("p", "fr"), cache.get("p", "de")]).toEqual([
-      Option.some("hello"),
-      Option.some("bonjour"),
-      Option.none(),
-    ]);
-    Effect.runSync(
-      Effect.gen(function* () {
-        yield* cache.set("p", "hi", 2n, "en");
-        // A fill that read version 1 is behind the id's version now, in any locale.
-        yield* cache.set("p", "bonjour", 1n, "fr");
-      }),
-    );
-    expect([cache.get("p", "en"), cache.get("p", "fr"), cache.get("p")]).toEqual([
-      Option.some("hi"),
-      Option.none(),
-      Option.none(),
-    ]);
-    Effect.runSync(cache.delete("p", 3n));
-    expect([cache.get("p", "en"), cache.versionOf("p")]).toEqual([Option.none(), Option.some(3n)]);
-  });
+  /** The two caches the locale rules are checked on: the fake and `./cache`'s reference cache (pulpit#271). */
+  const caches = [
+    {
+      label: "the in-memory fake",
+      make: () => {
+        const cache = makeInMemoryResourceCache<string>((resource) => resource !== "secret");
+        return {
+          set: cache.set,
+          delete: cache.delete,
+          // oxlint-disable-next-line effect/prefer-option-over-null -- the caches' optional `locale` parameter, `?: T | undefined` (AGENTS.md → Conventions)
+          get: (id: string, locale?: string | undefined) => Effect.succeed(cache.get(id, locale)),
+        };
+      },
+    },
+    {
+      label: "./cache's makeResourceCache",
+      make: () =>
+        makeResourceCache({
+          kv: makeInMemoryVersionedKv(),
+          schema: Schema.String,
+          serveable: (resource) => resource !== "secret",
+          prefix: "pages:v1:",
+          ttlSeconds: 60,
+        }),
+    },
+  ] as const;
 
-  it("is never cached by ./cache's reference cache, which keys one entry per id", () => {
-    const cache = makeResourceCache({
-      kv: makeInMemoryVersionedKv(),
-      schema: Schema.String,
-      serveable: () => true,
-      prefix: "pages:v1:",
-      ttlSeconds: 60,
-    });
-    const [localised, plain] = Effect.runSync(
-      Effect.gen(function* () {
-        yield* cache.set("p", "bonjour", 1n, "fr");
-        const localised = yield* cache.get("p");
-        yield* cache.set("q", "hello", 1n);
-        return [localised, yield* cache.get("q")] as const;
-      }),
-    );
-    expect(localised).toEqual(Option.none());
-    expect(plain).toEqual(Option.some("hello"));
-  });
+  it.each(caches)(
+    "keeps one compare-on-set version per id across its locales (pulpit#121) — $label",
+    ({ make }) => {
+      const cache = make();
+      /** Each locale's read, `Option.none()` for the id's unlocalised entry. */
+      const read = (locales: ReadonlyArray<Option.Option<string>>) =>
+        Effect.runSync(
+          Effect.forEach(locales, (locale) => cache.get("p", Option.getOrUndefined(locale)), {
+            concurrency: 1,
+          }),
+        );
+      const tags = (...locales: ReadonlyArray<string>) => Arr.map(locales, Option.some);
+      Effect.runSync(
+        Effect.gen(function* () {
+          yield* cache.set("p", "hello", 1n, "en");
+          yield* cache.set("p", "bonjour", 1n, "fr");
+          yield* cache.set("p", "secret", 1n, "de");
+        }),
+      );
+      expect(read(tags("en", "fr", "de"))).toEqual([
+        Option.some("hello"),
+        Option.some("bonjour"),
+        Option.none(),
+      ]);
+      Effect.runSync(
+        Effect.gen(function* () {
+          yield* cache.set("p", "hi", 2n, "en");
+          // A fill that read version 1 is behind the id's version now, in any locale.
+          yield* cache.set("p", "bonjour", 1n, "fr");
+        }),
+      );
+      expect(read([...tags("en", "fr"), Option.none()])).toEqual([
+        Option.some("hi"),
+        Option.none(),
+        Option.none(),
+      ]);
+      Effect.runSync(cache.delete("p", 3n));
+      expect(read(tags("en", "fr"))).toEqual([Option.none(), Option.none()]);
+      // A write at the evicted id's next version caches again, in its own locale only.
+      Effect.runSync(cache.set("p", "salut", 4n, "fr"));
+      expect(read(tags("fr", "en"))).toEqual([Option.some("salut"), Option.none()]);
+    },
+  );
 });
