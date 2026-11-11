@@ -45,6 +45,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./discovery` | Discovery (`defineDiscovery`): the keyset-paged feed and sitemap enumeration of a leaf's anonymously readable, publicly serveable, live, routable nodes, the per-family metadata projection, and the purge-hint after hook (`purgeHintHook`). |
 | `./social` | The social graph (`defineSocial` over a `SocialStore` seam): follow, mute and block between accounts, the follower seam filled from it (`socialFollowers`), and the opt-in read filter over the authors a viewer silenced. |
 | `./audience` | Audiences (`defineAudience` over a `MembershipStore` seam): named groups a row can be shared with (the `group` visibility), who manages and who may leave them, and the audience seam filled from them (`audienceSeam`). |
+| `./relations` | UGC relation patterns over `./edges` and `./collections`: reshares whose hidden target shows as a placeholder (`defineReshares`), accepted answers gated on the question (`acceptedAnswerGate`), an edge gate on one end's node (`nodeWriteGate`), and credit-only bylines. |
 | **Media** |  |
 | `./blobs` | File and media leaves: the `BlobStore` seam keyed by content hash, the file field spread, the commit-ordered byte write (`defineFileWrites`, with its `bytesPending` marker) and the usage index's edge ends. |
 | **Erasure** |  |
@@ -1127,6 +1128,72 @@ const hooks = { before: [], after: [purgeHintHook({ publishGated: true, emit: pu
 | `DiscoveryMetadata`, `DiscoveryImage`, `lastModified` | The metadata projection and the sitemap's `lastmod`. |
 | `purgeHintHook(options)`, `PurgeHint` | The purge-hint after hook and its event. |
 | `DiscoveryDeclarationError` | The defect for a feed column that doesn't order. |
+
+## `./relations`
+
+Three UGC relation patterns (pulpit#200), after gardeneria's posts (`sharedId`), questions and answers, and `blog_post_authors`. Each is a recipe over `./edges` or `./collections` plus a small helper; none adds a read rule, so every node is read through its own leaf's gate.
+
+```ts
+import { defineEdgeOps } from "@thomasfosterau/pulpit/edges";
+import { defineCollection } from "@thomasfosterau/pulpit/collections";
+import {
+  acceptedAnswerGate,
+  defineReshares,
+  nodeWriteGate,
+} from "@thomasfosterau/pulpit/relations";
+
+// A reshare: an edge family with one target per sharing post, written by whoever may write the post.
+const reshareEdges = defineEdgeOps({
+  type: "reshares",
+  ends: {
+    sharer: { column: "sharerId", type: "posts", access, nodes: postLeaves, maxEdges: 1 },
+    target: { column: "targetId", type: "posts", access, nodes: postLeaves },
+  },
+  writeGate: nodeWriteGate("sharerId", "posts", posts),
+  …
+});
+const reshares = defineReshares({
+  type: "reshares",
+  sharer: posts,
+  target: posts,
+  edges: reshareStore,
+  sharerColumn: "sharerId",
+  targetColumn: "targetId",
+});
+reshares.targetOf(postId); // Option<{ _tag: "Visible", target } | { _tag: "Unavailable" }>
+reshares.targetsOf(pageOfPostIds); // the same, for a feed page, in three bounded reads
+
+// An accepted answer: one per question, written by the question's writer, for one of its own answers.
+const accepted = defineEdgeOps({
+  type: "accepted-answers",
+  ends: {
+    question: { column: "questionId", type: "questions", access, nodes: questionLeaves, maxEdges: 1 },
+    answer: { column: "answerId", type: "answers", access, nodes: answerLeaves },
+  },
+  writeGate: acceptedAnswerGate({
+    questionType: "questions",
+    questions,
+    questionColumn: "questionId",
+    answerColumn: "answerId",
+    answers: answerLeaves,
+    parentColumn: "questionId", // the answer view's column naming its question
+  }),
+  …
+});
+
+// A byline: the post's credited authors, in order, over the app's profile leaf.
+const byline = defineCollection({ type: "post-authors", parent: posts, members: profiles, store });
+```
+
+- **Reshares** (owner decision on pulpit#200). The reshare edge family keeps `EDGE-001`: its `list` and `get` hide an edge whose target the viewer can't read, and its `create` refuses a target the writer can't read. A reshare of a node that has _since_ become unreadable is still shown, as a placeholder: `defineReshares` reads the stored edge itself, outside `EDGE-001`, for a sharing node the viewer can read (`NodeNotFound` otherwise, as its `get`), and answers the target through the target leaf's own `getMany`, so a private, draft, unpublished or tombstoned target is `{ _tag: "Unavailable" }`, carrying neither its id nor its content. What a reader of the sharing node learns is only that it reshared _something_. A target that has been purged leaves no edge (its row is gone), so the post reads as resharing nothing. A quote is the same family with a body on the sharing node.
+- **Accepted answers.** `acceptedAnswerGate` runs after `./edges` has checked that the viewer can read both ends. It is the question's own write gate (`authorize`: its owner or the moderate rung on an owned question, the corpus-write rung on a reference one), then the constraint that the answer's `parentColumn` names the question (`AnswerNotOfQuestion`, 422, otherwise; only a writer of the question learns it). `maxEdges: 1` at the question holds one accepted answer; changing it is a delete (gated the same way) and a create.
+- **Bylines are credit only** (owner decision on pulpit#200). They are an ordered collection (`./collections`) of the accounts' profile nodes, read through the profile leaf's own gate and written through the post's write gate. A credited co-author gets no write right: the post's `requireWriter` reads the owner record, never the byline, so a co-author's `update` is `Forbidden`, and so is their edit of the byline.
+
+| Export | What it is |
+| --- | --- |
+| `defineReshares(definition)`, `ReshareDefinition`, `ReshareOps`, `ReshareTarget` | The reshare reads: the target through its own gate, or the placeholder. |
+| `nodeWriteGate(column, type, leaf)` | An edge write gate admitting whoever may write the node at one end. |
+| `acceptedAnswerGate(declaration)`, `AcceptedAnswerDeclaration`, `AnswerNotOfQuestion` | The accepted-answer write gate and its 422. |
 
 ## `./testing`
 
