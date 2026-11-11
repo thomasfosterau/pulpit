@@ -9,7 +9,3 @@ rules:
       # cooldown, which counts whole days, waits 1 — longer than pnpm, so a
       # Dependabot PR never proposes a version pnpm would refuse.
       days: 1
-  self-repository:
-    # `./.github/actions/setup` is the documented local-action path; the
-    # `$/` spelling buys nothing for a single-repo composite action.
-    disable: true
