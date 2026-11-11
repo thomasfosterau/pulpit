@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Pages`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`, `Cache`, `Collections`, `Links`, `Social`, `Discovery`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Pages`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`, `Cache`, `Collections`, `Links`, `Social`, `Discovery`, `Notifications`). |
 | **Content model** |  |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`, `localised`) and `validateRegistry`. |
@@ -48,6 +48,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./social` | The social graph (`defineSocial` over a `SocialStore` seam): follow, mute and block between accounts, the follower seam filled from it (`socialFollowers`), and the opt-in read filter over the authors a viewer silenced. |
 | `./audience` | Audiences (`defineAudience` over a `MembershipStore` seam): named groups a row can be shared with (the `group` visibility), who manages and who may leave them, and the audience seam filled from them (`audienceSeam`). |
 | `./relations` | UGC relation patterns over `./edges` and `./collections`: reshares whose hidden target shows as a placeholder (`defineReshares`), accepted answers gated on the question (`acceptedAnswerGate`), an edge gate on one end's node (`nodeWriteGate`), and credit-only bylines. |
+| `./notifications` | Notifications (`defineNotifications`): an outbox of content events written in the triggering write's own transaction (`notificationHook` on a chain write, `emitting` around any other write), the kernel kinds derived from comments, moderation, reports, proposals, follows and mentions, a fan-out gated on each subject's read, mute, block and per-account preferences, an inbox, and a delivery seam. |
 | **Media** |  |
 | `./blobs` | File and media leaves: the `BlobStore` seam keyed by content hash, the file field spread, the commit-ordered byte write (`defineFileWrites`, with its `bytesPending` marker) and the usage index's edge ends. |
 | **Erasure** |  |
@@ -56,7 +57,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | **Discovery and search** |  |
 | `./search` | Hybrid search: reciprocal rank fusion (`fuseRankings`), a reranker seam, `hybridSearch` over `SearchBranch` seams that each apply the leaf's read scope, and the embedding pipeline (`enqueueEmbeddings`, `embedPending`, `sweepEmbeddings`) over `EmbeddingStore` and `Embedder` seams. |
 | **Testing** |  |
-| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy, purge, account-erasure, embedding, reaction, collection, social and membership stores, the budget counter and write counts, a versioned KV, an endpoint view, a follower seam, a search branch and its scope check), for tests only. Not on the root export. |
+| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy, purge, account-erasure, embedding, reaction, collection, social, membership, outbox, inbox and preference stores, the budget counter and write counts, a versioned KV, an endpoint view, a follower seam, a search branch and its scope check), for tests only. Not on the root export. |
 
 **Discovery and search** is also `./subtype`'s searchable projection, read scope and hit hydration (see [Search](#subtype) under `./subtype`), which `./search` builds on. **Localisation** is the version chain's locale level (`./version-chain`, `./subtype`'s `getLocalised` and `./filter`'s `locale` arm), not a module of its own.
 
@@ -1355,6 +1356,66 @@ const nightly = Effect.gen(function* () {
 | `LineageColumns`, `defaultLineageColumns`, `LocaleLineage`, `TranslationMethod`, `lineageOf`, `lineagePatch` | The lineage columns, their default names, a read lineage, its method, and its read and write. |
 | `humanLineageHook(declaration)`, `stampHumanLineage` | The before hook that marks a person's edit, and its pure transform. |
 
+## `./notifications`
+
+Notifications (pulpit#197), after gardeneria's `packages/jobs/src/notifications/` queue and its `social.notification_preferences`: the kernel owns _who is told what_; the application owns _how it is delivered_ (web-push, APNs, FCM, email) and the copy.
+
+```ts
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import {
+  commentRepliedHook,
+  contentFlagged,
+  defineNotifications,
+  emitting,
+  socialSuppression,
+  subjectGateFromGet,
+} from "@thomasfosterau/pulpit/notifications";
+
+// In the write: a comment leaf's before hooks gain the reply event…
+const hooks = {
+  before: [moderationHook(declaration, policy), commentRepliedHook({ outbox, authorOf })],
+  after: [],
+};
+// …and a write that appends no version emits inside the same transaction.
+const file = (input) =>
+  transact(
+    emitting(outbox, reports.file(input), contentFlagged({ reports: reportStore, moderators })),
+  );
+
+// Out of band: the sweep fans the outbox out.
+const notifications = defineNotifications({
+  outbox,
+  inbox,
+  preferences,
+  delivery, // the application's transports
+  subjects: {
+    posts: subjectGateFromGet(posts.get, asRecipient),
+    comments: subjectGateFromGet(comments.get, asRecipient),
+  },
+  suppression: Option.some(socialSuppression(socialStore)),
+  defaults: { channels: ["push"], mutedKinds: [] },
+  viewer,
+});
+const sweep = Effect.gen(function* () {
+  return yield* notifications.sweep(500); // { processed, delivered, suppressed }
+});
+```
+
+- **The outbox is written by the write that causes it, in its transaction.** A chain write emits through a before hook (`notificationHook`, the place `./subtype` reserves for an outbox): a refusing hook after it, a lost race at the append or any later failure rolls the event back with the write. A write that appends no version (a report, a proposal's decision, a follow) emits through `emitting(outbox, write, derive)`, run inside the transaction that runs `write`. A draft addressed to its own actor is dropped.
+- **The kernel kinds** (`KernelNotificationKind`), each a ready derivation: `comment.replied` (`commentRepliedHook`, the parent's author), `comment.moderated` (`moderationDecidedHook`, a move to `approved` or `rejected` notifies the owner), `content.flagged` (`contentFlagged`, each moderator), `proposal.decided` (`proposalDecided`, the author of an accepted or rejected proposal), `follow.created` (`followCreated`), and `mention.created` (`mentionDrafts`; pulpit#198 extracts the mentions). An application adds its own kinds by widening `Kind`.
+- **Fan-out reads the outbox oldest first, in bounded batches** (`sweep(limit)`, clamped to `MAX_PAGE_LIMIT`, `PERF-DB-001`). Per event, the recipient gets an inbox entry and a delivery on each channel they enabled, unless they muted the kind, they and the actor are muted or blocked (`socialSuppression`, `./social`), or **they can't read the subject**: each node subject is checked through its leaf's own `get`, run as the recipient (`subjectGateFromGet`), so nobody is told about a node they can't read (`SEC-AUTH-ENUM-001`). The gate is read at fan-out, once: a subject unreadable then (a reply still `pending` review, say) is dropped for good. A node subject whose type has no declared gate is dropped (fail closed); an account subject (a new follower) is not gated.
+- **At-least-once.** The batch is marked processed after its deliveries, so a sweep that stops part-way re-delivers the unprocessed events; `deliver` gets the event, whose `id` is the transport's idempotency key, and the inbox is keyed by it, so a re-run adds no second entry.
+- **The inbox is the viewer's own**: `inbox({ unreadOnly, limit, offset })` newest first, `markRead(ids)` (another account's ids change nothing), `unreadCount`, and `preferences` / `setPreferences` (the declared defaults until set). Each fails `Unauthorized` when anonymous.
+
+| Export | What it is |
+| --- | --- |
+| `defineNotifications(definition)`, `NotificationsDefinition`, `NotificationOps`, `SweepSummary` | The factory, its declaration, the sweep and the inbox operations. |
+| `notificationHook(options)`, `emitting(outbox, write, derive)` | The two ways a write emits, both inside its transaction. |
+| `commentRepliedHook`, `moderationDecidedHook`, `contentFlagged`, `proposalDecided`, `followCreated`, `mentionDrafts` | The kernel kinds' derivations. |
+| `KernelNotificationKind`, `NotificationDraft`, `NotificationEvent`, `NotificationSubject` (`nodeSubject`, `accountSubject`), `InboxEntry`, `NotificationPreferences` | The vocabulary. |
+| `OutboxStore`, `InboxStore`, `PreferenceStore`, `DeliverySeam`, `SubjectGate` (`subjectGateFromGet`), `SocialSuppression` (`socialSuppression`) | The seams (see [Seams](#seams)). |
+
 ## `./testing`
 
 In-memory fakes of the kernel's seams, for tests: an adapter's or an application's suite can run the real operations (`defineVersionChain`, `defineSubtype`, `defineEdgeOps`, …) over them without a database. Each fake implements its seam's contract as stated under [Seams](#seams), in memory and with no SQL, and enforces what the real table's schema enforces (a primary or unique key) and nothing the operations are responsible for. They are the fakes the kernel's own suites run against, so they are its reference semantics for each seam.
@@ -1734,6 +1795,14 @@ Filled by the application over its own membership table (in-the-dark's `group_me
 ### `GroupOwnerStore<E, R>`: the groups' owners
 
 Filled by the application over its own group table (in-the-dark's `groups.owner_id`), the same records `GroupOwnership.ownerOf` reads, for account erasure (pulpit#274). `reassignOwner(accountId, to, limit)` makes `to` the owner of at most `limit` of the groups `accountId` owns and returns how many changed (`UPDATE groups SET owner_id = $to WHERE id IN (SELECT id … WHERE owner_id = $accountId ORDER BY id LIMIT $limit)`, `PERF-DB-001`). A reassigned group no longer names the account, so a repeated call moves on and answers `0` once none is left. It leaves the group's memberships and invitations alone, applies no policy and never opens a transaction.
+
+### `OutboxStore<Kind, E, R>`, `InboxStore<Kind, E, R>` and `PreferenceStore<E, R>`: the notification tables
+
+The outbox is one row per event, `(id, kind, recipient_id, actor_id, subject_tag, subject_type, subject_id, at, processed_at)`: `enqueue` inserts the drafts in the caller's transaction (never its own: that is what makes a rolled-back write notify nobody), minting each id; `pending(limit)` reads the unprocessed rows oldest first (`ORDER BY at, id LIMIT $limit`, an index on `(processed_at, at, id)`); `markProcessed(ids)` stamps them, idempotently. The inbox is keyed by the event's id (one recipient per event): `add` is `INSERT … ON CONFLICT (event_id) DO NOTHING` and answers whether a row went in; `list` pages a recipient's entries newest first (`at DESC, id DESC`) with the unpaged total, optionally unread only; `markRead(recipient, ids, at)` stamps only that recipient's unread entries among `ids` and answers how many; `unreadCount` counts. The preference table is keyed by account (`channels text[]`, `muted_kinds text[]`); `get` answers none for an account that never set any. None of the three applies policy or opens a transaction; each fails only with its `E`.
+
+### `DeliverySeam<Kind, E, R>` and `SubjectGate<E, R>`: delivery and the subject's read
+
+`deliver(channel, event)` sends one notification on one of the application's channels (`push`, `email`, …): rendering the copy and choosing the transport are the application's. Delivery is at-least-once, so the transport dedups by `event.id`. A `SubjectGate` answers whether a recipient may read a node: build it with `subjectGateFromGet(leaf.get, asRecipient)`, where `asRecipient(recipientId)` runs an effect as that account (the application provides its viewer for it), so the leaf's own read rule decides and nothing re-spells it.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 

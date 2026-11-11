@@ -63,6 +63,7 @@
     "./discovery": "./src/discovery.ts",
     "./relations": "./src/relations.ts",
     "./translation": "./src/translation.ts",
+    "./notifications": "./src/notifications.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -182,6 +183,10 @@
       "./translation": {
         "types": "./dist/translation.d.ts",
         "default": "./dist/translation.js"
+      },
+      "./notifications": {
+        "types": "./dist/notifications.d.ts",
+        "default": "./dist/notifications.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",
