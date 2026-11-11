@@ -13,7 +13,7 @@
  */
 
 import { describe, expect, it } from "vite-plus/test";
-import * as Array from "effect/Array";
+import * as Arr from "effect/Array";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -118,7 +118,7 @@ describe("registry — derived wire identity", () => {
   });
 
   it("keeps the two trust-model subsets disjoint", () => {
-    expect(Array.intersection(wire.owned, wire.referenceData)).toEqual([]);
+    expect(Arr.intersection(wire.owned, wire.referenceData)).toEqual([]);
   });
 
   it("flaggedMembers / branchMembers return the resources themselves, typed as the member tuple", () => {

@@ -49,12 +49,12 @@
 
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
-import * as Equal from "effect/Equal";
+import * as Eq from "effect/Equal";
 import * as Formatter from "effect/Formatter";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
-import * as Predicate from "effect/Predicate";
-import * as Record from "effect/Record";
+import * as P from "effect/Predicate";
+import * as R from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { BoundBudget } from "./budgets.ts";
@@ -162,11 +162,11 @@ const stamps = (
 ): ChainPatch => ({
   ...Option.match(declaration.moderatedAtColumn, {
     onNone: () => ({}),
-    onSome: (column) => Record.singleton(column, now),
+    onSome: (column) => R.singleton(column, now),
   }),
   ...Option.match(declaration.moderatedByColumn, {
     onNone: () => ({}),
-    onSome: (column) => Record.singleton(column, account.id),
+    onSome: (column) => R.singleton(column, account.id),
   }),
 });
 
@@ -175,7 +175,7 @@ const carried = (event: BeforeWriteEvent, declaration: ModerationDeclaration): C
   Option.match(event.prior, {
     onNone: () => ({}),
     onSome: (prior) =>
-      Record.fromEntries(
+      R.fromEntries(
         Arr.map(
           [
             declaration.column,
@@ -194,7 +194,7 @@ const touchesReview = (event: BeforeWriteEvent, declaration: ModerationDeclarati
       onNone: () => false,
       onSome: (next) =>
         !Option.exists(event.prior, (prior) =>
-          Option.exists(valueOf(prior.state, column), (before) => Equal.equals(before, next)),
+          Option.exists(valueOf(prior.state, column), (before) => Eq.equals(before, next)),
         ),
     }),
   );
@@ -262,7 +262,7 @@ const decided = (decision: {
   if (Option.isNone(moderator)) return Result.fail(`${column} is the moderate rung's to change`);
   if (!isModerationState(asked) || !isModerationTransition(decision.from, asked)) {
     return Result.fail(
-      `${column} can't move to ${Predicate.isString(asked) ? asked : Formatter.format(asked)}`,
+      `${column} can't move to ${P.isString(asked) ? asked : Formatter.format(asked)}`,
     );
   }
   return Result.succeed(
@@ -457,7 +457,7 @@ export const gradeScores = (
   thresholds: { readonly [category: string]: number },
   defaultThreshold: number = DEFAULT_MODERATION_THRESHOLD,
 ): ModerationGrade => {
-  const entries = Record.toEntries(scores.categoryScores);
+  const entries = R.toEntries(scores.categoryScores);
   const breaches = Arr.filter(
     entries,
     ([category, score]) => score > (thresholds[category] ?? defaultThreshold),

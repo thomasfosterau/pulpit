@@ -26,7 +26,7 @@ import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Record from "effect/Record";
+import * as R from "effect/Record";
 import { describe, expect, it } from "vite-plus/test";
 import { isPubliclyServeable } from "../src/publication.ts";
 import {
@@ -154,12 +154,12 @@ describe("isPubliclyServeable ≡ Cacheability.publiclyServeable (CACHE-AUTH-005
   /* oxlint-disable effect/prefer-option-over-null -- a cached resource's attributes arrive as JSON: `null`, an explicit `undefined` and an absent key are three inputs the gate must each refuse or admit */
   /** An attribute value, or `ABSENT` for a key the attributes omit. */
   type Cell = string | boolean | null | undefined | typeof ABSENT;
-  type Attributes = Record.ReadonlyRecord<string, string | boolean | null | undefined>;
+  type Attributes = R.ReadonlyRecord<string, string | boolean | null | undefined>;
   /* oxlint-enable effect/prefer-option-over-null */
   const ABSENT: unique symbol = Symbol("absent");
   const attributesOf = (entries: ReadonlyArray<readonly [string, Cell]>): Attributes =>
-    Arr.reduce(entries, Record.empty<string, Attributes[string]>(), (acc, [key, value]) =>
-      value === ABSENT ? acc : Record.set(acc, key, value),
+    Arr.reduce(entries, R.empty<string, Attributes[string]>(), (acc, [key, value]) =>
+      value === ABSENT ? acc : R.set(acc, key, value),
     );
 
   const draftValues: ReadonlyArray<Cell> = [ABSENT, undefined, false, true, null];

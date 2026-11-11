@@ -83,8 +83,8 @@ import * as Formatter from "effect/Formatter";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
-import * as Predicate from "effect/Predicate";
-import * as Record from "effect/Record";
+import * as P from "effect/Predicate";
+import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 import {
   always,
@@ -123,7 +123,7 @@ import { NodeNotFound, type ColumnValue } from "./version-chain.ts";
 
 /** A column value as text for an error: a string as itself, anything else formatted (never `[object Object]`). */
 const columnText = (value: ColumnValue): string =>
-  Predicate.isString(value) ? value : Formatter.format(value);
+  P.isString(value) ? value : Formatter.format(value);
 
 // ── Errors ────────────────────────────────────────────────────────────
 
@@ -345,7 +345,7 @@ export const endpointFilter = <Following, E, R>(
   const scope = readScopeFor(viewer, policy, followers);
   const lifecycle = Option.exists(viewer, policy.canViewDeleted) ? always : liveFilter<Following>();
   return and<Following>(
-    ...Record.toEntries(ends).map(([alias, end]) =>
+    ...R.toEntries(ends).map(([alias, end]) =>
       qualify(
         alias,
         and<Following>(
@@ -361,9 +361,7 @@ export const endpointFilter = <Following, E, R>(
 
 /** Every end's node is live, over the columns {@link endpointColumn} names: the cardinality count's other arm. */
 const liveEndsFilter = <Following, E, R>(ends: EdgeEnds<E, R>): ListFilter<Following> =>
-  and<Following>(
-    ...Record.toEntries(ends).map(([alias]) => qualify(alias, liveFilter<Following>())),
-  );
+  and<Following>(...R.toEntries(ends).map(([alias]) => qualify(alias, liveFilter<Following>())));
 
 // ── The write gate ────────────────────────────────────────────────────
 
@@ -671,7 +669,7 @@ const boundOf = (
   Option.match(Option.fromNullishOr(values[column]), {
     onNone: () => Option.some(Option.none<Date>()),
     onSome: (value) =>
-      Predicate.isDate(value) && !Number.isNaN(value.getTime())
+      P.isDate(value) && !Number.isNaN(value.getTime())
         ? Option.some(Option.some(value))
         : Option.none(),
   });
@@ -857,7 +855,7 @@ const declarationProblem = <E, R>([alias, end]: readonly [string, EdgeEnd<E, R>]
 
 /** Throw {@link EdgeDeclarationError} on the first malformed end. */
 const validateEnds = <E, R>(type: string, ends: EdgeEnds<E, R>): void => {
-  const problem = Arr.findFirst(Record.toEntries(ends), declarationProblem);
+  const problem = Arr.findFirst(R.toEntries(ends), declarationProblem);
   if (Option.isSome(problem)) {
     throw new EdgeDeclarationError({ message: `${type}: ${problem.value}` });
   }
@@ -900,14 +898,14 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
       });
     }
   }
-  const endEntries = Record.toEntries(ends);
+  const endEntries = R.toEntries(ends);
   const writeGate: EdgeWriteGate<E, R> = definition.writeGate ?? corpusWriteGate;
   const onConflict = definition.onConflict ?? "fail";
 
   /** The node `edge` names at `end`, if the viewer may read it; none for a missing or non-string id. */
   const readableNode = (end: EdgeEnd<E, R>, viewer: Viewer, edge: EdgeValues) => {
     const nodeId = edge[end.column];
-    return Predicate.isString(nodeId)
+    return P.isString(nodeId)
       ? Effect.flatMap(end.nodes.get(nodeId), (node) =>
           Effect.map(canViewEndpoint(end, viewer, policy, followers, node), (readable) =>
             readable ? node : Option.none(),
@@ -1109,7 +1107,7 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     end: string,
     otherIds: ReadonlyArray<string>,
   ) {
-    const member = Record.get(ends, end);
+    const member = R.get(ends, end);
     const others = endEntries.filter(([alias]) => alias !== end);
     const [other] = others;
     if (Option.isNone(member) || other === undefined || others.length !== 1) {
@@ -1151,7 +1149,7 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
   ) {
     const wanted = Arr.dedupe(ids);
     const zero = HashMap.fromIterable(Arr.map(wanted, (id) => [id, 0] as const));
-    const counted = Record.get(ends, end);
+    const counted = R.get(ends, end);
     // A misnamed end, no ids, or past MAX_SET_VALUES: every count 0, unread.
     if (
       Option.isNone(counted) ||

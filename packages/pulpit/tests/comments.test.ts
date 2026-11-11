@@ -19,7 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
-import * as Record from "effect/Record";
+import * as R from "effect/Record";
 import {
   canViewModerated,
   CommentDeclarationError,
@@ -214,7 +214,7 @@ const world = (maxDepth?: number) => {
   const whoReads = async (id: string, targetId: string, targetType = "posts") => {
     const sightings = await run(
       Effect.forEach(
-        Record.toEntries(readers),
+        R.toEntries(readers),
         ([name, who]) =>
           Effect.all(
             [
@@ -246,7 +246,7 @@ const world = (maxDepth?: number) => {
     );
     // `get` and `listByTarget` agree for every reader.
     expect(sightings.filter(({ got, listed }) => got !== listed)).toEqual([]);
-    return Record.fromEntries(
+    return R.fromEntries(
       sightings.filter(({ got }) => got).map(({ name }) => [name, true] as const),
     );
   };
@@ -322,7 +322,7 @@ describe("defineComments — the read gates", () => {
       actAs(as(moderator), terms.create({ id: Option.none(), state: { name: "Ferns" } })),
     );
     const id = await comment(target, { targetType: "terms" });
-    expect(Record.keys(await whoReads(id, target, "terms"))).toHaveLength(6);
+    expect(R.keys(await whoReads(id, target, "terms"))).toHaveLength(6);
   });
 
   it("commenting on a target the viewer can't read, or of an unknown type, is NodeNotFound", async () => {

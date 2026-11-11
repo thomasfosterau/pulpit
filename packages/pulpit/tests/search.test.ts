@@ -19,7 +19,7 @@ import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
+import * as P from "effect/Predicate";
 import { always, eq, never, type FilterRow, type ListFilter } from "../src/filter.ts";
 import {
   applyReranking,
@@ -134,7 +134,7 @@ describe("hybridSearch", () => {
     name: "text",
     rows: () => rows,
     score: (row, query) =>
-      Option.filter(Option.liftPredicate(row["title"] ?? null, Predicate.isString), (title) =>
+      Option.filter(Option.liftPredicate(row["title"] ?? null, P.isString), (title) =>
         title.includes(query),
       ).pipe(Option.map((title) => title.length)),
     now: NOW,

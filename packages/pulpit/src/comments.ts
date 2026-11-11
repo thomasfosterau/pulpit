@@ -46,7 +46,7 @@
 
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
+import * as P from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import { always, and, eq, or, type ListFilter } from "./filter.ts";
 import type { ModerationDeclaration } from "./moderation.ts";
@@ -133,7 +133,7 @@ export const canViewModerated = (
     viewer,
     (account) =>
       policy.canModerate(account) ||
-      (Predicate.isString(row[columns.authorColumn]) && row[columns.authorColumn] === account.id),
+      (P.isString(row[columns.authorColumn]) && row[columns.authorColumn] === account.id),
   );
 
 /**
@@ -312,7 +312,7 @@ export const defineComments = <Resource, Following, E, R>(
       }
       const targetType = row.value["targetType"];
       const targetId = row.value["targetId"];
-      if (!Predicate.isString(targetType) || !Predicate.isString(targetId)) {
+      if (!P.isString(targetType) || !P.isString(targetId)) {
         return yield* new NodeNotFound({ type, id });
       }
       // A comment on a target the viewer can't read is missing to them.
@@ -326,7 +326,7 @@ export const defineComments = <Resource, Following, E, R>(
   /** A row's stored depth: `0` for a top-level comment; a value that is no number reads as past every limit. */
   const depthOf = (row: LeafRow): number => {
     const depth = row["depth"];
-    return Predicate.isNumber(depth) ? depth : Number.POSITIVE_INFINITY;
+    return P.isNumber(depth) ? depth : Number.POSITIVE_INFINITY;
   };
 
   const create = Effect.fn(`${type}.comments.create`)(function* (input: CommentCreate) {

@@ -71,12 +71,12 @@
  * @since 0.1.0
  */
 
-import * as Array from "effect/Array";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
-import * as Equal from "effect/Equal";
+import * as Eq from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
-import * as Record from "effect/Record";
+import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 
 // ── Vocabulary ────────────────────────────────────────────────────────
@@ -421,7 +421,7 @@ export const MAX_HISTORY_LIMIT = 1000;
  */
 export const applyPatch = (state: ChainState, patch: ChainPatch) => ({
   ...state,
-  ...Record.filter(patch, (value): value is ColumnValue => value !== undefined),
+  ...R.filter(patch, (value): value is ColumnValue => value !== undefined),
 });
 
 /**
@@ -444,13 +444,13 @@ export const applyPatch = (state: ChainState, patch: ChainPatch) => ({
  * @since 0.1.0
  */
 export const applyLocalePatch = (locales: LocaleStates, patch: LocalePatch): LocaleStates =>
-  Record.reduce(patch, locales, (acc, change, locale) => {
+  R.reduce(patch, locales, (acc, change, locale) => {
     if (change === undefined) return acc;
-    if (change === null) return Record.remove(acc, locale);
+    if (change === null) return R.remove(acc, locale);
     return {
       ...acc,
       [locale]: applyPatch(
-        Option.getOrElse(Record.get(acc, locale), () => ({})),
+        Option.getOrElse(R.get(acc, locale), () => ({})),
         change,
       ),
     };
@@ -499,7 +499,7 @@ const changeOf = (
     return Option.map(after, (value): AttributeChange => ({ _tag: "added", after: value }));
   }
   if (Option.isNone(after)) return Option.some({ _tag: "removed", before: before.value });
-  return Equal.equals(before.value, after.value)
+  return Eq.equals(before.value, after.value)
     ? Option.none()
     : Option.some({ _tag: "changed", before: before.value, after: after.value });
 };
@@ -511,7 +511,7 @@ const changeOf = (
  *
  * Presence is read per key, so the tri-state distinction survives: a column
  * holding `null` is present (a clear), and only a column with no key is
- * absent. Values compare structurally with `Equal.equals`: JSON objects and
+ * absent. Values compare structurally with `Eq.equals`: JSON objects and
  * arrays by content (key order ignored), a `Date` by its instant, a `bigint`
  * by value, and a `Date` never equals the string of its instant. A
  * content-addressed document is held as its `DocumentHash`, so it compares by
@@ -524,11 +524,11 @@ const changeOf = (
  * @since 0.1.0
  */
 export const diffStates = (from: ChainState, to: ChainState): StateDiff =>
-  Record.fromEntries(
-    Array.flatMap(Array.dedupe([...Record.keys(from), ...Record.keys(to)]), (column) =>
-      Array.fromOption(
+  R.fromEntries(
+    Arr.flatMap(Arr.dedupe([...R.keys(from), ...R.keys(to)]), (column) =>
+      Arr.fromOption(
         Option.map(
-          changeOf(Record.get(from, column), Record.get(to, column)),
+          changeOf(R.get(from, column), R.get(to, column)),
           (change) => [column, change] as const,
         ),
       ),
@@ -567,7 +567,7 @@ const localeChangeOf = (
   }
   if (Option.isNone(after)) return Option.some({ _tag: "removed", before: before.value });
   const changes = diffStates(before.value, after.value);
-  return Record.isEmptyRecord(changes) ? Option.none() : Option.some({ _tag: "changed", changes });
+  return R.isEmptyRecord(changes) ? Option.none() : Option.some({ _tag: "changed", changes });
 };
 
 /**
@@ -593,11 +593,11 @@ const localeChangeOf = (
  * @since 0.1.0
  */
 export const diffLocales = (from: LocaleStates, to: LocaleStates): LocaleDiff =>
-  Record.fromEntries(
-    Array.flatMap(Array.dedupe([...Record.keys(from), ...Record.keys(to)]), (locale) =>
-      Array.fromOption(
+  R.fromEntries(
+    Arr.flatMap(Arr.dedupe([...R.keys(from), ...R.keys(to)]), (locale) =>
+      Arr.fromOption(
         Option.map(
-          localeChangeOf(Record.get(from, locale), Record.get(to, locale)),
+          localeChangeOf(R.get(from, locale), R.get(to, locale)),
           (change) => [locale, change] as const,
         ),
       ),
@@ -838,25 +838,25 @@ class DeleteHookPatch extends Schema.TaggedError<
 
 /** Whether a patch changes nothing: every key is absent or `undefined`. */
 const isEmptyPatch = (patch: ChainPatch): boolean =>
-  Record.isEmptyRecord(Record.filter(patch, (value) => value !== undefined));
+  R.isEmptyRecord(R.filter(patch, (value) => value !== undefined));
 
 /** Whether a locale patch changes nothing: every locale is absent or `undefined`. */
 const isEmptyLocalePatch = (patch: LocalePatch): boolean =>
-  Record.isEmptyRecord(Record.filter(patch, (value) => value !== undefined));
+  R.isEmptyRecord(R.filter(patch, (value) => value !== undefined));
 
-/** Two patches set the same keys to the same values (`Equal.equals`, so a `Date` compares by instant). */
+/** Two patches set the same keys to the same values (`Eq.equals`, so a `Date` compares by instant). */
 const samePatch = (left: ChainPatch, right: ChainPatch): boolean => {
-  const keys = Array.dedupe([...Record.keys(left), ...Record.keys(right)]);
-  return keys.every((key) => Equal.equals(left[key], right[key]));
+  const keys = Arr.dedupe([...R.keys(left), ...R.keys(right)]);
+  return keys.every((key) => Eq.equals(left[key], right[key]));
 };
 
 /** One locale's columns in a level, or none when the level lacks it. */
 const localeIn = (level: LocaleStates, locale: string): Option.Option<ChainState> =>
-  Record.get(level, locale);
+  R.get(level, locale);
 
 /** Two locale levels carry the same locales, each with the same columns. */
 const sameLocales = (left: LocaleStates, right: LocaleStates): boolean =>
-  Array.dedupe([...Record.keys(left), ...Record.keys(right)]).every((locale) =>
+  Arr.dedupe([...R.keys(left), ...R.keys(right)]).every((locale) =>
     Option.getOrElse(
       Option.zipWith(localeIn(left, locale), localeIn(right, locale), samePatch),
       () => false,
@@ -875,7 +875,7 @@ const randomByte = Effect.map(Random.nextIntBetween(0, 255), (byte) =>
  */
 const mintNodeId: Effect.Effect<string> = Effect.map(
   Effect.all(
-    Array.makeBy(16, () => randomByte),
+    Arr.makeBy(16, () => randomByte),
     { concurrency: 1 },
   ),
   (bytes) => {
@@ -992,7 +992,7 @@ export const defineVersionChain = <E, R>(
       state: applyPatch({}, written.patch),
       actorId: input.actorId,
     };
-    return yield* chain.create(Record.isEmptyRecord(locales) ? next : { ...next, locales });
+    return yield* chain.create(R.isEmptyRecord(locales) ? next : { ...next, locales });
   });
 
   const merge = (input: UpdateInput, allowDeleted: boolean) =>
@@ -1073,9 +1073,9 @@ export const defineVersionChain = <E, R>(
     // The hooks changed what is restored: append their state over the head
     // through the explicit restore surface, with the restored locale level
     // replacing the head's (a locale only the head carries is dropped).
-    const dropped = Record.fromEntries(
-      Array.map(
-        Array.filter(Record.keys(localesOf(head.value)), (locale) => !(locale in hookedLocales)),
+    const dropped = R.fromEntries(
+      Arr.map(
+        Arr.filter(R.keys(localesOf(head.value)), (locale) => !(locale in hookedLocales)),
         (locale) => [locale, null] as const,
       ),
     );

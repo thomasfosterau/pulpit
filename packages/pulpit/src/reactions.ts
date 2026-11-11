@@ -40,7 +40,7 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
-import * as Record from "effect/Record";
+import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 import { MAX_SET_VALUES } from "./filter.ts";
 import { nowDate, signedIn as signedInAs } from "./internal/plain-rows.ts";
@@ -303,7 +303,7 @@ export const defineReactions = <Resource, E, R>(
     return { removed: yield* reactions.delete(nodeId, account.id) };
   });
 
-  const zero: { readonly [kind: string]: number } = Record.fromEntries(
+  const zero: { readonly [kind: string]: number } = R.fromEntries(
     Arr.map(kinds, (kind) => [kind, 0] as const),
   );
 
@@ -319,10 +319,8 @@ export const defineReactions = <Resource, E, R>(
     return HashMap.fromIterable(
       Arr.map(shown, (id) => {
         const stored = Option.getOrElse(HashMap.get(counted, id), () => ({}));
-        const counts = Record.map(zero, (_, kind) =>
-          Option.getOrElse(Record.get(stored, kind), () => 0),
-        );
-        const total = Arr.reduce(Record.values(counts), 0, (sum, count) => sum + count);
+        const counts = R.map(zero, (_, kind) => Option.getOrElse(R.get(stored, kind), () => 0));
+        const total = Arr.reduce(R.values(counts), 0, (sum, count) => sum + count);
         return [id, { counts, total }] as const;
       }),
     );

@@ -52,7 +52,7 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
+import * as P from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Str from "effect/String";
 import { MAX_SET_VALUES } from "@thomasfosterau/pulpit/filter";
@@ -182,7 +182,7 @@ const isWordPressInteger = (value: number): boolean => Number.isSafeInteger(valu
  * zeros as decimal, so `007` is 7); a number must already be an integer.
  */
 const toWordPressInteger = (wireId: WireId): Option.Option<number> => {
-  const value = Predicate.isNumber(wireId)
+  const value = P.isNumber(wireId)
     ? wireId
     : decimalDigits.test(wireId)
       ? Number(wireId)
@@ -360,7 +360,7 @@ export const stringIds = (
         isPastCap(wireIds)
           ? wireIds.map(() => Option.none<string>())
           : wireIds.map((wireId) =>
-              Predicate.isString(wireId) && isNodeId(wireId) ? Option.some(wireId) : Option.none(),
+              P.isString(wireId) && isNodeId(wireId) ? Option.some(wireId) : Option.none(),
             ),
       ),
   };

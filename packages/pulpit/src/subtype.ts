@@ -88,7 +88,6 @@
  * @since 0.1.0
  */
 
-import * as Array from "effect/Array";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -100,8 +99,8 @@ import * as HashSet from "effect/HashSet";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
-import * as Predicate from "effect/Predicate";
-import * as Record from "effect/Record";
+import * as P from "effect/Predicate";
+import * as R from "effect/Record";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Str from "effect/String";
@@ -1267,10 +1266,10 @@ export const noHooks = <Resource = never, E = never, R = never>(): LifecycleHook
 export const composeHooks = <Resource, E, R>(
   ...sets: ReadonlyArray<LifecycleHooks<Resource, E, R>>
 ): LifecycleHooks<Resource, E, R> => {
-  const afterFailure = Array.findFirst(sets, (set) => set.afterFailure !== undefined);
+  const afterFailure = Arr.findFirst(sets, (set) => set.afterFailure !== undefined);
   return {
-    before: Array.flatMap(sets, (set) => set.before),
-    after: Array.flatMap(sets, (set) => set.after),
+    before: Arr.flatMap(sets, (set) => set.before),
+    after: Arr.flatMap(sets, (set) => set.after),
     afterFailure: Option.getOrUndefined(
       Option.flatMapNullishOr(afterFailure, (set) => set.afterFailure),
     ),
@@ -1303,7 +1302,7 @@ const runBeforeLocales = <E, R>(
     (): LocalePatch => event.locales ?? {},
     (locales, hook) =>
       hook.locales === undefined
-        ? Array.isReadonlyArrayNonEmpty(writtenKeys(locales))
+        ? Arr.isReadonlyArrayNonEmpty(writtenKeys(locales))
           ? Effect.fail(
               new WriteRejected({
                 type: event.type,
@@ -1344,7 +1343,7 @@ const runAfter = <Resource, E, R>(
  * Typed as the request types it, but read as a caller may really send it.
  */
 const columnOf = (key: ListOrder | ReadonlyArray<ListOrder>): string =>
-  Predicate.isObject(key) && Predicate.isString(key.column) ? key.column : "";
+  P.isObject(key) && P.isString(key.column) ? key.column : "";
 
 /**
  * A list request's order as the store receives it: an array whose every key
@@ -1364,20 +1363,20 @@ const checkedOrder = (
   // The request's types are not checked at runtime: a decoded query or an
   // untyped caller can send any value here, so every guard reads it as such.
   const isKey = (key: ListOrder): boolean =>
-    Predicate.isObject(key) &&
-    Predicate.isString(key.column) &&
+    P.isObject(key) &&
+    P.isString(key.column) &&
     isSortable(key.column) &&
     (key.direction === "asc" || key.direction === "desc");
   // A boolean, not a guard: narrowing a typed array to `Array<unknown>` would lose its keys' type.
-  const isList = (value: ReadonlyArray<ListOrder>): boolean => Array.isArray(value);
+  const isList = (value: ReadonlyArray<ListOrder>): boolean => Arr.isArray(value);
   if (!isList(keys)) return Effect.fail(new InvalidListOrder({ type, column: columnOf(keys) }));
   return Option.match(
-    Array.findFirst(keys, (key) => !isKey(key)),
+    Arr.findFirst(keys, (key) => !isKey(key)),
     {
       onNone: () =>
         Effect.succeed(
-          Array.map(
-            Array.dedupeWith(keys, (self, that) => self.column === that.column),
+          Arr.map(
+            Arr.dedupeWith(keys, (self, that) => self.column === that.column),
             ({ column, direction }): ListOrder => ({ column, direction }),
           ),
         ),
@@ -1399,13 +1398,13 @@ const sortableColumns = (
   sortable: ReadonlyArray<string> | undefined,
 ): ((column: string) => boolean) => {
   if (sortable === undefined) return (column) => columns.has(column);
-  const undeclared = Array.findFirst(sortable, (column) => !columns.has(column));
+  const undeclared = Arr.findFirst(sortable, (column) => !columns.has(column));
   if (Option.isSome(undeclared)) {
     throw new SubtypeDeclarationError({
       message: `${type}: sortable names '${undeclared.value}', which is not a column of the view`,
     });
   }
-  return (column) => Array.contains(sortable, column);
+  return (column) => Arr.contains(sortable, column);
 };
 
 /**
@@ -1797,7 +1796,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
       : {
           beforeAppend: (event) =>
             Effect.flatMap(hooks, ({ before }) =>
-              Array.isReadonlyArrayNonEmpty(before)
+              Arr.isReadonlyArrayNonEmpty(before)
                 ? Effect.flatMap(definition.viewer, (viewer) =>
                     runBefore(before, { ...event, type, viewer }),
                   )
@@ -1805,7 +1804,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
             ),
           beforeAppendLocales: (event) =>
             Effect.flatMap(hooks, ({ before }) =>
-              Array.isReadonlyArrayNonEmpty(before)
+              Arr.isReadonlyArrayNonEmpty(before)
                 ? Effect.flatMap(definition.viewer, (viewer) =>
                     runBeforeLocales(before, { ...event, type, viewer }),
                   )
@@ -2027,7 +2026,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     const shown = Option.isSome(preview) ? preview.value : yield* visibleRow(viewer, id);
     if (Option.isNone(localeLevel)) return yield* new NodeNotFound({ type, id });
     // One read of the requested locales' rows, from the version the gate chose.
-    const wanted = Array.dedupe(locales);
+    const wanted = Arr.dedupe(locales);
     const query = {
       where: and<Following>(eq("id", id), localeIn(wanted)),
       orderBy: [],
@@ -2046,8 +2045,8 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     const readable = Option.isSome(preview)
       ? page.rows
       : yield* Effect.filter(page.rows, (row) => visible(viewer, row));
-    const found = Array.findFirst(wanted, (tag) =>
-      Array.findFirst(readable, (row) => row[LOCALE_COLUMN] === tag).pipe(
+    const found = Arr.findFirst(wanted, (tag) =>
+      Arr.findFirst(readable, (row) => row[LOCALE_COLUMN] === tag).pipe(
         Option.map((row): LocalisedResource<Resource> => ({
           locale: tag,
           resource: toResource(row),
@@ -2063,11 +2062,11 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     Option.match(publication, {
       onNone: () => Effect.succeed(heads),
       onSome: ({ live }) => {
-        const own = Array.filter(heads, (head) => readsHeadOf(viewer, head));
-        const others = Array.filter(heads, (head) => !readsHeadOf(viewer, head));
-        return Array.isReadonlyArrayNonEmpty(others)
+        const own = Arr.filter(heads, (head) => readsHeadOf(viewer, head));
+        const others = Arr.filter(heads, (head) => !readsHeadOf(viewer, head));
+        return Arr.isReadonlyArrayNonEmpty(others)
           ? Effect.map(
-              live.getMany(Array.map(others, (head) => head.id)),
+              live.getMany(Arr.map(others, (head) => head.id)),
               (lives): ReadonlyArray<Row> => [...own, ...lives],
             )
           : Effect.succeed(own);
@@ -2075,11 +2074,11 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     });
 
   const getMany = Effect.fn(`${type}.getMany`)(function* (ids: ReadonlyArray<string>) {
-    if (!Array.isReadonlyArrayNonEmpty(ids)) return HashMap.empty<string, Resource>();
+    if (!Arr.isReadonlyArrayNonEmpty(ids)) return HashMap.empty<string, Resource>();
     const viewer = yield* definition.viewer;
-    const rows = yield* chosenRows(viewer, yield* leaves.getMany(Array.dedupe(ids)));
+    const rows = yield* chosenRows(viewer, yield* leaves.getMany(Arr.dedupe(ids)));
     const shown = yield* Effect.filter(rows, (row) => visible(viewer, row));
-    return HashMap.fromIterable(Array.map(shown, (row) => [row.id, toResource(row)] as const));
+    return HashMap.fromIterable(Arr.map(shown, (row) => [row.id, toResource(row)] as const));
   });
 
   /** The heads a viewer below the head-reading rungs reads: their own, on an owned leaf. */
@@ -2167,7 +2166,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
       ? Effect.void
       : Effect.gen(function* () {
           const { before } = yield* hooks;
-          if (!Array.isReadonlyArrayNonEmpty(before)) return;
+          if (!Arr.isReadonlyArrayNonEmpty(before)) return;
           const head = yield* definition.chain.head(id);
           const prior = Option.isSome(head)
             ? yield* snapshotOf(definition.chain, id, head.value.version)
@@ -2304,10 +2303,10 @@ export interface SearchProjection {
 
 const checkSearchProjection = (projection: SearchProjection, columns: ReadonlySet<string>) => {
   const named = [
-    ...Array.map(projection.fields, (field) => field.column),
+    ...Arr.map(projection.fields, (field) => field.column),
     ...Option.toArray(projection.languageColumn),
   ];
-  const undeclared = Array.findFirst(named, (column) => !columns.has(column));
+  const undeclared = Arr.findFirst(named, (column) => !columns.has(column));
   if (Option.isSome(undeclared)) {
     throw new SubtypeDeclarationError({
       message: `search names '${undeclared.value}', which is not a column of the view`,
@@ -2343,10 +2342,10 @@ export const defineSearchProjection = (declaration: {
   // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is one fixed configuration
   readonly languageColumn?: string | undefined;
 }): SearchProjection => {
-  if (!Array.isReadonlyArrayNonEmpty(declaration.fields)) {
+  if (!Arr.isReadonlyArrayNonEmpty(declaration.fields)) {
     throw new SubtypeDeclarationError({ message: "search declares no field" });
   }
-  const repeated = Array.findFirst(declaration.fields, (field, index) =>
+  const repeated = Arr.findFirst(declaration.fields, (field, index) =>
     declaration.fields.slice(0, index).some((earlier) => earlier.column === field.column),
   );
   if (Option.isSome(repeated)) {
@@ -2354,9 +2353,9 @@ export const defineSearchProjection = (declaration: {
       message: `search names '${repeated.value.column}' twice`,
     });
   }
-  const unweighted = Array.findFirst(
+  const unweighted = Arr.findFirst(
     declaration.fields,
-    (field) => !Array.contains(["A", "B", "C", "D"], field.weight),
+    (field) => !Arr.contains(["A", "B", "C", "D"], field.weight),
   );
   if (Option.isSome(unweighted)) {
     throw new SubtypeDeclarationError({
@@ -2421,9 +2420,9 @@ export const hydrateSearchHits = <Hit extends { readonly id: string }, Resource,
   ops: Pick<SubtypeOps<Resource, E, R>, "getMany">,
   hits: ReadonlyArray<Hit>,
 ): Effect.Effect<ReadonlyArray<{ readonly hit: Hit; readonly resource: Resource }>, E, R> => {
-  const ranked = Array.dedupeWith(hits, (a, b) => a.id === b.id);
-  return Effect.map(ops.getMany(Array.map(ranked, (hit) => hit.id)), (shown) =>
-    Array.flatMap(ranked, (hit) =>
+  const ranked = Arr.dedupeWith(hits, (a, b) => a.id === b.id);
+  return Effect.map(ops.getMany(Arr.map(ranked, (hit) => hit.id)), (shown) =>
+    Arr.flatMap(ranked, (hit) =>
       Option.toArray(Option.map(HashMap.get(shown, hit.id), (resource) => ({ hit, resource }))),
     ),
   );
@@ -3021,8 +3020,8 @@ const splitTranslated = <V>(
 ): readonly [{ readonly [column: string]: V }, { readonly [column: string]: V }] => {
   const isTranslated = (_: V, column: string) => level.columns.includes(column);
   return [
-    Record.filter(values, (value, column) => !isTranslated(value, column)),
-    Record.filter(values, isTranslated),
+    R.filter(values, (value, column) => !isTranslated(value, column)),
+    R.filter(values, isTranslated),
   ];
 };
 
@@ -3167,7 +3166,7 @@ export const subtypeResourceHandlers = <
       onSome: (negotiated) =>
         Effect.map(writeLocale(negotiated), (tag): CreateRequest => {
           const [shared, translated] = splitTranslated(negotiated.level, input.state);
-          return Record.isEmptyRecord(translated)
+          return R.isEmptyRecord(translated)
             ? { id: input.id, state: shared }
             : { id: input.id, state: shared, locales: { [tag]: translated } };
         }),
@@ -3180,7 +3179,7 @@ export const subtypeResourceHandlers = <
       onSome: (negotiated) =>
         Effect.map(writeLocale(negotiated), (tag): RestoreRequest => {
           const [shared, translated] = splitTranslated(negotiated.level, input.patch);
-          return Record.some(translated, (value) => value !== undefined)
+          return R.some(translated, (value) => value !== undefined)
             ? { ...input, patch: shared, locales: { [tag]: translated } }
             : { ...input, patch: shared };
         }),
@@ -3213,7 +3212,7 @@ export const subtypeResourceHandlers = <
     Resource["type"]
   >({
     ...rest,
-    hiddenWrite: { type, when: (error) => Predicate.isTagged(error, "NodeNotFound") },
+    hiddenWrite: { type, when: (error) => P.isTagged(error, "NodeNotFound") },
     ops: {
       list: (query) =>
         Effect.map(handlers.list(listRequest(query)), (page) => ({
@@ -3293,13 +3292,13 @@ const checkLocaleLevel = (
   columns: ReadonlySet<string>,
   gated: ReadonlyArray<string>,
 ) => {
-  const gate = Array.findFirst(level.columns, (column) => gated.includes(column));
+  const gate = Arr.findFirst(level.columns, (column) => gated.includes(column));
   if (Option.isSome(gate)) {
     throw new SubtypeDeclarationError({
       message: `locales names '${gate.value}', which the read gate reads: it must be shared`,
     });
   }
-  const undeclared = Array.findFirst(
+  const undeclared = Arr.findFirst(
     [...level.columns, LOCALE_COLUMN],
     (column) => !columns.has(column),
   );
@@ -3311,8 +3310,8 @@ const checkLocaleLevel = (
 };
 
 /** The keys of a patch that set or clear a value (an `undefined` key carries forward). */
-const writtenKeys = <A>(patch: Record.ReadonlyRecord<string, A>): ReadonlyArray<string> =>
-  Array.filter(Record.keys(patch), (key) => patch[key] !== undefined);
+const writtenKeys = <A>(patch: R.ReadonlyRecord<string, A>): ReadonlyArray<string> =>
+  Arr.filter(R.keys(patch), (key) => patch[key] !== undefined);
 
 /**
  * Why a write breaks the locale level, or none: `translated` is the leaf's
@@ -3325,20 +3324,20 @@ const localeViolation = (
 ): Option.Option<string> => {
   const tags = writtenKeys(locales);
   if (Option.isNone(translated)) {
-    return Array.isReadonlyArrayNonEmpty(tags)
+    return Arr.isReadonlyArrayNonEmpty(tags)
       ? Option.some("the leaf declares no locale level")
       : Option.none();
   }
   const isTranslated = (column: string) => translated.value.includes(column);
-  const shared = Array.findFirst(writtenKeys(state), isTranslated);
+  const shared = Arr.findFirst(writtenKeys(state), isTranslated);
   if (Option.isSome(shared)) {
     return Option.some(`'${shared.value}' is translated: write it per locale`);
   }
   if (tags.some(Str.isEmpty)) return Option.some("a locale tag is empty");
-  return Array.findFirst(tags, (tag) =>
+  return Arr.findFirst(tags, (tag) =>
     Option.fromNullishOr(locales[tag]).pipe(
       Option.flatMap((change) =>
-        Array.findFirst(writtenKeys(change), (column) => !isTranslated(column)),
+        Arr.findFirst(writtenKeys(change), (column) => !isTranslated(column)),
       ),
       Option.map(
         (column) =>
@@ -3369,16 +3368,16 @@ const localeViolation = (
 export const defineLocaleLevel = (declaration: {
   readonly columns: ReadonlyArray<string>;
 }): LocaleLevel => {
-  if (!Array.isReadonlyArrayNonEmpty(declaration.columns)) {
+  if (!Arr.isReadonlyArrayNonEmpty(declaration.columns)) {
     throw new SubtypeDeclarationError({ message: "locales declares no column" });
   }
-  const repeated = Array.findFirst(declaration.columns, (column, index) =>
+  const repeated = Arr.findFirst(declaration.columns, (column, index) =>
     declaration.columns.slice(0, index).includes(column),
   );
   if (Option.isSome(repeated)) {
     throw new SubtypeDeclarationError({ message: `locales names '${repeated.value}' twice` });
   }
-  const reserved = Array.findFirst(declaration.columns, (column) =>
+  const reserved = Arr.findFirst(declaration.columns, (column) =>
     HashSet.has(RESERVED_COLUMNS, column),
   );
   if (Option.isSome(reserved)) {
@@ -3457,7 +3456,7 @@ export const readableOwners = <E, R>(
         ),
       { concurrency: 1 },
     );
-    const union = Arr.sort(Array.dedupe(Array.flatten(pages)), byCodePoint);
+    const union = Arr.sort(Arr.dedupe(Arr.flatten(pages)), byCodePoint);
     const limit = Math.max(1, Math.min(Math.trunc(request.limit), MAX_PAGE_LIMIT));
     const offset = Math.max(0, Math.trunc(request.offset));
     return { rows: union.slice(offset, offset + limit), total: union.length };

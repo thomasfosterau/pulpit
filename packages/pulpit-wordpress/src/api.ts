@@ -69,8 +69,8 @@ import * as HashMap from "effect/HashMap";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
-import * as Predicate from "effect/Predicate";
-import * as Record from "effect/Record";
+import * as P from "effect/Predicate";
+import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 import { fileUrl, type BlobStore, type FileColumns } from "@thomasfosterau/pulpit/blobs";
 import type { Visibility } from "@thomasfosterau/pulpit/content";
@@ -954,7 +954,7 @@ const checked = <P extends { readonly orderby: string; readonly include: Option.
   bad: ReadonlyArray<readonly [string, string]>,
   params: P,
 ): Effect.Effect<P, WpRestError> => {
-  if (Arr.isReadonlyArrayNonEmpty(bad)) return Effect.fail(invalidParams(Record.fromEntries(bad)));
+  if (Arr.isReadonlyArrayNonEmpty(bad)) return Effect.fail(invalidParams(R.fromEntries(bad)));
   if (params.orderby === "include" && Option.isNone(params.include)) {
     return Effect.fail(
       new WpRestError({
@@ -1469,7 +1469,7 @@ export const defineWordPress = <R, Following = never>(
       ),
       ...(servesUsers() ? [["users", userPattern] as const] : []),
     ];
-    return Record.fromEntries(
+    return R.fromEntries(
       Arr.flatMap(routed, ([base, pattern]) =>
         [`/wp/v2/${base}`, `/wp/v2/${base}/${pattern}`].map(
           (route) =>
@@ -1670,7 +1670,7 @@ export const defineWordPress = <R, Following = never>(
       ...termLinks(type, wireId),
       ["curies", [{ name: "wp", href: "https://api.w.org/{rel}", templated: true }]],
     ];
-    return Record.fromEntries(entries);
+    return R.fromEntries(entries);
   };
 
   /** An item's `wp:term` link: one entry per taxonomy applying to its type. */
@@ -1734,7 +1734,7 @@ export const defineWordPress = <R, Following = never>(
     });
     const _links = linksOf(type, item, related);
     /** The term fields of a page or attachment a taxonomy is bound to (a post always has both). */
-    const termFields: Schema.JsonObject = Record.fromEntries(
+    const termFields: Schema.JsonObject = R.fromEntries(
       related.terms.map(([taxonomy]) => [
         taxonomyBase(taxonomy),
         termWires(related, taxonomy, fields.id),
@@ -1908,7 +1908,7 @@ export const defineWordPress = <R, Following = never>(
       ],
       ["curies", [{ name: "wp", href: "https://api.w.org/{rel}", templated: true }]],
     ];
-    const _links = Record.fromEntries(entries);
+    const _links = R.fromEntries(entries);
     if (context === "embed") {
       return { id: wireId, link, name: fields.name, slug: fields.slug, taxonomy, _links };
     }
@@ -1995,7 +1995,7 @@ export const defineWordPress = <R, Following = never>(
           ]
         : []),
     ];
-    return Arr.isReadonlyArrayNonEmpty(members) ? [["_embedded", Record.fromEntries(members)]] : [];
+    return Arr.isReadonlyArrayNonEmpty(members) ? [["_embedded", R.fromEntries(members)]] : [];
   };
 
   /** The item with its `_embedded`, filtered to the `_fields` asked for. */
@@ -2007,8 +2007,8 @@ export const defineWordPress = <R, Following = never>(
     query: Query,
   ): Schema.Json =>
     fieldsFilterOf(query)(
-      Record.fromEntries([
-        ...Record.toEntries(itemBody(type, item, related, context)),
+      R.fromEntries([
+        ...R.toEntries(itemBody(type, item, related, context)),
         ...embeddedOf(type, item, related, embedsOf(query)),
       ]),
     );
@@ -2035,7 +2035,7 @@ export const defineWordPress = <R, Following = never>(
     const links = Arr.filter(headers, ([name]) => name === "link").map(([, value]) => value);
     return {
       status,
-      headers: Record.fromEntries([
+      headers: R.fromEntries([
         ["content-type", "application/json; charset=UTF-8"],
         ...Arr.filter(headers, ([name]) => name !== "link"),
         ["link", [apiLink, ...links].join(", ")],
@@ -2609,7 +2609,7 @@ export const defineWordPress = <R, Following = never>(
       type User = (typeof users)[number];
       // An integer id sorts by value (zero-padded past any safe integer), a string id by code point.
       const byWireId = Order.mapInput(Order.String, (user: User) =>
-        Predicate.isNumber(user.wireId) ? String(user.wireId).padStart(20, "0") : user.wireId,
+        P.isNumber(user.wireId) ? String(user.wireId).padStart(20, "0") : user.wireId,
       );
       const ascending = Match.value(params.orderby).pipe(
         Match.when("id", () => byWireId),

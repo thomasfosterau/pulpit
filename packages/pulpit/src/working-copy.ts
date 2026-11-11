@@ -26,7 +26,7 @@ import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Record from "effect/Record";
+import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 import type { Forbidden, SubtypeOps, Unauthorized, WriteRejected } from "./subtype.ts";
 import {
@@ -154,7 +154,7 @@ export const defineWorkingCopy = <Resource, E, R>(definition: {
         // An absent (or `undefined`) key in the new patch keeps the copy's own.
         onSome: (existing): ChainPatch => ({
           ...existing.patch,
-          ...Record.filter(patch, (value) => value !== undefined),
+          ...R.filter(patch, (value) => value !== undefined),
         }),
       }),
       baseVersion: Option.match(earlier, {

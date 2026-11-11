@@ -64,10 +64,10 @@
  * @since 0.1.0
  */
 
-import * as Array from "effect/Array";
+import * as Arr from "effect/Array";
 import * as Match from "effect/Match";
 import * as Order from "effect/Order";
-import * as Predicate from "effect/Predicate";
+import * as P from "effect/Predicate";
 import { byCodePoint } from "./internal/list-order.ts";
 import type { ColumnValue } from "./version-chain.ts";
 
@@ -153,8 +153,7 @@ export const never = { kind: "never" } as const;
  * {@link evaluate} share (see the module's "Outside the contract").
  */
 const isUnordered = (value: ColumnValue): boolean =>
-  (Predicate.isNumber(value) && Number.isNaN(value)) ||
-  (Predicate.isDate(value) && Number.isNaN(value.getTime()));
+  (P.isNumber(value) && Number.isNaN(value)) || (P.isDate(value) && Number.isNaN(value.getTime()));
 
 /**
  * `column = value`. A `NaN` value is {@link never}: PostgreSQL's `NaN = NaN`
@@ -263,7 +262,7 @@ export const lte = (column: string, value: Comparable) =>
  * @since 0.1.0
  */
 export const anyOf = (column: string, values: ReadonlyArray<Scalar>) =>
-  Array.isReadonlyArrayEmpty(values) || values.length > MAX_SET_VALUES || values.some(isUnordered)
+  Arr.isReadonlyArrayEmpty(values) || values.length > MAX_SET_VALUES || values.some(isUnordered)
     ? never
     : ({ kind: "anyOf", column, values: [...values] } as const);
 
@@ -278,7 +277,7 @@ export const anyOf = (column: string, values: ReadonlyArray<Scalar>) =>
  * @since 0.1.0
  */
 export const noneOf = (column: string, values: ReadonlyArray<Scalar>) =>
-  Array.isReadonlyArrayEmpty(values)
+  Arr.isReadonlyArrayEmpty(values)
     ? always
     : values.length > MAX_SET_VALUES || values.some(isUnordered)
       ? never
@@ -339,7 +338,7 @@ export const LOCALE_COLUMN = "locale";
  * @since 0.1.0
  */
 export const locale = (locales: ReadonlyArray<string>) =>
-  Array.isReadonlyArrayEmpty(locales) || locales.length > MAX_SET_VALUES
+  Arr.isReadonlyArrayEmpty(locales) || locales.length > MAX_SET_VALUES
     ? never
     : ({ kind: "locale", column: LOCALE_COLUMN, locales: [...locales] } as const);
 
@@ -349,12 +348,12 @@ const collapse = <Following>(
   identity: ListFilter<Following>,
   combine: (parts: ReadonlyArray<ListFilter<Following>>) => ListFilter<Following>,
 ): ListFilter<Following> =>
-  Array.match(parts, {
+  Arr.match(parts, {
     onEmpty: () => identity,
     onNonEmpty: (nonEmpty) =>
-      Array.isReadonlyArrayNonEmpty(Array.tailNonEmpty(nonEmpty))
+      Arr.isReadonlyArrayNonEmpty(Arr.tailNonEmpty(nonEmpty))
         ? combine(nonEmpty)
-        : Array.headNonEmpty(nonEmpty),
+        : Arr.headNonEmpty(nonEmpty),
   });
 
 /**
@@ -369,7 +368,7 @@ export const and = <Following>(
 ): ListFilter<Following> => {
   if (filters.some((filter) => filter.kind === "never")) return never;
   return collapse(
-    Array.filter(filters, (filter) => filter.kind !== "always"),
+    Arr.filter(filters, (filter) => filter.kind !== "always"),
     always,
     (parts) => ({ kind: "and", filters: parts }),
   );
@@ -386,7 +385,7 @@ export const or = <Following>(
 ): ListFilter<Following> => {
   if (filters.some((filter) => filter.kind === "always")) return always;
   return collapse(
-    Array.filter(filters, (filter) => filter.kind !== "never"),
+    Arr.filter(filters, (filter) => filter.kind !== "never"),
     never,
     (parts) => ({ kind: "or", filters: parts }),
   );
@@ -423,13 +422,13 @@ const byNumber = (column: number, value: number): number =>
  * false, as SQL's `NULL` is.
  */
 const compareTo = (column: ColumnValue, value: Comparable): number => {
-  if (Predicate.isDate(value)) {
-    return Predicate.isDate(column) ? byNumber(column.getTime(), value.getTime()) : Number.NaN;
+  if (P.isDate(value)) {
+    return P.isDate(column) ? byNumber(column.getTime(), value.getTime()) : Number.NaN;
   }
-  if (Predicate.isString(value)) {
-    return Predicate.isString(column) ? byCodePoint(column, value) : Number.NaN;
+  if (P.isString(value)) {
+    return P.isString(column) ? byCodePoint(column, value) : Number.NaN;
   }
-  return Predicate.isNumber(column) ? byNumber(column, value) : Number.NaN;
+  return P.isNumber(column) ? byNumber(column, value) : Number.NaN;
 };
 
 /**
@@ -443,11 +442,11 @@ const differs = (column: ColumnValue, value: Scalar): boolean =>
 
 /** Whether `column` holds the same kind of {@link Scalar} as `value`. */
 const sameKind = (column: ColumnValue, value: Scalar): boolean =>
-  Predicate.isString(value)
-    ? Predicate.isString(column)
-    : Predicate.isNumber(value)
-      ? Predicate.isNumber(column)
-      : Predicate.isBoolean(column);
+  P.isString(value)
+    ? P.isString(column)
+    : P.isNumber(value)
+      ? P.isNumber(column)
+      : P.isBoolean(column);
 
 /** Read a timestamp column the way the publication axis does: a `Date`, or nothing. */
 const instantOf = (value: ColumnValue): number =>
@@ -501,7 +500,7 @@ export const evaluate = <Following>(
       noneOf: (node) => {
         if (node.values.length > MAX_SET_VALUES) return false;
         // `<> ALL` over no values is true, even for NULL; the constructor folds that to `always`.
-        if (Array.isReadonlyArrayEmpty(node.values)) return true;
+        if (Arr.isReadonlyArrayEmpty(node.values)) return true;
         const value = row[node.column] ?? null;
         return node.values.every((excluded) => differs(value, excluded));
       },
@@ -511,9 +510,7 @@ export const evaluate = <Following>(
       locale: (node) => {
         const value = row[node.column] ?? null;
         return (
-          node.locales.length <= MAX_SET_VALUES &&
-          Predicate.isString(value) &&
-          node.locales.includes(value)
+          node.locales.length <= MAX_SET_VALUES && P.isString(value) && node.locales.includes(value)
         );
       },
       and: (node) => node.filters.every((part) => evaluate(part, row, context)),

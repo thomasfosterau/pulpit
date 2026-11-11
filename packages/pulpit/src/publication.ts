@@ -53,7 +53,7 @@
 
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
+import * as P from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import { always, and, gt, lte, notPublished, published, type ListFilter } from "./filter.ts";
 
@@ -164,7 +164,7 @@ const hasArrivedStamp = (publishedAt: unknown, now: Date): boolean => {
   const instant =
     publishedAt instanceof Date
       ? publishedAt.getTime()
-      : Predicate.isString(publishedAt)
+      : P.isString(publishedAt)
         ? Option.match(DateTime.make(publishedAt), {
             onNone: () => Number.NaN,
             onSome: DateTime.toEpochMillis,
@@ -184,10 +184,10 @@ export const isPubliclyServeable = (
   resource: unknown,
   options: ServeabilityOptions = {},
 ): boolean => {
-  if (!Predicate.isObject(resource)) return false;
+  if (!P.isObject(resource)) return false;
   const attributes = resource["attributes"];
   // No attributes block to inspect: refuse rather than guess.
-  if (!Predicate.isObject(attributes)) return false;
+  if (!P.isObject(attributes)) return false;
   const read = (key: string): unknown => attributes[key];
   const visibility = read("visibility");
   if (options.owned === true && visibility === undefined) return false;

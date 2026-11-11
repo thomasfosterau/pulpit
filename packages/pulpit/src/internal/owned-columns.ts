@@ -12,7 +12,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
+import * as P from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import { Visibility } from "../content.ts";
 import type { ColumnValue } from "../version-chain.ts";
@@ -134,7 +134,7 @@ export const ownedFacts = (
   access: OwnedColumns,
   row: { readonly [column: string]: ColumnValue },
 ): OwnedRowFacts => ({
-  ownerId: Option.liftPredicate(row[access.ownerColumn], Predicate.isString),
+  ownerId: Option.liftPredicate(row[access.ownerColumn], P.isString),
   visibility: Option.getOrElse(
     Option.liftPredicate(row[access.visibilityColumn], isVisibility),
     (): Visibility => "private",
@@ -148,7 +148,7 @@ export const ownedFacts = (
     onSome: (column) => row[column] !== "approved",
   }),
   groupId: Option.flatMap(Option.fromUndefinedOr(access.groupColumn), (column) =>
-    Option.liftPredicate(row[column], Predicate.isString),
+    Option.liftPredicate(row[column], P.isString),
   ),
 });
 
