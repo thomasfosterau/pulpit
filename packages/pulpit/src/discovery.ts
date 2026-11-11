@@ -30,6 +30,30 @@
  * items than its limit, but the next page starts after the last row read,
  * so paging is stable and never skips or repeats a node.
  *
+ * ## A localised leaf (pulpit#265)
+ *
+ * A localised view lists one row per `(node, locale)` (`./subtype`'s
+ * {@link LOCALE_COLUMN}), so each discoverable pair is an item carrying its
+ * `locale`; a node whose version carries no locale is one item with none.
+ * Whether a pair is listed is the same three checks, on that locale's row:
+ * on a publish-gated leaf, a locale the live version doesn't carry (added
+ * only in an unpublished head) is not listed.
+ *
+ * - **The feed** orders by the feed column, then the locale, then the node
+ *   (`id`, the view's closing tiebreak), and its cursor carries the locale,
+ *   so a page boundary inside one node's locales neither repeats nor skips
+ *   one. `request.locale` narrows it to one locale (`./filter`'s `locale`
+ *   arm): a feed per language.
+ * - **The sitemap** orders by node, and **a page never splits a node's
+ *   locales**: a page that would end part-way through a node ends before
+ *   it instead (a page holding only that node holds all of its locales,
+ *   even past the limit), so each item's `alternates`, the node's other
+ *   listed locales, is complete: a sitemap's `hreflang` alternates.
+ *
+ * The canonical path stays per node (pulpit#57: the locale is chosen when
+ * the node is read, not by the path), read once per node; an alternate's
+ * URL is the application's to build from the path and the locale.
+ *
  * Serialisation is not the kernel's: JSON Feed, RSS, Atom and the sitemap
  * are built by the application from the items and their
  * {@link DiscoveryMetadata}, for example with effect-ext's
@@ -44,14 +68,17 @@
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
+import * as P from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import {
   always,
   and,
+  eq,
   gt,
   gte,
   isNull,
+  LOCALE_COLUMN,
+  locale as localeArm,
   lt,
   lte,
   or,
@@ -59,6 +86,7 @@ import {
   type ListFilter,
 } from "./filter.ts";
 import type { PathStore } from "./paths.ts";
+import { byCodePoint } from "./internal/list-order.ts";
 import { serveablePolicy } from "./publication.ts";
 import {
   defineSubtype,
@@ -125,9 +153,8 @@ export const lastModified = (
 /**
  * A discovery declaration the rules refuse, thrown by
  * {@link defineDiscovery} when the family is declared (never an Effect
- * failure), as `./subtype`'s `SubtypeDeclarationError` is: a localised
- * leaf, whose list reads one row per locale (pulpit#265 tracks its
- * per-locale enumeration).
+ * failure), as `./subtype`'s `SubtypeDeclarationError` is, and raised
+ * as a defect when a feed column holds a value that does not order.
  *
  * @since 0.2.0
  */
@@ -139,19 +166,26 @@ export class DiscoveryDeclarationError extends Schema.TaggedError<
 /**
  * Where a page starts: after the node `id` whose order key was `key` (the
  * feed column's value; none for a `NULL`, and always none in the sitemap,
- * which orders by `id` alone). The application encodes it into its own
- * page parameter.
+ * which orders by `id` alone) and, in a localised leaf's feed, whose locale
+ * was `locale` (absent for a row with no locale; the sitemap's cursor never
+ * carries one, since its pages end between nodes). The application encodes
+ * it into its own page parameter.
  *
  * @since 0.2.0
  */
 export interface DiscoveryCursor {
   readonly id: string;
   readonly key: Option.Option<Comparable>;
+  /** The locale of the row the page ended on (pulpit#265); absent: none, or a leaf without a locale level. */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is the row with no locale
+  readonly locale?: string | undefined;
 }
 
 /**
  * A page request: at most `limit` items (clamped to `[1, MAX_PAGE_LIMIT]`,
- * `SEC-INPUT-003`), after `after` when given.
+ * `SEC-INPUT-003`), after `after` when given, and on a localised leaf only
+ * the items in `locale` when given (a feed per language; on a leaf without
+ * a locale level nothing is in any locale).
  *
  * @since 0.2.0
  */
@@ -159,12 +193,18 @@ export interface DiscoveryRequest {
   readonly limit: number;
   // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is the first page
   readonly after?: DiscoveryCursor | undefined;
+  /** One locale's items only (pulpit#265). */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is every locale
+  readonly locale?: string | undefined;
 }
 
 /**
- * One discoverable node: its id, its canonical path, its resource as an
- * anonymous reader gets it (the live version on a publish-gated leaf) and
- * its projected metadata.
+ * One discoverable node (on a localised leaf, one node in one locale): its
+ * id, its canonical path, its resource as an anonymous reader gets it (the
+ * live version on a publish-gated leaf), its projected metadata, its
+ * `locale` (none on a leaf without a locale level, or for a node carrying
+ * none) and, in the sitemap, `alternates`: the node's other listed locales,
+ * by code point (a sitemap's `hreflang` set; always empty in the feed).
  *
  * @since 0.2.0
  */
@@ -174,6 +214,10 @@ export interface DiscoveryItem<Resource> {
   readonly path: string;
   readonly resource: Resource;
   readonly metadata: DiscoveryMetadata;
+  /** The item's locale (pulpit#265). */
+  readonly locale: Option.Option<string>;
+  /** In the sitemap, the node's other listed locales (pulpit#265). */
+  readonly alternates: ReadonlyArray<string>;
 }
 
 /**
@@ -194,8 +238,8 @@ export interface DiscoveryPage<Resource> {
 export interface DiscoveryDefinition<Row extends LeafRow, Resource, Following, E, R> {
   /**
    * The leaf, exactly as its own operations declare it. Its `viewer` is
-   * ignored: the enumeration always reads as the anonymous do. A
-   * localised leaf is refused ({@link DiscoveryDeclarationError}).
+   * ignored: the enumeration always reads as the anonymous do. A localised
+   * leaf lists one item per `(node, locale)` (pulpit#265).
    */
   readonly leaf: SubtypeDefinition<Row, Resource, Following, E, R>;
   /** The family's path table, for each item's canonical path. */
@@ -249,7 +293,7 @@ const keyOf = (
 ): Effect.Effect<Option.Option<Comparable>> => {
   if (Option.isNone(cell) || cell.value === null) return Effect.succeedNone;
   const value = cell.value;
-  return value instanceof Date || Predicate.isString(value) || Predicate.isNumber(value)
+  return value instanceof Date || P.isString(value) || P.isNumber(value)
     ? Effect.succeedSome(value)
     : Effect.die(
         new DiscoveryDeclarationError({
@@ -259,26 +303,53 @@ const keyOf = (
 };
 
 /**
- * The rows after `cursor` in the feed's order (`column` descending,
- * `NULL`s last, then `id` ascending).
+ * Within one feed key, the rows after `cursor`: a later node, or on a
+ * localised leaf a later locale (`NULL` last) and then a later node.
  */
-const afterInFeed = <Following>(column: string, cursor: DiscoveryCursor): ListFilter<Following> =>
+const afterWithinKey = <Following>(
+  localised: boolean,
+  cursor: DiscoveryCursor,
+): ListFilter<Following> => {
+  const laterNode = gt("id", cursor.id);
+  if (!localised) return laterNode;
+  return cursor.locale === undefined
+    ? and<Following>(isNull(LOCALE_COLUMN), laterNode)
+    : or<Following>(
+        gt(LOCALE_COLUMN, cursor.locale),
+        isNull(LOCALE_COLUMN),
+        and<Following>(eq(LOCALE_COLUMN, cursor.locale), laterNode),
+      );
+};
+
+/**
+ * The rows after `cursor` in the feed's order (`column` descending,
+ * `NULL`s last, then on a localised leaf the locale ascending, `NULL`s
+ * last, then `id` ascending).
+ */
+const afterInFeed = <Following>(
+  column: string,
+  localised: boolean,
+  cursor: DiscoveryCursor,
+): ListFilter<Following> =>
   Option.match(cursor.key, {
-    onNone: () => and<Following>(isNull(column), gt("id", cursor.id)),
+    onNone: () => and<Following>(isNull(column), afterWithinKey(localised, cursor)),
     onSome: (key) =>
       or<Following>(
         lt(column, key),
-        and<Following>(gte(column, key), lte(column, key), gt("id", cursor.id)),
+        and<Following>(gte(column, key), lte(column, key), afterWithinKey(localised, cursor)),
         isNull(column),
       ),
   });
 
 const clampLimit = (limit: number) => Math.max(1, Math.min(Math.trunc(limit), MAX_PAGE_LIMIT));
 
+/** A row's locale: none for a row with none, or on a view without a locale level. */
+const localeOf = (row: LeafRow): Option.Option<string> =>
+  Option.liftPredicate(row[LOCALE_COLUMN], P.isString);
+
 /**
- * Bind a family's discovery reads. Throws {@link DiscoveryDeclarationError}
- * for a localised leaf, and whatever {@link defineSubtype} throws for the
- * leaf itself.
+ * Bind a family's discovery reads. Throws whatever {@link defineSubtype}
+ * throws for the leaf itself.
  *
  * @since 0.2.0
  */
@@ -287,11 +358,7 @@ export const defineDiscovery = <Row extends LeafRow, Resource, Following, E, R>(
 ): DiscoveryOps<Resource, E, R> => {
   const { leaf, paths, feedColumn, project } = definition;
   const type = leaf.type;
-  if (leaf.locales !== undefined) {
-    throw new DiscoveryDeclarationError({
-      message: `${type}: a localised leaf's discovery is not supported yet (pulpit#265)`,
-    });
-  }
+  const localised = leaf.locales !== undefined;
   const serveable =
     definition.serveable ??
     serveablePolicy({
@@ -306,61 +373,136 @@ export const defineDiscovery = <Row extends LeafRow, Resource, Following, E, R>(
     hooks: undefined,
   });
 
-  const itemOf = (read: Read<Row, Resource>) =>
-    serveable(read.resource)
-      ? Effect.map(paths.canonicalOf(read.row.id), (path) =>
-          Option.map(path, (canonical): DiscoveryItem<Resource> => ({
-            type,
-            id: read.row.id,
-            path: canonical,
-            resource: read.resource,
-            metadata: project(read.resource),
-          })),
-        )
-      : Effect.succeedNone;
+  /** One node's listed reads as items: its path read once, every locale's alternates the others'. */
+  const itemsOf = (reads: Arr.NonEmptyReadonlyArray<Read<Row, Resource>>, alternates: boolean) =>
+    Effect.gen(function* () {
+      const listed = Arr.filter(reads, (read) => serveable(read.resource));
+      if (!Arr.isReadonlyArrayNonEmpty(listed)) return [];
+      const id = listed[0].row.id;
+      const path = yield* paths.canonicalOf(id);
+      const locales = Arr.sort(
+        Arr.getSomes(Arr.map(listed, (read) => localeOf(read.row))),
+        byCodePoint,
+      );
+      return Option.match(path, {
+        onNone: () => [],
+        onSome: (canonical) =>
+          Arr.map(listed, (read): DiscoveryItem<Resource> => {
+            const locale = localeOf(read.row);
+            return {
+              type,
+              id,
+              path: canonical,
+              resource: read.resource,
+              metadata: project(read.resource),
+              locale,
+              alternates: alternates
+                ? Arr.filter(locales, (tag) => !Option.contains(locale, tag))
+                : [],
+            };
+          }),
+      });
+    });
 
-  const enumerate = (
+  /** The reads grouped into runs of one node each, in page order. */
+  const byNode = (
+    reads: ReadonlyArray<Read<Row, Resource>>,
+  ): ReadonlyArray<Arr.NonEmptyReadonlyArray<Read<Row, Resource>>> =>
+    Arr.isReadonlyArrayNonEmpty(reads)
+      ? Arr.groupWith(reads, (self, that) => self.row.id === that.row.id)
+      : [];
+
+  const page = (
     request: DiscoveryRequest,
     where: ListFilter<Following>,
     orderBy: ReadonlyArray<{ readonly column: string; readonly direction: "asc" | "desc" }>,
-    cursorOf: (row: Row) => Effect.Effect<DiscoveryCursor>,
-  ): Effect.Effect<DiscoveryPage<Resource>, E, R> =>
+    limit: number,
+  ) =>
+    anonymous
+      .list({
+        limit,
+        offset: 0,
+        includeDeleted: false,
+        where:
+          request.locale === undefined ? where : and<Following>(where, localeArm([request.locale])),
+        orderBy,
+      })
+      .pipe(Effect.catchTag("InvalidListOrder", (error) => Effect.die(error)));
+
+  const feed = (request: DiscoveryRequest): Effect.Effect<DiscoveryPage<Resource>, E, R> =>
     Effect.gen(function* () {
-      const limit = clampLimit(request.limit);
-      const page = yield* anonymous
-        .list({ limit, offset: 0, includeDeleted: false, where, orderBy })
-        .pipe(Effect.catchTag("InvalidListOrder", (error) => Effect.die(error)));
-      const items = Arr.getSomes(yield* Effect.forEach(page.rows, itemOf, { concurrency: 1 }));
+      const read = yield* page(
+        request,
+        request.after === undefined ? always : afterInFeed(feedColumn, localised, request.after),
+        localised
+          ? [
+              { column: feedColumn, direction: "desc" },
+              { column: LOCALE_COLUMN, direction: "asc" },
+            ]
+          : [{ column: feedColumn, direction: "desc" }],
+        clampLimit(request.limit),
+      );
+      const items = Arr.flatten(
+        yield* Effect.forEach(
+          Arr.map(read.rows, (row) => [row] as const),
+          (one) => itemsOf(one, false),
+          { concurrency: 1 },
+        ),
+      );
       const next =
-        page.total > page.rows.length
+        read.total > read.rows.length
           ? yield* Effect.transposeOption(
-              Option.map(Arr.last(page.rows), ({ row }) => cursorOf(row)),
+              Option.map(Arr.last(read.rows), ({ row }) =>
+                Effect.map(
+                  keyOf(type, feedColumn, Option.fromUndefinedOr(row[feedColumn])),
+                  (key): DiscoveryCursor =>
+                    Option.match(localeOf(row), {
+                      onNone: () => ({ id: row.id, key }),
+                      onSome: (locale) => ({ id: row.id, key, locale }),
+                    }),
+                ),
+              ),
             )
           : Option.none<DiscoveryCursor>();
       return { items, next };
     });
 
-  return {
-    type,
-    feed: (request) =>
-      enumerate(
-        request,
-        request.after === undefined ? always : afterInFeed(feedColumn, request.after),
-        [{ column: feedColumn, direction: "desc" }],
-        (row) =>
-          Effect.map(keyOf(type, feedColumn, Option.fromUndefinedOr(row[feedColumn])), (key) => ({
-            id: row.id,
-            key,
-          })),
-      ),
-    sitemap: (request) =>
-      enumerate(
-        request,
-        request.after === undefined ? always : gt("id", request.after.id),
-        [],
-        (row) => Effect.succeed({ id: row.id, key: Option.none() }),
-      ),
-  };
+  const sitemap = (request: DiscoveryRequest): Effect.Effect<DiscoveryPage<Resource>, E, R> =>
+    Effect.gen(function* () {
+      const where = request.after === undefined ? always : gt("id", request.after.id);
+      const read = yield* page(request, where, [], clampLimit(request.limit));
+      const more = read.total > read.rows.length;
+      const runs = byNode(read.rows);
+      // A localised page that may end part-way through its last node ends
+      // before that node; a page holding only that node reads all of it.
+      const complete: ReadonlyArray<Arr.NonEmptyReadonlyArray<Read<Row, Resource>>> =
+        !localised || !more
+          ? runs
+          : runs.length > 1
+            ? runs.slice(0, -1)
+            : yield* Effect.map(
+                page(
+                  request,
+                  and<Following>(where, eq("id", read.rows[0]?.row.id ?? "")),
+                  [],
+                  MAX_PAGE_LIMIT,
+                ),
+                (whole) => byNode(whole.rows),
+              );
+      const items = Arr.flatten(
+        yield* Effect.forEach(complete, (run) => itemsOf(run, localised), { concurrency: 1 }),
+      );
+      const last = Arr.last(Arr.flatten(complete));
+      const ended = Option.map(last, ({ row }): DiscoveryCursor => ({
+        id: row.id,
+        key: Option.none(),
+      }));
+      // More rows remain past the last complete node when the read was cut short.
+      const remains = more || complete.length < runs.length;
+      return { items, next: remains ? ended : Option.none() };
+    });
+
+  return { type, feed, sitemap };
 };
 
 // ── Purge hints ───────────────────────────────────────────────────────

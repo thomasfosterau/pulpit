@@ -173,10 +173,3 @@ export * as Audience from "./audience.ts";
  * (`defineDiscovery`, `purgeHintHook`).
  */
 export * as Discovery from "./discovery.ts";
-
-/**
- * UGC relation patterns: reshares with a placeholder for a hidden target,
- * accepted answers gated on the question, and the write gates their edge
- * families take (`defineReshares`, `acceptedAnswerGate`, `nodeWriteGate`).
- */
-export * as Relations from "./relations.ts";
