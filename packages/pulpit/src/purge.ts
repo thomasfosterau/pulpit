@@ -258,9 +258,12 @@ export const definePurge = <E, EB, R>(definition: PurgeDefinition<E, EB, R>): Pu
     definition.viewer,
     (viewer): Effect.Effect<ViewerAccount, Unauthorized | Forbidden> =>
       Option.match(viewer, {
-        onNone: () => Effect.fail(new Unauthorized()),
+        onNone: () =>
+          Effect.fail(new Unauthorized({ message: "This operation needs a signed-in viewer." })),
         onSome: (account) =>
-          definition.canPurge(account) ? Effect.succeed(account) : Effect.fail(new Forbidden()),
+          definition.canPurge(account)
+            ? Effect.succeed(account)
+            : Effect.fail(new Forbidden({ message: "The viewer may not purge this node." })),
       }),
   );
 

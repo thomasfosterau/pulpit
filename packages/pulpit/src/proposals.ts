@@ -880,7 +880,9 @@ export const defineProposals = <Resource, E, R>(
     readonly rationale: Option.Option<string>;
   }) {
     const account = yield* signedIn;
-    if (!definition.canPropose(account)) return yield* new Forbidden();
+    if (!definition.canPropose(account)) {
+      return yield* new Forbidden({ message: "The viewer may not propose edits to this node." });
+    }
     // A target the proposer can't read is missing to them (SEC-AUTH-ENUM-001).
     yield* target.get(input.targetId);
     const locales = Option.fromUndefinedOr(input.locales);
@@ -1013,7 +1015,9 @@ export const defineProposals = <Resource, E, R>(
     if (Option.isNone(row) || row.value.targetType !== type) {
       return yield* new ProposalNotFound({ id });
     }
-    if (row.value.authorId !== account.id) return yield* new Forbidden();
+    if (row.value.authorId !== account.id) {
+      return yield* new Forbidden({ message: "Only a proposal's author may withdraw it." });
+    }
     if (row.value.status !== "pending") {
       return yield* new ProposalClosed({ id, status: row.value.status });
     }

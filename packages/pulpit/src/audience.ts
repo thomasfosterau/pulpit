@@ -498,7 +498,7 @@ export const defineAudience = <Following, E, R>(
       if (account.id === owner) return { account, owner };
       const role = yield* store.roleOf(groupId, account.id);
       if (Option.contains(role, "admin")) return { account, owner };
-      return yield* new Forbidden();
+      return yield* new Forbidden({ message: "Only the group's owner or an admin may manage it." });
     });
 
   const notOwner = (groupId: string, owner: string, accountId: string) =>
@@ -561,7 +561,9 @@ export const defineAudience = <Following, E, R>(
   const removeGroup = Effect.fn("audience.removeGroup")(function* (groupId: string) {
     const account = yield* signedIn;
     const owner = yield* ownerOf(groupId);
-    if (account.id !== owner) return yield* new Forbidden();
+    if (account.id !== owner) {
+      return yield* new Forbidden({ message: "Only the group's owner may remove it." });
+    }
     return yield* store.removeGroup(groupId);
   });
 

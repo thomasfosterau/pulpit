@@ -353,8 +353,11 @@ export const defineModeration = <Resource, E, R>(definition: {
     precondition: Precondition = {},
   ) {
     const viewer = yield* definition.viewer;
-    if (Option.isNone(viewer)) return yield* new Unauthorized();
-    if (!definition.policy.canModerate(viewer.value)) return yield* new Forbidden();
+    if (Option.isNone(viewer))
+      return yield* new Unauthorized({ message: "This operation needs a signed-in viewer." });
+    if (!definition.policy.canModerate(viewer.value)) {
+      return yield* new Forbidden({ message: "Only a moderator may do this." });
+    }
     return yield* definition.target.update({
       id,
       patch: { [definition.declaration.column]: decision },
@@ -721,7 +724,9 @@ export const defineReports = <Resource, E, R>(definition: {
     note: Option.Option<string>,
   ) {
     const account = yield* signedIn;
-    if (!policy.canModerate(account)) return yield* new Forbidden();
+    if (!policy.canModerate(account)) {
+      return yield* new Forbidden({ message: "Only a moderator may resolve a report." });
+    }
     const row = yield* reports.lock(id);
     if (Option.isNone(row) || row.value.targetType !== type) {
       return yield* new ReportNotFound({ id });

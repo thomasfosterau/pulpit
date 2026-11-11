@@ -105,6 +105,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Str from "effect/String";
 import * as Schema from "effect/Schema";
+import { Forbidden, Unauthorized, type Guard, type Ladder } from "@thomasfosterau/effect-auth";
 import { ResourceHandlers, type Assemble, type Handlers } from "@thomasfosterau/effect-jsonapi";
 import type { Visibility } from "./content.ts";
 import {
@@ -197,6 +198,81 @@ export interface AccessPolicy {
 }
 
 /**
+ * The four role axes an {@link AccessPolicy} asks about, each an
+ * application-named rung (or a named `Ladder.axis`) on effect-auth's ladder.
+ *
+ * @since 0.2.0
+ */
+export interface AccessAxes<Rung extends string> {
+  /** May see `private` rows and drafts. */
+  readonly viewPrivate: Rung | Ladder.Axis<Rung>;
+  /** May see soft-deleted rows. */
+  readonly viewDeleted: Rung | Ladder.Axis<Rung>;
+  /** May write someone else's owned row. */
+  readonly moderate: Rung | Ladder.Axis<Rung>;
+  /** May write reference data directly. */
+  readonly writeCorpus: Rung | Ladder.Axis<Rung>;
+}
+
+/**
+ * The kernel's {@link AccessPolicy} from effect-auth's guard kit
+ * (`Guard.make`, pulpit#5): each axis is the kit's ladder
+ * (`ladder.hasAtLeast(account, rung)`), the rank comparison its role gates
+ * make, which fails closed on a role outside the ladder. Never fails.
+ *
+ * @example
+ * ```ts
+ * import { strictEqual } from "node:assert";
+ * import * as Context from "effect/Context";
+ * import type * as Option from "effect/Option";
+ * import { Guard, Ladder } from "@thomasfosterau/effect-auth";
+ * import { accessPolicyFromGuards, type ViewerAccount } from "@thomasfosterau/pulpit/subtype";
+ *
+ * class CurrentViewer extends Context.Service<CurrentViewer, Option.Option<ViewerAccount>>()(
+ *   "@app/CurrentViewer",
+ * ) {}
+ * const guards = Guard.make({
+ *   ladder: Ladder.make(["user", "contributor", "moderator"]),
+ *   viewer: CurrentViewer,
+ * });
+ * const policy = accessPolicyFromGuards(guards, {
+ *   viewPrivate: "moderator",
+ *   viewDeleted: "moderator",
+ *   moderate: "moderator",
+ *   writeCorpus: "contributor",
+ * });
+ *
+ * strictEqual(policy.canWriteCorpus({ id: "u-1", role: "contributor" }), true);
+ * strictEqual(policy.canViewPrivate({ id: "u-1", role: "contributor" }), false);
+ * strictEqual(policy.canModerate({ id: "u-2", role: "superuser" }), false); // off the ladder
+ * ```
+ *
+ * @since 0.2.0
+ */
+export const accessPolicyFromGuards = <Id, User extends ViewerAccount, Rung extends string>(
+  guards: Pick<Guard.Guards<Id, User, Rung>, "ladder">,
+  axes: AccessAxes<NoInfer<Rung>>,
+): AccessPolicy => {
+  const { ladder } = guards;
+  return {
+    canViewPrivate: (account) => ladder.hasAtLeast(account, axes.viewPrivate),
+    canViewDeleted: (account) => ladder.hasAtLeast(account, axes.viewDeleted),
+    canModerate: (account) => ladder.hasAtLeast(account, axes.moderate),
+    canWriteCorpus: (account) => ladder.hasAtLeast(account, axes.writeCorpus),
+  };
+};
+
+/**
+ * The request's {@link Viewer}, read from effect-auth's guard kit: its
+ * `viewer` effect, the session context `Guard.make` was given (pulpit#5).
+ *
+ * @since 0.2.0
+ */
+export const viewerFromGuards = <Id, User extends ViewerAccount, Rung extends string>(
+  guards: Pick<Guard.Guards<Id, User, Rung>, "viewer">,
+): Effect.Effect<Viewer, never, Id> => guards.viewer;
+
+/**
  * The follower seam — the `followers` visibility state's one external fact.
  * `isFollower` answers one row's question; `following` answers a list's, as
  * whatever the list filter's `in` node takes (a subquery in SQL, #1107).
@@ -252,25 +328,27 @@ export const nobodyFollows = <Following>(nobody: Following): FollowerSeam<Follow
 
 // ── Errors ────────────────────────────────────────────────────────────
 
-/**
- * No signed-in viewer where one is required: the wire's 401.
- *
- * @since 0.1.0
- */
-export class Unauthorized extends Schema.TaggedError<
+// The two gate failures are effect-auth's own `Guard` errors (pulpit#5,
+// option (c)), so an application's error mapping encodes one class each,
+// whichever library raised it.
+export {
+  /**
+   * No signed-in viewer where one is required: the wire's 401. effect-auth's
+   * `Guard.Unauthorized`, re-exported (pulpit#5): it carries a `message` and
+   * an optional `code`.
+   *
+   * @since 0.1.0
+   */
   Unauthorized,
-  { readonly brand: unique symbol }
->()("Unauthorized", {}) {}
-
-/**
- * A signed-in viewer below the rung a write needs: the wire's 403. Never used to hide a row.
- *
- * @since 0.1.0
- */
-export class Forbidden extends Schema.TaggedError<Forbidden, { readonly brand: unique symbol }>()(
-  "Forbidden",
-  {},
-) {}
+  /**
+   * A signed-in viewer below the rung a write needs: the wire's 403. Never
+   * used to hide a row. effect-auth's `Guard.Forbidden`, re-exported
+   * (pulpit#5): it carries a `message` and an optional `code`.
+   *
+   * @since 0.1.0
+   */
+  Forbidden,
+};
 
 /**
  * A list order the leaf does not sort by: a key whose column is not sortable
@@ -635,13 +713,20 @@ const publicOrAll = <Following>(viewer: Viewer, policy: AccessPolicy): ReadScope
 // ── The write gates ───────────────────────────────────────────────────
 
 const signedIn = (viewer: Viewer): Effect.Effect<ViewerAccount, Unauthorized> =>
-  Effect.fromOption(viewer, () => new Unauthorized());
+  Effect.fromOption(
+    viewer,
+    () => new Unauthorized({ message: "This operation needs a signed-in viewer." }),
+  );
 
 const atRung = (
   viewer: Viewer,
   admits: (account: ViewerAccount) => boolean,
 ): Effect.Effect<ViewerAccount, Unauthorized | Forbidden> =>
-  Effect.filterOrFail(signedIn(viewer), admits, () => new Forbidden());
+  Effect.filterOrFail(
+    signedIn(viewer),
+    admits,
+    () => new Forbidden({ message: "The viewer's role is below the rung this write needs." }),
+  );
 
 /**
  * The gate for a CREATE: reference data → the corpus-write rung; owned → any signed-in account.
@@ -690,7 +775,9 @@ export const requireWriter = <E, R>(
         const owner = yield* ownerOf;
         if (Option.isNone(owner)) return yield* new NodeNotFound(row);
         if (account.id === owner.value || policy.canModerate(account)) return account;
-        return yield* new Forbidden();
+        return yield* new Forbidden({
+          message: "Only the owner or a moderator may write this node.",
+        });
       });
 
 // ── The current-version view seam ─────────────────────────────────────
