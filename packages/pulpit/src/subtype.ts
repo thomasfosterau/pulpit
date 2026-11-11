@@ -123,6 +123,7 @@ import {
 } from "./filter.ts";
 import { byCodePoint } from "./internal/list-order.ts";
 import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
+import { qOf } from "./internal/qvalue.ts";
 import {
   canViewReferenceRow,
   groupArm,
@@ -3082,19 +3083,9 @@ interface WeightedRange {
   readonly index: number;
 }
 
-/** An RFC 9110 qvalue: `0`, `1` or `0.` / `1.` with up to three decimals (`1.` only zeros). */
-const QVALUE = /^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/;
-
 const weightedRange = (range: string, index: number) => {
   const [tag = "", ...parameters] = Arr.map(range.split(";"), Str.trim);
-  const weight = Arr.findFirst(parameters, (parameter) => /^q=/i.test(parameter));
-  const q = Option.match(weight, {
-    onNone: () => 1,
-    onSome: (parameter) => {
-      const value = parameter.slice(2).trim();
-      return QVALUE.test(value) ? Number(value) : Number.NaN;
-    },
-  });
+  const q = qOf(parameters);
   return tag === "" || tag === "*" || !(q > 0)
     ? Result.failVoid
     : Result.succeed<WeightedRange>({ tag, q, index });

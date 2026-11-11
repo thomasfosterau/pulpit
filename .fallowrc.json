@@ -25,6 +25,7 @@
     "packages/pulpit/src/blobs.ts",
     "packages/pulpit/src/paths.ts",
     "packages/pulpit/src/pages.ts",
+    "packages/pulpit/src/media.ts",
     "packages/pulpit/src/collections.ts",
     "packages/pulpit/src/links.ts",
     "packages/pulpit/src/proposals.ts",

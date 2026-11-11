@@ -20,6 +20,7 @@ import {
   Documents,
   Edges,
   Pages,
+  Media,
   Paths,
   Purge,
   Erasure,
@@ -218,6 +219,16 @@ import {
   resolveLocalised,
   type LocalisedResolution,
 } from "@thomasfosterau/pulpit/pages";
+import {
+  defineAlbum,
+  defineRenditions,
+  mediaResourceFields,
+  renditionFormat,
+  renditionWidth,
+  type MediaItem,
+  type RenditionNotFound,
+  type RenditionOps,
+} from "@thomasfosterau/pulpit/media";
 
 import type { PublicationFact, PublicationOps, SubtypeOps } from "@thomasfosterau/pulpit/subtype";
 import { defineWorkingCopy } from "@thomasfosterau/pulpit/working-copy";
@@ -1651,3 +1662,54 @@ export type _TranslationSweep = Assert<
 >;
 export type _LineageOf = Assert<Equals<ReturnType<typeof lineageOf>, Option.Option<LocaleLineage>>>;
 export type _HumanLineageHook = Assert<Equals<ReturnType<typeof humanLineageHook>["name"], string>>;
+
+// ── media (pulpit#206) ───────────────────────────────────────────────────
+
+export type _MediaBarrel = Assert<Equals<typeof Media.defineRenditions, typeof defineRenditions>>;
+export type _RenditionWidth = Assert<
+  Equals<
+    typeof renditionWidth,
+    (widths: readonly [number, ...Array<number>], requested: number) => number
+  >
+>;
+export type _RenditionFormat = Assert<
+  Equals<
+    typeof renditionFormat,
+    // oxlint-disable-next-line effect/prefer-option-over-null -- pins the emitted parameter type exactly: an HTTP header arrives as `string | undefined`
+    (formats: readonly [string, ...Array<string>], accept: string | undefined) => string
+  >
+>;
+export type _RenditionServe = Assert<
+  Equals<
+    ReturnType<RenditionOps<string, StoreFailure, Transaction>["serve"]>,
+    Effect.Effect<
+      { readonly width: number; readonly format: string; readonly rendition: string },
+      RenditionNotFound | StoreFailure,
+      Transaction
+    >
+  >
+>;
+export type _AlbumMember = Assert<
+  Equals<
+    Parameters<
+      ReturnType<typeof defineAlbum<PostDoc, PostDoc, StoreFailure, Transaction>>["append"]
+    >,
+    [parentId: string, memberId: string]
+  >
+>;
+export type _MediaItem = Assert<
+  Equals<MediaItem<PostDoc>, { readonly type: string; readonly resource: PostDoc }>
+>;
+export type _MediaFields = Assert<
+  Equals<
+    keyof typeof mediaResourceFields,
+    | "mediaKind"
+    | "altText"
+    | "caption"
+    | "license"
+    | "width"
+    | "height"
+    | "durationSeconds"
+    | "exif"
+  >
+>;
