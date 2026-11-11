@@ -12,8 +12,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
-import * as Record from "effect/Record";
+import * as P from "effect/Predicate";
+import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 import {
   applyPatch,
@@ -87,9 +87,7 @@ describe("diffStates — the field-level change set", () => {
   it("equal states diff to the empty set, and unchanged columns are omitted", () => {
     expect(diffStates(initial, { ...initial })).toStrictEqual({});
     expect(diffStates({}, {})).toStrictEqual({});
-    expect(Record.keys(diffStates(initial, { ...initial, title: "Second" }))).toStrictEqual([
-      "title",
-    ]);
+    expect(R.keys(diffStates(initial, { ...initial, title: "Second" }))).toStrictEqual(["title"]);
   });
 
   it("is directed: swapping the sides swaps added / removed and before / after", () => {
@@ -495,7 +493,7 @@ describe("beforeAppend — the kernel's hook layer over the port (pulpit#45, pul
     expect(
       Exit.isFailure(missing) &&
         Option.map(Exit.findErrorOption(missing), (error) =>
-          Predicate.isString(error) ? error : error._tag,
+          P.isString(error) ? error : error._tag,
         ),
     ).toEqual(Option.some("NodeNotFound"));
     await Effect.runPromise(chain.create({ id: Option.some(ID), state: {}, actorId: ACTOR }));

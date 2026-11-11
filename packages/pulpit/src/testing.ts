@@ -279,7 +279,7 @@ const nextContent = (
 ): Written => {
   const state = applyPatch(base.state, patch);
   const level = applyLocalePatch(localesOf(base), locales);
-  return Record.isEmptyRecord(level) ? { state } : { state, locales: level };
+  return R.isEmptyRecord(level) ? { state } : { state, locales: level };
 };
 
 /**
@@ -610,9 +610,7 @@ export const versionChainConformance = <E, R>(
     return Option.match(Exit.findErrorOption(exit), {
       onNone: () => "defect",
       onSome: (error) =>
-        Predicate.hasProperty(error, "_tag") && Predicate.isString(error._tag)
-          ? error._tag
-          : "error",
+        P.hasProperty(error, "_tag") && P.isString(error._tag) ? error._tag : "error",
     });
   };
   /** The typed failure itself. */
