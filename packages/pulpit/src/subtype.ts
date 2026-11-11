@@ -2212,7 +2212,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     // contract: serve nothing for it rather than a locale nobody asked for.
     const rows = Arr.filterMap(page.rows, (row) => {
       const tag = row[LOCALE_COLUMN];
-      return Predicate.isString(tag) && locales.includes(tag)
+      return P.isString(tag) && locales.includes(tag)
         ? Result.succeed<LocalisedResource<Resource>>({ locale: tag, resource: toResource(row) })
         : Result.failVoid;
     });

@@ -236,7 +236,7 @@ const fallbackPage = (
 ): Page<LeafRow> => {
   const rank = (row: LeafRow): number => {
     const tag = row[LOCALE_COLUMN];
-    return Predicate.isString(tag) ? query.locales.indexOf(tag) : -1;
+    return P.isString(tag) ? query.locales.indexOf(tag) : -1;
   };
   const chosen = Arr.reduce(
     rows.filter((row) => rank(row) >= 0 && evaluate(query.where, row, contextAt(now))),
