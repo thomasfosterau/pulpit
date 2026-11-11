@@ -21,7 +21,7 @@ import { FlatQuery, Group, Resource } from "@thomasfosterau/effect-jsonapi";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Record from "effect/Record";
+import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import { makeResourceCache } from "../src/cache.ts";
@@ -109,7 +109,7 @@ interface PageResource {
 const level = defineLocaleLevel({ columns: ["title"] });
 
 /** A request's headers, by lower-case name. */
-type Headers = Record.ReadonlyRecord<string, string>;
+type Headers = R.ReadonlyRecord<string, string>;
 const accepting = (header: string): Headers => ({ "accept-language": header });
 
 /** A localised `pages` leaf behind effect-jsonapi's handlers, with the request's headers in hand. */
@@ -148,8 +148,8 @@ const localisedPages = () => {
   const wire: LocaleWire<never> = {
     level,
     defaultLocale: "en",
-    acceptLanguage: Effect.sync(() => Record.get(headers, "accept-language")),
-    contentLanguage: Effect.sync(() => Record.get(headers, "content-language")),
+    acceptLanguage: Effect.sync(() => R.get(headers, "accept-language")),
+    contentLanguage: Effect.sync(() => R.get(headers, "content-language")),
     served: (tag) => Effect.sync(() => void served.push(tag)),
   };
   const handlers = subtypeResourceHandlers(

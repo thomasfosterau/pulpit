@@ -6,7 +6,7 @@
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
+import * as P from "effect/Predicate";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 import { MAX_SET_VALUES } from "../src/filter.ts";
@@ -150,7 +150,7 @@ describe("SubtypeOps.owners", () => {
         Arr.dedupe(
           Arr.flatMap(listed.rows, (row) => {
             const owner = row["ownerId"];
-            return Predicate.isString(owner) ? [owner] : [];
+            return P.isString(owner) ? [owner] : [];
           }),
         ),
         byCodePoint,

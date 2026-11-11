@@ -51,7 +51,7 @@ import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
-import * as Predicate from "effect/Predicate";
+import * as P from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import { byCodePoint } from "./internal/list-order.ts";
 import {
@@ -412,10 +412,7 @@ export const defineCollection = <Parent, Member, E, R>(
       return Arr.isArray<unknown>(value) ? Option.some(value) : Option.none();
     });
     if (Option.isNone(recorded)) return;
-    const ids = Arr.take(
-      Arr.dedupe(Arr.filter(recorded.value, Predicate.isString)),
-      MAX_COLLECTION_SIZE,
-    );
+    const ids = Arr.take(Arr.dedupe(Arr.filter(recorded.value, P.isString)), MAX_COLLECTION_SIZE);
     // Gate parity with `append`: the column is writable through the parent's
     // own `update`, so keep only the members the writer can read.
     const readable = Arr.isReadonlyArrayNonEmpty(ids)

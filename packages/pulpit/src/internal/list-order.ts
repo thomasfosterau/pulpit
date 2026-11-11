@@ -10,9 +10,9 @@
  *
  * @internal
  */
-import * as Array from "effect/Array";
+import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
-import * as Predicate from "effect/Predicate";
+import * as P from "effect/Predicate";
 import type { ColumnValue } from "../version-chain.ts";
 
 /**
@@ -22,7 +22,7 @@ import type { ColumnValue } from "../version-chain.ts";
  */
 export const byCodePoint: Order.Order<string> = Order.mapInput(
   Order.Array(Order.Number),
-  (text: string) => Array.map(Array.fromIterable(text), (char) => char.codePointAt(0) ?? 0),
+  (text: string) => Arr.map(Arr.fromIterable(text), (char) => char.codePointAt(0) ?? 0),
 );
 
 /**
@@ -52,12 +52,12 @@ const kind = <A extends ColumnValue>(
  * string by code point, a `Date` by its instant (an invalid one as `NaN`).
  */
 const kinds = [
-  kind(Predicate.isBoolean, Order.Boolean),
-  kind(Predicate.isNumber, byNumber),
-  kind(Predicate.isBigInt, Order.BigInt),
-  kind(Predicate.isString, byCodePoint),
+  kind(P.isBoolean, Order.Boolean),
+  kind(P.isNumber, byNumber),
+  kind(P.isBigInt, Order.BigInt),
+  kind(P.isString, byCodePoint),
   kind(
-    Predicate.isDate,
+    P.isDate,
     Order.mapInput(byNumber, (date: Date) => date.getTime()),
   ),
 ];
@@ -114,4 +114,4 @@ const byId: Order.Order<SortRow> = Order.mapInput(byCodePoint, (row: SortRow) =>
  * value in either direction, then `id` ascending, so no two rows tie.
  */
 export const rowOrder = (keys: ReadonlyArray<OrderKey>): Order.Order<SortRow> =>
-  Order.combineAll([...Array.map(keys, byKey), byId]);
+  Order.combineAll([...Arr.map(keys, byKey), byId]);

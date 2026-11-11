@@ -16,7 +16,7 @@ import * as Exit from "effect/Exit";
 import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
-import * as Predicate from "effect/Predicate";
+import * as P from "effect/Predicate";
 import { always, evaluate, type FilterRow } from "../src/filter.ts";
 import { defineSocial, socialFollowers, type SocialStore } from "../src/social.ts";
 import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/subtype.ts";
@@ -170,7 +170,7 @@ describe("the silenced-authors read filter (opt-in)", () => {
   const context = {
     now: NOW,
     contains: (set: InMemoryFollowing, value: ColumnValue) =>
-      Predicate.isString(value) && HashSet.has(set, value),
+      P.isString(value) && HashSet.has(set, value),
   };
   const rows: ReadonlyArray<FilterRow> = [
     { id: "1", authorId: "u-b" },

@@ -73,8 +73,8 @@
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
-import * as Record from "effect/Record";
+import * as P from "effect/Predicate";
+import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 import type { BoundBudget } from "./budgets.ts";
 import { always, eq, never, or, type ListFilter } from "./filter.ts";
@@ -344,13 +344,13 @@ export const classifyProposalConflict = (
   const conflictingAttributes = conflictsIn(base.state, current.state, touchedKeys);
   const before = localesOf(base);
   const after = localesOf(current);
-  const conflictingLocales = Record.filter(
-    Record.map(touchedLocales, (keys, locale) =>
-      Option.match(Record.get(before, locale), {
+  const conflictingLocales = R.filter(
+    R.map(touchedLocales, (keys, locale) =>
+      Option.match(R.get(before, locale), {
         // A locale neither version carries is a new translation; one only the head carries was added since.
-        onNone: () => (Record.has(after, locale) ? keys : []),
+        onNone: () => (R.has(after, locale) ? keys : []),
         onSome: (from) =>
-          Option.match(Record.get(after, locale), {
+          Option.match(R.get(after, locale), {
             // Dropped since the base.
             onNone: () => keys,
             onSome: (to) => conflictsIn(from, to, keys),
@@ -359,8 +359,7 @@ export const classifyProposalConflict = (
     ),
     Arr.isReadonlyArrayNonEmpty,
   );
-  return Arr.isReadonlyArrayNonEmpty(conflictingAttributes) ||
-    !Record.isEmptyRecord(conflictingLocales)
+  return Arr.isReadonlyArrayNonEmpty(conflictingAttributes) || !R.isEmptyRecord(conflictingLocales)
     ? { state: "conflicting", conflictingAttributes, conflictingLocales }
     : { state: "stale", conflictingAttributes: [], conflictingLocales: {} };
 };
@@ -372,10 +371,7 @@ const conflictsIn = (
   keys: ReadonlyArray<string>,
 ): ReadonlyArray<string> => {
   const changes = diffStates(from, to);
-  return Arr.filter(
-    keys,
-    (key) => !Record.has(from, key) || !Record.has(to, key) || Record.has(changes, key),
-  );
+  return Arr.filter(keys, (key) => !R.has(from, key) || !R.has(to, key) || R.has(changes, key));
 };
 
 // ── Patch validation ──────────────────────────────────────────────────
@@ -442,12 +438,12 @@ const jsonMembers = (
   value: Schema.Json,
 ): Option.Option<ReadonlyArray<readonly [string, Schema.Json]>> =>
   value === null ||
-  Predicate.isBoolean(value) ||
-  Predicate.isNumber(value) ||
-  Predicate.isString(value) ||
+  P.isBoolean(value) ||
+  P.isNumber(value) ||
+  P.isString(value) ||
   Arr.isArray<Schema.Json>(value)
     ? Option.none()
-    : Option.some(Record.toEntries(value));
+    : Option.some(R.toEntries(value));
 
 /**
  * Check a submitted patch's shape and keys against the leaf's proposable
@@ -484,12 +480,12 @@ export const validateProposalPatch = <R>(
   },
 ): Effect.Effect<ValidatedPatch, InvalidProposalPatch, R> => {
   const invalid = (reason: string) => Effect.fail(new InvalidProposalPatch({ type, reason }));
-  if (!Predicate.isObject(patch) || Arr.isArray(patch)) {
+  if (!P.isObject(patch) || Array.isArray(patch)) {
     return invalid("expected an object of attribute changes");
   }
   const localeMembers = jsonMembers(options.locales ?? {});
   if (Option.isNone(localeMembers)) return invalid("expected an object of changes per locale");
-  const keys = Record.keys(patch);
+  const keys = R.keys(patch);
   const locales = localeMembers.value;
   if (!Arr.isReadonlyArrayNonEmpty(keys) && !Arr.isReadonlyArrayNonEmpty(locales)) {
     return invalid("it proposes no changes");
@@ -516,8 +512,8 @@ export const validateProposalPatch = <R>(
         return {
           patch: decoded,
           touchedKeys: Arr.filter(options.attributes, (key) => Arr.contains(keys, key)),
-          locales: Record.fromEntries(decodedLocales),
-          touchedLocales: Record.fromEntries(
+          locales: R.fromEntries(decodedLocales),
+          touchedLocales: R.fromEntries(
             Arr.map(locales, ([locale, changes]) => {
               const touched = Option.match(jsonMembers(changes), {
                 onNone: () => [],

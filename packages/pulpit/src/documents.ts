@@ -42,8 +42,8 @@ import * as Effect from "effect/Effect";
 import type * as HashMap from "effect/HashMap";
 import type * as Option from "effect/Option";
 import * as Order from "effect/Order";
-import * as Predicate from "effect/Predicate";
-import * as Record from "effect/Record";
+import * as P from "effect/Predicate";
+import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 
 // ── Vocabulary ────────────────────────────────────────────────────────
@@ -202,7 +202,7 @@ const numericText = (value: number): string => {
 };
 
 /** The short escapes jsonb's `escape_json` writes; every other control character is `\u00xx`. */
-const SHORT_ESCAPES: Record.ReadonlyRecord<string, string> = {
+const SHORT_ESCAPES: R.ReadonlyRecord<string, string> = {
   '"': '\\"',
   "\\": "\\\\",
   "\b": "\\b",
@@ -252,12 +252,12 @@ const stringText = (value: string): string =>
  */
 export const canonicalText = (value: Schema.Json): string => {
   if (value === null) return "null";
-  if (Predicate.isBoolean(value)) return value ? "true" : "false";
-  if (Predicate.isNumber(value)) return numericText(value);
-  if (Predicate.isString(value)) return stringText(value);
+  if (P.isBoolean(value)) return value ? "true" : "false";
+  if (P.isNumber(value)) return numericText(value);
+  if (P.isString(value)) return stringText(value);
   if (Arr.isArray<Schema.Json>(value)) return `[${value.map(canonicalText).join(", ")}]`;
   const members = Arr.sort(
-    Record.toEntries(value),
+    R.toEntries(value),
     Order.mapInput(keyOrder, ([key]: readonly [string, Schema.Json]) => key),
   );
   return `{${members.map(([key, member]) => `${stringText(key)}: ${canonicalText(member)}`).join(", ")}}`;
@@ -281,4 +281,4 @@ export const canonicalText = (value: Schema.Json): string => {
  * @since 0.1.0
  */
 export const documentRef = <const Key extends string>(key: Key) =>
-  Record.singleton(key, Resource.attribute(DocumentHash));
+  R.singleton(key, Resource.attribute(DocumentHash));

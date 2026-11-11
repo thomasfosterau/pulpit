@@ -55,8 +55,8 @@ import * as HashMap from "effect/HashMap";
 import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
-import * as Predicate from "effect/Predicate";
-import * as Record from "effect/Record";
+import * as P from "effect/Predicate";
+import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 import { sha256Hex, type BlobHead, type BlobStore } from "./blobs.ts";
 import type { BudgetCounter, BudgetRequest, WriteCountStore } from "./budgets.ts";
@@ -152,7 +152,7 @@ const instantOf = (now: Option.Option<Date>): Effect.Effect<Date> =>
 /** The list filter's evaluation context at `now`, over an {@link InMemoryFollowing} set. */
 const contextAt = (now: Date): EvaluationContext<InMemoryFollowing> => ({
   now,
-  contains: (set, value: ColumnValue) => Predicate.isString(value) && HashSet.has(set, value),
+  contains: (set, value: ColumnValue) => P.isString(value) && HashSet.has(set, value),
 });
 
 /**
@@ -162,9 +162,9 @@ const contextAt = (now: Date): EvaluationContext<InMemoryFollowing> => ({
  * the `NULL`-locale row a left join gives.
  */
 const localeRows = (row: LeafRow, locales: LocaleStates): ReadonlyArray<LeafRow> =>
-  Record.isEmptyRecord(locales)
+  R.isEmptyRecord(locales)
     ? [row]
-    : Arr.map(Record.toEntries(locales), ([tag, columns]): LeafRow => ({
+    : Arr.map(R.toEntries(locales), ([tag, columns]): LeafRow => ({
         ...row,
         ...columns,
         [LOCALE_COLUMN]: tag,
@@ -190,9 +190,7 @@ const distinctPage = (
     Arr.dedupe(
       Arr.flatMap(rows, (row) => {
         const value = row[query.column];
-        return evaluate(query.where, row, contextAt(now)) && Predicate.isString(value)
-          ? [value]
-          : [];
+        return evaluate(query.where, row, contextAt(now)) && P.isString(value) ? [value] : [];
       }),
     ),
     byCodePoint,
@@ -1490,14 +1488,14 @@ export const makeInMemoryEdgeStore = (options: InMemoryEdgeStoreOptions): InMemo
   const joined = (row: EdgeRow): Effect.Effect<Option.Option<FilterRow>> =>
     Effect.map(
       Effect.forEach(
-        Record.toEntries(options.ends),
+        R.toEntries(options.ends),
         ([alias, end]) => {
           const nodeId = row[end.column];
-          return Predicate.isString(nodeId)
+          return P.isString(nodeId)
             ? Effect.map(
                 end.nodes.get(nodeId),
                 Option.map((node) =>
-                  Record.mapKeys(node, (column): string => endpointColumn(alias, column)),
+                  R.mapKeys(node, (column): string => endpointColumn(alias, column)),
                 ),
               )
             : Effect.succeedNone;
@@ -1562,9 +1560,7 @@ export const makeInMemoryEdgeStore = (options: InMemoryEdgeStoreOptions): InMemo
           Arr.flatMap(rows, (row) => {
             const member = row[column];
             const other = row[otherColumn];
-            return Predicate.isString(member) && Predicate.isString(other) && ids.includes(other)
-              ? [member]
-              : [];
+            return P.isString(member) && P.isString(other) && ids.includes(other) ? [member] : [];
           }),
         ),
       ),
@@ -1574,7 +1570,7 @@ export const makeInMemoryEdgeStore = (options: InMemoryEdgeStoreOptions): InMemo
       Effect.map(matching(where), (rows) =>
         Arr.reduce(rows, HashMap.empty<string, number>(), (counts, row) => {
           const node = row[column];
-          return Predicate.isString(node) && ids.includes(node)
+          return P.isString(node) && ids.includes(node)
             ? HashMap.set(counts, node, Option.getOrElse(HashMap.get(counts, node), () => 0) + 1)
             : counts;
         }),
@@ -2086,7 +2082,7 @@ const hashesIn = (
     Arr.flatMap(rows, (row) =>
       Arr.flatMap(columns, (column) => {
         const value = row.state[column];
-        return Predicate.isString(value) ? [value] : [];
+        return P.isString(value) ? [value] : [];
       }),
     ),
   );
@@ -2409,7 +2405,7 @@ export const makeInMemoryReactionStore = (): InMemoryReactionStore => {
             const counts = Option.getOrElse(HashMap.get(acc, row.nodeId), () => ({}));
             return HashMap.set(acc, row.nodeId, {
               ...counts,
-              [row.kind]: Option.getOrElse(Record.get(counts, row.kind), () => 0) + 1,
+              [row.kind]: Option.getOrElse(R.get(counts, row.kind), () => 0) + 1,
             });
           },
         ),

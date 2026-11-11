@@ -31,8 +31,8 @@ import * as HashMap from "effect/HashMap";
 import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
-import * as Predicate from "effect/Predicate";
-import * as Record from "effect/Record";
+import * as P from "effect/Predicate";
+import * as R from "effect/Record";
 import {
   canViewEndpoint,
   defineEdgeOps,
@@ -472,7 +472,7 @@ describe("ported: an owned-child edge whose gate is its owned end's (gardeneria'
         { type: "observations", id },
         Effect.map(
           observations.get(id),
-          Option.flatMap((row) => Option.liftPredicate(row["ownerId"], Predicate.isString)),
+          Option.flatMap((row) => Option.liftPredicate(row["ownerId"], P.isString)),
         ),
       );
     };
@@ -588,13 +588,12 @@ const joinedRow = (alias: string, column: string, row: LeafRow): FilterRow => ({
   id: "edge",
   createdAt: NOW,
   [column]: row.id,
-  ...Record.mapKeys(row, (key): string => endpointColumn(alias, key)),
+  ...R.mapKeys(row, (key): string => endpointColumn(alias, key)),
 });
 
 const evaluationContext = {
   now: NOW,
-  contains: (set: Following, value: ColumnValue) =>
-    Predicate.isString(value) && HashSet.has(set, value),
+  contains: (set: Following, value: ColumnValue) => P.isString(value) && HashSet.has(set, value),
 };
 
 /** For one end and one viewer: each row's [id, listed, readable] — the two readings side by side. */
@@ -632,7 +631,7 @@ const drafts: ReadonlyArray<ColumnValue | typeof ABSENT> = [false, true, null, "
 
 /** A draft for a row id: a string quoted, so `"false"` never collides with `false`. */
 const showDraft = (draft: ColumnValue | typeof ABSENT): string =>
-  draft === ABSENT ? "absent" : Predicate.isString(draft) ? `"${draft}"` : String(draft);
+  draft === ABSENT ? "absent" : P.isString(draft) ? `"${draft}"` : String(draft);
 
 describe("EDGE-001: the endpoint filter never disagrees with the endpoint predicate", () => {
   const ownedRows = Arr.flatMap(actions, (action) =>
@@ -746,7 +745,7 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
       Arr.flatMap(["public", "followers", "private", "unknown", null], (visibility) =>
         Arr.map(curators, (curatorId) =>
           node(
-            `${action}-${String(visibility)}-${curatorId === ABSENT ? "absent" : Predicate.isString(curatorId) ? `"${curatorId}"` : String(curatorId)}`,
+            `${action}-${String(visibility)}-${curatorId === ABSENT ? "absent" : P.isString(curatorId) ? `"${curatorId}"` : String(curatorId)}`,
             curatorId === ABSENT ? { visibility } : { visibility, curatorId },
             action,
           ),
@@ -794,7 +793,7 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
         seen.map(({ id, readable }) => [id, readable]),
       );
       // The seam is asked only about a string, and only for a `followers` row.
-      expect(asked.filter((ownerId) => !Predicate.isString(ownerId))).toEqual([]);
+      expect(asked.filter((ownerId) => !P.isString(ownerId))).toEqual([]);
     });
 
     it("is not vacuous: the named account and its follower read its followers rows, and nobody else below the rung does", async () => {
@@ -1414,7 +1413,7 @@ describe("EDGE-001 by rung × end state: the view-deleted rung reads an edge who
   const world = async () => {
     const subjects = makeInMemoryNodes(["visibility"]);
     const parts = makeInMemoryNodes(["visibility"]);
-    Record.values(states).forEach((row) => subjects.put(row));
+    R.values(states).forEach((row) => subjects.put(row));
     parts.put(node("p1", { visibility: "public" }));
     const links = family(
       {
@@ -1425,7 +1424,7 @@ describe("EDGE-001 by rung × end state: the view-deleted rung reads an edge who
     );
     await run(
       Effect.forEach(
-        Record.values(states),
+        R.values(states),
         (row) => links.edges.insert({ subjectId: row.id, partId: "p1" }),
         { concurrency: 1 },
       ),
@@ -1446,7 +1445,7 @@ describe("EDGE-001 by rung × end state: the view-deleted rung reads an edge who
     ],
   ];
   const cases = Arr.flatMap(rungs, ([rung, viewer, reads]) =>
-    Arr.map(Record.keys(states), (state) => [rung, state, viewer, reads.includes(state)] as const),
+    Arr.map(R.keys(states), (state) => [rung, state, viewer, reads.includes(state)] as const),
   );
 
   it.each(cases)("%s, an edge whose subject is %s", async (_rung, state, viewer, readable) => {
@@ -1972,8 +1971,7 @@ describe("memberFilter and countBy: membership and counts never disagree with ED
               const listed = postRows.filter((post) =>
                 evaluate(filter, post, {
                   now: NOW,
-                  contains: (set: Following, value) =>
-                    Predicate.isString(value) && HashSet.has(set, value),
+                  contains: (set: Following, value) => P.isString(value) && HashSet.has(set, value),
                 }),
               );
               // The per-edge reading: a post is a member when some edge to a
@@ -2008,8 +2006,7 @@ describe("memberFilter and countBy: membership and counts never disagree with ED
         .filter((post) =>
           evaluate(filter, post, {
             now: NOW,
-            contains: (set: Following, value) =>
-              Predicate.isString(value) && HashSet.has(set, value),
+            contains: (set: Following, value) => P.isString(value) && HashSet.has(set, value),
           }),
         )
         .map((post) => post.id);
@@ -2204,8 +2201,7 @@ describe("nonMemberFilter: the complement of memberFilter under EDGE-001 (pulpit
 
   const context = {
     now: NOW,
-    contains: (set: Following, value: ColumnValue) =>
-      Predicate.isString(value) && HashSet.has(set, value),
+    contains: (set: Following, value: ColumnValue) => P.isString(value) && HashSet.has(set, value),
   };
 
   const policies = [

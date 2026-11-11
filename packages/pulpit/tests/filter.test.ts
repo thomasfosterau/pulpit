@@ -16,10 +16,10 @@
  */
 
 import { describe, expect, it } from "vite-plus/test";
-import * as Array from "effect/Array";
+import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as HashSet from "effect/HashSet";
-import * as Predicate from "effect/Predicate";
+import * as P from "effect/Predicate";
 import {
   always,
   and,
@@ -55,7 +55,7 @@ const LATER = DateTime.toDate(DateTime.makeUnsafe(NOW.getTime() + 1));
 
 const context: EvaluationContext<Following> = {
   now: NOW,
-  contains: (set, value) => Predicate.isString(value) && HashSet.has(set, value),
+  contains: (set, value) => P.isString(value) && HashSet.has(set, value),
 };
 
 const run = (filter: ListFilter<Following>, row: FilterRow) => evaluate(filter, row, context);
@@ -96,7 +96,7 @@ describe("evaluate — eq / ne against SQL's three-valued reading", () => {
     const handEq: ListFilter<Following> = { kind: "eq", column: "c", value: Number.NaN };
     const handNe: ListFilter<Following> = { kind: "ne", column: "c", value: Number.NaN };
     expect(
-      Array.map([handEq, handNe], (filter) => [
+      Arr.map([handEq, handNe], (filter) => [
         run(filter, { c: Number.NaN }),
         run(filter, { c: 1 }),
       ]),
@@ -156,7 +156,7 @@ describe("evaluate — in against SQL's `NULL IN (…)`", () => {
     const inOr = or<SpySet>(isIn("owner", set), eq("kind", "post"));
     const inAnd = and<SpySet>(isIn("owner", set), eq("kind", "page"));
     const rows: ReadonlyArray<FilterRow> = [{ owner: null, kind: "page" }, { kind: "page" }];
-    expect(Array.map(rows, (row) => [runSpy(inOr, row), runSpy(inAnd, row)])).toEqual([
+    expect(Arr.map(rows, (row) => [runSpy(inOr, row), runSpy(inAnd, row)])).toEqual([
       [false, false],
       [false, false],
     ]);
@@ -179,13 +179,13 @@ describe("evaluate — notIn against `(col IS NULL OR col NOT IN (…))` (pulpit
       },
     };
     const rows: ReadonlyArray<FilterRow> = [{ owner: "a" }, { owner: "b" }, { owner: null }, {}];
-    expect(Array.map(rows, (row) => evaluate(isNotIn("owner", set), row, context))).toEqual([
+    expect(Arr.map(rows, (row) => evaluate(isNotIn("owner", set), row, context))).toEqual([
       false,
       true,
       true,
       true,
     ]);
-    Array.forEach(rows, (row) =>
+    Arr.forEach(rows, (row) =>
       expect(evaluate(isNotIn("owner", set), row, context)).toBe(
         !evaluate(isIn("owner", set), row, context),
       ),
@@ -209,8 +209,8 @@ describe("evaluate — the other nodes", () => {
 
   it("an absent or NULL stamp is unpublished", () => {
     const rows: ReadonlyArray<FilterRow> = [{}, { at: null }];
-    expect(Array.map(rows, (row) => run(published("at"), row))).toEqual([false, false]);
-    expect(Array.map(rows, (row) => run(notPublished("at"), row))).toEqual([true, true]);
+    expect(Arr.map(rows, (row) => run(published("at"), row))).toEqual([false, false]);
+    expect(Arr.map(rows, (row) => run(notPublished("at"), row))).toEqual([true, true]);
     expect(run(published("at"), { at: NOW })).toBe(true);
     expect(run(notPublished("at"), { at: LATER })).toBe(true);
   });
@@ -226,7 +226,7 @@ describe("evaluate — the other nodes", () => {
 describe("evaluate — gt / gte / lt / lte against SQL's comparison", () => {
   /** Every operator's answer for one row against one comparand, in `gt, gte, lt, lte` order. */
   const answersFor = (row: FilterRow, value: Comparable) =>
-    Array.map([gt, gte, lt, lte], (op) => run(op("c", value), row));
+    Arr.map([gt, gte, lt, lte], (op) => run(op("c", value), row));
   const answers = (column: ColumnValue, value: Comparable) => answersFor({ c: column }, value);
   const NONE = [false, false, false, false];
 
@@ -266,9 +266,9 @@ describe("evaluate — gt / gte / lt / lte against SQL's comparison", () => {
   it("a NULL or absent column satisfies none (`NULL > $v` is NULL)", () => {
     const values: ReadonlyArray<Comparable> = [0, "", NOW];
     const rows: ReadonlyArray<FilterRow> = [{ c: null }, { other: 1 }, {}];
-    expect(
-      Array.flatMap(values, (value) => Array.map(rows, (row) => answersFor(row, value))),
-    ).toEqual(Array.makeBy(values.length * rows.length, () => NONE));
+    expect(Arr.flatMap(values, (value) => Arr.map(rows, (row) => answersFor(row, value)))).toEqual(
+      Arr.makeBy(values.length * rows.length, () => NONE),
+    );
   });
 
   it("a column of another type than the comparand satisfies none", () => {
@@ -284,8 +284,8 @@ describe("evaluate — gt / gte / lt / lte against SQL's comparison", () => {
       [["a"], "a"],
       [{ at: 1 }, 1],
     ];
-    expect(Array.map(mismatched, ([column, value]) => answers(column, value))).toEqual(
-      Array.map(mismatched, () => NONE),
+    expect(Arr.map(mismatched, ([column, value]) => answers(column, value))).toEqual(
+      Arr.map(mismatched, () => NONE),
     );
   });
 
@@ -305,14 +305,14 @@ describe("evaluate — gt / gte / lt / lte against SQL's comparison", () => {
     expect(Number.isNaN(invalid.getTime())).toBe(true);
     // PostgreSQL orders NaN above every number; outside the contract, so the constructors fail closed.
     expect(
-      Array.flatMap([Number.NaN, invalid], (value) =>
-        Array.map([gt, gte, lt, lte], (op) => op("c", value)),
+      Arr.flatMap([Number.NaN, invalid], (value) =>
+        Arr.map([gt, gte, lt, lte], (op) => op("c", value)),
       ),
-    ).toEqual(Array.makeBy(8, () => never));
+    ).toEqual(Arr.makeBy(8, () => never));
     const handBuilt = (value: Comparable): ReadonlyArray<ListFilter<Following>> =>
-      Array.map(["gt", "gte", "lt", "lte"] as const, (kind) => ({ kind, column: "c", value }));
+      Arr.map(["gt", "gte", "lt", "lte"] as const, (kind) => ({ kind, column: "c", value }));
     expect(
-      Array.flatMap(
+      Arr.flatMap(
         [
           [Number.NaN, Number.NaN],
           [1, Number.NaN],
@@ -320,9 +320,9 @@ describe("evaluate — gt / gte / lt / lte against SQL's comparison", () => {
           [invalid, NOW],
           [NOW, invalid],
         ] as const,
-        ([column, value]) => Array.map(handBuilt(value), (filter) => run(filter, { c: column })),
+        ([column, value]) => Arr.map(handBuilt(value), (filter) => run(filter, { c: column })),
       ),
-    ).toEqual(Array.makeBy(20, () => false));
+    ).toEqual(Arr.makeBy(20, () => false));
     expect([
       answers(invalid, NOW),
       answers(Number.NaN, 1),
@@ -345,11 +345,11 @@ describe("evaluate — gt / gte / lt / lte against SQL's comparison", () => {
       [Number.NEGATIVE_INFINITY, 0],
     ];
     expect(
-      Array.map(pairs, ([column, value]) => {
+      Arr.map(pairs, ([column, value]) => {
         const [isGt, isGte, isLt, isLte] = answers(column, value);
         return [isGt === !isLte, isGte === !isLt];
       }),
-    ).toEqual(Array.map(pairs, () => [true, true]));
+    ).toEqual(Arr.map(pairs, () => [true, true]));
     // …and a NULL column satisfies neither half, so `or(gt, lte)` drops it as SQL does.
     expect(run(or<Following>(gt("c", 1), lte("c", 1)), { c: null })).toBe(false);
     expect(run(or<Following>(gt("c", 1), lte("c", 1)), { c: 7 })).toBe(true);
@@ -374,7 +374,7 @@ describe("evaluate — anyOf / noneOf against `= ANY(…)` / `<> ALL(…)`", () 
     { c: null },
     {},
   ];
-  const over = (filter: ListFilter<Following>) => Array.map(rows, (row) => run(filter, row));
+  const over = (filter: ListFilter<Following>) => Arr.map(rows, (row) => run(filter, row));
 
   it("anyOf matches a member of the set by eq's identity, and nothing of another type", () => {
     expect(over(anyOf("c", ["a", "b", 1]))).toEqual([
@@ -406,14 +406,14 @@ describe("evaluate — anyOf / noneOf against `= ANY(…)` / `<> ALL(…)`", () 
     expect(over(ne("c", 1))).toEqual([false, false, false, false, false, false, false, false]);
     expect(over(ne("c", "1"))).toEqual([true, true, true, false, false, false, false, false]);
     // A mixed set is itself a type mismatch for every column.
-    expect(over(noneOf("c", ["a", 1]))).toEqual(Array.map(rows, () => false));
+    expect(over(noneOf("c", ["a", 1]))).toEqual(Arr.map(rows, () => false));
   });
 
   it("a one-value set reads as eq / ne over every row", () => {
     const values: ReadonlyArray<Scalar> = ["a", 1, true];
     expect(
-      Array.map(values, (value) => [over(anyOf("c", [value])), over(noneOf("c", [value]))]),
-    ).toEqual(Array.map(values, (value) => [over(eq("c", value)), over(ne("c", value))]));
+      Arr.map(values, (value) => [over(anyOf("c", [value])), over(noneOf("c", [value]))]),
+    ).toEqual(Arr.map(values, (value) => [over(eq("c", value)), over(ne("c", value))]));
   });
 
   it("an empty anyOf is never and an empty noneOf is always", () => {
@@ -432,13 +432,13 @@ describe("evaluate — anyOf / noneOf against `= ANY(…)` / `<> ALL(…)`", () 
   it("a hand-built empty node reads as SQL does: `= ANY('{}')` is false, `<> ALL('{}')` true even for NULL", () => {
     const emptyAny: ListFilter<Following> = { kind: "anyOf", column: "c", values: [] };
     const emptyNone: ListFilter<Following> = { kind: "noneOf", column: "c", values: [] };
-    expect(over(emptyAny)).toEqual(Array.map(rows, () => false));
-    expect(over(emptyNone)).toEqual(Array.map(rows, () => true));
+    expect(over(emptyAny)).toEqual(Arr.map(rows, () => false));
+    expect(over(emptyNone)).toEqual(Arr.map(rows, () => true));
   });
 
   it(`a set past MAX_SET_VALUES (${MAX_SET_VALUES}) is never, from the constructor and in evaluate`, () => {
-    const atCap = Array.makeBy(MAX_SET_VALUES, (i) => `v${i}`);
-    const pastCap = Array.makeBy(MAX_SET_VALUES + 1, (i) => `v${i}`);
+    const atCap = Arr.makeBy(MAX_SET_VALUES, (i) => `v${i}`);
+    const pastCap = Arr.makeBy(MAX_SET_VALUES + 1, (i) => `v${i}`);
     expect(anyOf("c", atCap).kind).toBe("anyOf");
     expect(noneOf("c", atCap).kind).toBe("noneOf");
     expect(run(anyOf("c", atCap), { c: "v0" })).toBe(true);
@@ -453,7 +453,7 @@ describe("evaluate — anyOf / noneOf against `= ANY(…)` / `<> ALL(…)`", () 
   });
 
   it("MAX_SET_VALUES counts duplicates", () => {
-    const repeated = Array.makeBy(MAX_SET_VALUES + 1, () => "a");
+    const repeated = Arr.makeBy(MAX_SET_VALUES + 1, () => "a");
     expect([anyOf("c", repeated), noneOf("c", repeated)]).toEqual([never, never]);
   });
 
@@ -468,7 +468,7 @@ describe("evaluate — anyOf / noneOf against `= ANY(…)` / `<> ALL(…)`", () 
     };
     const nanRows: ReadonlyArray<FilterRow> = [{ c: Number.NaN }, { c: 1 }, { c: 2 }];
     expect(
-      Array.map([handAny, handNone], (filter) => Array.map(nanRows, (row) => run(filter, row))),
+      Arr.map([handAny, handNone], (filter) => Arr.map(nanRows, (row) => run(filter, row))),
     ).toEqual([
       [false, false, false],
       [false, false, false],
@@ -499,20 +499,20 @@ describe("evaluate — isNull against `col IS NULL` (pulpit#170)", () => {
     expect(run(isNull("parent"), { parent: null })).toBe(true);
     expect(run(isNull("parent"), { other: "x" })).toBe(true);
     const values: ReadonlyArray<ColumnValue> = ["", "p", 0, false, NOW];
-    expect(Array.map(values, (value) => run(isNull("parent"), { parent: value }))).toEqual(
-      Array.map(values, () => false),
+    expect(Arr.map(values, (value) => run(isNull("parent"), { parent: value }))).toEqual(
+      Arr.map(values, () => false),
     );
   });
 
   it("or(isNull, noneOf) keeps an unset column that a bare noneOf drops", () => {
     const excluding = or<Following>(isNull("parent"), noneOf("parent", ["a"]));
     const rows: ReadonlyArray<FilterRow> = [{ parent: null }, {}, { parent: "a" }, { parent: "b" }];
-    expect(Array.map(rows, (row) => run(noneOf("parent", ["a"]), row))).toEqual([
+    expect(Arr.map(rows, (row) => run(noneOf("parent", ["a"]), row))).toEqual([
       false,
       false,
       false,
       true,
     ]);
-    expect(Array.map(rows, (row) => run(excluding, row))).toEqual([true, true, false, true]);
+    expect(Arr.map(rows, (row) => run(excluding, row))).toEqual([true, true, false, true]);
   });
 });

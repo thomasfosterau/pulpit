@@ -51,8 +51,8 @@ import * as Match from "effect/Match";
 import * as MutableHashMap from "effect/MutableHashMap";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
-import * as Predicate from "effect/Predicate";
-import * as Record from "effect/Record";
+import * as P from "effect/Predicate";
+import * as R from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -323,7 +323,7 @@ describe("ownedListFilter ≡ canViewOwned", () => {
       row.id,
       evaluate(filter, row, {
         now: NOW,
-        contains: (set: Following, value) => Predicate.isString(value) && HashSet.has(set, value),
+        contains: (set: Following, value) => P.isString(value) && HashSet.has(set, value),
       }),
     ]);
     const seen = await run(
@@ -924,7 +924,7 @@ describe("defineSubtype — an owned leaf", () => {
         observed
           .filter((probe) => probe.label === label && probe.viewerName === viewerName)
           .map(({ answer }) =>
-            Result.isFailure(answer) ? answer.failure._tag : Record.keys(answer.success.changes),
+            Result.isFailure(answer) ? answer.failure._tag : R.keys(answer.success.changes),
           );
       const admitted = [
         [],
@@ -1643,14 +1643,14 @@ interface RowReads {
 
 /** A seeded column for a test name: a string quoted, so `"false"` never reads as `false`. */
 const showColumn = (seed: Seed, column: string): string =>
-  Option.match(Record.get(seed.state, column), {
+  Option.match(R.get(seed.state, column), {
     onNone: () => "absent",
     onSome: (value) =>
-      value === ABSENT ? "absent" : Predicate.isString(value) ? `"${value}"` : String(value),
+      value === ABSENT ? "absent" : P.isString(value) ? `"${value}"` : String(value),
   });
 
 const labelOf = (seed: Seed): string =>
-  `visibility ${showColumn(seed, "visibility")}, draft ${showColumn(seed, "draft")}, owner ${seed.unstamped === true ? showColumn(seed, "ownerId") : seed.owner.id}${Record.has(seed.state, "curatorId") ? `, curator ${showColumn(seed, "curatorId")}` : ""}${Record.has(seed.state, "groupId") ? `, group ${showColumn(seed, "groupId")}` : ""}${seed.deleted ? ", deleted" : ""}`;
+  `visibility ${showColumn(seed, "visibility")}, draft ${showColumn(seed, "draft")}, owner ${seed.unstamped === true ? showColumn(seed, "ownerId") : seed.owner.id}${R.has(seed.state, "curatorId") ? `, curator ${showColumn(seed, "curatorId")}` : ""}${R.has(seed.state, "groupId") ? `, group ${showColumn(seed, "groupId")}` : ""}${seed.deleted ? ", deleted" : ""}`;
 
 /** A leaf over the in-memory seams, seeded through the factory's own `create` and `delete`. */
 const seededLeaf = (
@@ -1685,7 +1685,7 @@ const seededLeaf = (
         as(seed.owner),
         ops.create({
           id: Option.none(),
-          state: Record.filterMap(seed.state, (value) =>
+          state: R.filterMap(seed.state, (value) =>
             value === ABSENT ? Result.failVoid : Result.succeed(value),
           ),
         }),
@@ -2078,7 +2078,7 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
       );
       expectAgreement(await leaf.reads(as(follower)));
       expect(asked.length).toBeGreaterThan(0);
-      expect(asked.filter((ownerId) => !Predicate.isString(ownerId))).toEqual([]);
+      expect(asked.filter((ownerId) => !P.isString(ownerId))).toEqual([]);
     });
 
     it.each(
@@ -2804,7 +2804,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
 
   it("is not vacuous: a corpus writer without the view rungs reaches no hidden row, and the rungs restore access", async () => {
     const answers = async (who: ViewerAccount) =>
-      Record.fromEntries(
+      R.fromEntries(
         (await run(probe(splitPolicy, ["name", "visibility", "draft"], as(who)))).map(
           (result) => [`${result.operation} ${result.label}`, result.answer] as const,
         ),
@@ -2824,7 +2824,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     );
     // Every operation on every row: only the two rows `get` serves it reach the chain.
     expect(await answers(contributor)).toEqual(
-      Record.fromEntries(
+      R.fromEntries(
         Arr.flatMap(operations, (operation) =>
           Arr.map([...seeds.map((seed) => seed.label), "missing"], (label) => [
             `${operation} ${label}`,
@@ -2882,7 +2882,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
 
   it("is not vacuous: a declared followers column opens its followers rows to a following corpus writer, and nothing else (pulpit#92)", async () => {
     const answers = async (who: ViewerAccount) =>
-      Record.fromEntries(
+      R.fromEntries(
         (
           await run(
             probe(splitPolicy, ["name", "visibility", "draft", "curatorId"], as(who), curated),
@@ -2913,7 +2913,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     const memberAnswers = await answers(member);
     expect(memberAnswers["update followers of the member"]).toEqual(Option.some("Forbidden"));
     // The same writer without the declaration is shut out, as before pulpit#92.
-    const undeclared = Record.fromEntries(
+    const undeclared = R.fromEntries(
       (
         await run(probe(splitPolicy, ["name", "visibility", "draft", "curatorId"], as(contributor)))
       ).map((result) => [`${result.operation} ${result.label}`, result.answer] as const),
@@ -3385,7 +3385,7 @@ describe("lifecycle hooks — before and after every write (pulpit#45)", () => {
   });
 
   it("a before hook transforms the patch: each hook sees the previous one's", async () => {
-    const title = (patch: ChainPatch) => Option.liftPredicate(patch["title"], Predicate.isString);
+    const title = (patch: ChainPatch) => Option.liftPredicate(patch["title"], P.isString);
     const slugOf = (patch: ChainPatch): ChainPatch =>
       Option.match(title(patch), {
         onNone: () => patch,

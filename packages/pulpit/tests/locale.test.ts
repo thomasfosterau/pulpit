@@ -7,7 +7,7 @@
 import * as Effect from "effect/Effect";
 import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
-import * as Record from "effect/Record";
+import * as R from "effect/Record";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 import { evaluate, locale, LOCALE_COLUMN, MAX_SET_VALUES, never } from "../src/filter.ts";
@@ -439,7 +439,7 @@ describe("a localised leaf's before hooks (pulpit#56)", () => {
     run: (event) => Effect.succeed(event.patch),
     locales: (event) =>
       Effect.succeed(
-        Record.map(event.locales ?? {}, (change) =>
+        R.map(event.locales ?? {}, (change) =>
           change === null || change === undefined
             ? change
             : { ...change, title: String(change["title"]).toUpperCase() },

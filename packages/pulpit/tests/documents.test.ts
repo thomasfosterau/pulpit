@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
-import * as Record from "effect/Record";
+import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 import { Resource } from "@thomasfosterau/effect-jsonapi";
 import {
@@ -245,11 +245,7 @@ describe("documentRef — the version row's document reference", () => {
   });
 
   it("is optional at update (carry forward) and never cleared", () => {
-    expect(Record.keys(NoteResource.updateInput.fields).toSorted()).toEqual([
-      "body",
-      "id",
-      "title",
-    ]);
+    expect(R.keys(NoteResource.updateInput.fields).toSorted()).toEqual(["body", "id", "title"]);
     expect(decodes(NoteResource.updateInput, { id: UUID })).toBe(true);
     expect(decodes(NoteResource.updateInput, { id: UUID, body: HELLO })).toBe(true);
     expect(decodes(NoteResource.updateInput, { id: UUID, body: null })).toBe(false);

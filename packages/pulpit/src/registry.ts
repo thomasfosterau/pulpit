@@ -54,10 +54,10 @@
  */
 
 import type { Resource } from "@thomasfosterau/effect-jsonapi";
-import * as Array from "effect/Array";
+import * as Arr from "effect/Array";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
-import * as Record from "effect/Record";
+import * as R from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -186,7 +186,7 @@ const fail = (message: string): never => {
 export const indexByKey = (
   entries: readonly RegistryEntry[],
 ): HashMap.HashMap<string, RegistryEntry> =>
-  Array.reduce(entries, HashMap.empty<string, RegistryEntry>(), (map, entry) => {
+  Arr.reduce(entries, HashMap.empty<string, RegistryEntry>(), (map, entry) => {
     if (HashMap.has(map, entry.key)) fail(`registry: duplicate key '${entry.key}'`);
     return HashMap.set(map, entry.key, entry);
   });
@@ -195,7 +195,7 @@ export const indexByKey = (
 const checkFlagsHaveResource = (entry: RegistryEntry): void => {
   if (entry.resource !== undefined) return;
   Option.map(
-    Array.findFirst(RESOURCE_FLAGS, (flag) => entry[flag] === true),
+    Arr.findFirst(RESOURCE_FLAGS, (flag) => entry[flag] === true),
     (flag) => fail(`'${entry.key}' is flagged '${flag}' but declares no resource`),
   );
 };
@@ -231,7 +231,7 @@ const checkEntry = (
   checkFlagsHaveResource(entry);
   checkTrustAxis(entry);
   checkIdLockstep(entry);
-  Array.forEach(checks, (check) => Option.map(check(entry, byKey), fail));
+  Arr.forEach(checks, (check) => Option.map(check(entry, byKey), fail));
 };
 
 /**
@@ -294,7 +294,7 @@ export const validateRegistry = (
   checks: ReadonlyArray<RegistryCheck> = [],
 ): void => {
   const byKey = indexByKey(entries);
-  Array.forEach(entries, (entry) => checkEntry(entry, byKey, checks));
+  Arr.forEach(entries, (entry) => checkEntry(entry, byKey, checks));
 };
 
 // ── Branch resolution ─────────────────────────────────────────────────
@@ -313,7 +313,7 @@ export const branchOf = <Root extends string>(
   byKey: HashMap.HashMap<string, RegistryEntry>,
   roots: ReadonlyArray<Root>,
 ): Option.Option<Root> => {
-  const isRoot = (key: string): key is Root => Array.some(roots, (root) => root === key);
+  const isRoot = (key: string): key is Root => Arr.some(roots, (root) => root === key);
   const walk = (key: string): Option.Option<Root> =>
     isRoot(key)
       ? Option.some(key)
@@ -411,7 +411,7 @@ export const flaggedMembers = <const T extends readonly RegistryEntry[], Flag ex
   flag: Flag,
 ): PickResources<T, Flag> =>
   asMemberTuple<PickResources<T, Flag>>(
-    Array.filterMap(entries, (entry): Result.Result<Resource.Any, void> =>
+    Arr.filterMap(entries, (entry): Result.Result<Resource.Any, void> =>
       entry[flag] === true && entry.resource !== undefined
         ? Result.succeed(entry.resource)
         : Result.failVoid,
@@ -443,7 +443,7 @@ export const branchMembers = <
 ): PickChildren<T, Parents> => {
   const byKey = indexByKey(entries);
   return asMemberTuple<PickChildren<T, Parents>>(
-    Array.filterMap(entries, (entry): Result.Result<Resource.Any, void> =>
+    Arr.filterMap(entries, (entry): Result.Result<Resource.Any, void> =>
       entry.resource !== undefined && Option.contains(branchOf(entry, byKey, roots), root)
         ? Result.succeed(entry.resource)
         : Result.failVoid,
@@ -459,7 +459,7 @@ export const branchMembers = <
 export const identifiersOf = <const Members extends readonly Resource.Any[]>(
   members: Members,
 ): Identifiers<Members> =>
-  asMemberTuple<Identifiers<Members>>(Array.map(members, (member) => member.identifier));
+  asMemberTuple<Identifiers<Members>>(Arr.map(members, (member) => member.identifier));
 
 // ── Derived wire identity ─────────────────────────────────────────────
 
@@ -495,21 +495,21 @@ export const registryWireTypes = <Root extends string>(
 ): RegistryWireTypes<Root> => {
   const byKey = indexByKey(entries);
   const flagged = (flag: RegistryFlag): ReadonlyArray<string> =>
-    Array.filterMap(entries, (entry): Result.Result<string, void> =>
+    Arr.filterMap(entries, (entry): Result.Result<string, void> =>
       entry[flag] === true && entry.resource !== undefined
         ? Result.succeed(entry.resource.type)
         : Result.failVoid,
     );
   const branch = (root: Root): ReadonlyArray<string> =>
-    Array.filterMap(entries, (entry): Result.Result<string, void> =>
+    Arr.filterMap(entries, (entry): Result.Result<string, void> =>
       entry.resource !== undefined && Option.contains(branchOf(entry, byKey, roots), root)
         ? Result.succeed(entry.resource.type)
         : Result.failVoid,
     );
-  // SAFETY: `Record.fromEntries` erases the key union to `string`; the entries
+  // SAFETY: `R.fromEntries` erases the key union to `string`; the entries
   // are built from exactly `roots`, so every `Root` key is present.
-  const branches = Record.fromEntries(
-    Array.map(roots, (root): [Root, ReadonlyArray<string>] => [root, branch(root)]),
+  const branches = R.fromEntries(
+    Arr.map(roots, (root): [Root, ReadonlyArray<string>] => [root, branch(root)]),
   ) as { readonly [K in Root]: ReadonlyArray<string> };
   return {
     pageable: flagged("pageable"),

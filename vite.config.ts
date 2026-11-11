@@ -121,10 +121,6 @@ export default defineConfig({
       // `effect/require-safety-comment-for-type-assertion`, which demands the
       // `// SAFETY:` invariant this rule only prompts for.
       "effect/casting-awareness": "off",
-      // Hard-codes abbreviations (`Arr`, `P`, `R`, …) with no options, so it is
-      // unsatisfiable under the full-name convention (`import * as Option from
-      // "effect/Option"`) this library shares with its consumers.
-      "effect/prefer-namespace-imports": "off",
       // Every former ported-code allowance (the preset rules this workspace
       // once held at `warn` while ported modules were paid down) is at zero
       // and back at the preset's `error`; a new site is a defect.

@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
-import * as Record from "effect/Record";
+import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 import { Resource } from "@thomasfosterau/effect-jsonapi";
 import {
@@ -98,8 +98,8 @@ describe("the visibility / draft pair on an owned Content leaf", () => {
   });
 
   it("the owned-leaf spread carries visibility alone (a garden is not a draft of anything)", () => {
-    expect(Record.keys(ownedVisibilityResourceFields)).toEqual(["visibility"]);
-    expect(Record.keys(ownedContentLeafResourceFields)).toEqual([
+    expect(R.keys(ownedVisibilityResourceFields)).toEqual(["visibility"]);
+    expect(R.keys(ownedContentLeafResourceFields)).toEqual([
       "createdAt",
       "updatedAt",
       "deletedAt",
@@ -123,9 +123,9 @@ describe("the timestamps and the tombstone", () => {
   });
 
   it("are in no write projection", () => {
-    expect(Record.keys(TaxonResource.createInput.fields)).toEqual(["name"]);
-    expect(Record.keys(TaxonResource.updateInput.fields).toSorted()).toEqual(["id", "name"]);
-    expect(Record.keys(PostResource.createInput.fields)).toEqual(["visibility", "draft", "title"]);
+    expect(R.keys(TaxonResource.createInput.fields)).toEqual(["name"]);
+    expect(R.keys(TaxonResource.updateInput.fields).toSorted()).toEqual(["id", "name"]);
+    expect(R.keys(PostResource.createInput.fields)).toEqual(["visibility", "draft", "title"]);
   });
 });
 

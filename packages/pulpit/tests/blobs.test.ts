@@ -17,7 +17,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
-import * as Record from "effect/Record";
+import * as R from "effect/Record";
 import {
   blobKey,
   ContentHash,
@@ -53,7 +53,7 @@ describe("the content hash", () => {
   });
 
   it("the file fields are on the resource only", () => {
-    expect(Record.keys(fileResourceFields)).toEqual([
+    expect(R.keys(fileResourceFields)).toEqual([
       "contentHash",
       "byteSize",
       "mediaType",

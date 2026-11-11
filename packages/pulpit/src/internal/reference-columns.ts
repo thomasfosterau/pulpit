@@ -20,7 +20,7 @@
 import * as Effect from "effect/Effect";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
+import * as P from "effect/Predicate";
 import { always, and, eq, isIn, never, or, type ListFilter } from "../filter.ts";
 import type { ColumnValue } from "../version-chain.ts";
 import {
@@ -179,7 +179,7 @@ export const canViewReferenceRow = <A extends Account, R>(
       followers,
       account.id,
       Option.flatMap(groupColumnOf(access, viewColumns), (column) =>
-        Option.liftPredicate(row[column], Predicate.isString),
+        Option.liftPredicate(row[column], P.isString),
       ),
     );
   }

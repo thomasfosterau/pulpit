@@ -19,8 +19,8 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
-import * as Record from "effect/Record";
+import * as P from "effect/Predicate";
+import * as R from "effect/Record";
 import type * as Schema from "effect/Schema";
 import {
   classifyProposalBase,
@@ -179,10 +179,8 @@ describe("classifyProposalConflict", () => {
 
 /** The leaf's decoder: string values only, as a stand-in for its update schema. */
 const decodeStrings = (patch: Schema.Json): Effect.Effect<ChainPatch, InvalidProposalPatch> =>
-  Predicate.isObject(patch) &&
-  !Array.isArray(patch) &&
-  Record.every(patch, (value) => Predicate.isString(value))
-    ? Effect.succeed(Record.filter(patch, Predicate.isString))
+  P.isObject(patch) && !Array.isArray(patch) && R.every(patch, (value) => P.isString(value))
+    ? Effect.succeed(R.filter(patch, P.isString))
     : Effect.fail(new InvalidProposalPatch({ type: "pages", reason: "a value is not a string" }));
 
 describe("validateProposalPatch — the patch rules", () => {

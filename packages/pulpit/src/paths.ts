@@ -35,7 +35,7 @@
 import * as Effect from "effect/Effect";
 import * as Equivalence from "effect/Equivalence";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
+import * as P from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import type { SubtypeOps } from "./subtype.ts";
 import type { ChainWrite, VersionChain } from "./version-chain.ts";
@@ -221,7 +221,7 @@ export const routable = <Resource, E, R>(
       const path = Option.flatMap(written, (snapshot) =>
         snapshot.action === "delete"
           ? Option.none()
-          : Option.liftPredicate(snapshot.state[column], Predicate.isString),
+          : Option.liftPredicate(snapshot.state[column], P.isString),
       );
       const held = yield* paths.canonicalOf(id);
       if (Option.makeEquivalence(Equivalence.String)(path, held)) return;

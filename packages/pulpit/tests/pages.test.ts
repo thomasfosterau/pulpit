@@ -14,7 +14,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
+import * as P from "effect/Predicate";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 import { localeFallbacks, resolveLocalised, type LocalisedResolution } from "../src/pages.ts";
@@ -259,9 +259,7 @@ describe("resolveLocalised (pulpit#201)", () => {
       }),
     );
     expect(
-      Arr.map([...owner, ...rung], (outcome) =>
-        Predicate.isString(outcome) ? outcome : outcome.kind,
-      ),
+      Arr.map([...owner, ...rung], (outcome) => (P.isString(outcome) ? outcome : outcome.kind)),
     ).toEqual(Arr.replicate("node", 6));
     // A tombstone frees its path: it is gone for its owner too.
     expect(gone).toBe("PathNotFound");

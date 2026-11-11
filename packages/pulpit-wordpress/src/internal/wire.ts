@@ -12,8 +12,8 @@
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
-import * as Record from "effect/Record";
+import * as P from "effect/Predicate";
+import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 
 // ── Errors ────────────────────────────────────────────────────────────
@@ -44,7 +44,7 @@ export const noRoute = (): WpRestError =>
 export const invalidParams = (params: Readonly<Record<string, string>>): WpRestError =>
   new WpRestError({
     code: "rest_invalid_param",
-    message: `Invalid parameter(s): ${Record.keys(params).join(", ")}`,
+    message: `Invalid parameter(s): ${R.keys(params).join(", ")}`,
     status: 400,
     params,
   });
@@ -185,14 +185,14 @@ export const fieldTree = (fields: ReadonlyArray<string>): FieldTree =>
 
 /** A JSON object: not `null`, not an array, not a scalar. */
 const isJsonObject = (value: Schema.Json): value is Schema.JsonObject =>
-  Predicate.isObject(value) && !Arr.isArray(value);
+  P.isObject(value) && !Array.isArray(value);
 
 /** Keep only the requested fields of a response object, as `rest_filter_response_fields` does. */
 export const projectFields = (value: Schema.Json, tree: FieldTree): Schema.Json => {
   if (!isJsonObject(value)) return value;
   const source = value;
-  return Record.fromEntries(
-    Arr.flatMap(Record.toEntries(tree), ([key, sub]) => {
+  return R.fromEntries(
+    Arr.flatMap(R.toEntries(tree), ([key, sub]) => {
       const field = source[key];
       if (field === undefined) return [];
       return [[key, sub === true ? field : projectFields(field, sub)] as const];

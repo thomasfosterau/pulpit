@@ -15,8 +15,8 @@ import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
-import * as Predicate from "effect/Predicate";
-import * as Record from "effect/Record";
+import * as P from "effect/Predicate";
+import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 import { Visibility } from "@thomasfosterau/pulpit/content";
 import {
@@ -112,25 +112,25 @@ const COLUMNS = [
 
 /** A row's string column, or none. */
 const stringOf = (row: LeafRow, column: string) =>
-  Option.filter(Option.fromNullishOr(row[column]), Predicate.isString);
+  Option.filter(Option.fromNullishOr(row[column]), P.isString);
 const textOf = (row: LeafRow, column: string) => Option.getOrElse(stringOf(row, column), () => "");
 
 const fieldsOf = (row: LeafRow): PostFields => ({
   id: row.id,
   slug: textOf(row, "slug"),
-  date: Option.liftPredicate(row["publishedAt"], Predicate.isDate),
-  modified: Predicate.isDate(row["updatedAt"]) ? row["updatedAt"] : PAST,
+  date: Option.liftPredicate(row["publishedAt"], P.isDate),
+  modified: P.isDate(row["updatedAt"]) ? row["updatedAt"] : PAST,
   title: textOf(row, "title"),
   content: textOf(row, "content"),
   excerpt: textOf(row, "excerpt"),
   author: stringOf(row, "ownerId"),
   featuredMedia: stringOf(row, "featuredMediaId"),
   parent: stringOf(row, "parentId"),
-  menuOrder: Predicate.isNumber(row["menuOrder"]) ? row["menuOrder"] : 0,
+  menuOrder: P.isNumber(row["menuOrder"]) ? row["menuOrder"] : 0,
   draft: row["draft"] !== false,
   visibility: Schema.is(Visibility)(row["visibility"]) ? row["visibility"] : "private",
   deleted: row.action === "delete",
-  media: Predicate.isString(row["mimeType"])
+  media: P.isString(row["mimeType"])
     ? {
         caption: "",
         description: "",
@@ -262,8 +262,8 @@ const site = (options: SiteOptions = {}) => {
         term: { alias: "term", column: "termId" },
       },
       assignment: (edge: EdgeRow) => ({
-        post: Predicate.isString(edge["postId"]) ? edge["postId"] : "",
-        term: Predicate.isString(edge["termId"]) ? edge["termId"] : "",
+        post: P.isString(edge["postId"]) ? edge["postId"] : "",
+        term: P.isString(edge["termId"]) ? edge["termId"] : "",
       }),
     });
   const nodes = makeInMemoryIdCodec();
@@ -299,12 +299,11 @@ const site = (options: SiteOptions = {}) => {
         : Effect.sync(() => {
             renders.push(requests);
             return requests.map(
-              ({ field, value }) =>
-                `<${field}>${Predicate.isString(value) ? value : ""}</${field}>`,
+              ({ field, value }) => `<${field}>${P.isString(value) ? value : ""}</${field}>`,
             );
           }),
     link: (type, fields) => `https://example.org/${type}/${fields.slug}`,
-    types: Record.filter(
+    types: R.filter(
       {
         post: bind({
           ops:
@@ -702,16 +701,16 @@ describe("the wp/v2 read API — related nodes, _embed and _fields", () => {
 
     const shown = itemOf(await wp.get(`/wp/v2/posts/${withShown.wireId}`, embed));
     expect(shown.featured_media).toBe(shownMedia.wireId);
-    expect(Record.has(shown._links, "wp:featuredmedia")).toBe(true);
+    expect(R.has(shown._links, "wp:featuredmedia")).toBe(true);
     expect(shown._embedded?.["wp:featuredmedia"]?.map(({ id }) => id)).toEqual([shownMedia.wireId]);
 
     const hidden = itemOf(await wp.get(`/wp/v2/posts/${withHidden.wireId}`, embed));
     expect(hidden.featured_media).toBe(0);
-    expect(Record.has(hidden._links, "wp:featuredmedia")).toBe(false);
-    expect(Record.has(hidden._embedded ?? {}, "wp:featuredmedia")).toBe(false);
+    expect(R.has(hidden._links, "wp:featuredmedia")).toBe(false);
+    expect(R.has(hidden._embedded ?? {}, "wp:featuredmedia")).toBe(false);
 
     const page = itemOf(await wp.get(`/wp/v2/pages/${child.wireId}`, embed));
-    expect([page.parent, Record.has(page._links, "up")]).toEqual([0, false]);
+    expect([page.parent, R.has(page._links, "up")]).toEqual([0, false]);
     // The owner reads the hidden page, so the parent is theirs to see.
     const owned = itemOf(await wp.get(`/wp/v2/pages/${child.wireId}`, embed, Option.some(member)));
     expect([owned.parent, owned._embedded?.["up"]?.map(({ id }) => id)]).toEqual([
@@ -737,7 +736,7 @@ describe("the wp/v2 read API — related nodes, _embed and _fields", () => {
     const wp = site();
     const post = await wp.create("posts", {});
     const authorOnly = itemOf(await wp.get(`/wp/v2/posts/${post.wireId}`, [["_embed", "author"]]));
-    expect(Record.keys(authorOnly._embedded ?? {})).toEqual(["author"]);
+    expect(R.keys(authorOnly._embedded ?? {})).toEqual(["author"]);
     expect(
       objectOf(
         await wp.get(`/wp/v2/posts/${post.wireId}`, [["_fields", "id,title.rendered,slug"]]),
@@ -802,7 +801,7 @@ describe("the wp/v2 read API — routes", () => {
       }),
     )(await wp.get("/"));
     expect(index.namespaces).toEqual(["wp/v2"]);
-    expect(Record.keys(index.routes)).toEqual([
+    expect(R.keys(index.routes)).toEqual([
       "/wp/v2/posts",
       "/wp/v2/posts/(?P<id>[\\d]+)",
       "/wp/v2/pages",
@@ -840,7 +839,7 @@ describe("the wp/v2 read API — every parameter's check", () => {
     wp = site(),
   ) => {
     const body = decodeBody(ErrorBody)(await wp.get(path, query));
-    return [body.code, Record.keys(body.data.params ?? {})];
+    return [body.code, R.keys(body.data.params ?? {})];
   };
 
   it("names each bad value: a non-integer, an out-of-range one, an unknown enum, a bad date, context and status", async () => {
@@ -1087,16 +1086,16 @@ describe("the wp/v2 read API — item forms and failures", () => {
     const bare = await wp.create("media", { slug: "bare" });
     const withMedia = await wp.create("media", { mimeType: "image/jpeg", slug: "photo" });
     const embedOf = async (wireId: number) =>
-      Record.keys(objectOf(await wp.get(`/wp/v2/media/${wireId}`, [["context", "embed"]])));
+      R.keys(objectOf(await wp.get(`/wp/v2/media/${wireId}`, [["context", "embed"]])));
     expect(await embedOf(bare.wireId)).not.toContain("source_url");
     expect(await embedOf(withMedia.wireId)).toContain("source_url");
     const embedded = decodeBody(Schema.Array(Schema.Record(Schema.String, Schema.Json)))(
       await wp.get("/wp/v2/media", [["context", "embed"]]),
     );
-    expect(embedded.map((item) => Record.has(item, "description"))).toEqual([false, false]);
+    expect(embedded.map((item) => R.has(item, "description"))).toEqual([false, false]);
     const post = await wp.create("posts", {});
     expect(
-      Record.keys(objectOf(await wp.get(`/wp/v2/posts/${post.wireId}`, [["context", "embed"]]))),
+      R.keys(objectOf(await wp.get(`/wp/v2/posts/${post.wireId}`, [["context", "embed"]]))),
     ).not.toContain("content");
   });
 
@@ -1175,18 +1174,18 @@ describe("the wp/v2 read API — item forms and failures", () => {
 const isJsonList = Schema.is(Schema.Array(Schema.Json));
 const isJsonObject = Schema.is(Schema.Record(Schema.String, Schema.Json));
 const isFormObject = (form: WireForm): form is { readonly [key: string]: WireForm } =>
-  Predicate.isObject(form) && !isJsonList(form);
+  P.isObject(form) && !isJsonList(form);
 
 /** A value's wire form, as `tests/fixtures/wordpress-forms.ts` records WordPress's. */
 const formOf = (value: Schema.Json): WireForm => {
-  if (Predicate.isNull(value)) return "null";
-  if (Predicate.isString(value)) return "string";
-  if (Predicate.isNumber(value)) return "number";
-  if (Predicate.isBoolean(value)) return "boolean";
+  if (P.isNull(value)) return "null";
+  if (P.isString(value)) return "string";
+  if (P.isNumber(value)) return "number";
+  if (P.isBoolean(value)) return "boolean";
   if (isJsonList(value)) {
     return Arr.fromOption(Option.map(Arr.head(value), formOf));
   }
-  return isJsonObject(value) ? Record.map(value, formOf) : "unknown";
+  return isJsonObject(value) ? R.map(value, formOf) : "unknown";
 };
 
 /**
@@ -1194,13 +1193,13 @@ const formOf = (value: Schema.Json): WireForm => {
  * fixture's registered meta key where a site with none registered answers
  * `[]`, and phase 1 has no terms, so `categories` is empty.
  */
-const ADJUSTED: Record.ReadonlyRecord<string, WireForm> = { meta: [], categories: [] };
+const ADJUSTED: R.ReadonlyRecord<string, WireForm> = { meta: [], categories: [] };
 const adjusted = (form: WireForm): WireForm =>
   isFormObject(form)
-    ? Record.map(form, (field, key) => Option.getOrElse(Record.get(ADJUSTED, key), () => field))
+    ? R.map(form, (field, key) => Option.getOrElse(R.get(ADJUSTED, key), () => field))
     : form;
 
-const withoutLinks = (response: WordPressResponse) => Record.remove(objectOf(response), "_links");
+const withoutLinks = (response: WordPressResponse) => R.remove(objectOf(response), "_links");
 
 describe("the wp/v2 read API — the wire forms WordPress core answers in (golden)", () => {
   it("answers /posts and /posts/{id} in core's post form", async () => {
@@ -1209,15 +1208,13 @@ describe("the wp/v2 read API — the wire forms WordPress core answers in (golde
     const [first] = decodeBody(Schema.Array(Schema.Record(Schema.String, Schema.Json)))(
       await wp.get("/wp/v2/posts"),
     );
-    expect(formOf(Record.remove(first ?? {}, "_links"))).toEqual(adjusted(POST_FORM));
+    expect(formOf(R.remove(first ?? {}, "_links"))).toEqual(adjusted(POST_FORM));
     const item = await wp.get(`/wp/v2/posts/${post.wireId}`);
     expect(formOf(withoutLinks(item))).toEqual(adjusted(POST_FORM));
     const links = itemOf(item)._links;
     expect(
       formOf(
-        Record.filter(links, (_, rel) =>
-          Arr.contains(["self", "collection", "about", "curies"], rel),
-        ),
+        R.filter(links, (_, rel) => Arr.contains(["self", "collection", "about", "curies"], rel)),
       ),
     ).toEqual(LINKS_FORM);
   });
@@ -1357,7 +1354,7 @@ describe("the wp/v2 read API — taxonomies (phase 2)", () => {
     const { wp, news, sport, hot } = await taxonomySite();
     const child = termOf(await wp.get(`/wp/v2/categories/${sport.wireId}`));
     expect(child.parent).toBe(news.wireId);
-    expect(Record.has(child._links, "up")).toBe(true);
+    expect(R.has(child._links, "up")).toBe(true);
     expect(termOf(await wp.get(`/wp/v2/tags/${hot.wireId}`)).parent).toBeUndefined();
     const missing = await wp.get("/wp/v2/categories/999");
     expect([missing.status, codeOf(missing)]).toEqual([404, "rest_term_invalid"]);
@@ -1556,7 +1553,7 @@ describe("the wp/v2 read API — phase 2 wire forms (golden)", () => {
     const index = decodeBody(Schema.Struct({ routes: Schema.Record(Schema.String, Schema.Json) }))(
       await wp.get("/"),
     );
-    expect(Record.keys(index.routes)).toEqual(
+    expect(R.keys(index.routes)).toEqual(
       expect.arrayContaining(["/wp/v2/categories", "/wp/v2/tags/(?P<id>[\\d]+)", "/wp/v2/users"]),
     );
   });
@@ -1575,7 +1572,7 @@ describe("the wp/v2 read API — media from a file leaf (pulpit#221)", () => {
     expect(list.headers["x-wp-total"]).toBe("1");
     const item = itemOf(await wp.get(`/wp/v2/posts/${post.wireId}`, [["_embed", "1"]]));
     expect(item.featured_media).toBe(0);
-    expect(Record.has(item._embedded ?? {}, "wp:featuredmedia")).toBe(false);
+    expect(R.has(item._embedded ?? {}, "wp:featuredmedia")).toBe(false);
     // Its owner, too, reads it as missing until the bytes are there.
     expect(codeOf(await wp.get(`/wp/v2/media/${pending.wireId}`, [], Option.some(member)))).toBe(
       "rest_post_invalid_id",
