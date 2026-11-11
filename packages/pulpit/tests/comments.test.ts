@@ -37,7 +37,7 @@ import {
 } from "../src/subtype.ts";
 import type { ChainState } from "../src/version-chain.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
   type InMemoryFollowing,
@@ -104,7 +104,7 @@ const world = (maxDepth?: number) => {
   let viewer: Viewer = anonymous;
   const viewerOf = Effect.sync(() => viewer);
   const followers = makeInMemoryFollowers([[follower.id, [member.id]]]);
-  const postChain = makeInMemoryChainStore();
+  const postChain = makeInMemoryVersionChain("posts");
   const postLeaves = makeInMemoryLeafStore(postChain, { columns: ["visibility"], now: NOW });
   const posts = defineSubtype({
     type: "posts",
@@ -116,7 +116,7 @@ const world = (maxDepth?: number) => {
     followers,
     toResource: (row: LeafRow) => row,
   });
-  const termChain = makeInMemoryChainStore();
+  const termChain = makeInMemoryVersionChain("terms");
   const terms = defineSubtype({
     type: "terms",
     access: { kind: "reference" },
@@ -127,7 +127,7 @@ const world = (maxDepth?: number) => {
     followers,
     toResource: (row: LeafRow) => row,
   });
-  const commentChain = makeInMemoryChainStore();
+  const commentChain = makeInMemoryVersionChain("comments");
   const commentLeaves = makeInMemoryLeafStore(commentChain, {
     columns: [
       "body",

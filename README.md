@@ -43,15 +43,15 @@ Node.js 22 or newer. Each module is also a subpath (`@thomasfosterau/pulpit/vers
 
 ## Example
 
-A version chain over the in-memory store from `./testing`; an application binds the same operations to its own `VersionChainStore`.
+A version chain over the in-memory chain from `./testing`; an application binds the same operations to its own `VersionChain` (pulpit-drizzle-pg's, once it publishes).
 
 ```ts
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { defineVersionChain } from "@thomasfosterau/pulpit/version-chain";
-import { makeInMemoryChainStore } from "@thomasfosterau/pulpit/testing";
+import { makeInMemoryVersionChain } from "@thomasfosterau/pulpit/testing";
 
-const chain = defineVersionChain("posts", makeInMemoryChainStore());
+const chain = defineVersionChain("posts", makeInMemoryVersionChain("posts"));
 const actorId = Option.none<string>();
 
 const program = Effect.gen(function* () {

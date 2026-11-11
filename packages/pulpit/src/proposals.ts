@@ -98,7 +98,7 @@ import {
   type LocalePatch,
   type ChainWrite,
   type StaleVersion,
-  type VersionChainStore,
+  type VersionChain,
   type VersionConflict,
   type VersionNotFound,
   type VersionSnapshot,
@@ -610,8 +610,8 @@ export interface ProposalsDefinition<Resource, E, R> {
   readonly type: string;
   /** The target leaf's operations: `get` gates a submission, `compare` and `update` an acceptance. */
   readonly target: SubtypeOps<Resource, E, R>;
-  /** The target leaf's chain store, for the head a proposal is stamped with. */
-  readonly chain: VersionChainStore<E, R>;
+  /** The target leaf's version chain, for the head a proposal is stamped with. */
+  readonly chain: VersionChain<E, R>;
   /** The target's owner (its `LeafStore.ownerOf`), for the write gate and the reads. */
   readonly ownerOf: (id: string) => Effect.Effect<Option.Option<string>, E, R>;
   readonly proposals: ProposalStore<E, R>;

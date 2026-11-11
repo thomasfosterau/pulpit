@@ -31,7 +31,7 @@ import {
 import { defineSubtype, ownedAccess, type LeafRow } from "../src/subtype.ts";
 import {
   makeInMemoryBlobStore,
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
 } from "../src/testing.ts";
@@ -64,7 +64,7 @@ describe("the content hash", () => {
 });
 
 const images = () => {
-  const chain = makeInMemoryChainStore();
+  const chain = makeInMemoryVersionChain("images");
   const leaves = makeInMemoryLeafStore(chain, {
     columns: ["visibility", "contentHash", "byteSize", "mediaType", "filename", "bytesPending"],
     now: NOW,

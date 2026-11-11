@@ -30,7 +30,7 @@ import {
 import { defineEdgeOps, type EdgeRow, type EdgeValues } from "@thomasfosterau/pulpit/edges";
 import { routable } from "@thomasfosterau/pulpit/paths";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryEdgeStore,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
@@ -176,7 +176,7 @@ const site = (options: SiteOptions = {}) => {
   const viewerSeam = Effect.sync(() => viewer);
   /** A chain and the current-version view over it. */
   const store = (columns: ReadonlyArray<string>) => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("posts");
     return { chain, leaves: makeInMemoryLeafStore(chain, { columns, now: NOW }) };
   };
   const leafStores = {

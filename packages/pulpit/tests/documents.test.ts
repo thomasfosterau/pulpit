@@ -25,7 +25,7 @@ import {
 } from "../src/documents.ts";
 import { defineVersionChain } from "../src/version-chain.ts";
 import { decodes } from "./fixtures.ts";
-import { makeInMemoryChainStore, makeInMemoryDocumentStore } from "../src/testing.ts";
+import { makeInMemoryVersionChain, makeInMemoryDocumentStore } from "../src/testing.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 
@@ -259,7 +259,7 @@ describe("documentRef — the version row's document reference", () => {
 describe("version rows that reference documents", () => {
   const setup = () => {
     const documents = makeInMemoryDocumentStore();
-    const chainStore = makeInMemoryChainStore();
+    const chainStore = makeInMemoryVersionChain("notes");
     const chain = defineVersionChain("notes", chainStore);
     return { documents, chainStore, chain };
   };

@@ -22,7 +22,7 @@ import {
   type ViewerAccount,
 } from "../src/subtype.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
   makeInMemoryPublication,
@@ -58,7 +58,7 @@ const run = <A, E>(effect: Effect.Effect<A, E>) =>
 
 /** An owned leaf, gated or not, seeded with every visibility × draft × owner, and one tombstone. */
 const seeded = (gated: boolean) => {
-  const chain = makeInMemoryChainStore();
+  const chain = makeInMemoryVersionChain("posts");
   const heads = makeInMemoryLeafStore(chain, { columns: ["title", "visibility", "draft"] });
   const publication = makeInMemoryPublication({ chain, leaves: heads, now: NOW });
   let viewer: Viewer = anonymous;
@@ -206,7 +206,7 @@ describe("SubtypeOps.owners", () => {
   });
 
   it("is empty on a reference leaf, which has no owner", async () => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("terms");
     const ops = defineSubtype({
       type: "terms",
       access: { kind: "reference" },

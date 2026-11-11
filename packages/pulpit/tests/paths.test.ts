@@ -19,7 +19,7 @@ import {
   type Viewer,
 } from "../src/subtype.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryLeafStore,
   makeInMemoryPathStore,
   type InMemoryFollowing,
@@ -41,7 +41,7 @@ const tagOf = async <A, E extends { readonly _tag: string }>(
 
 /** An owned page leaf with a `slug` path column, over in-memory stores. */
 const pagesLeaf = () => {
-  const chain = makeInMemoryChainStore();
+  const chain = makeInMemoryVersionChain("pages");
   const leaves = makeInMemoryLeafStore(chain, { columns: ["slug", "visibility"], now: NOW });
   const paths = makeInMemoryPathStore();
   let viewer: Viewer = Option.some(member);

@@ -36,7 +36,7 @@ import {
 } from "../src/subtype.ts";
 import {
   makeInMemoryBudgetCounter,
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
   makeInMemoryProposalStore,
@@ -189,7 +189,7 @@ describe("countingCounter — count within the transaction", () => {
 
 describe("budgetHook — a chain write's budget", () => {
   const leaf = (limit: number) => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("comments");
     const leaves = makeInMemoryLeafStore(chain, { columns: ["body", "visibility"], now: NOW });
     let viewer: Viewer = Option.some(member);
     const target = defineSubtype({
@@ -249,7 +249,7 @@ describe("budgetHook — a chain write's budget", () => {
 
 describe("opt-in budgets on proposals and reports", () => {
   const setup = () => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("pages");
     const leaves = makeInMemoryLeafStore(chain, {
       columns: ["title", "visibility", "moderationState"],
       now: NOW,

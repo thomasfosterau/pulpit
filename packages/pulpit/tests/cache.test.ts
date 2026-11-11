@@ -18,7 +18,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { makeResourceCache, type VersionedKv } from "../src/cache.ts";
 import { defineSubtype, ownedAccess, subtypeHandlers, type LeafRow } from "../src/subtype.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
   makeInMemoryVersionedKv,
@@ -207,7 +207,7 @@ describe("makeResourceCache as subtypeHandlers' cache", () => {
       prefix: "posts:v1:",
       ttlSeconds: 60,
     });
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("posts");
     const ops = defineSubtype({
       type: "posts",
       access: ownedAccess(),

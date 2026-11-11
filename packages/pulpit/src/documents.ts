@@ -87,7 +87,7 @@ export interface DocumentPut {
  * production, a table per document family, keyed by the hash). `Document`
  * is the application's document type; `E` is the store's own failure and `R`
  * its requirements (a Drizzle store's `EffectDrizzleQueryError` and
- * `CurrentTransaction`: like the chain store, it never opens a transaction).
+ * `CurrentTransaction`: like the version chain, it never opens a transaction).
  *
  * Every method fails only with the store's `E`, and applies no policy: a
  * document is validated against the application's schema before it reaches

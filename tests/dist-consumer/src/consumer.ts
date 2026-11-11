@@ -65,7 +65,8 @@ import {
   type StaleVersion,
   type StateDiff,
   type VersionChainOps,
-  type VersionChainStore,
+  type VersionChain,
+  type VersionChainEntry,
   type VersionComparison,
   type VersionConflict,
   type VersionNotFound,
@@ -356,8 +357,18 @@ class StoreFailure {
 interface Transaction {
   readonly _tag: "Transaction";
 }
-declare const store: VersionChainStore<StoreFailure, Transaction>;
-export const chain = defineVersionChain("posts", store);
+declare const port: VersionChain<StoreFailure, Transaction>;
+export const chain = defineVersionChain("posts", port);
+// The port's own reads beside the operations (pulpit#246).
+export type _ChainHead = Assert<
+  Equals<
+    ReturnType<typeof port.head>,
+    Effect.Effect<Option.Option<VersionChainEntry>, StoreFailure, Transaction>
+  >
+>;
+export type _ChainPurge = Assert<
+  Equals<ReturnType<typeof port.purge>, Effect.Effect<void, StoreFailure, Transaction>>
+>;
 export type _Chain = Assert<Equals<typeof chain, VersionChainOps<StoreFailure, Transaction>>>;
 export type _Create = Assert<
   Equals<
@@ -714,7 +725,7 @@ interface PostDoc {
 export const posts = defineSubtype({
   type: "posts",
   access: ownedAccess({ draft: true }),
-  chain: store,
+  chain: port,
   leaves,
   ...anonymousSeams,
   toResource: (row): PostDoc => ({ id: row.id }),

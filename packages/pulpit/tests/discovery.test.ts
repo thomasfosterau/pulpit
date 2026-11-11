@@ -42,7 +42,7 @@ import {
   type ViewerAccount,
 } from "../src/subtype.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
   makeInMemoryPathStore,
@@ -92,7 +92,7 @@ const fixture = (options: {
   readonly gated: boolean;
   readonly sortable: Option.Option<ReadonlyArray<string>>;
 }) => {
-  const chain = makeInMemoryChainStore();
+  const chain = makeInMemoryVersionChain("posts");
   const heads = makeInMemoryLeafStore(chain, {
     columns: ["title", "visibility", "draft", "moderationState", "createdAt", "publishedAt"],
   });

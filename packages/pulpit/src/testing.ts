@@ -26,9 +26,9 @@
  * import * as Effect from "effect/Effect";
  * import * as Option from "effect/Option";
  * import { defineVersionChain } from "@thomasfosterau/pulpit/version-chain";
- * import { makeInMemoryChainStore } from "@thomasfosterau/pulpit/testing";
+ * import { makeInMemoryVersionChain } from "@thomasfosterau/pulpit/testing";
  *
- * const store = makeInMemoryChainStore();
+ * const store = makeInMemoryVersionChain("notes");
  * const chain = defineVersionChain("notes", store);
  * const { id } = Effect.runSync(
  *   chain.create({ id: Option.none(), state: { title: "Hello" }, actorId: Option.none() }),
@@ -50,6 +50,7 @@ import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
@@ -105,12 +106,26 @@ import type {
   ResourceCacheSeam,
 } from "./subtype.ts";
 import {
+  applyLocalePatch,
+  applyPatch,
+  BrokenChain,
   localesOf,
+  MAX_HISTORY_LIMIT,
+  NodeAlreadyExists,
+  NodeNotFound,
+  StaleVersion,
   VersionConflict,
+  VersionNotFound,
+  type ChainPatch,
+  type ChainState,
   type ColumnValue,
+  type LocalePatch,
   type LocaleStates,
+  type Precondition,
+  type UpdateInput,
+  type VersionAction,
+  type VersionChain,
   type VersionChainEntry,
-  type VersionChainStore,
   type VersionRow,
   type VersionSnapshot,
 } from "./version-chain.ts";
@@ -156,7 +171,7 @@ const localeRows = (row: LeafRow, locales: LocaleStates): ReadonlyArray<LeafRow>
       }));
 
 /** The locale level of `id` at `version` in an in-memory chain, `{}` for none. */
-const localesAt = (chain: InMemoryChainStore, id: string, version: bigint): LocaleStates =>
+const localesAt = (chain: InMemoryVersionChain, id: string, version: bigint): LocaleStates =>
   Option.match(
     Arr.findFirst(chain.rows(), (row) => row.id === id && row.version === version),
     { onNone: () => ({}), onSome: localesOf },
@@ -234,47 +249,64 @@ export const makeInMemoryFollowers = (
 // ── The version chain ─────────────────────────────────────────────────
 
 /**
- * An in-memory {@link VersionChainStore}, plus the hooks a test reads and
- * steers it through. In memory only; not for production.
+ * An in-memory {@link VersionChain} for one leaf, plus the hooks a test
+ * reads and steers it through. In memory only; not for production.
  *
- * @since 0.1.0
+ * @since 0.2.0
  */
-export interface InMemoryChainStore extends VersionChainStore<never, never> {
+export interface InMemoryVersionChain extends VersionChain<never, never> {
+  /** The leaf's wire type, which every error the chain raises names. */
+  readonly type: string;
   /** Every row ever appended, in append order — what the append-only assertions read. */
   readonly rows: () => ReadonlyArray<VersionRow>;
   /** Simulate a partial chain: the state at `(id, version)` is no longer reconstructable. */
   readonly dropState: (id: string, version: bigint) => void;
   /** Simulate a concurrent writer: the next append for `id` finds its version taken. */
   readonly raceNextAppend: (id: string) => void;
-  /**
-   * Hard-delete every row of `id` and return them: what
-   * {@link makeInMemoryPurgeStore} erases a node through, and nothing else
-   * may call (`VERSION-CHAIN-001/002`).
-   */
-  readonly erase: (id: string) => ReadonlyArray<VersionRow>;
 }
 
+/** The write clock: the current instant, as the `Date` a version row stores. */
+const writeClock: Effect.Effect<Date> = Effect.map(Clock.currentTimeMillis, (millis) =>
+  DateTime.toDate(DateTime.makeUnsafe(millis)),
+);
+
+/** What a write stores: the shared state and, when it carries any locale, the locale level. */
+type Written = Pick<VersionSnapshot, "state" | "locales">;
+
+/** The state a write stores: `patch` over `base`, and the locale patch over its locale level. */
+const nextContent = (
+  base: Pick<VersionSnapshot, "state" | "locales">,
+  patch: ChainPatch,
+  locales: LocalePatch,
+): Written => {
+  const state = applyPatch(base.state, patch);
+  const level = applyLocalePatch(localesOf(base), locales);
+  return Record.isEmptyRecord(level) ? { state } : { state, locales: level };
+};
+
 /**
- * An in-memory {@link VersionChainStore}: the seam's contract (README → Seams
- * → `VersionChainStore`) over an append log. It enforces what the Drizzle
- * store's schema enforces, the `(id, version)` primary key (an `append` at a
- * taken pair fails `VersionConflict`), and nothing the operations are
- * responsible for. `mintId` mints sequential UUID-shaped ids.
+ * An in-memory {@link VersionChain} for leaf `type` (pulpit#246): the port's
+ * contract (README → Seams → `VersionChain`) over an append log, holding
+ * every invariant `./version-chain`'s module doc states, as
+ * `versionChainConformance` checks. The log's `(id, version)` pair is
+ * unique, as the Drizzle tables' primary key is: an append at a taken pair
+ * fails `VersionConflict`, which is what makes the expected-version check
+ * atomic. An id it is not given is minted sequentially, UUID-shaped.
  *
  * `dropState` simulates a partial chain (a level with no row at a version),
  * which a real database reaches through a missing leaf row, and
  * `raceNextAppend` a writer that takes the next version first. In memory
  * only; not for production.
  *
- * @since 0.1.0
+ * @since 0.2.0
  */
-export const makeInMemoryChainStore = (): InMemoryChainStore => {
+export const makeInMemoryVersionChain = (type: string): InMemoryVersionChain => {
   let log: ReadonlyArray<VersionRow> = [];
   let dropped = HashSet.empty<string>();
   let raced = HashSet.empty<string>();
   let minted = 0;
   const key = (id: string, version: bigint) => `${id}@${version}`;
-  const chain = (id: string) => log.filter((row) => row.id === id);
+  const rowsOf = (id: string) => log.filter((row) => row.id === id);
 
   const entryOf = (row: VersionRow): VersionChainEntry => ({
     version: row.version,
@@ -289,33 +321,173 @@ export const makeInMemoryChainStore = (): InMemoryChainStore => {
     return wasRaced;
   };
 
+  const head = (id: string) => Effect.sync(() => Option.map(Arr.last(rowsOf(id)), entryOf));
+
+  /** The full state at `(id, version)`, or none when it cannot be reconstructed. */
+  const snapshot = (id: string, version: bigint) =>
+    Effect.sync(() =>
+      HashSet.has(dropped, key(id, version))
+        ? Option.none<VersionSnapshot>()
+        : Option.map(
+            Arr.findFirst(rowsOf(id), (candidate) => candidate.version === version),
+            (row): VersionSnapshot =>
+              row.locales === undefined
+                ? { ...entryOf(row), state: row.state }
+                : { ...entryOf(row), state: row.state, locales: row.locales },
+          ),
+    );
+
+  /** Append one row; a taken `(id, version)` (or a raced append) is `VersionConflict`. */
+  const append = (row: VersionRow) =>
+    Effect.suspend(() => {
+      if (takeRace(row.id) || rowsOf(row.id).some((taken) => taken.version === row.version)) {
+        return Effect.fail(new VersionConflict({ id: row.id, version: row.version }));
+      }
+      log = [...log, row];
+      return Effect.void;
+    });
+
+  /** The head and its full state. A head without a state is a broken chain: a defect. */
+  const current = (id: string) =>
+    Effect.gen(function* () {
+      const entry = yield* head(id);
+      if (Option.isNone(entry)) return Option.none<VersionSnapshot>();
+      const state = yield* snapshot(id, entry.value.version);
+      if (Option.isNone(state)) {
+        return yield* Effect.die(new BrokenChain({ type, id, version: entry.value.version }));
+      }
+      return state;
+    });
+
+  /**
+   * Append at `previous + 1`, after checking the precondition against that
+   * same `previous`: the check and the append's version come from one read,
+   * so a writer that lands in between takes `previous + 1` first and this
+   * append fails the log's key.
+   */
+  const appendNext = (
+    id: string,
+    previous: VersionChainEntry,
+    action: VersionAction,
+    content: Written,
+    actorId: Option.Option<string>,
+    precondition: Precondition,
+    proposedBy: Option.Option<string> = Option.none(),
+  ) =>
+    Effect.gen(function* () {
+      const expected = precondition.expectedVersion;
+      if (expected !== undefined && expected !== previous.version) {
+        return yield* new StaleVersion({ type, id, expected, current: previous.version });
+      }
+      const version = previous.version + 1n;
+      const timestamp = yield* writeClock;
+      yield* append({ id, type, version, action, timestamp, ...content, actorId, proposedBy });
+      return { id, version };
+    });
+
+  const merge = (input: UpdateInput, allowDeleted: boolean) =>
+    Effect.gen(function* () {
+      const prior = yield* current(input.id);
+      if (Option.isNone(prior) || (prior.value.action === "delete" && !allowDeleted)) {
+        return yield* new NodeNotFound({ type, id: input.id });
+      }
+      return yield* appendNext(
+        input.id,
+        prior.value,
+        "update",
+        nextContent(prior.value, input.patch, input.locales ?? {}),
+        input.actorId,
+        input,
+        input.proposedBy,
+      );
+    });
+
   return {
-    head: (id) => Effect.sync(() => Option.map(Arr.last(chain(id)), entryOf)),
-    snapshot: (id, version) =>
-      Effect.sync(() =>
-        HashSet.has(dropped, key(id, version))
-          ? Option.none()
-          : Option.map(
-              Arr.findFirst(chain(id), (candidate) => candidate.version === version),
-              (row): VersionSnapshot =>
-                row.locales === undefined
-                  ? { ...entryOf(row), state: row.state }
-                  : { ...entryOf(row), state: row.state, locales: row.locales },
-            ),
-      ),
-    append: (row) =>
-      Effect.suspend(() => {
-        if (takeRace(row.id) || chain(row.id).some((taken) => taken.version === row.version)) {
-          return Effect.fail(new VersionConflict({ id: row.id, version: row.version }));
-        }
-        log = [...log, row];
-        return Effect.void;
+    type,
+    create: (input) =>
+      Effect.gen(function* () {
+        const id = Option.isSome(input.id)
+          ? input.id.value
+          : yield* Effect.sync(() => {
+              minted += 1;
+              return `00000000-0000-4000-8000-${String(minted).padStart(12, "0")}`;
+            });
+        if (Option.isSome(yield* head(id))) return yield* new NodeAlreadyExists({ type, id });
+        const timestamp = yield* writeClock;
+        yield* append({
+          id,
+          type,
+          version: 0n,
+          action: "create",
+          timestamp,
+          ...nextContent({ state: {} }, input.state, input.locales ?? {}),
+          actorId: input.actorId,
+          proposedBy: Option.none(),
+        }).pipe(
+          // A racing create that took the id between the check above and
+          // this append surfaces as the version-0 collision.
+          Effect.mapError((error) =>
+            error.version === 0n ? new NodeAlreadyExists({ type, id }) : error,
+          ),
+        );
+        return { id, version: 0n };
       }),
-    entries: (id, limit) => Effect.sync(() => chain(id).slice(0, limit).map(entryOf)),
-    mintId: Effect.sync(() => {
-      minted += 1;
-      return `00000000-0000-4000-8000-${String(minted).padStart(12, "0")}`;
-    }),
+    update: (input) => merge(input, false),
+    restore: (input) => merge(input, true),
+    delete: (id, actorId, precondition = {}) =>
+      Effect.gen(function* () {
+        const prior = yield* current(id);
+        if (Option.isNone(prior)) return yield* new NodeNotFound({ type, id });
+        if (prior.value.action === "delete") {
+          return { id, version: prior.value.version, alreadyDeleted: true };
+        }
+        const written = yield* appendNext(
+          id,
+          prior.value,
+          "delete",
+          nextContent(prior.value, {}, {}),
+          actorId,
+          precondition,
+        );
+        return { ...written, alreadyDeleted: false };
+      }),
+    restoreVersion: (id, version, actorId, precondition = {}) =>
+      Effect.gen(function* () {
+        // Read the whole historical state FIRST, so an unreconstructable
+        // version fails before the chain is touched at all.
+        const restored = yield* snapshot(id, version);
+        if (Option.isNone(restored)) return yield* new VersionNotFound({ type, id, version });
+        const entry = yield* head(id);
+        if (Option.isNone(entry)) return yield* new VersionNotFound({ type, id, version });
+        // `update`, not a fourth action: a restore is an ordinary edit whose
+        // content came from history; every locale is restored together with
+        // the shared columns, over nothing.
+        return yield* appendNext(
+          id,
+          entry.value,
+          "update",
+          nextContent({ state: {} }, restored.value.state, localesOf(restored.value)),
+          actorId,
+          precondition,
+        );
+      }),
+    getVersion: (id, version) =>
+      Effect.flatMap(snapshot(id, version), (found) =>
+        Effect.fromOption(found, () => new VersionNotFound({ type, id, version })),
+      ),
+    history: (id, limit = MAX_HISTORY_LIMIT) =>
+      Effect.suspend(() => {
+        const bounded = Math.max(1, Math.min(Math.trunc(limit), MAX_HISTORY_LIMIT));
+        return Arr.match(rowsOf(id).slice(0, bounded).map(entryOf), {
+          onEmpty: () => Effect.fail(new NodeNotFound({ type, id })),
+          onNonEmpty: (entries) => Effect.succeed<ReadonlyArray<VersionChainEntry>>(entries),
+        });
+      }),
+    head,
+    purge: (id) =>
+      Effect.sync(() => {
+        log = log.filter((row) => row.id !== id);
+      }),
     rows: () => log,
     dropState: (id, version) => {
       dropped = HashSet.add(dropped, key(id, version));
@@ -323,18 +495,559 @@ export const makeInMemoryChainStore = (): InMemoryChainStore => {
     raceNextAppend: (id) => {
       raced = HashSet.add(raced, id);
     },
-    erase: (id) => {
-      const erased = chain(id);
-      log = log.filter((row) => row.id !== id);
-      return erased;
-    },
   };
+};
+
+// ── The version chain's conformance suite ─────────────────────────────
+
+/**
+ * The slice of a test runner {@link versionChainConformance} registers its
+ * cases through, passed in rather than imported so `./testing` needs no
+ * test-runner dependency (pulpit#246, owner decision (b)): vitest's (and
+ * vite-plus/test's) `describe`, `it` and `expect` fit it as they are.
+ *
+ * @since 0.2.0
+ */
+/* oxlint-disable effect/no-unknown-parameters, effect/no-object-parameters -- a test runner's assertions take any value by contract: this is vitest's `expect` signature, the boundary the suite hands its results across */
+export interface ConformanceRunner {
+  readonly describe: (name: string, body: () => void) => void;
+  readonly it: (name: string, body: () => Promise<void>) => void;
+  readonly expect: (actual: unknown) => {
+    readonly toEqual: (expected: unknown) => void;
+    readonly toBe: (expected: unknown) => void;
+    readonly toMatchObject: (expected: object) => void;
+  };
+}
+/* oxlint-enable effect/no-unknown-parameters, effect/no-object-parameters */
+
+/**
+ * One fresh {@link VersionChain} for a conformance case, and the faults the
+ * harness can inject into it. Each simulation is optional: a case that needs
+ * one the harness lacks is not registered (a real database reaches a partial
+ * chain only through a broken table, and a lost race through a second
+ * connection, which its own integration suite drives).
+ *
+ * @since 0.2.0
+ */
+export interface ConformanceChain<E, R> {
+  readonly chain: VersionChain<E, R>;
+  /** Make the state at `(id, version)` unreconstructable (a level with no row there). */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional member is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "this harness cannot simulate it"
+  readonly dropState?: ((id: string, version: bigint) => void | Promise<void>) | undefined;
+  /** Make the next append for `id` find its version taken by a concurrent writer. */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional member is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "this harness cannot simulate it"
+  readonly raceNextAppend?: ((id: string) => void | Promise<void>) | undefined;
+}
+
+/**
+ * How {@link versionChainConformance} reaches the implementation under test.
+ *
+ * @since 0.2.0
+ */
+export interface ConformanceHarness<E, R> {
+  /** The leaf's wire type: every error the chain raises must name it. */
+  readonly type: string;
+  /** A fresh, empty chain for one case (a new in-memory chain; a truncated table). */
+  readonly make: () => Promise<ConformanceChain<E, R>>;
+  /** Run one of the chain's effects to its exit (providing its transaction, for a database). */
+  readonly run: <A, E2>(effect: Effect.Effect<A, E2, R>) => Promise<Exit.Exit<A, E2>>;
+}
+
+/**
+ * The version chain's conformance suite (pulpit#246): every invariant
+ * `./version-chain`'s module doc states, as cases registered through
+ * `runner`, against whatever `harness` makes. The kernel's unit suite runs
+ * it against {@link makeInMemoryVersionChain}, and pulpit-drizzle-pg's
+ * integration suite against its Drizzle chain, so the two cannot drift.
+ *
+ * @example
+ * ```ts
+ * import { strictEqual } from "node:assert";
+ * import * as Effect from "effect/Effect";
+ * import { makeInMemoryVersionChain, versionChainConformance } from "@thomasfosterau/pulpit/testing";
+ *
+ * // A runner that only counts the cases, where a test file passes vitest's.
+ * let cases = 0;
+ * versionChainConformance(
+ *   {
+ *     type: "posts",
+ *     make: async () => ({ chain: makeInMemoryVersionChain("posts") }),
+ *     run: (effect) => Effect.runPromiseExit(effect),
+ *   },
+ *   {
+ *     describe: (_name, body) => body(),
+ *     it: () => {
+ *       cases += 1;
+ *     },
+ *     expect: () => ({ toEqual: () => {}, toBe: () => {}, toMatchObject: () => {} }),
+ *   },
+ * );
+ * strictEqual(cases > 30, true);
+ * ```
+ *
+ * @since 0.2.0
+ */
+export const versionChainConformance = <E, R>(
+  harness: ConformanceHarness<E, R>,
+  runner: ConformanceRunner,
+): void => {
+  const { type } = harness;
+  const { describe, it, expect } = runner;
+  const ACTOR = Option.some("u-author");
+  const ID = "00000000-0000-4000-8000-00000000abcd";
+  const OTHER = "00000000-0000-4000-8000-00000000beef";
+  const initial: ChainState = { title: "First", body: "Hello", summary: "s" };
+
+  /* oxlint-disable effect/avoid-untagged-errors, effect/no-unknown-returns -- the suite's helpers live at the test runner's Promise boundary: a thrown Error is how a case fails, and a case's typed failure is any of the port's errors, matched by its `_tag` */
+  /** Run to the value, or throw the failure (so a case fails on it). */
+  const value = async <A, E2>(effect: Effect.Effect<A, E2, R>): Promise<A> => {
+    const exit = await harness.run(effect);
+    if (Exit.isSuccess(exit)) return exit.value;
+    throw new Error(`${type} conformance: unexpected failure ${String(exit.cause)}`);
+  };
+  /** The failure's `_tag`, `"success"`, or `"defect"` for a die. */
+  const outcome = async <A, E2>(effect: Effect.Effect<A, E2, R>): Promise<string> => {
+    const exit = await harness.run(effect);
+    if (Exit.isSuccess(exit)) return "success";
+    return Option.match(Exit.findErrorOption(exit), {
+      onNone: () => "defect",
+      onSome: (error) =>
+        Predicate.hasProperty(error, "_tag") && Predicate.isString(error._tag)
+          ? error._tag
+          : "error",
+    });
+  };
+  /** The typed failure itself. */
+  const failure = async <A, E2>(effect: Effect.Effect<A, E2, R>): Promise<unknown> =>
+    Option.getOrUndefined(Exit.findErrorOption(await harness.run(effect)));
+  /* oxlint-enable effect/avoid-untagged-errors, effect/no-unknown-returns */
+
+  /** A fresh chain holding node `ID` at version 0 with `initial`. */
+  const created = async () => {
+    const context = await harness.make();
+    await value(context.chain.create({ id: Option.some(ID), state: initial, actorId: ACTOR }));
+    return context;
+  };
+  /** The chain's versions and actions, oldest first. */
+  const actions = async (chain: VersionChain<E, R>, id: string = ID) =>
+    Arr.map(await value(chain.history(id)), (entry) => [entry.version, entry.action] as const);
+  const stateAt = async (chain: VersionChain<E, R>, version: bigint, id: string = ID) =>
+    (await value(chain.getVersion(id, version))).state;
+
+  /** Each write that extends an existing chain, under a precondition. */
+  const extending: ReadonlyArray<
+    readonly [
+      string,
+      (
+        chain: VersionChain<E, R>,
+        precondition: Precondition,
+      ) => Effect.Effect<
+        unknown,
+        E | NodeNotFound | StaleVersion | VersionConflict | VersionNotFound,
+        R
+      >,
+    ]
+  > = [
+    [
+      "update",
+      (chain, precondition) =>
+        chain.update({ id: ID, patch: { title: "Next" }, actorId: ACTOR, ...precondition }),
+    ],
+    [
+      "restore",
+      (chain, precondition) =>
+        chain.restore({ id: ID, patch: { title: "Next" }, actorId: ACTOR, ...precondition }),
+    ],
+    ["delete", (chain, precondition) => chain.delete(ID, ACTOR, precondition)],
+    ["restoreVersion", (chain, precondition) => chain.restoreVersion(ID, 0n, ACTOR, precondition)],
+  ];
+
+  describe(`VersionChain conformance: ${type}`, () => {
+    describe("create — never an upsert", () => {
+      it("inserts the node at version 0, minting an id when none is given", async () => {
+        const { chain } = await harness.make();
+        const written = await value(
+          chain.create({ id: Option.none(), state: initial, actorId: ACTOR }),
+        );
+        expect(written.version).toBe(0n);
+        expect(await actions(chain, written.id)).toEqual([[0n, "create"]]);
+        expect(await stateAt(chain, 0n, written.id)).toEqual(initial);
+      });
+      it("uses a caller's id, and fails NodeAlreadyExists on a taken one, writing nothing", async () => {
+        const { chain } = await created();
+        expect(
+          await failure(chain.create({ id: Option.some(ID), state: {}, actorId: ACTOR })),
+        ).toMatchObject({
+          _tag: "NodeAlreadyExists",
+          type,
+          id: ID,
+        });
+        expect(await actions(chain)).toEqual([[0n, "create"]]);
+      });
+    });
+
+    describe("update — append-only, tri-state (VERSION-CHAIN-001/002)", () => {
+      it("appends at N_max + 1: a value sets, null clears, an absent or undefined key carries forward", async () => {
+        const { chain } = await created();
+        const written = await value(
+          chain.update({
+            id: ID,
+            patch: { title: "Second", summary: null, body: undefined },
+            actorId: ACTOR,
+          }),
+        );
+        expect(written).toEqual({ id: ID, version: 1n });
+        expect(await stateAt(chain, 1n)).toEqual({ title: "Second", body: "Hello", summary: null });
+      });
+      it("never rewrites an existing version", async () => {
+        const { chain } = await created();
+        const before = await value(chain.history(ID));
+        await value(chain.update({ id: ID, patch: { title: "Second" }, actorId: ACTOR }));
+        await value(chain.update({ id: ID, patch: { title: "Third" }, actorId: ACTOR }));
+        expect(await stateAt(chain, 0n)).toEqual(initial);
+        expect((await value(chain.history(ID))).slice(0, 1)).toEqual(before);
+        expect(await actions(chain)).toEqual([
+          [0n, "create"],
+          [1n, "update"],
+          [2n, "update"],
+        ]);
+      });
+      it("fails NodeNotFound for an unknown id", async () => {
+        const { chain } = await harness.make();
+        expect(await failure(chain.update({ id: OTHER, patch: {}, actorId: ACTOR }))).toMatchObject(
+          {
+            _tag: "NodeNotFound",
+            type,
+            id: OTHER,
+          },
+        );
+      });
+      it("never resurrects a tombstone (VERSION-CHAIN-006)", async () => {
+        const { chain } = await created();
+        await value(chain.delete(ID, ACTOR));
+        expect(
+          await outcome(chain.update({ id: ID, patch: { title: "Back" }, actorId: ACTOR })),
+        ).toBe("NodeNotFound");
+        expect(await actions(chain)).toEqual([
+          [0n, "create"],
+          [1n, "delete"],
+        ]);
+      });
+    });
+
+    describe("restore — the explicit resurrection surface", () => {
+      it("writes over a tombstone as an update, carrying the tombstone's state forward", async () => {
+        const { chain } = await created();
+        await value(chain.delete(ID, ACTOR));
+        expect(
+          await value(chain.restore({ id: ID, patch: { title: "Back" }, actorId: ACTOR })),
+        ).toEqual({
+          id: ID,
+          version: 2n,
+        });
+        expect(await actions(chain)).toEqual([
+          [0n, "create"],
+          [1n, "delete"],
+          [2n, "update"],
+        ]);
+        expect(await stateAt(chain, 2n)).toEqual({ ...initial, title: "Back" });
+      });
+      it("fails NodeNotFound for an unknown id", async () => {
+        const { chain } = await harness.make();
+        expect(await outcome(chain.restore({ id: OTHER, patch: {}, actorId: ACTOR }))).toBe(
+          "NodeNotFound",
+        );
+      });
+    });
+
+    describe("delete — the tombstone", () => {
+      it("appends a delete version that carries the full state forward", async () => {
+        const { chain } = await created();
+        expect(await value(chain.delete(ID, ACTOR))).toEqual({
+          id: ID,
+          version: 1n,
+          alreadyDeleted: false,
+        });
+        expect(await stateAt(chain, 1n)).toEqual(initial);
+      });
+      it("is idempotent: on a tombstone it returns it and writes nothing, whatever the precondition", async () => {
+        const { chain } = await created();
+        await value(chain.delete(ID, ACTOR));
+        expect(await value(chain.delete(ID, ACTOR, { expectedVersion: 99n }))).toEqual({
+          id: ID,
+          version: 1n,
+          alreadyDeleted: true,
+        });
+        expect(await actions(chain)).toEqual([
+          [0n, "create"],
+          [1n, "delete"],
+        ]);
+      });
+      it("fails NodeNotFound for an unknown id", async () => {
+        const { chain } = await harness.make();
+        expect(await outcome(chain.delete(OTHER, ACTOR))).toBe("NodeNotFound");
+      });
+    });
+
+    describe("getVersion / restoreVersion — history as data", () => {
+      it("getVersion reconstructs any version, and fails VersionNotFound for an unknown one", async () => {
+        const { chain } = await created();
+        await value(chain.update({ id: ID, patch: { title: "Second" }, actorId: ACTOR }));
+        const first = await value(chain.getVersion(ID, 0n));
+        expect(first).toMatchObject({ version: 0n, action: "create", state: initial });
+        expect(first.timestamp instanceof Date).toBe(true);
+        expect(await failure(chain.getVersion(ID, 7n))).toMatchObject({
+          _tag: "VersionNotFound",
+          type,
+          id: ID,
+          version: 7n,
+        });
+        expect(await outcome(chain.getVersion(OTHER, 0n))).toBe("VersionNotFound");
+      });
+      it("restoreVersion re-applies a version as a NEW update version", async () => {
+        const { chain } = await created();
+        await value(
+          chain.update({ id: ID, patch: { title: "Second", summary: null }, actorId: ACTOR }),
+        );
+        expect(await value(chain.restoreVersion(ID, 0n, ACTOR))).toEqual({ id: ID, version: 2n });
+        expect(await stateAt(chain, 2n)).toEqual(initial);
+        expect(await actions(chain)).toEqual([
+          [0n, "create"],
+          [1n, "update"],
+          [2n, "update"],
+        ]);
+      });
+      it("restoreVersion restores over a tombstone, and from one", async () => {
+        const { chain } = await created();
+        await value(chain.delete(ID, ACTOR));
+        await value(chain.restoreVersion(ID, 1n, ACTOR));
+        expect(await actions(chain)).toEqual([
+          [0n, "create"],
+          [1n, "delete"],
+          [2n, "update"],
+        ]);
+        expect(await stateAt(chain, 2n)).toEqual(initial);
+      });
+      it("restoreVersion fails VersionNotFound for an unknown version, writing nothing", async () => {
+        const { chain } = await created();
+        expect(await failure(chain.restoreVersion(ID, 5n, ACTOR))).toMatchObject({
+          _tag: "VersionNotFound",
+          type,
+          version: 5n,
+        });
+        expect(await outcome(chain.restoreVersion(OTHER, 0n, ACTOR))).toBe("VersionNotFound");
+        expect(await actions(chain)).toEqual([[0n, "create"]]);
+      });
+    });
+
+    describe("history — bounded (PERF-DB-001)", () => {
+      it("lists the chain oldest first, every entry with its timestamp", async () => {
+        const { chain } = await created();
+        await value(chain.update({ id: ID, patch: {}, actorId: ACTOR }));
+        await value(chain.delete(ID, ACTOR));
+        const entries = await value(chain.history(ID));
+        expect(Arr.map(entries, (entry) => [entry.version, entry.action])).toEqual([
+          [0n, "create"],
+          [1n, "update"],
+          [2n, "delete"],
+        ]);
+        expect(entries.every((entry) => entry.timestamp instanceof Date)).toBe(true);
+      });
+      it("applies the limit, clamping a non-positive one to 1 and an oversized one to the cap", async () => {
+        const { chain } = await created();
+        await value(chain.update({ id: ID, patch: {}, actorId: ACTOR }));
+        await value(chain.update({ id: ID, patch: {}, actorId: ACTOR }));
+        expect((await value(chain.history(ID, 2))).length).toBe(2);
+        expect((await value(chain.history(ID, 0))).length).toBe(1);
+        expect((await value(chain.history(ID, 1_000_000))).length).toBe(3);
+        expect((await value(chain.history(ID))).length).toBe(3);
+      });
+      it("fails NodeNotFound for an id with no versions", async () => {
+        const { chain } = await harness.make();
+        expect(await failure(chain.history(OTHER))).toMatchObject({
+          _tag: "NodeNotFound",
+          type,
+          id: OTHER,
+        });
+      });
+    });
+
+    describe("head", () => {
+      it("is none for an unknown id, and the latest entry once written", async () => {
+        const { chain } = await created();
+        expect(await value(chain.head(OTHER))).toEqual(Option.none());
+        await value(chain.delete(ID, ACTOR));
+        expect(
+          Option.map(await value(chain.head(ID)), (entry) => [entry.version, entry.action]),
+        ).toEqual(Option.some([1n, "delete"]));
+      });
+    });
+
+    describe("expectedVersion — a precondition on the append", () => {
+      Arr.forEach(extending, ([name, write]) => {
+        it(`${name}: writes when the expected version is the head`, async () => {
+          const { chain } = await created();
+          expect(await outcome(write(chain, { expectedVersion: 0n }))).toBe("success");
+          expect((await value(chain.history(ID))).length).toBe(2);
+        });
+        it(`${name}: a stale or ahead expected version is StaleVersion, carrying the head, and writes nothing`, async () => {
+          const { chain } = await created();
+          await value(chain.update({ id: ID, patch: {}, actorId: ACTOR }));
+          expect(await failure(write(chain, { expectedVersion: 0n }))).toMatchObject({
+            _tag: "StaleVersion",
+            type,
+            id: ID,
+            expected: 0n,
+            current: 1n,
+          });
+          expect(await outcome(write(chain, { expectedVersion: 9n }))).toBe("StaleVersion");
+          expect((await value(chain.history(ID))).length).toBe(2);
+        });
+        it(`${name}: without one (absent or undefined) it extends whatever the head is`, async () => {
+          const { chain } = await created();
+          await value(chain.update({ id: ID, patch: {}, actorId: ACTOR }));
+          expect(await outcome(write(chain, {}))).toBe("success");
+          expect(await outcome(write(chain, { expectedVersion: undefined }))).toBe("success");
+        });
+      });
+      it("restore over a tombstone checks the tombstone's version; update still refuses it", async () => {
+        const { chain } = await created();
+        await value(chain.delete(ID, ACTOR));
+        expect(
+          await outcome(chain.restore({ id: ID, patch: {}, actorId: ACTOR, expectedVersion: 0n })),
+        ).toBe("StaleVersion");
+        expect(
+          await outcome(chain.update({ id: ID, patch: {}, actorId: ACTOR, expectedVersion: 1n })),
+        ).toBe("NodeNotFound");
+        expect(
+          await outcome(chain.restore({ id: ID, patch: {}, actorId: ACTOR, expectedVersion: 1n })),
+        ).toBe("success");
+      });
+      it("an unknown id is NodeNotFound, and an unknown restore target VersionNotFound, before the precondition", async () => {
+        const { chain } = await created();
+        expect(
+          await outcome(
+            chain.update({ id: OTHER, patch: {}, actorId: ACTOR, expectedVersion: 3n }),
+          ),
+        ).toBe("NodeNotFound");
+        expect(await outcome(chain.delete(OTHER, ACTOR, { expectedVersion: 3n }))).toBe(
+          "NodeNotFound",
+        );
+        expect(await outcome(chain.restoreVersion(ID, 8n, ACTOR, { expectedVersion: 3n }))).toBe(
+          "VersionNotFound",
+        );
+      });
+      it("is race-safe: two writers expecting the same head cannot both write", async () => {
+        const { chain } = await created();
+        const results = await Promise.all([
+          outcome(
+            chain.update({ id: ID, patch: { title: "A" }, actorId: ACTOR, expectedVersion: 0n }),
+          ),
+          outcome(
+            chain.update({ id: ID, patch: { title: "B" }, actorId: ACTOR, expectedVersion: 0n }),
+          ),
+        ]);
+        expect(Arr.filter(results, (result) => result === "success").length).toBe(1);
+        expect(
+          Arr.filter(results, (result) => result === "StaleVersion" || result === "VersionConflict")
+            .length,
+        ).toBe(1);
+        expect((await value(chain.history(ID))).length).toBe(2);
+      });
+    });
+
+    describe("locales — the keyed level (pulpit#56)", () => {
+      it("a version carries its locale level: set, drop (null) and carry forward, restored together", async () => {
+        const { chain } = await harness.make();
+        await value(
+          chain.create({
+            id: Option.some(ID),
+            state: { slug: "a" },
+            locales: { en: { title: "Hello" }, fr: { title: "Salut" } },
+            actorId: ACTOR,
+          }),
+        );
+        await value(
+          chain.update({
+            id: ID,
+            patch: {},
+            locales: { en: { title: "Hi" }, fr: null },
+            actorId: ACTOR,
+          }),
+        );
+        expect(localesOf(await value(chain.getVersion(ID, 1n)))).toEqual({ en: { title: "Hi" } });
+        await value(chain.restoreVersion(ID, 0n, ACTOR));
+        expect(localesOf(await value(chain.getVersion(ID, 2n)))).toEqual({
+          en: { title: "Hello" },
+          fr: { title: "Salut" },
+        });
+      });
+    });
+
+    describe("purge — the erasure's whole-chain delete (pulpit#58)", () => {
+      it("deletes the node's whole chain and nothing else; an unknown id is a no-op", async () => {
+        const { chain } = await created();
+        await value(chain.create({ id: Option.some(OTHER), state: initial, actorId: ACTOR }));
+        await value(chain.update({ id: ID, patch: {}, actorId: ACTOR }));
+        await value(chain.purge(ID));
+        expect(await value(chain.head(ID))).toEqual(Option.none());
+        expect(await outcome(chain.history(ID))).toBe("NodeNotFound");
+        expect(await outcome(chain.getVersion(ID, 0n))).toBe("VersionNotFound");
+        expect(await actions(chain, OTHER)).toEqual([[0n, "create"]]);
+        expect(await outcome(chain.purge("00000000-0000-4000-8000-0000000000ff"))).toBe("success");
+      });
+    });
+
+    describe("faults the harness can inject", () => {
+      Arr.forEach(extending, ([name, write]) => {
+        it(`${name}: a lost race at the append is VersionConflict, never retried over`, async () => {
+          const context = await created();
+          if (context.raceNextAppend === undefined) return;
+          await context.raceNextAppend(ID);
+          expect(await failure(write(context.chain, { expectedVersion: 0n }))).toMatchObject({
+            _tag: "VersionConflict",
+            id: ID,
+            version: 1n,
+          });
+          expect(await actions(context.chain)).toEqual([[0n, "create"]]);
+        });
+      });
+      it("a create that loses the race for its id is NodeAlreadyExists", async () => {
+        const context = await harness.make();
+        if (context.raceNextAppend === undefined) return;
+        await context.raceNextAppend(ID);
+        expect(
+          await outcome(context.chain.create({ id: Option.some(ID), state: {}, actorId: ACTOR })),
+        ).toBe("NodeAlreadyExists");
+      });
+      it("no partial restore: a version some level cannot rebuild is VersionNotFound, before anything is written", async () => {
+        const context = await created();
+        if (context.dropState === undefined) return;
+        await value(context.chain.update({ id: ID, patch: { title: "Second" }, actorId: ACTOR }));
+        await context.dropState(ID, 0n);
+        expect(await outcome(context.chain.getVersion(ID, 0n))).toBe("VersionNotFound");
+        expect(await outcome(context.chain.restoreVersion(ID, 0n, ACTOR))).toBe("VersionNotFound");
+        expect(await actions(context.chain)).toEqual([
+          [0n, "create"],
+          [1n, "update"],
+        ]);
+      });
+      it("a head with no reconstructable state is a defect, not a typed miss", async () => {
+        const context = await created();
+        if (context.dropState === undefined) return;
+        await context.dropState(ID, 0n);
+        expect(await outcome(context.chain.update({ id: ID, patch: {}, actorId: ACTOR }))).toBe(
+          "defect",
+        );
+      });
+    });
+  });
 };
 
 // ── The leaf view ─────────────────────────────────────────────────────
 
 /**
- * An in-memory {@link LeafStore} over an {@link InMemoryChainStore}, plus the
+ * An in-memory {@link LeafStore} over an {@link InMemoryVersionChain}, plus the
  * hooks a test reads and steers its owner stamps through. In memory only; not
  * for production.
  *
@@ -369,7 +1082,7 @@ export interface InMemoryLeafStoreOptions {
 
 /**
  * An in-memory {@link LeafStore}: the seam's contract (README → Seams →
- * `LeafStore`) as a current-version view over an {@link InMemoryChainStore}.
+ * `LeafStore`) as a current-version view over an {@link InMemoryVersionChain}.
  * Each node's row is its head version's state with its head `version` and `action`, and
  * `ownerId` merged in from the owner stamps (the apps' `core.node_owner`
  * join); `list` evaluates its {@link ListFilter} in memory, orders by its
@@ -383,7 +1096,7 @@ export interface InMemoryLeafStoreOptions {
  * @since 0.1.0
  */
 export const makeInMemoryLeafStore = (
-  chain: InMemoryChainStore,
+  chain: InMemoryVersionChain,
   options: InMemoryLeafStoreOptions,
 ): InMemoryLeafStore => {
   const fixedNow = Option.fromNullishOr(options.now);
@@ -953,7 +1666,7 @@ export interface InMemoryProposalStore extends ProposalStore<never, never> {
  * @since 0.1.0
  */
 export const makeInMemoryProposalStore = (options: {
-  readonly chain: InMemoryChainStore;
+  readonly chain: InMemoryVersionChain;
   readonly leaves: InMemoryLeafStore;
 }): InMemoryProposalStore => {
   const table = plainRowTable<ProposalRow>({
@@ -1174,7 +1887,7 @@ export interface InMemoryPublication {
  * @since 0.1.0
  */
 export const makeInMemoryPublication = (options: {
-  readonly chain: InMemoryChainStore;
+  readonly chain: InMemoryVersionChain;
   readonly leaves: InMemoryLeafStore;
   // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is the Effect `Clock`
   readonly now?: Date | undefined;
@@ -1345,7 +2058,7 @@ export interface InMemoryPurgeStoreOptions {
    * purged node's rows are erased from each, and a hash is unreferenced when
    * no row left in any of them carries it.
    */
-  readonly chains: ReadonlyArray<InMemoryChainStore>;
+  readonly chains: ReadonlyArray<InMemoryVersionChain>;
   /** The documents an unreferenced hash is deleted from; omitted, none is deleted (or reported). */
   // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no document store"
   readonly documents?: Pick<InMemoryDocumentStore<Schema.Json>, "remove"> | undefined;
@@ -1381,7 +2094,8 @@ const hashesIn = (
 /**
  * An in-memory {@link PurgeStore} over in-memory chains and a document
  * store: the seam's contract (README → Seams → `PurgeStore`). `eraseNode`
- * erases the node's rows from every chain and runs the `dependents`;
+ * reads the node's rows from every chain (`definePurge` then deletes them
+ * through the leaf's chain's `purge`) and runs the `dependents`;
  * a hash is referenced while any row left in any chain carries it in a
  * declared column. In memory only; not for production.
  *
@@ -1403,7 +2117,9 @@ export const makeInMemoryPurgeStore = (
   return {
     eraseNode: (id) =>
       Effect.sync((): ErasedReferences => {
-        const erased = Arr.flatMap(options.chains, (chain) => chain.erase(id));
+        const erased = Arr.flatMap(options.chains, (chain) =>
+          chain.rows().filter((row) => row.id === id),
+        );
         Arr.forEach(options.dependents ?? [], (dependent) => dependent(id));
         return {
           documents: hashesIn(erased, documentColumns),

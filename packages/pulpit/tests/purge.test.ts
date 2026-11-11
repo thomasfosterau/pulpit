@@ -25,7 +25,7 @@ import { defineVersionChain, type ChainState } from "../src/version-chain.ts";
 import {
   type InMemoryBlobFailure,
   makeInMemoryBlobStore,
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryDocumentStore,
   makeInMemoryLeafStore,
   makeInMemoryPurgeStore,
@@ -53,8 +53,8 @@ const setup = async (
     readonly withoutBlobs?: boolean;
   } = {},
 ) => {
-  const chain = makeInMemoryChainStore();
-  const other = makeInMemoryChainStore();
+  const chain = makeInMemoryVersionChain("notes");
+  const other = makeInMemoryVersionChain("others");
   const leaves = makeInMemoryLeafStore(chain, { columns: ["body", "contentHash"], now: NOW });
   const documents = makeInMemoryDocumentStore();
   const blobs = makeInMemoryBlobStore();

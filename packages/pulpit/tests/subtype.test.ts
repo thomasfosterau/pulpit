@@ -111,7 +111,7 @@ import {
 import { audienceSeam } from "../src/audience.ts";
 import { isPubliclyServeable } from "../src/publication.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryFollowers,
   makeInMemoryMembershipStore,
   makeInMemoryLeafStore,
@@ -531,7 +531,7 @@ describe("the write gates", () => {
 // ── The factory end to end ────────────────────────────────────────────
 
 const ownedPosts = () => {
-  const chain = makeInMemoryChainStore();
+  const chain = makeInMemoryVersionChain("posts");
   const leaves = makeInMemoryLeafStore(chain, {
     columns: ["title", "visibility", "draft"],
     now: NOW,
@@ -544,10 +544,10 @@ const ownedPosts = () => {
     access: ownedAccess({ draft: true }),
     chain: {
       ...chain,
-      snapshot: (id, version) =>
+      getVersion: (id, version) =>
         Effect.suspend(() => {
           snapshots.push([id, version]);
-          return chain.snapshot(id, version);
+          return chain.getVersion(id, version);
         }),
     },
     leaves,
@@ -649,7 +649,7 @@ describe("defineSubtype — an owned leaf", () => {
   });
 
   it("a moderated leaf shows an unapproved row only to its owner and moderator+ (pulpit#154)", async () => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("comments");
     const leaves = makeInMemoryLeafStore(chain, {
       columns: ["title", "visibility", "moderationState"],
       now: NOW,
@@ -1086,7 +1086,7 @@ describe("defineSubtype — the expected-version precondition", () => {
 
 describe("defineSubtype — a reference leaf", () => {
   it("writes at the corpus rung; reads are public", async () => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("taxa");
     const leaves = makeInMemoryLeafStore(chain, { columns: ["name"], now: NOW });
     let viewer: Viewer = as(member);
     const ops = defineSubtype({
@@ -1145,7 +1145,7 @@ describe("defineSubtype — list ordering (pulpit#112)", () => {
     seeds: ReadonlyArray<Seed>,
     leaf: Pick<SubtypeDefinition<LeafRow, LeafRow, never, never, never>, "sortable"> = {},
   ) => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("taxa");
     const store = makeInMemoryLeafStore(chain, {
       columns: ["title", "rank", "publishedAt", "visibility"],
       now: NOW,
@@ -1660,7 +1660,7 @@ const seededLeaf = (
   seeds: ReadonlyArray<Seed>,
   followers: FollowerSeam<Following, never> = follows,
 ) => {
-  const chain = makeInMemoryChainStore();
+  const chain = makeInMemoryVersionChain("leaves");
   const leaves = makeInMemoryLeafStore(chain, { columns, now: NOW });
   let viewer: Viewer = anonymous;
   const ops = defineSubtype({
@@ -2606,7 +2606,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     columns: ReadonlyArray<string>,
     access: Extract<LeafAccess, { kind: "reference" }>,
   ) => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("terms");
     const leaves = makeInMemoryLeafStore(chain, { columns, now: NOW });
     let viewer: Viewer = anonymous;
     /** How many versions the operations have read: a history read past a refusing gate shows here. */
@@ -2616,10 +2616,10 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
       access,
       chain: {
         ...chain,
-        snapshot: (id, version) =>
+        getVersion: (id, version) =>
           Effect.suspend(() => {
             snapshotReads += 1;
-            return chain.snapshot(id, version);
+            return chain.getVersion(id, version);
           }),
       },
       leaves,
@@ -2991,7 +2991,7 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
    * one kind block, from the next write on.
    */
   const cachedReference = () => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("taxa");
     const leaves = makeInMemoryLeafStore(chain, { columns: ["name", "visibility"], now: NOW });
     let viewer: Viewer = as(admin);
     const base = defineSubtype({
@@ -3284,7 +3284,7 @@ describe("lifecycle hooks — before and after every write (pulpit#45)", () => {
     readonly after?: ReadonlyArray<AfterWriteHook<Post, never, never>>;
     readonly afterFailure?: "log" | "defect";
   }) => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("posts");
     const leaves = makeInMemoryLeafStore(chain, {
       columns: ["title", "slug", "visibility", "draft"],
       now: NOW,
@@ -3451,7 +3451,7 @@ describe("lifecycle hooks — before and after every write (pulpit#45)", () => {
 
   it("a before hook runs after the gate: a refused caller never reaches it", async () => {
     const seen: Array<Seen> = [];
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("pages");
     const leaves = makeInMemoryLeafStore(chain, { columns: ["title"], now: NOW });
     const ops = defineSubtype<LeafRow, unknown, Following, never, never>({
       type: "pages",
@@ -3497,8 +3497,8 @@ describe("lifecycle hooks — before and after every write (pulpit#45)", () => {
     expect(chain.rows()).toHaveLength(1);
   });
 
-  it("a leaf without hooks reads no head snapshot for restoreVersion beyond the restored one", async () => {
-    const chain = makeInMemoryChainStore();
+  it("a leaf without hooks reads no version for restoreVersion: the port's own restoreVersion does (pulpit#246)", async () => {
+    const chain = makeInMemoryVersionChain("pages");
     const snapshots: Array<bigint> = [];
     const leaves = makeInMemoryLeafStore(chain, { columns: ["title"], now: NOW });
     const ops = defineSubtype<LeafRow, unknown, Following, never, never>({
@@ -3506,10 +3506,10 @@ describe("lifecycle hooks — before and after every write (pulpit#45)", () => {
       access: { kind: "reference" },
       chain: {
         ...chain,
-        snapshot: (id, version) =>
+        getVersion: (id, version) =>
           Effect.suspend(() => {
             snapshots.push(version);
-            return chain.snapshot(id, version);
+            return chain.getVersion(id, version);
           }),
       },
       leaves,
@@ -3522,7 +3522,8 @@ describe("lifecycle hooks — before and after every write (pulpit#45)", () => {
     await run(ops.update({ id, patch: { title: "u" } }));
     snapshots.length = 0;
     await run(ops.restoreVersion(id, 0n));
-    expect(snapshots).toEqual([0n]);
+    expect(snapshots).toEqual([]);
+    expect(chain.rows().at(-1)?.state).toEqual({ title: "t" });
   });
 
   it("composeHooks concatenates in order, and the first given afterFailure wins", () => {
@@ -3564,7 +3565,7 @@ describe("lifecycle hooks — before and after every write (pulpit#45)", () => {
 
 describe("the head version on the wire (pulpit#65)", () => {
   const versionedLeaf = () => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("posts");
     const leaves = makeInMemoryLeafStore(chain, { columns: ["title", "visibility"], now: NOW });
     let viewer: Viewer = anonymous;
     const ops = defineSubtype({
@@ -3709,7 +3710,7 @@ describe("subtypeResourceHandlers — effect-jsonapi's ResourceHandlers (pulpit#
    * view-private rung can't read a `private` row back.
    */
   const jsonapiLeaf = (access: LeafAccess = ownedAccess({ draft: false })) => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("posts");
     const leaves = makeInMemoryLeafStore(chain, { columns: ["title", "visibility"], now: NOW });
     let viewer: Viewer = as(member);
     const ops = defineSubtype({
@@ -3862,7 +3863,7 @@ describe("subtypeResourceHandlers — effect-jsonapi's ResourceHandlers (pulpit#
 
 describe("search: the projection and gated hydration (pulpit#54)", () => {
   const searchLeaf = (search?: Parameters<typeof defineSubtype>[0]["search"]) => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("posts");
     const leaves = makeInMemoryLeafStore(chain, {
       columns: ["title", "visibility", "language"],
       now: NOW,
@@ -3999,7 +4000,7 @@ describe("the resource cache's compare-on-set (pulpit#121)", () => {
     readonly visibility: ColumnValue;
   }
   const racingLeaf = () => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("posts");
     const leaves = makeInMemoryLeafStore(chain, { columns: ["title", "visibility"], now: NOW });
     const ops = defineSubtype({
       type: "posts",
@@ -4230,7 +4231,7 @@ describe("defineSubtype — the live pointer (pulpit#46)", () => {
 
   /** A publish-gated owned leaf over the in-memory seams, with a preview grant a test sets. */
   const gatedPosts = (options: { readonly withCache?: boolean } = {}) => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("posts");
     const heads = makeInMemoryLeafStore(chain, { columns: ["title", "visibility", "draft"] });
     const publication = makeInMemoryPublication({ chain, leaves: heads });
     let viewer: Viewer = anonymous;
@@ -4579,7 +4580,7 @@ describe("defineSubtype — the live pointer (pulpit#46)", () => {
   });
 
   it("a before hook can refuse a publish, and is shown the head", async () => {
-    const chain = makeInMemoryChainStore();
+    const chain = makeInMemoryVersionChain("posts");
     const heads = makeInMemoryLeafStore(chain, { columns: ["title", "visibility", "draft"] });
     const publication = makeInMemoryPublication({ chain, leaves: heads });
     const shown: Array<string> = [];

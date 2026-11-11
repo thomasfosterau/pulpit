@@ -120,12 +120,12 @@ export interface LocalisedRoutesConfig {
  * import { routable } from "@thomasfosterau/pulpit/paths";
  * import { defineLocaleLevel, defineSubtype, nobodyFollows } from "@thomasfosterau/pulpit/subtype";
  * import {
- *   makeInMemoryChainStore,
+ *   makeInMemoryVersionChain,
  *   makeInMemoryLeafStore,
  *   makeInMemoryPathStore,
  * } from "@thomasfosterau/pulpit/testing";
  *
- * const chain = makeInMemoryChainStore();
+ * const chain = makeInMemoryVersionChain("pages");
  * const pages = routable(
  *   defineSubtype({
  *     type: "pages",

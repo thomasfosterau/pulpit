@@ -441,7 +441,7 @@ export interface EdgeRow {
 /**
  * The persistence seam over one edge table. `E` is the store's own failure,
  * `R` its requirements (a Drizzle store's `CurrentTransaction`: like the
- * chain store, it never opens a transaction). Every method applies no policy.
+ * version chain, it never opens a transaction). Every method applies no policy.
  *
  * @since 0.1.0
  */

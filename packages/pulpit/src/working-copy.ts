@@ -34,7 +34,7 @@ import {
   type ChainPatch,
   type ChainWrite,
   type StaleVersion,
-  type VersionChainStore,
+  type VersionChain,
   type VersionConflict,
 } from "./version-chain.ts";
 
@@ -133,7 +133,7 @@ const nowDate: Effect.Effect<Date> = Effect.map(Clock.currentTimeMillis, (millis
  */
 export const defineWorkingCopy = <Resource, E, R>(definition: {
   readonly leaf: SubtypeOps<Resource, E, R>;
-  readonly chain: VersionChainStore<E, R>;
+  readonly chain: VersionChain<E, R>;
   readonly store: WorkingCopyStore<E, R>;
 }): WorkingCopyOps<E, R> => {
   const { leaf, chain, store } = definition;

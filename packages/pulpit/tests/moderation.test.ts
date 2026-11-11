@@ -45,7 +45,7 @@ import {
 } from "../src/subtype.ts";
 import type { ChainState, WriteAction } from "../src/version-chain.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
   makeInMemoryReportStore,
@@ -289,7 +289,7 @@ describe("moderatePatch — the rules, case by case", () => {
 // ── End to end ────────────────────────────────────────────────────────
 
 const comments = () => {
-  const chain = makeInMemoryChainStore();
+  const chain = makeInMemoryVersionChain("comments");
   const leaves = makeInMemoryLeafStore(chain, {
     columns: ["body", "visibility", "moderationState", "moderatedAt", "moderatedBy"],
     now: NOW,
