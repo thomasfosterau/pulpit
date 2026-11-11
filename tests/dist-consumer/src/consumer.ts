@@ -140,11 +140,15 @@ import {
   serveablePolicy,
 } from "@thomasfosterau/pulpit/publication";
 import {
+  checkedDocumentStore,
+  documentCheckHook,
   DocumentHash,
   documentRef,
   onDocumentInsert,
+  type DocumentCheck,
   type DocumentPut,
   type DocumentStore,
+  type DocumentViolation,
 } from "@thomasfosterau/pulpit/documents";
 import {
   defineEdgeOps,
@@ -995,6 +999,23 @@ export type _OnInsert = Assert<
   Equals<
     ReturnType<typeof onDocumentInsert<ProseDocument, StoreFailure, Transaction>>,
     DocumentStore<ProseDocument, StoreFailure, Transaction>
+  >
+>;
+// The grammar check (pulpit#264): the checked store adds `DocumentViolation`
+// to `put`'s failure; the hook is a plain before-write hook of the store's E.
+export type _CheckedStore = Assert<
+  Equals<
+    ReturnType<typeof checkedDocumentStore<ProseDocument, StoreFailure, Transaction, never>>,
+    DocumentStore<ProseDocument, StoreFailure | DocumentViolation, Transaction>
+  >
+>;
+export type _DocumentCheck = Assert<
+  Equals<ReturnType<DocumentCheck<ProseDocument>>, Effect.Effect<void, DocumentViolation>>
+>;
+export type _DocumentCheckHook = Assert<
+  Equals<
+    ReturnType<typeof documentCheckHook<ProseDocument, StoreFailure, Transaction>>,
+    BeforeWriteHook<StoreFailure, Transaction>
   >
 >;
 
