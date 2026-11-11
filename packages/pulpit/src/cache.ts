@@ -31,6 +31,12 @@
  *   read as a miss.
  * - **A TTL backstop.** Every write carries the configured TTL, so an entry
  *   no write ever evicted still expires.
+ * - **No locale keys yet.** It keeps one entry per id, so a `set` that names
+ *   a locale (a localised leaf's read-through fill, pulpit#184; locale keys
+ *   are pulpit#271) evicts the
+ *   id at its version instead of caching: a localised leaf served through
+ *   this cache is never cached, rather than answered from another locale's
+ *   entry.
  * - **Never fails.** A KV failure reads as a miss and skips a write: the
  *   cache is an optimisation, and the store stays the source of truth.
  *
@@ -194,7 +200,12 @@ export const makeResourceCache = <Resource, E, R>(
     );
   const evict = (id: string, version: bigint) => write(id, version, Option.none());
 
-  const set = (id: string, resource: Resource, version: bigint) => {
+  // oxlint-disable-next-line effect/prefer-option-over-null -- the seam's optional `locale` parameter, `?: T | undefined` (AGENTS.md → Conventions)
+  const set = (id: string, resource: Resource, version: bigint, locale?: string | undefined) => {
+    // A localised entry evicts instead: this cache keys one entry per id, so
+    // caching a locale under it could answer another locale's reader
+    // (pulpit#184). Fail safe: a localised leaf through it is never cached.
+    if (locale !== undefined) return evict(id, version);
     // Refuse (and evict) what the policy doesn't serve, or what doesn't encode.
     const encoded = serveable(resource) ? encode(resource) : Option.none();
     return write(id, version, encoded);

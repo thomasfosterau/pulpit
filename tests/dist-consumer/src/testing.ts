@@ -178,10 +178,16 @@ export type _MakeResourceCache = Assert<
     <Resource>(serveable: (resource: Resource) => boolean) => InMemoryResourceCache<Resource>
   >
 >;
+// oxlint-disable effect/prefer-option-over-null -- the assertions must spell the emitted optional parameter exactly, `?: T | undefined` (AGENTS.md → Conventions)
 export type _CacheSet = Assert<
   Equals<
     ResourceCacheSeam<CachedPost, never>["set"],
-    (id: string, resource: CachedPost, version: bigint) => Effect.Effect<void>
+    (
+      id: string,
+      resource: CachedPost,
+      version: bigint,
+      locale?: string | undefined,
+    ) => Effect.Effect<void>
   >
 >;
 export type _CacheDelete = Assert<
@@ -191,8 +197,12 @@ export type _CacheDelete = Assert<
   >
 >;
 export type _CacheGet = Assert<
-  Equals<InMemoryResourceCache<CachedPost>["get"], (id: string) => Option.Option<CachedPost>>
+  Equals<
+    InMemoryResourceCache<CachedPost>["get"],
+    (id: string, locale?: string | undefined) => Option.Option<CachedPost>
+  >
 >;
+// oxlint-enable effect/prefer-option-over-null
 export type _CacheVersionOf = Assert<
   Equals<InMemoryResourceCache<CachedPost>["versionOf"], (id: string) => Option.Option<bigint>>
 >;

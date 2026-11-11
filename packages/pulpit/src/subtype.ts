@@ -99,9 +99,11 @@ import * as HashMap from "effect/HashMap";
 import * as HashSet from "effect/HashSet";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
+import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Str from "effect/String";
 import * as Schema from "effect/Schema";
 import { ResourceHandlers, type Assemble, type Handlers } from "@thomasfosterau/effect-jsonapi";
@@ -2447,18 +2449,37 @@ export const hydrateSearchHits = <Hit extends { readonly id: string }, Resource,
  * cannot honour the seam. A read-through fill passes the version its read
  * saw, and goes through `set` like any other.
  *
+ * **A localised leaf's cache is keyed by locale** (pulpit#184): one entry
+ * per `(id, locale)` a reader was served, so `Accept-Language` can never
+ * answer one locale from another's entry. A version covers all of a node's
+ * locales, so the compare-on-set version is still kept per id: a `set` of
+ * any locale below it is a no-op, a `set` above it drops the id's other
+ * locales (they are older versions), and `delete` evicts every locale of
+ * the id. The kernel never writes a localised leaf through (its writer's
+ * re-read is the node's shared row, no locale's representation): its
+ * handlers evict instead ({@link SubtypeHandlersConfig.localised}), and
+ * the application's read-through fill passes the locale it served.
+ *
  * @since 0.1.0
  */
 export interface ResourceCacheSeam<Resource, R> {
   /**
    * Write the resource through, as of `version`: a no-op below the highest
    * version the cache holds for `id`; the cache refuses (and evicts at
-   * `version`) one that isn't serveable. Never fails.
+   * `version`) one that isn't serveable. On a localised leaf `locale`
+   * names the entry's locale (since 0.2.0); absent, the id's one entry.
+   * Never fails.
    */
-  readonly set: (id: string, resource: Resource, version: bigint) => Effect.Effect<void, never, R>;
+  readonly set: (
+    id: string,
+    resource: Resource,
+    version: bigint,
+    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter is `?: T | undefined` (AGENTS.md → Conventions), so every existing three-argument cache still fits the seam; the omitted argument is "no locale"
+    locale?: string | undefined,
+  ) => Effect.Effect<void, never, R>;
   /**
    * Evict the resource as of `version`, which a later `set` must reach to
-   * cache it again. Never fails.
+   * cache it again, every locale's entry of the id included. Never fails.
    */
   readonly delete: (id: string, version: bigint) => Effect.Effect<void, never, R>;
 }
@@ -2541,6 +2562,14 @@ export interface CommittedWrite<Resource> extends ChainWrite {
 export interface SubtypeHandlers<Resource, E, R> {
   readonly list: SubtypeOps<Resource, E, R>["list"];
   readonly get: SubtypeOps<Resource, E, R>["get"];
+  /**
+   * The operations' locale fallback read, unchanged: what
+   * {@link subtypeResourceHandlers} serves `get` through on a localised
+   * leaf (pulpit#184).
+   *
+   * @since 0.2.0
+   */
+  readonly getLocalised: SubtypeOps<Resource, E, R>["getLocalised"];
   readonly create: (
     input: CreateRequest,
   ) => Effect.Effect<
@@ -2607,6 +2636,18 @@ export interface SubtypeHandlersConfig<Resource, R> {
   readonly inTransaction: Effect.Effect<boolean, never, R>;
   /** The leaf's cache, when it has one. */
   readonly cache: Option.Option<ResourceCacheSeam<Resource, R>>;
+  /**
+   * Whether the leaf is localised (it declares a locale level, pulpit#184).
+   * When it is, every write evicts the node's cache entries, every locale's,
+   * at its version instead of writing a resource through: the writer's
+   * re-read is the node's shared row, which is no locale's representation,
+   * and the cache's entries are keyed by locale (see
+   * {@link ResourceCacheSeam}). Absent or `false`, a write writes through.
+   *
+   * @since 0.2.0
+   */
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so the existing configs keep compiling; the omitted key is an unlocalised leaf
+  readonly localised?: boolean | undefined;
 }
 
 /**
@@ -2686,7 +2727,9 @@ export const subtypeHandlers = <Resource, E, R>(
 
   /**
    * The cache step inside an outer transaction: the write hasn't committed,
-   * so evict at its version and cache nothing (pulpit#124).
+   * so evict at its version and cache nothing (pulpit#124). A localised
+   * leaf's every write takes it too: its entries are per locale, and the
+   * writer's re-read is no locale's (pulpit#184).
    */
   const evictHook = (
     cache: ResourceCacheSeam<Resource, R>,
@@ -2706,7 +2749,9 @@ export const subtypeHandlers = <Resource, E, R>(
         {
           ...hooks,
           after: [
-            ...Option.toArray(Option.map(config.cache, nested ? evictHook : cacheHook)),
+            ...Option.toArray(
+              Option.map(config.cache, nested || config.localised === true ? evictHook : cacheHook),
+            ),
             ...hooks.after,
           ],
         },
@@ -2778,6 +2823,7 @@ export const subtypeHandlers = <Resource, E, R>(
   return {
     list: ops.list,
     get: ops.get,
+    getLocalised: ops.getLocalised,
     create: (input) => write("create", ops.create(input)),
     update: (input) => write("update", ops.update(input)),
     restore: (input) => write("restore", ops.restore(input)),
@@ -2823,6 +2869,181 @@ export const subtypeHandlers = <Resource, E, R>(
     })),
   };
 };
+
+// ── The locale on the wire ────────────────────────────────────────────
+
+/**
+ * The language tags an `Accept-Language` header asks for (RFC 9110 §12.5.4),
+ * most preferred first: each range ordered by its `q` weight (1 when
+ * absent), ties in the header's own order. A range weighted 0, the wildcard
+ * `*`, an empty range and one with a malformed weight are dropped, so a
+ * header that names nothing usable asks for nothing. Tags are kept as
+ * given: compare them as the leaf stores its locales (normalise case
+ * before writing, if the application's tags vary). Absent, nothing. Never
+ * throws.
+ *
+ * @example
+ * ```ts
+ * import { deepStrictEqual } from "node:assert";
+ * import { acceptLanguage } from "@thomasfosterau/pulpit/subtype";
+ *
+ * deepStrictEqual(acceptLanguage("fr-CH, fr;q=0.9, en;q=0.8, *;q=0.5"), ["fr-CH", "fr", "en"]);
+ * deepStrictEqual(acceptLanguage("en;q=0.2, de"), ["de", "en"]);
+ * deepStrictEqual(acceptLanguage(undefined), []);
+ * ```
+ *
+ * @since 0.2.0
+ */
+// oxlint-disable-next-line effect/prefer-option-over-null -- a request header is present or not, and every HTTP layer hands it over as `string | undefined`; taking that directly saves each caller an `Option` round trip
+export const acceptLanguage = (header: string | undefined): ReadonlyArray<string> =>
+  header === undefined
+    ? []
+    : Arr.map(
+        Arr.sort(
+          Arr.filterMap(Arr.map(header.split(","), Str.trim), (range, index) =>
+            weightedRange(range, index),
+          ),
+          languageOrder,
+        ),
+        (weighted) => weighted.tag,
+      );
+
+/** One `Accept-Language` range, parsed: its tag, weight and position. */
+interface WeightedRange {
+  readonly tag: string;
+  readonly q: number;
+  readonly index: number;
+}
+
+/** An RFC 9110 qvalue: `0`, `1` or `0.` / `1.` with up to three decimals (`1.` only zeros). */
+const QVALUE = /^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/;
+
+const weightedRange = (range: string, index: number) => {
+  const [tag = "", ...parameters] = Arr.map(range.split(";"), Str.trim);
+  const weight = Arr.findFirst(parameters, (parameter) => /^q=/i.test(parameter));
+  const q = Option.match(weight, {
+    onNone: () => 1,
+    onSome: (parameter) => {
+      const value = parameter.slice(2).trim();
+      return QVALUE.test(value) ? Number(value) : Number.NaN;
+    },
+  });
+  return tag === "" || tag === "*" || !(q > 0)
+    ? Result.failVoid
+    : Result.succeed<WeightedRange>({ tag, q, index });
+};
+
+const languageOrder = Order.combine(
+  Order.mapInput(Order.flip(Order.Number), (range: WeightedRange) => range.q),
+  Order.mapInput(Order.Number, (range: WeightedRange) => range.index),
+);
+
+/**
+ * The locales a localised read tries, in order: each requested tag, each
+ * followed by its shorter prefixes (`fr-CH` → `fr`), then the leaf's
+ * default, each tag once, empty tags dropped. What
+ * {@link subtypeResourceHandlers} hands `getLocalised` for a request's
+ * `Accept-Language` (pulpit#184). Never throws.
+ *
+ * @example
+ * ```ts
+ * import { deepStrictEqual } from "node:assert";
+ * import { localePreferences } from "@thomasfosterau/pulpit/subtype";
+ *
+ * deepStrictEqual(localePreferences(["fr-CH", "de"], "en"), ["fr-CH", "fr", "de", "en"]);
+ * deepStrictEqual(localePreferences([], "en"), ["en"]);
+ * ```
+ *
+ * @since 0.2.0
+ */
+export const localePreferences = (
+  requested: ReadonlyArray<string>,
+  defaultLocale: string,
+): ReadonlyArray<string> =>
+  Arr.dedupe(
+    Arr.filter([...Arr.flatMap(requested, prefixesOf), defaultLocale], (tag) => tag !== ""),
+  );
+
+/** A tag and its shorter prefixes, longest first (empty subtags dropped): `zh-Hant-TW` → `zh-Hant-TW`, `zh-Hant`, `zh`. */
+const prefixesOf = (tag: string): ReadonlyArray<string> => {
+  const subtags = Arr.filter(tag.split("-"), Str.isNonEmpty);
+  return Arr.makeBy(subtags.length, (shorter) =>
+    subtags.slice(0, subtags.length - shorter).join("-"),
+  );
+};
+
+/**
+ * How a localised leaf's JSON:API handlers read the request's locale and
+ * report the one they served (pulpit#184; the owner decision there: the
+ * locale travels in `Accept-Language` / `Content-Language`, never a query
+ * parameter). effect-jsonapi's handlers see only the decoded params, query
+ * and payload, so the application reads the headers from its own request
+ * context (`HttpServerRequest`'s `headers`) and sets the response's
+ * (`HttpEffect.appendPreResponseHandler`); see the package README.
+ *
+ * @since 0.2.0
+ */
+export interface LocaleWire<R> {
+  /** The leaf's locale level: which payload columns are translated. */
+  readonly level: LocaleLevel;
+  /** The locale a read falls back to last, and a write lands in without a `Content-Language`. */
+  readonly defaultLocale: string;
+  /** The request's `Accept-Language` header, if it has one. */
+  readonly acceptLanguage: Effect.Effect<Option.Option<string>, never, R>;
+  /** The request's `Content-Language` header, if it has one. */
+  readonly contentLanguage: Effect.Effect<Option.Option<string>, never, R>;
+  /**
+   * Called with the locale a response carries, once a read has found it:
+   * the application sets `Content-Language` to it and `Vary:
+   * Accept-Language` on the response (and keys any cache it fills by it).
+   */
+  readonly served: (locale: string) => Effect.Effect<void, never, R>;
+}
+
+/** The first tag of a `Content-Language` header; the default without one. */
+const writeLocale = <R>(wire: LocaleWire<R>): Effect.Effect<string, never, R> =>
+  Effect.map(wire.contentLanguage, (header) =>
+    Option.getOrElse(
+      Option.flatMap(header, (value) => Arr.head(acceptLanguageTags(value))),
+      () => wire.defaultLocale,
+    ),
+  );
+
+/** A comma-separated tag list's non-empty tags, in order. */
+const acceptLanguageTags = (header: string): ReadonlyArray<string> =>
+  Arr.filter(Arr.map(header.split(","), Str.trim), (tag) => tag !== "");
+
+/** Split a state or patch into its shared columns and the level's translated ones. */
+const splitTranslated = <V>(
+  level: LocaleLevel,
+  values: { readonly [column: string]: V },
+): readonly [{ readonly [column: string]: V }, { readonly [column: string]: V }] => {
+  const isTranslated = (_: V, column: string) => level.columns.includes(column);
+  return [
+    Record.filter(values, (value, column) => !isTranslated(value, column)),
+    Record.filter(values, isTranslated),
+  ];
+};
+
+/**
+ * `get` over the locale fallback read: the request's `Content-Language`
+ * first (a write's response answers in the locale it wrote), then its
+ * `Accept-Language` preferences, then the default; the locale served is
+ * reported through {@link LocaleWire.served}.
+ */
+const localisedGet =
+  <Resource, E, R>(handlers: SubtypeHandlers<Resource, E, R>, wire: LocaleWire<R>) =>
+  (id: string): Effect.Effect<Resource, NodeNotFound | E, R> =>
+    Effect.gen(function* () {
+      const written = Arr.flatMap(Option.toArray(yield* wire.contentLanguage), acceptLanguageTags);
+      const asked = acceptLanguage(Option.getOrUndefined(yield* wire.acceptLanguage));
+      const found = yield* handlers.getLocalised(
+        id,
+        localePreferences([...written, ...asked], wire.defaultLocale),
+      );
+      yield* wire.served(found.locale);
+      return found.resource;
+    });
 
 // ── effect-jsonapi's ResourceHandlers ─────────────────────────────────
 
@@ -2926,8 +3147,44 @@ export const subtypeResourceHandlers = <
     Targets,
     Resource["type"]
   >,
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter is `?: T | undefined` (AGENTS.md → Conventions), so the existing two-argument calls keep compiling; the omitted argument is an unlocalised leaf
+  locale?: LocaleWire<R> | undefined,
 ) => {
   const { type, listRequest, createInput, updateInput, ...rest } = config;
+  const wire = Option.fromUndefinedOr(locale);
+  const get = Option.match(wire, {
+    onNone: () => handlers.get,
+    onSome: (negotiated) => localisedGet(handlers, negotiated),
+  });
+  // On a localised leaf, the payload's translated columns land in the
+  // `Content-Language` locale (the default without one) and the rest stay
+  // shared; one version of the whole node either way.
+  const createRequest = (payload: TCreate): Effect.Effect<CreateRequest, never, R> => {
+    const input = createInput(payload);
+    return Option.match(wire, {
+      onNone: () => Effect.succeed(input),
+      onSome: (negotiated) =>
+        Effect.map(writeLocale(negotiated), (tag): CreateRequest => {
+          const [shared, translated] = splitTranslated(negotiated.level, input.state);
+          return Record.isEmptyRecord(translated)
+            ? { id: input.id, state: shared }
+            : { id: input.id, state: shared, locales: { [tag]: translated } };
+        }),
+    });
+  };
+  const updateRequest = (payload: TUpdate): Effect.Effect<RestoreRequest, never, R> => {
+    const input = updateInput(payload);
+    return Option.match(wire, {
+      onNone: () => Effect.succeed(input),
+      onSome: (negotiated) =>
+        Effect.map(writeLocale(negotiated), (tag): RestoreRequest => {
+          const [shared, translated] = splitTranslated(negotiated.level, input.patch);
+          return Record.some(translated, (value) => value !== undefined)
+            ? { ...input, patch: shared, locales: { [tag]: translated } }
+            : { ...input, patch: shared };
+        }),
+    });
+  };
   return ResourceHandlers.make<
     TQuery,
     TCreate,
@@ -2962,13 +3219,19 @@ export const subtypeResourceHandlers = <
           items: page.rows,
           totalCount: page.total,
         })),
-      get: handlers.get,
+      get,
       // The committed version rides along: a write hidden from its writer
       // answers it as `data.meta.version` (pulpit#107).
       create: (payload) =>
-        Effect.map(handlers.create(createInput(payload)), ({ id, version }) => ({ id, version })),
+        Effect.map(Effect.flatMap(createRequest(payload), handlers.create), ({ id, version }) => ({
+          id,
+          version,
+        })),
       update: (payload) =>
-        Effect.map(handlers.update(updateInput(payload)), ({ id, version }) => ({ id, version })),
+        Effect.map(Effect.flatMap(updateRequest(payload), handlers.update), ({ id, version }) => ({
+          id,
+          version,
+        })),
       delete: (id) => handlers.delete(id),
     },
   });

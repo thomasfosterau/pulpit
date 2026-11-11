@@ -28,11 +28,9 @@
  * @since 0.2.0
  */
 
-import * as Array from "effect/Array";
 import * as Effect from "effect/Effect";
-import * as Str from "effect/String";
 import { PathNotFound, type Resolution } from "./paths.ts";
-import type { LocalisedResource } from "./subtype.ts";
+import { localePreferences, type LocalisedResource } from "./subtype.ts";
 import type { NodeNotFound } from "./version-chain.ts";
 
 /**
@@ -41,7 +39,8 @@ import type { NodeNotFound } from "./version-chain.ts";
  * `zh-Hant` → `zh`), then the family's default. Empty tags are dropped and
  * each tag is tried once. Tags are compared exactly as given: normalise
  * their case before they reach a store (BCP 47 is case-insensitive; the
- * locale rows are not).
+ * locale rows are not). It is `./subtype`'s `localePreferences` for one
+ * requested tag.
  *
  * @example
  * ```ts
@@ -54,16 +53,8 @@ import type { NodeNotFound } from "./version-chain.ts";
  *
  * @since 0.2.0
  */
-export const localeFallbacks = (
-  requested: string,
-  defaultLocale: string,
-): ReadonlyArray<string> => {
-  const subtags = Array.filter(Str.split(requested, "-"), Str.isNonEmpty);
-  const prefixes = Array.map(Array.reverse(Array.range(1, Math.max(1, subtags.length))), (count) =>
-    Array.join(Array.take(subtags, count), "-"),
-  );
-  return Array.dedupe(Array.filter([...prefixes, defaultLocale], Str.isNonEmpty));
-};
+export const localeFallbacks = (requested: string, defaultLocale: string): ReadonlyArray<string> =>
+  localePreferences([requested], defaultLocale);
 
 /**
  * What a localised path resolves to for one viewer: the node in the locale
