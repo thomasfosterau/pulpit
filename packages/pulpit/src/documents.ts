@@ -307,7 +307,7 @@ export const canonicalText = (value: Schema.Json): string => {
  * @since 0.1.0
  */
 export const documentRef = <const Key extends string>(key: Key) =>
-  Record.singleton(key, Resource.attribute(DocumentHash));
+  R.singleton(key, Resource.attribute(DocumentHash));
 
 // ── The grammar check ─────────────────────────────────────────────────
 
@@ -458,7 +458,7 @@ export const documentCheckHook = <Document, E, R>(
       });
     const hashes = Arr.dedupe(
       Arr.filterMap(references, ([, value]) =>
-        Predicate.isString(value) ? Result.succeed(value) : Result.failVoid,
+        P.isString(value) ? Result.succeed(value) : Result.failVoid,
       ),
     );
     const read = Arr.match(hashes, {
@@ -469,16 +469,13 @@ export const documentCheckHook = <Document, E, R>(
       Effect.forEach(
         references,
         ([field, value]) =>
-          Option.match(
-            Predicate.isString(value) ? HashMapModule.get(found, value) : Option.none(),
-            {
-              onNone: () => Effect.fail(reject(field, "no stored document at this reference")),
-              onSome: (document) =>
-                Effect.mapError(check(field, document), (violation) =>
-                  reject(violation.field, violation.message),
-                ),
-            },
-          ),
+          Option.match(P.isString(value) ? HashMapModule.get(found, value) : Option.none(), {
+            onNone: () => Effect.fail(reject(field, "no stored document at this reference")),
+            onSome: (document) =>
+              Effect.mapError(check(field, document), (violation) =>
+                reject(violation.field, violation.message),
+              ),
+          }),
         { concurrency: 1, discard: true },
       ),
     );
@@ -491,7 +488,7 @@ export const documentCheckHook = <Document, E, R>(
       return Effect.as(
         verify(
           event,
-          Arr.filterMap(Record.values(locales), (patch) =>
+          Arr.filterMap(R.values(locales), (patch) =>
             patch === null || patch === undefined ? Result.failVoid : Result.succeed(patch),
           ),
         ),
