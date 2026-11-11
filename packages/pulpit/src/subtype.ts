@@ -2964,9 +2964,9 @@ export const localePreferences = (
     Arr.filter([...Arr.flatMap(requested, prefixesOf), defaultLocale], (tag) => tag !== ""),
   );
 
-/** A tag and its shorter prefixes, longest first: `zh-Hant-TW` → `zh-Hant-TW`, `zh-Hant`, `zh`. */
+/** A tag and its shorter prefixes, longest first (empty subtags dropped): `zh-Hant-TW` → `zh-Hant-TW`, `zh-Hant`, `zh`. */
 const prefixesOf = (tag: string): ReadonlyArray<string> => {
-  const subtags = tag.split("-");
+  const subtags = Arr.filter(tag.split("-"), Str.isNonEmpty);
   return Arr.makeBy(subtags.length, (shorter) =>
     subtags.slice(0, subtags.length - shorter).join("-"),
   );
