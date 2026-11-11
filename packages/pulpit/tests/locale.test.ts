@@ -4,13 +4,15 @@
  * visibility and publication; the shared (untranslated) columns live once in
  * the chain state and the translated ones per locale.
  */
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as R from "effect/Record";
+import * as Order from "effect/Order";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
-import { evaluate, locale, LOCALE_COLUMN, MAX_SET_VALUES, never } from "../src/filter.ts";
+import { always, evaluate, locale, LOCALE_COLUMN, MAX_SET_VALUES, never } from "../src/filter.ts";
 import { renameColumns } from "../src/internal/filter-columns.ts";
 import {
   defineLocaleLevel,
@@ -20,6 +22,7 @@ import {
   WriteRejected,
   type LeafRow,
   type LeafStore,
+  type LocalisedResource,
   type LifecycleHooks,
   type Viewer,
   type ViewerAccount,
@@ -362,6 +365,188 @@ describe("a localised leaf's list", () => {
       ]),
     );
     expect(french.rows.map((row) => row.title)).toEqual(["Bonjour"]);
+  });
+});
+
+describe("a localised leaf's fallback list (pulpit#272)", () => {
+  const request = { limit: 10, offset: 0, includeDeleted: false, where: always };
+  /** Three public nodes: en + fr, fr only, de only. */
+  const seeded = (ops: ReturnType<typeof pages>["ops"]) =>
+    Effect.gen(function* () {
+      const both = yield* seed(ops);
+      const french = yield* ops.create({
+        id: Option.none(),
+        state: { colour: "blue", visibility: "public", draft: false },
+        locales: { fr: { title: "Salut" } },
+      });
+      const german = yield* ops.create({
+        id: Option.none(),
+        state: { colour: "green", visibility: "public", draft: false },
+        locales: { de: { title: "Hallo" } },
+      });
+      return { both: both.id, french: french.id, german: german.id };
+    });
+  const served = (page: { readonly rows: ReadonlyArray<LocalisedResource<Page>> }) =>
+    Arr.map(page.rows, (row) => [row.resource.id, row.locale, row.resource.title] as const);
+
+  /** Which seeded node a case expects, and in which locale. */
+  type Expected = ReadonlyArray<readonly ["both" | "french", string]>;
+  it.each<{ readonly locales: ReadonlyArray<string>; readonly expected: Expected }>([
+    {
+      locales: ["fr", "en"],
+      expected: [
+        ["both", "fr"],
+        ["french", "fr"],
+      ],
+    },
+    {
+      locales: ["en", "fr"],
+      expected: [
+        ["both", "en"],
+        ["french", "fr"],
+      ],
+    },
+    { locales: ["en"], expected: [["both", "en"]] },
+    { locales: ["it"], expected: [] },
+    { locales: [], expected: [] },
+  ])("serves each node once, in its first of $locales", async ({ locales, expected }) => {
+    const { ops, actAs } = pages();
+    const [ids, page] = await run(
+      Effect.gen(function* () {
+        const ids = yield* seeded(ops);
+        return [ids, yield* actAs(anonymous, ops.listLocalised({ ...request, locales }))] as const;
+      }),
+    );
+    const want = Arr.sort(
+      Arr.map(expected, ([node, tag]) => [ids[node], tag] as const),
+      Order.mapInput(Order.String, ([id]: readonly [string, string]) => id),
+    );
+    expect(Arr.map(page.rows, (row) => [row.resource.id, row.locale] as const)).toEqual(want);
+    // The total counts nodes, never locale rows.
+    expect(page.total).toBe(want.length);
+    expect(Arr.every(page.rows, (row) => row.resource.locale === row.locale)).toBe(true);
+  });
+
+  it("pages over nodes, stably, with the same total on every page", async () => {
+    const { ops, actAs } = pages();
+    const pagesRead = await run(
+      Effect.gen(function* () {
+        yield* seeded(ops);
+        const locales = ["de", "fr", "en"];
+        return yield* Effect.forEach(
+          [0, 1, 2],
+          (offset) =>
+            actAs(anonymous, ops.listLocalised({ ...request, limit: 1, offset, locales })),
+          { concurrency: 1 },
+        );
+      }),
+    );
+    expect(Arr.map(pagesRead, (page) => page.total)).toEqual([3, 3, 3]);
+    const ids = Arr.flatMap(pagesRead, (page) => Arr.map(page.rows, (row) => row.resource.id));
+    expect(Arr.dedupe(ids)).toHaveLength(3);
+    expect(ids).toHaveLength(3);
+  });
+
+  it("orders by the request's order, after the locale is chosen", async () => {
+    const { ops, actAs } = pages();
+    const page = await run(
+      Effect.gen(function* () {
+        yield* seeded(ops);
+        return yield* actAs(
+          anonymous,
+          ops.listLocalised({
+            ...request,
+            orderBy: [{ column: "colour", direction: "desc" }],
+            locales: ["en", "fr", "de"],
+          }),
+        );
+      }),
+    );
+    expect(Arr.map(page.rows, (row) => row.resource.colour)).toEqual(["red", "green", "blue"]);
+  });
+
+  it("omits a row the viewer cannot read in every locale (SEC-AUTH-ENUM-001)", async () => {
+    const { ops, actAs } = pages();
+    const [stranger, owner] = await run(
+      Effect.gen(function* () {
+        yield* seed(ops, "private");
+        const locales = ["fr", "en"];
+        return [
+          yield* actAs(as(otherMember), ops.listLocalised({ ...request, locales })),
+          yield* actAs(as(member), ops.listLocalised({ ...request, locales })),
+        ] as const;
+      }),
+    );
+    expect(stranger).toEqual({ rows: [], total: 0 });
+    expect(served(owner)).toEqual([[expect.any(String), "fr", "Bonjour"]]);
+  });
+
+  it("serves a reader the live version's locale rows and the owner the head's", async () => {
+    const { ops, actAs } = pages({ gated: true });
+    const [reader, owner, rung, unpublished] = await run(
+      Effect.gen(function* () {
+        const { id } = yield* seed(ops);
+        yield* TestClock.setTime(NOW.getTime());
+        const publication = yield* Effect.fromOption(ops.publication);
+        yield* publication.publish(id);
+        // The head gains a German translation the live version doesn't carry.
+        yield* ops.update({ id, patch: {}, locales: { de: { title: "Hallo" } } });
+        yield* ops.create({
+          id: Option.none(),
+          state: { colour: "blue", visibility: "public", draft: false },
+          locales: { de: { title: "Nie" } },
+        });
+        const locales = ["de", "fr"];
+        return [
+          yield* actAs(anonymous, ops.listLocalised({ ...request, locales })),
+          yield* actAs(as(member), ops.listLocalised({ ...request, locales })),
+          yield* actAs(as(moderator), ops.listLocalised({ ...request, locales })),
+          yield* actAs(anonymous, ops.listLocalised({ ...request, locales: ["de"] })),
+        ] as const;
+      }).pipe(Effect.provide(TestClock.layer())),
+    );
+    // The live version has no German, so a reader falls back to French; the
+    // never-published node isn't listed for them at all.
+    expect(Arr.map(reader.rows, (row) => row.locale)).toEqual(["fr"]);
+    expect(reader.total).toBe(1);
+    expect(Arr.map(owner.rows, (row) => row.locale)).toEqual(["de", "de"]);
+    expect(Arr.map(rung.rows, (row) => row.locale)).toEqual(["de", "de"]);
+    expect(unpublished).toEqual({ rows: [], total: 0 });
+  });
+
+  it("refuses an order the leaf cannot sort by, as list does", async () => {
+    const { ops } = pages();
+    const outcome = await run(
+      Effect.flip(
+        ops.listLocalised({
+          ...request,
+          orderBy: [{ column: "nope", direction: "asc" }],
+          locales: ["en"],
+        }),
+      ),
+    );
+    expect(outcome._tag).toBe("InvalidListOrder");
+  });
+
+  it("lists nothing on a leaf without a locale level", async () => {
+    const chain = makeInMemoryVersionChain("notes");
+    const ops = defineSubtype({
+      type: "notes",
+      access: ownedAccess(),
+      chain,
+      leaves: makeInMemoryLeafStore(chain, { columns: ["title", "visibility"] }),
+      viewer: Effect.succeed(as(member)),
+      policy: gardeneriaPolicy,
+      followers: follows,
+      toResource: (row: LeafRow) => row,
+    });
+    const page = await run(
+      Effect.andThen(
+        ops.create({ id: Option.none(), state: { title: "x", visibility: "public" } }),
+        ops.listLocalised({ ...request, locales: ["en"] }),
+      ),
+    );
+    expect(page).toEqual({ rows: [], total: 0 });
   });
 });
 
