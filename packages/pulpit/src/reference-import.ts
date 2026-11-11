@@ -419,13 +419,13 @@ type Outcome =
  * import { defineReferenceImport } from "@thomasfosterau/pulpit/reference-import";
  * import { defineSubtype, type LeafRow } from "@thomasfosterau/pulpit/subtype";
  * import {
- *   makeInMemoryChainStore,
+ *   makeInMemoryVersionChain,
  *   makeInMemoryExternalIdStore,
  *   makeInMemoryFollowers,
  *   makeInMemoryLeafStore,
  * } from "@thomasfosterau/pulpit/testing";
  *
- * const chain = makeInMemoryChainStore();
+ * const chain = makeInMemoryVersionChain("parties");
  * const always = () => true;
  * const leaf = {
  *   type: "parties",

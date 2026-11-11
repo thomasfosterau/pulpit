@@ -30,7 +30,7 @@ import {
   type ViewerAccount,
 } from "../src/subtype.ts";
 import {
-  makeInMemoryChainStore,
+  makeInMemoryVersionChain,
   makeInMemoryExternalIdStore,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
@@ -48,7 +48,7 @@ const FIELDS = {
 /** A reference `parties` leaf, its import, and the request viewer a test steers. */
 const world = (options: { readonly hooks?: ReadonlyArray<BeforeWriteHook<never, never>> } = {}) => {
   let viewer: Viewer = Option.some(contributor);
-  const chain = makeInMemoryChainStore();
+  const chain = makeInMemoryVersionChain("parties");
   const leaves = makeInMemoryLeafStore(chain, {
     columns: ["name", "abbreviation", "colour", "notes"],
     now: NOW,
@@ -109,7 +109,7 @@ const nodeOf = (ids: ReturnType<typeof world>["ids"], externalId: string): strin
   );
 
 describe("defineReferenceImport's declaration", () => {
-  const chain = makeInMemoryChainStore();
+  const chain = makeInMemoryVersionChain("parties");
   const base = {
     type: "parties",
     access: { kind: "reference" } as const,
