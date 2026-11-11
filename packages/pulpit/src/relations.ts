@@ -52,7 +52,7 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
+import * as P from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import type { EdgeRow, EdgeStore, EdgeWriteGate, EdgeWriteRequest, EndpointView } from "./edges.ts";
 import { anyOf, MAX_SET_VALUES } from "./filter.ts";
@@ -113,9 +113,7 @@ const nodeAt = (
   type: string,
 ): Effect.Effect<string, NodeNotFound> => {
   const id = request.edge[column];
-  return Predicate.isString(id)
-    ? Effect.succeed(id)
-    : Effect.fail(new NodeNotFound({ type, id: "" }));
+  return P.isString(id) ? Effect.succeed(id) : Effect.fail(new NodeNotFound({ type, id: "" }));
 };
 
 // ── Reshares ──────────────────────────────────────────────────────────
@@ -211,13 +209,8 @@ export const defineReshares = <Sharer, Target, Following, E, R>(
             HashMap.fromIterable(
               Arr.flatMap(page.rows, (row) => {
                 const sharerId = row[sharerColumn];
-                return Predicate.isString(sharerId)
-                  ? [
-                      [
-                        sharerId,
-                        Option.liftPredicate(row[targetColumn], Predicate.isString),
-                      ] as const,
-                    ]
+                return P.isString(sharerId)
+                  ? [[sharerId, Option.liftPredicate(row[targetColumn], P.isString)] as const]
                   : [];
               }),
             ),
@@ -310,11 +303,11 @@ export const acceptedAnswerGate = <Question, E, R>(
       const question = yield* nodeAt(request, questionColumn, questionType);
       const account = yield* questions.authorize(question);
       const answer = request.edge[answerColumn];
-      const row = Predicate.isString(answer) ? yield* answers.get(answer) : Option.none();
+      const row = P.isString(answer) ? yield* answers.get(answer) : Option.none();
       if (!Option.exists(row, (node) => node[parentColumn] === question)) {
         return yield* new AnswerNotOfQuestion({
           question,
-          answer: Predicate.isString(answer) ? answer : "",
+          answer: P.isString(answer) ? answer : "",
         });
       }
       return account;
