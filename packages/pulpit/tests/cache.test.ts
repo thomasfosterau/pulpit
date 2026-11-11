@@ -197,6 +197,71 @@ describe("makeResourceCache — decode, TTL and failures", () => {
   });
 });
 
+describe("makeResourceCache — locale keys (pulpit#271)", () => {
+  const localeKey = (locale: string) => `posts:v1:p-1\u001f${locale}`;
+
+  it("keeps each locale's entry apart, and serves none to a reader of another locale or of no locale", async () => {
+    const { cache } = setup();
+    await run(cache.set("p-1", post("public", "hello"), 1n, "en"));
+    await run(cache.set("p-1", post("public", "bonjour"), 1n, "fr"));
+    expect(await run(cache.get("p-1", "en"))).toEqual(Option.some(post("public", "hello")));
+    expect(await run(cache.get("p-1", "fr"))).toEqual(Option.some(post("public", "bonjour")));
+    expect(await run(cache.get("p-1", "de"))).toEqual(Option.none());
+    // The id's own key holds only the generation: no value for an unlocalised reader.
+    expect(await run(cache.get("p-1"))).toEqual(Option.none());
+  });
+
+  it("an eviction wins a tie in every locale: a fill at the evicted version can't re-cache", async () => {
+    const { cache, kv } = setup();
+    await run(cache.set("p-1", post("public", "hello"), 5n, "en"));
+    await run(cache.delete("p-1", 5n));
+    await run(cache.set("p-1", post("public", "pre-unpublish"), 5n, "fr"));
+    expect(await run(cache.get("p-1", "en"))).toEqual(Option.none());
+    expect(await run(cache.get("p-1", "fr"))).toEqual(Option.none());
+    // One conditional write evicted both: the generation's tombstone rank, and no fr entry.
+    expect(Option.map(kv.peek("posts:v1:p-1"), (entry) => entry.version)).toEqual(Option.some(11n));
+    expect(kv.peek(localeKey("fr"))).toEqual(Option.none());
+  });
+
+  it("a locale entry written behind a newer generation is never served", async () => {
+    const { cache, kv } = setup();
+    await run(cache.set("p-1", post("public", "hello"), 1n, "en"));
+    // Another writer raised the id to version 2 (in French) between this fill's
+    // generation write and its entry write: the entry at version 1 stays stored, unserved.
+    await run(cache.set("p-1", post("public", "bonjour"), 2n, "fr"));
+    expect(Option.map(kv.peek(localeKey("en")), (entry) => entry.version)).toEqual(Option.some(2n));
+    expect(await run(cache.get("p-1", "en"))).toEqual(Option.none());
+    expect(await run(cache.get("p-1", "fr"))).toEqual(Option.some(post("public", "bonjour")));
+  });
+
+  it("refuses a locale entry the policy doesn't serve, re-checks it on read, and evicts one that no longer decodes", async () => {
+    const { cache, kv, setPolicy } = setup();
+    await run(cache.set("p-1", post("private"), 1n, "en"));
+    expect(await run(cache.get("p-1", "en"))).toEqual(Option.none());
+    await run(cache.set("p-1", post("public"), 2n, "en"));
+    setPolicy(() => false);
+    expect(await run(cache.get("p-1", "en"))).toEqual(Option.none());
+    expect(Option.map(kv.peek(localeKey("en")), (entry) => [entry.version, entry.value])).toEqual(
+      Option.some([5n, Option.none()]),
+    );
+    setPolicy((resource) => resource.visibility === "public");
+    await run(cache.set("p-1", post("public"), 3n, "fr"));
+    kv.poke(localeKey("fr"), { version: 6n, value: Option.some({ id: "p-1" }) });
+    expect(await run(cache.get("p-1", "fr"))).toEqual(Option.none());
+    expect(Option.map(kv.peek(localeKey("fr")), (entry) => entry.version)).toEqual(Option.some(7n));
+  });
+
+  it("never fails: a KV failure reads as a miss and writes no locale entry", async () => {
+    const broken: VersionedKv<string, never> = {
+      get: () => Effect.fail("kv down"),
+      putIfNotBehind: () => Effect.fail("kv down"),
+    };
+    const { cache } = setup({ kv: broken });
+    await run(cache.set("p-1", post("public"), 1n, "en"));
+    expect(await run(cache.get("p-1", "en"))).toEqual(Option.none());
+  });
+});
+
 describe("makeResourceCache as subtypeHandlers' cache", () => {
   it("writes each update through, evicts on a hiding write, and a replayed stale write-through changes nothing", async () => {
     const kv = makeInMemoryVersionedKv();
