@@ -33,7 +33,7 @@
  * rejected and withdrawn proposals are deleted and accepted ones keep their
  * row under the tombstone account (`ProposalStore.eraseAuthor`); reports
  * filed are deleted (`ReportStore.eraseReporter`); reactions, follows,
- * mutes, blocks and working copies are deleted. An application adds its
+ * mutes, blocks, group memberships and working copies are deleted. An application adds its
  * own (memberships, notifications, …) as {@link AccountRelation}s.
  *
  * ## Attribution is the one rewrite
@@ -64,6 +64,7 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type { MembershipStore } from "./audience.ts";
 import type { BlobStore } from "./blobs.ts";
 import { purgeNode } from "./internal/purge-node.ts";
 import type { ReportStore } from "./moderation.ts";
@@ -242,6 +243,8 @@ export interface AccountErasureDefinition<E, EB, R> {
   readonly reactions?: Pick<ReactionStore<E, R>, "eraseAccount"> | undefined;
   readonly social?: Pick<SocialStore<unknown, E, R>, "eraseAccount"> | undefined;
   readonly workingCopies?: Pick<WorkingCopyStore<E, R>, "eraseAccount"> | undefined;
+  /** Group memberships (`./audience`): every membership of the account is deleted. */
+  readonly memberships?: Pick<MembershipStore<unknown, E, R>, "eraseAccount"> | undefined;
   /** The application's own relationships to erase. */
   readonly relations?: ReadonlyArray<AccountRelation<E, R>> | undefined;
   /** Rows per batch, clamped to `[1, MAX_PAGE_LIMIT]`; {@link DEFAULT_ERASURE_BATCH} when omitted. */
@@ -511,6 +514,13 @@ export const defineAccountErasure = <E, EB, R>(
     ...Option.toArray(
       Option.map(Option.fromUndefinedOr(definition.workingCopies), (copies) =>
         counted("workingCopies", copies.eraseAccount),
+      ),
+    ),
+    // `MembershipStore.eraseAccount` is unbounded (pulpit#274): one
+    // call deletes every membership, and the next answers 0.
+    ...Option.toArray(
+      Option.map(Option.fromUndefinedOr(definition.memberships), (memberships) =>
+        counted("memberships", (accountId) => memberships.eraseAccount(accountId)),
       ),
     ),
     ...Arr.map(definition.relations ?? [], (relation) =>

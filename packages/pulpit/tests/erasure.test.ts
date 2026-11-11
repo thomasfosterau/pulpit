@@ -33,6 +33,7 @@ import {
   makeInMemoryAccountErasureStore,
   makeInMemoryDocumentStore,
   makeInMemoryLeafStore,
+  makeInMemoryMembershipStore,
   makeInMemoryProposalStore,
   makeInMemoryPurgeStore,
   makeInMemoryReactionStore,
@@ -65,6 +66,7 @@ const makeWorld = () => {
   const reactions = makeInMemoryReactionStore();
   const social = makeInMemorySocialStore();
   const workingCopies = makeInMemoryWorkingCopyStore();
+  const memberships = makeInMemoryMembershipStore();
   const commentCache = makeInMemoryResourceCache<unknown>(() => true);
   const chains = [postChain, commentChain, taxonChain];
   const ops = {
@@ -85,6 +87,7 @@ const makeWorld = () => {
     reactions,
     social,
     workingCopies,
+    memberships,
     commentCache,
     chains,
     ops,
@@ -127,6 +130,7 @@ const makeWorld = () => {
         reactions,
         social,
         workingCopies,
+        memberships,
         relations: [{ name: "app.notifications", erase: () => Effect.succeed(0) }],
         batchSize: options.batchSize,
       }),
@@ -244,6 +248,8 @@ const seed = (world: World) =>
     yield* world.social.add({ kind: "follow", from: GONE, to: OTHER, at: AT });
     yield* world.social.add({ kind: "follow", from: OTHER, to: GONE, at: AT });
     yield* world.social.add({ kind: "mute", from: OTHER, to: TOMBSTONE, at: AT });
+    yield* world.memberships.add({ groupId: "g-1", accountId: GONE, role: "admin", at: AT });
+    yield* world.memberships.add({ groupId: "g-1", accountId: OTHER, role: "member", at: AT });
     yield* world.workingCopies.put(
       { id: theirs.id, userId: GONE },
       { patch: {}, baseVersion: 0n, savedAt: AT },
@@ -275,6 +281,7 @@ const recordedAccounts = (world: World): ReadonlyArray<string> => [
   ]),
   ...Arr.map(world.reactions.rows(), (row) => row.accountId),
   ...Arr.flatMap(world.social.rows(), (row) => [row.from, row.to]),
+  ...Arr.map(world.memberships.rows(), (row) => row.accountId),
   ...Arr.map(Arr.fromIterable(HashMap.keys(world.workingCopies.copies())), (key) =>
     key.slice(key.indexOf(":") + 1),
   ),
@@ -293,6 +300,7 @@ const snapshot = (world: World) => ({
   reports: world.reports.rows(),
   reactions: world.reactions.rows(),
   social: world.social.rows(),
+  memberships: world.memberships.rows(),
   copies: HashMap.toEntries(world.workingCopies.copies()),
   documents: HashMap.size(world.documents.stored()),
 });
@@ -369,6 +377,7 @@ describe("defineAccountErasure", () => {
     expect(Arr.map(world.reactions.rows(), (row) => row.accountId)).toEqual([OTHER]);
     expect(Arr.map(world.social.rows(), (row) => row.kind)).toEqual(["mute"]);
     expect(HashMap.size(world.workingCopies.copies())).toBe(0);
+    expect(Arr.map(world.memberships.rows(), (row) => row.accountId)).toEqual([OTHER]);
   });
 
   it("changes nothing when run again", async () => {

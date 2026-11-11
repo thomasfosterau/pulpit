@@ -933,6 +933,7 @@ const erasure = defineAccountErasure({
   reactions,
   social,
   workingCopies,
+  memberships, // `./audience`
   relations: [{ name: "notifications", erase: eraseNotifications }], // the application's own
 });
 // erasure.erase(accountId, { maxBatches }) → { complete, batches, changed, purged }
@@ -943,7 +944,7 @@ const erasure = defineAccountErasure({
   - `reassign`, the default for reference contributions: owner records, and the versions the account wrote, name the tombstone account instead.
   - `anonymise`, the default for comments: the content stays and the owner record is removed, so the row is no one's (an ownerless owned row reads only when public, pulpit#85), and its versions record no actor. A reply keeps the thread it answers.
 - **Versions the account wrote on someone else's node** lose their actor as the family's disposition says (a `purge` family anonymises them), and the `proposedBy` of every version an accepted proposal of theirs produced is cleared.
-- **The kernel's stores:** pending, rejected and withdrawn proposals are deleted, and accepted ones keep their row under the tombstone account; reports filed are deleted, and a resolution names the tombstone; reactions, follows, mutes, blocks and working copies are deleted. Add the application's own (memberships, notifications, …) as `relations`.
+- **The kernel's stores:** pending, rejected and withdrawn proposals are deleted, and accepted ones keep their row under the tombstone account; reports filed are deleted, and a resolution names the tombstone; reactions, follows, mutes, blocks, group memberships (`./audience`) and working copies are deleted. Add the application's own (memberships, notifications, …) as `relations`.
 - **Attribution is the one rewrite.** A version row's actor and `proposedBy` are the only columns erasure rewrites in place, and no version is appended for it (SECURITY.md → `VERSION-CHAIN-001/002`). No kernel read returns either column, so no served resource changes; a node whose owner record changes is evicted from its family's `cache` past its head.
 - **Bounded, resumable, idempotent.** Each step reads or writes at most `batchSize` rows (default 100, capped at `MAX_PAGE_LIMIT`, `PERF-DB-001`) in its own `transact`, and repeats until a batch changes fewer. Written rows stop matching, so a run cut short by `maxBatches` (it counts the batches that change rows) or a crash resumes on the next run, and a run over an erased account changes nothing (`changed: {}`).
 - **The gate:** `canErase(actor, accountId)` is checked before anything is read (`Unauthorized` / `Forbidden`), and erasing the tombstone account itself fails `TombstoneErasure`.
