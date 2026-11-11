@@ -17,9 +17,13 @@
  * - **The owner and the admins manage members**: add, remove and set a
  *   member's role. A member may only leave. The owner can't leave or be
  *   removed ({@link GroupOwnerMembership}).
- * - **Members are added directly**, by account id. Invitations and consent
- *   are a later slice (pulpit#227).
- * - **The audience is the membership rows.** {@link audienceSeam} answers
+ * - **Members are added directly**, by account id, or **invited**
+ *   (pulpit#227): an invitation is a pending membership that the invitee
+ *   accepts or declines, and the owner or an admin revokes. A pending
+ *   invitee is not a member: they read nothing the group's rows expose, a
+ *   pending `admin` invitation manages nothing, and neither the member list
+ *   nor any gate counts them until they accept.
+ * - **The audience is the active membership rows.** {@link audienceSeam} answers
  *   from the store alone, so the owner reads a group's rows that others
  *   share only through a membership of their own: record one when the group
  *   is created.
@@ -75,6 +79,21 @@ export interface Membership {
   readonly at: Date;
 }
 
+/**
+ * One pending invitation (pulpit#227): `invitedBy` asked `accountId` to join
+ * `groupId` with `role`, at `at`. It grants nothing until the invitee
+ * accepts it, when it becomes a {@link Membership} with that role.
+ *
+ * @since 0.2.0
+ */
+export interface Invitation {
+  readonly groupId: string;
+  readonly accountId: string;
+  readonly role: MembershipRole;
+  readonly invitedBy: string;
+  readonly at: Date;
+}
+
 // ── Errors ────────────────────────────────────────────────────────────
 
 /**
@@ -110,20 +129,59 @@ export class GroupOwnerMembership extends Schema.TaggedError<
   { readonly brand: unique symbol }
 >()("GroupOwnerMembership", { groupId: Schema.String }) {}
 
+/**
+ * No pending invitation for the account to the group (never sent, already
+ * accepted, declined or revoked): the wire's 404.
+ *
+ * @since 0.2.0
+ */
+export class InvitationNotFound extends Schema.TaggedError<
+  InvitationNotFound,
+  { readonly brand: unique symbol }
+>()("InvitationNotFound", { groupId: Schema.String, accountId: Schema.String }) {}
+
+/**
+ * An invitation for an account that already is a member: the wire's 409.
+ *
+ * @since 0.2.0
+ */
+export class AlreadyMember extends Schema.TaggedError<
+  AlreadyMember,
+  { readonly brand: unique symbol }
+>()("AlreadyMember", { groupId: Schema.String, accountId: Schema.String }) {}
+
+/**
+ * An invitation from an account to itself: the wire's 422.
+ *
+ * @since 0.2.0
+ */
+export class SelfInvitation extends Schema.TaggedError<
+  SelfInvitation,
+  { readonly brand: unique symbol }
+>()("SelfInvitation", { groupId: Schema.String }) {}
+
 // ── The seams ─────────────────────────────────────────────────────────
 
 /**
  * The membership table an application supplies (in-the-dark's
  * `group_members`, gardeneria's `social.group_memberships`), keyed
- * `(group_id, account_id)` with a `role` column and both foreign keys
- * cascading. A store seam: no policy, never opens a transaction, fails only
- * with its `E`. `Following` is the list filter's `in` set (a subquery in
- * SQL). See the package README → Seams.
+ * `(group_id, account_id)` with a `role` column, a `status`
+ * (`active | pending`, pulpit#227) and both foreign keys cascading. A
+ * pending row is an invitation: only the invitation methods read or write
+ * it, and every membership read (`roleOf`, `list`, `isMember`, `groupsOf`)
+ * reads `status = 'active'` rows alone. A store seam: no policy, never
+ * opens a transaction, fails only with its `E`. `Following` is the list
+ * filter's `in` set (a subquery in SQL). See the package README → Seams.
  *
  * @since 0.2.0
  */
 export interface MembershipStore<Following, E, R> {
-  /** Insert the membership (`ON CONFLICT DO NOTHING`); whether a row was written. */
+  /**
+   * Insert the active membership; whether a row was written. Over a pending
+   * invitation for the same key it activates that row with this role (the
+   * direct add supersedes the invitation); over an active one it changes
+   * nothing.
+   */
   readonly add: (membership: Membership) => Effect.Effect<boolean, E, R>;
   /** Set a member's role; whether a row changed (false for no such member, or the same role). */
   readonly setRole: (
@@ -131,7 +189,7 @@ export interface MembershipStore<Following, E, R> {
     accountId: string,
     role: MembershipRole,
   ) => Effect.Effect<boolean, E, R>;
-  /** Delete the membership; whether a row went. */
+  /** Delete the active membership; whether a row went. A pending invitation is left alone. */
   readonly remove: (groupId: string, accountId: string) => Effect.Effect<boolean, E, R>;
   /** The account's role in the group, or none when it isn't a member. */
   readonly roleOf: (
@@ -144,7 +202,7 @@ export interface MembershipStore<Following, E, R> {
     readonly limit: number;
     readonly offset: number;
   }) => Effect.Effect<Page<Omit<Membership, "groupId">>, E, R>;
-  /** Delete every membership of the group; how many went. */
+  /** Delete every membership of the group, pending invitations included; how many rows went. */
   readonly removeGroup: (groupId: string) => Effect.Effect<number, E, R>;
   /** Whether `accountId` is a member of `groupId`, as the audience seam asks it (never fails). */
   readonly isMember: (accountId: string, groupId: string) => Effect.Effect<boolean, never, R>;
@@ -154,8 +212,42 @@ export interface MembershipStore<Following, E, R> {
    * never an array).
    */
   readonly groupsOf: (accountId: string) => Following;
-  /** Delete every membership of the account (account erasure, pulpit#207); how many went. */
+  /**
+   * Delete every row of the account (account erasure, pulpit#207): its
+   * memberships, its pending invitations, and the pending invitations it
+   * sent; how many rows went.
+   */
   readonly eraseAccount: (accountId: string) => Effect.Effect<number, E, R>;
+  /**
+   * Insert a pending invitation (pulpit#227); whether a row was written. Any
+   * row already at the key, active or pending, makes it a no-op
+   * (`ON CONFLICT DO NOTHING`).
+   */
+  readonly invite: (invitation: Invitation) => Effect.Effect<boolean, E, R>;
+  /** The pending invitation at the key, or none. */
+  readonly invitationOf: (
+    groupId: string,
+    accountId: string,
+  ) => Effect.Effect<Option.Option<Invitation>, E, R>;
+  /**
+   * Turn the pending invitation at the key into an active membership with
+   * the invitation's role, joined at `at`; whether a row changed (false when
+   * there is no pending row).
+   */
+  readonly accept: (groupId: string, accountId: string, at: Date) => Effect.Effect<boolean, E, R>;
+  /** Delete the pending invitation at the key; whether a row went. An active membership is left alone. */
+  readonly removeInvitation: (groupId: string, accountId: string) => Effect.Effect<boolean, E, R>;
+  /**
+   * One page of pending invitations, oldest first (`at ASC`, then the other
+   * key), with the unpaged total: a group's (`by: "group"`) or an account's
+   * (`by: "account"`).
+   */
+  readonly invitations: (
+    query: (
+      | { readonly by: "group"; readonly groupId: string }
+      | { readonly by: "account"; readonly accountId: string }
+    ) & { readonly limit: number; readonly offset: number },
+  ) => Effect.Effect<Page<Invitation>, E, R>;
 }
 
 /**
@@ -238,8 +330,9 @@ export interface MembersPageRequest {
  * The operations {@link defineAudience} produces. Every operation fails
  * `Unauthorized` when anonymous and {@link GroupNotFound} for a group the
  * application doesn't know. The managing writes (`addMember`,
- * `removeMember`, `setRole`) fail `Forbidden` unless the viewer is the
- * group's owner or one of its admins.
+ * `removeMember`, `setRole`, `invite`, `revoke`) fail `Forbidden` unless the
+ * viewer is the group's owner or one of its active admins: a pending admin
+ * invitation manages nothing.
  *
  * @since 0.2.0
  */
@@ -300,7 +393,52 @@ export interface AudienceOps<E, R> {
     request: MembersPageRequest,
   ) => Effect.Effect<Page<Omit<Membership, "groupId">>, Unauthorized | GroupNotFound | E, R>;
   /**
-   * The group's deletion: delete every membership, so its `group` rows read
+   * Invite `accountId` to the group with `role` (default `member`), as a
+   * pending membership (pulpit#227). Fails {@link SelfInvitation} for the
+   * viewer themselves and {@link AlreadyMember} for an active member;
+   * inviting an account already invited changes nothing.
+   */
+  readonly invite: (
+    groupId: string,
+    accountId: string,
+    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter is `?: T | undefined` (AGENTS.md → Conventions); the omitted value is `member`
+    role?: MembershipRole | undefined,
+  ) => Effect.Effect<
+    { readonly changed: boolean },
+    Unauthorized | Forbidden | GroupNotFound | SelfInvitation | AlreadyMember | E,
+    R
+  >;
+  /**
+   * Accept the viewer's own invitation: it becomes an active membership with
+   * the invited role. Fails {@link InvitationNotFound} without one.
+   */
+  readonly accept: (
+    groupId: string,
+  ) => Effect.Effect<void, Unauthorized | GroupNotFound | InvitationNotFound | E, R>;
+  /** Decline the viewer's own invitation. Fails {@link InvitationNotFound} without one. */
+  readonly decline: (
+    groupId: string,
+  ) => Effect.Effect<void, Unauthorized | GroupNotFound | InvitationNotFound | E, R>;
+  /** Withdraw `accountId`'s pending invitation. Fails {@link InvitationNotFound} without one. */
+  readonly revoke: (
+    groupId: string,
+    accountId: string,
+  ) => Effect.Effect<void, Unauthorized | Forbidden | GroupNotFound | InvitationNotFound | E, R>;
+  /**
+   * One page of the group's pending invitations, oldest first: its owner's
+   * and admins'. A member gets `Forbidden`; anyone else (a pending invitee
+   * included) {@link GroupNotFound}.
+   */
+  readonly invitations: (
+    groupId: string,
+    request: MembersPageRequest,
+  ) => Effect.Effect<Page<Invitation>, Unauthorized | Forbidden | GroupNotFound | E, R>;
+  /** One page of the viewer's own pending invitations, oldest first. */
+  readonly myInvitations: (
+    request: MembersPageRequest,
+  ) => Effect.Effect<Page<Invitation>, Unauthorized | E, R>;
+  /**
+   * The group's deletion: delete every membership and invitation, so its `group` rows read
    * as `private`. The owner only (`Forbidden` for anyone else); how many
    * memberships went. Call it in the transaction that deletes the group.
    */
@@ -427,5 +565,80 @@ export const defineAudience = <Following, E, R>(
     return yield* store.removeGroup(groupId);
   });
 
-  return { addMember, removeMember, setRole, leave, members, removeGroup };
+  const invite = Effect.fn("audience.invite")(function* (
+    groupId: string,
+    accountId: string,
+    // oxlint-disable-next-line effect/prefer-option-over-null -- `AudienceOps.invite`'s optional parameter, defaulted here
+    role: MembershipRole | undefined = "member",
+  ) {
+    const { account } = yield* manager(groupId);
+    if (accountId === account.id) return yield* new SelfInvitation({ groupId });
+    if (Option.isSome(yield* store.roleOf(groupId, accountId))) {
+      return yield* new AlreadyMember({ groupId, accountId });
+    }
+    const at = yield* nowDate;
+    return {
+      changed: yield* store.invite({ groupId, accountId, role, invitedBy: account.id, at }),
+    };
+  });
+
+  /** The signed-in invitee and an existing group, or the operation's failure. */
+  const invitee = (groupId: string) => Effect.tap(signedIn, () => ownerOf(groupId));
+
+  const accept = Effect.fn("audience.accept")(function* (groupId: string) {
+    const account = yield* invitee(groupId);
+    const at = yield* nowDate;
+    if (!(yield* store.accept(groupId, account.id, at))) {
+      return yield* new InvitationNotFound({ groupId, accountId: account.id });
+    }
+  });
+
+  const decline = Effect.fn("audience.decline")(function* (groupId: string) {
+    const account = yield* invitee(groupId);
+    if (!(yield* store.removeInvitation(groupId, account.id))) {
+      return yield* new InvitationNotFound({ groupId, accountId: account.id });
+    }
+  });
+
+  const revoke = Effect.fn("audience.revoke")(function* (groupId: string, accountId: string) {
+    yield* manager(groupId);
+    if (!(yield* store.removeInvitation(groupId, accountId))) {
+      return yield* new InvitationNotFound({ groupId, accountId });
+    }
+  });
+
+  const invitations = Effect.fn("audience.invitations")(function* (
+    groupId: string,
+    request: MembersPageRequest,
+  ) {
+    const account = yield* signedIn;
+    const owner = yield* ownerOf(groupId);
+    const role =
+      account.id === owner ? Option.some("admin") : yield* store.roleOf(groupId, account.id);
+    if (Option.isNone(role)) return yield* new GroupNotFound({ groupId });
+    if (role.value !== "admin") return yield* new Forbidden();
+    return yield* store.invitations({ by: "group", groupId, ...window(request) });
+  });
+
+  const myInvitations = Effect.fn("audience.myInvitations")(function* (
+    request: MembersPageRequest,
+  ) {
+    const account = yield* signedIn;
+    return yield* store.invitations({ by: "account", accountId: account.id, ...window(request) });
+  });
+
+  return {
+    addMember,
+    removeMember,
+    setRole,
+    leave,
+    members,
+    removeGroup,
+    invite,
+    accept,
+    decline,
+    revoke,
+    invitations,
+    myInvitations,
+  };
 };

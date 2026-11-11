@@ -2312,6 +2312,57 @@ describe("defineSubtype — a `group` row reads to its group's members (pulpit#1
   });
 });
 
+describe("defineSubtype — a pending group invitation reads nothing a `group` row exposes (pulpit#227)", () => {
+  const groupSeeds: ReadonlyArray<Seed> = Arr.flatMap(
+    ["public", "group", "private"],
+    (visibility) =>
+      Arr.map(["g-1", "g-2"], (groupId): Seed => ({
+        owner: member,
+        state: { title: "t", visibility, draft: false, groupId },
+        deleted: false,
+      })),
+  );
+  const columns = ["title", "visibility", "draft", "groupId"];
+  const invite = (memberships: ReturnType<typeof makeInMemoryMembershipStore>) =>
+    Effect.runSync(
+      memberships.invite({
+        groupId: "g-1",
+        accountId: follower.id,
+        role: "admin",
+        invitedBy: member.id,
+        at: NOW,
+      }),
+    );
+  const sharedWithG1 = (labels: ReadonlyArray<string>) =>
+    labels.filter((label) => label.includes('visibility "group"') && label.includes('"g-1"'));
+
+  it("hidden to the pending invitee in get, getMany and list; open once accepted; hidden after leaving or a revoke", async () => {
+    const memberships = makeInMemoryMembershipStore();
+    const seam: FollowerSeam<Following, never> = { ...follows, ...audienceSeam(memberships) };
+    const leaf = await seededLeaf(
+      ownedAccess({ draft: true, group: true }),
+      columns,
+      gardeneriaPolicy,
+      groupSeeds,
+      seam,
+    );
+    const readsAs = async () => {
+      const reads = await leaf.reads(as(follower));
+      expectAgreement(reads);
+      return sharedWithG1(listedRows(reads));
+    };
+    invite(memberships);
+    expect(await readsAs()).toEqual([]);
+    Effect.runSync(memberships.accept("g-1", follower.id, NOW));
+    expect(await readsAs()).toHaveLength(1);
+    Effect.runSync(memberships.remove("g-1", follower.id));
+    expect(await readsAs()).toEqual([]);
+    invite(memberships);
+    Effect.runSync(memberships.removeInvitation("g-1", follower.id));
+    expect(await readsAs()).toEqual([]);
+  });
+});
+
 describe("defineSubtype — an owner column holding no string is no owner (pulpit#85)", () => {
   /** Accounts whose ids are what `String` makes of a `NULL`, an absent key and `42`. */
   const nullId: ViewerAccount = { id: "null", role: "user" };
