@@ -81,6 +81,7 @@ import {
   type ViewerAccount,
   type WriteRejected,
 } from "./subtype.ts";
+import { mintNodeId } from "./internal/node-id.ts";
 import {
   applyPatch,
   diffStates,
@@ -516,7 +517,7 @@ export const defineReferenceImport = <Row extends LeafRow, Resource, Following, 
       const id = yield* Option.match(linked, {
         onSome: (nodeId) => Effect.succeedSome(nodeId),
         onNone: () =>
-          Effect.flatMap(leaf.chain.mintId, (minted) =>
+          Effect.flatMap(mintNodeId, (minted) =>
             Effect.map(ids.link(authority, record.externalId, minted), (result) =>
               result === "taken" ? Option.none<string>() : Option.some(minted),
             ),
