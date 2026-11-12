@@ -210,23 +210,25 @@ describe("mediaColumns", () => {
 
 // ── The upload pipeline ───────────────────────────────────────────────
 
-const uploads = (options: { readonly stripLocation: boolean } = { stripLocation: false }) => {
+const uploads = (options: { readonly stripLocation?: true } = {}) => {
   const { leaf, as } = setup();
   const images = leaf("images");
   const blobs = makeInMemoryBlobStore();
   const files = defineFileWrites({ leaf: images.ops, blobs, transact: (effect) => effect });
   const extracted: Array<string> = [];
-  const media = defineMediaUploads({
+  const declaration = {
     files,
     extractor: {
-      extract: (file) =>
+      extract: (file: Upload) =>
         Effect.sync(() => {
           extracted.push(file.filename);
           return photo;
         }),
     },
-    stripLocation: options.stripLocation,
-  });
+  };
+  const media = defineMediaUploads(
+    options.stripLocation === true ? { ...declaration, stripLocation: true } : declaration,
+  );
   return { images, media, blobs, extracted, as };
 };
 
@@ -272,7 +274,11 @@ describe("defineMediaUploads", () => {
       }),
     );
     const replaced = await run(
-      media.replace({ id: created.id, upload: upload("two"), patch: { license: "CC-BY-4.0" } }),
+      media.replace({
+        id: created.id,
+        upload: upload("two"),
+        patch: { license: "CC-BY-4.0" },
+      }),
     );
     const head = await run(images.ops.get(created.id));
     expect(head).toMatchObject({

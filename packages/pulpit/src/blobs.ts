@@ -232,9 +232,8 @@ type WriteFailure = Unauthorized | Forbidden | WriteRejected | VersionConflict;
 export interface ReplaceInput extends Precondition {
   readonly id: string;
   readonly upload: Upload;
-  /** Other leaf columns this version sets (tri-state); the file columns win. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key sets no other column
-  readonly patch?: ChainPatch | undefined;
+  /** Other leaf columns this version sets (tri-state); the file columns win. Omitted, no other column. */
+  readonly patch?: ChainPatch;
 }
 
 /**

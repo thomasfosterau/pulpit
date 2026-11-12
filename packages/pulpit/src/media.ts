@@ -309,8 +309,7 @@ export const defineMediaUploads = <FE, XE, R>(definition: {
   readonly files: Pick<FileWriteOps<FE, R>, "create" | "replace">;
   readonly extractor: MetadataExtractor<XE, R>;
   /** Drop EXIF location from what is recorded (pulpit#206: kept by default). */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key keeps the location
-  readonly stripLocation?: boolean | undefined;
+  readonly stripLocation?: true;
 }): MediaUploadOps<FE, XE, R> => {
   const { files, extractor } = definition;
   const stripLocation = definition.stripLocation === true;
@@ -555,8 +554,8 @@ export interface RenditionTransform<A, E, R> {
 export interface RenditionRequest {
   readonly contentHash: string;
   readonly width: number;
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no Accept header"
-  readonly accept?: string | undefined;
+  /** The request's `Accept` header; omitted, no header. */
+  readonly accept?: string;
 }
 
 /**

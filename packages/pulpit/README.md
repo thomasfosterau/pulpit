@@ -680,7 +680,7 @@ import { defineAlbum, defineMediaUploads, defineRenditions } from "@thomasfoster
 const media = defineMediaUploads({
   files: defineFileWrites({ leaf: imageOps, blobs: r2, transact }),
   extractor: exifReader, // the app's MetadataExtractor
-  stripLocation: false, // the default: EXIF location is recorded
+  // stripLocation: true, // omitted, the default: EXIF location is recorded
 });
 const renditions = defineRenditions({
   policy: { widths: [320, 640, 1280, 2560], formats: ["image/avif", "image/webp", "image/jpeg"] },
@@ -717,7 +717,7 @@ const program = Effect.gen(function* () {
 - **EXIF location: kept by default, stripped per family.** Owner decision on pulpit#206. A photo's GPS coordinates can reveal where its author lives, so a family that holds UGC (members' uploads) should declare `stripLocation: true`; a family of curated or field-record media (a species observation, a press photo) keeps them, because the location is the point. Know what each setting does and doesn't do:
   - `stripLocation: true` drops `location` from what the kernel _records_ in `exif`, so it is never on the resource, in search, or in a feed.
   - It does **not** change the bytes. The original file's own EXIF block still holds the coordinates, and anyone who can fetch the original can read them. Stripping them from the bytes is the application's: re-encode in the extractor before the bytes are stored, or serve only transformed renditions (most image services drop metadata) and never the original.
-  - `stripLocation: false` records the location on the resource, where every reader of the node sees it. Gate the node accordingly.
+  - Omitting `stripLocation` records the location on the resource, where every reader of the node sees it. Gate the node accordingly.
 - **Renditions.** `defineRenditions({ policy, references, leaves, transform })` serves a variant only through its gate:
   1. **The gate.** Some node the viewer can read must reference the bytes, with them confirmed. The `MediaReferences` index lists the nodes that reference a hash, each is re-read through its own leaf's `getMany` (so its access, tombstone and live-version rules apply), and the resource that read returns must point at exactly these bytes (`fileOf`), not pending. Otherwise, and for a malformed hash or a ref to an undeclared leaf, the answer is `RenditionNotFound` (404), never a 403 (`SEC-AUTH-ENUM-001`). `readable(contentHash)` is the gate alone, for a route serving the original.
   2. **The width** is `renditionWidth(widths, requested)`: the smallest declared width at or above the request, capped at the largest, and the smallest for a non-positive or missing width. Only declared widths are ever rendered, so a client can't fill a cache with arbitrary sizes.
