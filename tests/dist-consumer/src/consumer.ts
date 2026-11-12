@@ -309,7 +309,8 @@ import {
   type NotificationDraft,
   type NotificationOps,
   type OutboxStore,
-  type SweepSummary,
+  // ./translation exports a `SweepSummary` too; each module keeps its own.
+  type SweepSummary as NotificationSweepSummary,
 } from "@thomasfosterau/pulpit/notifications";
 
 type Assert<T extends true> = T;
@@ -1670,7 +1671,7 @@ export type _NotificationsBarrel = Assert<
 export type _NotificationSweep = Assert<
   Equals<
     ReturnType<NotificationOps<"comment.replied", StoreFailure, Transaction>["sweep"]>,
-    Effect.Effect<SweepSummary, StoreFailure, Transaction>
+    Effect.Effect<NotificationSweepSummary, StoreFailure, Transaction>
   >
 >;
 export type _NotificationHookRun = Assert<
