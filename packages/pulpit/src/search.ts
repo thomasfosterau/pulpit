@@ -268,6 +268,15 @@ export interface BranchRequest<Following> {
    * rank never shifts another hit's (`SEC-AUTH-ENUM-001`).
    */
   readonly scope: ListFilter<Following>;
+  /**
+   * On a publish-gated leaf, the heads the viewer reads: the leaf's
+   * `searchHeadFor` for the viewer (`./subtype`), exactly the `headFor` its
+   * `list` hands `LiveView.list` (pulpit#346). A branch over a gated leaf
+   * ranks, per node, its head when it matches this and its live row
+   * otherwise, so a reader's search never scores a head's unpublished text
+   * and an owner's finds their own. A branch over an ungated leaf ignores it.
+   */
+  readonly headFor: ListFilter<Following>;
   /** At most this many hits, best first; never more than `MAX_PAGE_LIMIT`. */
   readonly limit: number;
 }
@@ -328,7 +337,9 @@ export interface HybridSearchDefinition<Following, E, R> {
 }
 
 /**
- * Run every branch under the same scope, one after another in the caller's
+ * Run every branch under the same scope and `headFor` (both forwarded as
+ * given: the caller computes them for the viewer with `searchScopeFilter`
+ * and `searchHeadFor`), one after another in the caller's
  * transaction, fuse their rankings ({@link fuseRankings}) and, with a
  * reranker, reorder the fused candidates ({@link applyReranking}). Returns
  * at most `request.limit` hits (clamped to `[1, MAX_PAGE_LIMIT]`), for the
@@ -339,7 +350,7 @@ export interface HybridSearchDefinition<Following, E, R> {
  * ```ts
  * import { deepStrictEqual } from "node:assert";
  * import * as Effect from "effect/Effect";
- * import { always } from "@thomasfosterau/pulpit/filter";
+ * import { always, never } from "@thomasfosterau/pulpit/filter";
  * import { hybridSearch } from "@thomasfosterau/pulpit/search";
  *
  * const search = hybridSearch({
@@ -348,7 +359,9 @@ export interface HybridSearchDefinition<Following, E, R> {
  *     { name: "vector", weight: 2, search: () => Effect.succeed([{ id: "b" }]) },
  *   ],
  * });
- * const hits = await Effect.runPromise(search({ query: "tomato", scope: always, limit: 10 }));
+ * const hits = await Effect.runPromise(
+ *   search({ query: "tomato", scope: always, headFor: never, limit: 10 }),
+ * );
  * deepStrictEqual(
  *   hits.map((hit) => hit.id),
  *   ["b", "a"],
@@ -367,7 +380,12 @@ export const hybridSearch =
         definition.branches,
         (branch) =>
           Effect.map(
-            branch.search({ query: request.query, scope: request.scope, limit: perBranch }),
+            branch.search({
+              query: request.query,
+              scope: request.scope,
+              headFor: request.headFor,
+              limit: perBranch,
+            }),
             (hits): BranchRanking => ({ name: branch.name, weight: branch.weight, hits }),
           ),
         { concurrency: 1 },

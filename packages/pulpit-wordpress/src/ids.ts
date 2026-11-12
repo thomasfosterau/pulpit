@@ -347,10 +347,7 @@ export interface StringIdsOptions {
  *
  * @since 0.1.0
  */
-export const stringIds = (
-  // oxlint-disable-next-line effect/prefer-option-over-null -- the optional-parameter form of the `?: T | undefined` convention (AGENTS.md → Conventions); absent is every default
-  options?: StringIdsOptions | undefined,
-): WireIds<string, never, never, never> => {
+export const stringIds = (options?: StringIdsOptions): WireIds<string, never, never, never> => {
   const isNodeId = options?.isNodeId ?? Str.isNonEmpty;
   return {
     mode: "string",

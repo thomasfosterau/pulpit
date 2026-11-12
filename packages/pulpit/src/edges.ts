@@ -81,6 +81,7 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Formatter from "effect/Formatter";
 import * as HashMap from "effect/HashMap";
+import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as P from "effect/Predicate";
@@ -207,7 +208,7 @@ export class EdgeDeclarationError extends Schema.TaggedError<
  */
 export interface EndpointView<E, R> {
   /** The endpoint view's column names; an owned declaration naming a column outside it hides every edge. */
-  readonly columns: ReadonlySet<string>;
+  readonly columns: HashSet.HashSet<string>;
   /** One node of the current-version view by id, or none. Applies no visibility policy. */
   readonly get: (id: string) => Effect.Effect<Option.Option<LeafRow>, E, R>;
 }
@@ -841,8 +842,7 @@ export interface EdgeOps<Create, Resource, E, R, Following = never> {
   readonly countBy: (
     end: string,
     ids: ReadonlyArray<string>,
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter, `?: T | undefined` (AGENTS.md → Conventions); the omitted value is `always`
-    where?: ListFilter<never> | undefined,
+    where?: ListFilter<never>,
   ) => Effect.Effect<HashMap.HashMap<string, number>, E, R>;
 }
 

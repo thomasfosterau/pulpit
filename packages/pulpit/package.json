@@ -48,6 +48,7 @@
     "./blobs": "./src/blobs.ts",
     "./paths": "./src/paths.ts",
     "./pages": "./src/pages.ts",
+    "./media": "./src/media.ts",
     "./collections": "./src/collections.ts",
     "./links": "./src/links.ts",
     "./moderation": "./src/moderation.ts",
@@ -124,6 +125,10 @@
       "./pages": {
         "types": "./dist/pages.d.ts",
         "default": "./dist/pages.js"
+      },
+      "./media": {
+        "types": "./dist/media.d.ts",
+        "default": "./dist/media.js"
       },
       "./collections": {
         "types": "./dist/collections.d.ts",

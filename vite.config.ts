@@ -71,11 +71,6 @@ export default defineConfig({
       // and the generic `R` / `A` / `E` parameters mean names deliberately
       // recur in nested scopes.
       "eslint/no-shadow": "off",
-      // Its "explicit `undefined` is unnecessary on an optional parameter"
-      // check contradicts the workspace convention (AGENTS.md → Conventions):
-      // an optional parameter is spelled `x?: T | undefined`, like an
-      // optional field, so a caller can forward its own optional value.
-      "typescript/no-duplicate-type-constituents": "off",
       // The suites assert through helpers named `expect…` (`expectAgreement`
       // in tests/subtype.test.ts) as well as `expect` itself.
       "vitest/expect-expect": ["error", { assertFunctionNames: ["expect", "expect*"] }],
@@ -91,14 +86,6 @@ export default defineConfig({
             "The `Buffer` global is typed `any` wherever @cloudflare/workers-types is loaded. Use Uint8Array/DataView.",
         },
       ],
-      // `casting-awareness` is an awareness prompt, not a defect rule: it
-      // fires on every `as`, including the narrowings a generic seam
-      // structurally requires (a member tuple rebuilt from its entries, a
-      // record whose key union `Record.fromEntries` erases, both in
-      // registry.ts). Every `as` here is already audited at `error` by
-      // `effect/require-safety-comment-for-type-assertion`, which demands the
-      // `// SAFETY:` invariant this rule only prompts for.
-      "effect/casting-awareness": "off",
       // Every former ported-code allowance (the preset rules this workspace
       // once held at `warn` while ported modules were paid down) is at zero;
       // a new site is a defect. `unicorn/no-empty-file` is in the
@@ -118,11 +105,10 @@ export default defineConfig({
       // nothing to decode into: the array built from the same entries, in
       // the same order, is narrowed with a `// SAFETY:`-commented `as`
       // (audited by `effect/require-safety-comment-for-type-assertion`).
-      // The file's other assertion, the `Root`-keyed `branches` record, goes
-      // in #309 (a `HashMap`).
       {
         files: ["packages/pulpit/src/registry.ts"],
         rules: {
+          "effect/casting-awareness": "off",
           "typescript/no-unsafe-type-assertion": "off",
         },
       },

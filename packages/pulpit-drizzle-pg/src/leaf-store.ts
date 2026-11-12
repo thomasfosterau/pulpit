@@ -49,6 +49,7 @@ import {
 import * as Arr from "effect/Array";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
@@ -302,8 +303,7 @@ export const makeLeafStores = <S, Leaf extends string, I, Relations extends AnyR
       });
 
     return {
-      // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is the native `ReadonlySet` `LeafStore.columns` names
-      columns: new Set(R.keys(columns)),
+      columns: HashSet.fromIterable(R.keys(columns)),
       get: (nodeId) =>
         isNodeId(nodeId)
           ? Effect.map(rowsWhere(sql`${id} = ${nodeId}`, 1), Arr.head)

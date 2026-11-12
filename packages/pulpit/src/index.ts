@@ -89,6 +89,13 @@ export * as Paths from "./paths.ts";
 export * as Pages from "./pages.ts";
 
 /**
+ * The media library: the media fields, the metadata-recording upload
+ * pipeline, the gated renditions and albums (`mediaResourceFields`,
+ * `defineMediaUploads`, `defineRenditions`, `defineAlbum`).
+ */
+export * as Media from "./media.ts";
+
+/**
  * The moderation workflow: the transition rules as a before hook
  * (`moderationHook`), the decision (`defineModeration`), the review-queue
  * filter, threshold grading (`gradeScores`) and member reports
