@@ -4,7 +4,7 @@
  * The kernel's content-addressed `DocumentStore` (README → Seams →
  * `DocumentStore`, pulpit#53) on PostgreSQL (pulpit#247): one table per
  * document family, the document as `jsonb`, keyed by the hash the database
- * generates to the kernel's contract, `digest(document_jsonb::text,
+ * generates to the kernel's contract, `digest(document::text,
  * 'sha256')` (pgcrypto's immutable `text` overload, so a generated column
  * may use it). A stored row is never rewritten (`DOC-001`): `put` is
  * `INSERT … ON CONFLICT DO NOTHING RETURNING`, and a document already
@@ -29,9 +29,9 @@ import * as Schema from "effect/Schema";
 import type { StoreQueryError } from "./leaf-store.ts";
 
 /**
- * Build one document family's table (`name`): `hash_id` the generated
+ * Build one document family's table (`name`): `hash` the generated
  * SHA-256 of the document's canonical text, its primary key, and
- * `document_jsonb` the document. The database needs pgcrypto (`CREATE
+ * `document` the document. The database needs pgcrypto (`CREATE
  * EXTENSION pgcrypto`) for `digest`.
  *
  * @example
@@ -49,10 +49,10 @@ import type { StoreQueryError } from "./leaf-store.ts";
  */
 export const makeDocumentTable = (options: { readonly schema: PgSchema; readonly name: string }) =>
   options.schema.table(options.name, {
-    hashId: bytea("hash_id")
+    hashId: bytea("hash")
       .primaryKey()
-      .generatedAlwaysAs(sql`digest(document_jsonb::text, 'sha256')`),
-    document: jsonb("document_jsonb").notNull(),
+      .generatedAlwaysAs(sql`digest(document::text, 'sha256')`),
+    document: jsonb("document").notNull(),
   });
 
 /**
@@ -87,7 +87,7 @@ const asJsonb = (text: string): SQL => sql`(${text})::jsonb`;
  * - `put` inserts an unseen document (`ON CONFLICT DO NOTHING RETURNING`)
  *   and answers `{ hash, inserted }`; a seen one writes nothing and
  *   answers the hash Postgres derives for it, `inserted: false`.
- * - `get` / `getMany` read by `hash_id`; `getMany` is one `IN (…)` read.
+ * - `get` / `getMany` read by `hash`; `getMany` is one `IN (…)` read.
  *   A string that is no `DocumentHash` names no document.
  *
  * @since 0.0.0

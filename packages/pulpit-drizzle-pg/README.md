@@ -165,14 +165,14 @@ What each store does, over the leaf's view:
 The kernel's content-addressed `DocumentStore` (README → Seams → `DocumentStore`, `DOC-001`): one table per document family, built by `makeDocumentTable({ schema, name })`, with the hash the database generates to the kernel's contract:
 
 ```sql
-hash_id bytea PRIMARY KEY GENERATED ALWAYS AS (digest(document_jsonb::text, 'sha256')) STORED,
-document_jsonb jsonb NOT NULL
+hash bytea PRIMARY KEY GENERATED ALWAYS AS (digest(document::text, 'sha256')) STORED,
+document jsonb NOT NULL
 ```
 
 `digest` is pgcrypto's (its immutable `text` overload): a migration must `CREATE EXTENSION pgcrypto` before the table. `makeDocumentStore({ table, document, CurrentTransaction })` binds the store, `document` the family's schema (a document read back that fails it is a defect):
 
-- **`put`** is `INSERT … ON CONFLICT DO NOTHING RETURNING encode(hash_id, 'hex')`: `{ hash, inserted: true }` for a first insert; for a document already stored, or equal to one under the canonical text (a reordering), nothing is written and the hash is Postgres's own, `encode(digest($document::jsonb::text, 'sha256'), 'hex')`, `inserted: false`. A stored row is never rewritten. The document is bound as its JSON text cast to `jsonb`, so a JSON `null` document is stored as `'null'`, never SQL `NULL`.
-- **`get` / `getMany`** read by `hash_id` (`getMany` one `IN (…)` read); a string that is no `DocumentHash` names no document.
+- **`put`** is `INSERT … ON CONFLICT DO NOTHING RETURNING encode(hash, 'hex')`: `{ hash, inserted: true }` for a first insert; for a document already stored, or equal to one under the canonical text (a reordering), nothing is written and the hash is Postgres's own, `encode(digest($document::jsonb::text, 'sha256'), 'hex')`, `inserted: false`. A stored row is never rewritten. The document is bound as its JSON text cast to `jsonb`, so a JSON `null` document is stored as `'null'`, never SQL `NULL`.
+- **`get` / `getMany`** read by `hash` (`getMany` one `IN (…)` read); a string that is no `DocumentHash` names no document.
 - **The first-insert hook** (website's embedding enqueue) is the kernel's `onDocumentInsert(store, hook)` over this store, with `EmbeddingStore.enqueue` in the same transaction; this package adds no hook of its own.
 
 The integration suite puts the same documents through this store and the kernel's `makeInMemoryDocumentStore` (whose hash is `canonicalText`'s) and checks every hash agrees, escapes, key order and exponent-free numbers included.

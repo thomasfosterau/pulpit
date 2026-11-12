@@ -19,7 +19,7 @@ The kernel's tree-bound seams over the tables and views `@thomasfosterau/effect-
 - **The SQL filter and the kernel's `evaluate` never disagree.** `./filter` renders the kernel's contract table node for node; a node over a column the view lacks is `false`. Change one, change both: the integration suite checks every node, and every row × viewer through `searchScopeFilter`, against `makeInMemoryLeafStore`.
 - **A wire id never fails a query.** The identity `id` is a `uuid`; an id that is no canonical UUID names no node in every seam (`src/internal/node-id.ts`), and a `uuid` column compares with a filter value as text.
 - **No view key has two sources.** `makeLeafStores` refuses at module load a tree whose leaf view would take one key from an identity extra, a level and the view's own projection (`id`, `version`, `action`, `timestamp`, `createdAt`, `ownerId`); the view's merge would otherwise keep the later silently.
-- **A stored document is never rewritten** (`DOC-001`): `put` is `INSERT … ON CONFLICT DO NOTHING`, the hash is the database's generated `digest(document_jsonb::text, 'sha256')`, and the integration suite pins it to the kernel's `canonicalText`. Change neither without the other.
+- **A stored document is never rewritten** (`DOC-001`): `put` is `INSERT … ON CONFLICT DO NOTHING`, the hash is the database's generated `digest(document::text, 'sha256')`, and the integration suite pins it to the kernel's `canonicalText`. Change neither without the other.
 - **Stores never open a transaction or a connection**: every read and write yields the caller's `CurrentTransaction`.
 - **A contributor is never dropped.** An update carrying `proposedBy` over a tree whose root version table has no `proposedBy` column dies (`ProposedByUnrecorded`).
 
