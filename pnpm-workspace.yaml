@@ -1,8 +1,10 @@
-# pnpm workspace — two packages under `packages/*`, the published kernel
-# (`packages/pulpit`, `@thomasfosterau/pulpit`) and its WordPress-compatible
-# read API (`packages/pulpit-wordpress`, `@thomasfosterau/pulpit-wordpress`,
-# private until its publishing is set up), plus the private dist-consumer
-# declaration check of both under `tests/*`.
+# pnpm workspace — three packages under `packages/*`, the published kernel
+# (`packages/pulpit`, `@thomasfosterau/pulpit`), its WordPress-compatible
+# read API (`packages/pulpit-wordpress`, `@thomasfosterau/pulpit-wordpress`)
+# and its Drizzle / PostgreSQL seams (`packages/pulpit-drizzle-pg`,
+# `@thomasfosterau/pulpit-drizzle-pg`), the last two private until their
+# publishing is set up, plus the private dist-consumer declaration check of
+# all three under `tests/*`.
 #
 # The `catalog:` protocol pins versions that MUST be singletons across the
 # workspace. Effect especially: two copies of `effect` break Context / Layer /
@@ -36,6 +38,16 @@ catalog:
   # is met by the TS6 alias below, so it needs no `peerDependencyRules` entry.
   "@effect/docgen": ^4.1.3
   "@effect/language-service": ^0.87.5
+  # The Node `FileSystem` / `Path` services pulpit-drizzle-pg's integration
+  # setup provides to `-pg/testing`'s `provisionTestDatabase`. Dev-only; it
+  # moves with the `effect` pin.
+  "@effect/platform-node": 4.1.3
+  # The PostgreSQL driver `@thomasfosterau/effect-drizzle-ext-pg` binds (its
+  # required peer). pulpit-drizzle-pg never imports it itself; its tests and
+  # integration suite build their `PgClient` through `-pg`'s helpers, which
+  # need it installed. It peers on `effect` at its own version, so it moves
+  # with the `effect` pin below.
+  "@effect/sql-pg": 4.1.3
   # The Effect lint rules (`effect/*`, the anti-slop set included) the root
   # vite.config.ts extends with `configs.recommended`. It loads as an oxlint
   # JS plugin; it ranges `@oxlint/plugins` `^1.85.0`, so no vite-plus oxlint
@@ -58,6 +70,13 @@ catalog:
   # of the three.
   "@effect/tsgo": 0.63.0
   # The JSON:API model layer the `./content` and `./registry` subpaths build on.
+  # pulpit-drizzle-pg's substrate (pulpit#247): the tree, its tables and
+  # views (`./versioned-chain`) and the error classifier (`./errors`), and the
+  # `@effect/sql-pg` binding with `./chain`, the version-chain discipline the
+  # kernel's `VersionChain` port delegates to. The dev pins; the published
+  # ranges are `catalogs.peers`.
+  "@thomasfosterau/effect-drizzle-ext": ^0.2.0
+  "@thomasfosterau/effect-drizzle-ext-pg": ^0.2.0
   "@thomasfosterau/effect-jsonapi": ^0.21.0
   # A required peer of the kernel (pulpit#5, option (c)): `Unauthorized` /
   # `Forbidden` are its `Guard` errors, `accessPolicyFromGuards` builds the
@@ -74,6 +93,14 @@ catalog:
   # vite-plus: pin it to the `vitest` entry below (vite-plus 1.4.0 → 5.0.5),
   # never ahead of it (pulpit#119).
   "@vitest/coverage-istanbul": 5.0.5
+  # The ORM pulpit-drizzle-pg renders its SQL with. 1.0 is still a release
+  # candidate; effect-drizzle-ext(-pg) 0.2.0 peer on `>=1.0.0-rc.5` and are
+  # built against exactly this one, so it is pinned exact.
+  drizzle-orm: 1.0.0-rc.5
+  # pulpit-drizzle-pg's integration suite generates its fixture tree's DDL
+  # with drizzle-kit's programmatic API (`drizzle-kit/api-postgres`), so the
+  # fixture has no committed migrations to drift. Dev-only, never a peer.
+  drizzle-kit: 1.0.0-rc.5
   effect: 4.1.3
   fallow: 3.42.0
   # Exists only for @effect/docgen, which requires `tsx` as a peer and spawns
@@ -118,8 +145,15 @@ catalog:
 catalogs:
   peers:
     "@thomasfosterau/effect-auth": ">=0.2.0"
+    # pulpit-drizzle-pg's substrate: 0.2.0 is the first release with `-pg`'s
+    # `./chain` (`LeafChain.head` included) and core's tree views, pointer
+    # logs and keyed levels.
+    "@thomasfosterau/effect-drizzle-ext": ">=0.2.0"
+    "@thomasfosterau/effect-drizzle-ext-pg": ">=0.2.0"
     "@thomasfosterau/effect-jsonapi": ">=0.20.0"
     effect: ^4.1.0
+    # effect-drizzle-ext(-pg) 0.2.0's own floor.
+    drizzle-orm: ">=1.0.0-rc.5"
 
 overrides:
   # undici <8.12.2 — GHSA-xjj6-f33q-929c (high): an unhandled error on a
