@@ -59,6 +59,12 @@ import {
 } from "@thomasfosterau/pulpit-drizzle-pg/documents";
 import type { DocumentStore } from "@thomasfosterau/pulpit/documents";
 import type { SearchBranch } from "@thomasfosterau/pulpit/search";
+import type { ProposalStore } from "@thomasfosterau/pulpit/proposals";
+import {
+  makeProposalStore,
+  makeProposalTable,
+  type ProposalTable,
+} from "@thomasfosterau/pulpit-drizzle-pg/proposals";
 import {
   fullTextRank,
   makeSearchBranch,
@@ -85,7 +91,14 @@ type Satisfies<A, B> = [A] extends [B] ? true : false;
 export type _Root = Assert<
   Equals<
     keyof typeof DrizzlePg,
-    "VersionChain" | "LeafStore" | "Filter" | "Publication" | "Documents" | "Paths" | "Search"
+    | "VersionChain"
+    | "LeafStore"
+    | "Filter"
+    | "Publication"
+    | "Documents"
+    | "Paths"
+    | "Search"
+    | "Proposals"
   >
 >;
 export type _RootChains = Assert<
@@ -282,4 +295,19 @@ export type _SearchBranchOptions = Assert<
     SearchBranchOptions,
     { readonly name: string; readonly weight?: number; readonly rank: SearchRank }
   >
+>;
+
+// ── ./proposals ──────────────────────────────────────────────────────────
+
+const proposalTable = makeProposalTable({ schema, root: tables.root });
+const proposalStore = makeProposalStore({
+  table: proposalTable,
+  root: tables.root,
+  owners,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _ProposalTable = Assert<Equals<typeof proposalTable, ProposalTable>>;
+export type _ProposalStore = Assert<
+  Equals<typeof proposalStore, ProposalStore<EffectDrizzleQueryError, Key>>
 >;

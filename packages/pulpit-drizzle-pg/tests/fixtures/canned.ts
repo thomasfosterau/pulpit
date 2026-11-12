@@ -32,6 +32,8 @@ export const cannedTransaction = (rows: ReadonlyArray<object>) => {
           "selectDistinctOn",
           "from",
           "leftJoin",
+          "innerJoin",
+          "execute",
           "where",
           "orderBy",
           "limit",
