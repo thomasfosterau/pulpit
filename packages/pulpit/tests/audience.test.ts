@@ -242,8 +242,27 @@ describe("the audience seam and the store", () => {
   it("erases an account's memberships (pulpit#207)", () => {
     const { store } = world();
     Effect.runSync(store.add({ groupId: "g-2", accountId: member.id, role: "member", at: NOW }));
-    expect(Effect.runSync(store.eraseAccount(member.id))).toBe(2);
+    expect(Effect.runSync(store.eraseAccount(member.id, 10))).toBe(2);
     expect(store.rows().map((row) => row.accountId)).toEqual([owner.id, groupAdmin.id]);
+  });
+
+  it("erases at most `limit` rows, invitations to and from the account counted with its memberships (pulpit#274)", () => {
+    const { store } = world();
+    Effect.runSync(store.add({ groupId: "g-2", accountId: member.id, role: "member", at: NOW }));
+    const invite = (groupId: string, accountId: string, invitedBy: string) =>
+      Effect.runSync(store.invite({ groupId, accountId, role: "member", invitedBy, at: NOW }));
+    invite("g-3", member.id, owner.id);
+    invite(GROUP, stranger.id, member.id);
+    invite("g-2", "u-other-invitee", owner.id);
+    const erase = (limit: number) => Effect.runSync(store.eraseAccount(member.id, limit));
+    // Two memberships and two invitations: batches of 3, then 1, then none.
+    expect(erase(3)).toBe(3);
+    expect(store.rows().map((row) => row.accountId)).toEqual([owner.id, groupAdmin.id]);
+    expect(store.pending()).toHaveLength(2);
+    expect(erase(3)).toBe(1);
+    expect(store.pending().map((row) => row.accountId)).toEqual(["u-other-invitee"]);
+    expect(erase(3)).toBe(0);
+    expect(erase(0)).toBe(0);
   });
 });
 
@@ -451,11 +470,11 @@ describe("defineAudience — invitations (pulpit#227)", () => {
       changed: false,
     });
     expect(store.pending()).toHaveLength(1);
-    expect(Effect.runSync(store.eraseAccount(invitee.id))).toBe(1);
+    expect(Effect.runSync(store.eraseAccount(invitee.id, 10))).toBe(1);
     expect(store.pending()).toEqual([]);
     Effect.runSync(as(Option.some(groupAdmin)).invite(GROUP, invitee.id));
     // Erasing the inviter drops the invitations they sent.
-    expect(Effect.runSync(store.eraseAccount(groupAdmin.id))).toBe(2);
+    expect(Effect.runSync(store.eraseAccount(groupAdmin.id, 10))).toBe(2);
     expect(store.pending()).toEqual([]);
     Effect.runSync(as(Option.some(owner)).invite(GROUP, invitee.id));
     expect(Effect.runSync(as(Option.some(owner)).removeGroup(GROUP))).toBe(3);

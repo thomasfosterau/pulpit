@@ -2880,11 +2880,22 @@ export const makeInMemoryMembershipStore = (): InMemoryMembershipStore => {
           (row) => row.groupId,
         ),
       ),
-    eraseAccount: (accountId) =>
-      removeWhere(
-        (row) => row.accountId === accountId,
-        (row) => row.accountId === accountId || row.invitedBy === accountId,
-      ),
+    eraseAccount: (accountId, limit) =>
+      Effect.sync(() => {
+        // One `limit` across both statuses: the active rows first, then the
+        // pending invitations to or from the account (pulpit#274).
+        const active = Arr.take(
+          Arr.filter(rows, (row) => row.accountId === accountId),
+          limit,
+        );
+        const invitations = Arr.take(
+          Arr.filter(pending, (row) => row.accountId === accountId || row.invitedBy === accountId),
+          Math.max(0, limit - active.length),
+        );
+        rows = Arr.filter(rows, (row) => !active.includes(row));
+        pending = Arr.filter(pending, (row) => !invitations.includes(row));
+        return active.length + invitations.length;
+      }),
     invite: (invitation) =>
       Effect.sync(() => {
         if (takenKey(invitation.groupId, invitation.accountId)) return false;

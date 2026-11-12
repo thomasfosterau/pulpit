@@ -16,6 +16,9 @@
  * - A re-run changes nothing and appends nothing; a run cut short at a
  *   batch boundary resumes to the same end state. A tombstoned node gets no
  *   redacting version.
+ * - Memberships (pulpit#274): more membership rows and invitations than a
+ *   batch go in bounded batches, and an interrupted run resumes to one
+ *   uninterrupted run's end state.
  * - The gate: anonymous, a refused actor and the tombstone account itself
  *   are refused before anything is read.
  * - The cache: an anonymised comment is evicted at its redacting version.
@@ -305,6 +308,7 @@ const recordedAccounts = (world: World): ReadonlyArray<string> => [
   ...Arr.map(world.reactions.rows(), (row) => row.accountId),
   ...Arr.flatMap(world.social.rows(), (row) => [row.from, row.to]),
   ...Arr.map(world.memberships.rows(), (row) => row.accountId),
+  ...Arr.flatMap(world.memberships.pending(), (row) => [row.accountId, row.invitedBy]),
   ...Arr.map(Arr.fromIterable(HashMap.keys(world.workingCopies.copies())), (key) =>
     key.slice(key.indexOf(":") + 1),
   ),
@@ -324,6 +328,7 @@ const snapshot = (world: World) => ({
   reactions: world.reactions.rows(),
   social: world.social.rows(),
   memberships: world.memberships.rows(),
+  invitations: world.memberships.pending(),
   copies: HashMap.toEntries(world.workingCopies.copies()),
   documents: HashMap.size(world.documents.stored()),
 });
@@ -497,6 +502,81 @@ describe("defineAccountErasure", () => {
       expect(recordedAccounts(cut)).not.toContain(GONE);
     },
   );
+
+  describe("memberships at a batch boundary (pulpit#274)", () => {
+    const BATCH = 3;
+    /** More of `GONE`'s membership rows than a batch: 4 memberships, 2 invitations to it, 2 from it. */
+    const seedMemberships = (world: World) => {
+      const { memberships } = world;
+      const invite = (groupId: string, accountId: string, invitedBy: string) =>
+        memberships.invite({ groupId, accountId, role: "member", invitedBy, at: AT });
+      return Effect.all(
+        [
+          Effect.forEach(
+            ["g-1", "g-2", "g-3", "g-4"],
+            (groupId) =>
+              Effect.andThen(
+                memberships.add({ groupId, accountId: GONE, role: "admin", at: AT }),
+                memberships.add({ groupId, accountId: OTHER, role: "member", at: AT }),
+              ),
+            { concurrency: 1 },
+          ),
+          Effect.forEach(["g-5", "g-6"], (groupId) => invite(groupId, GONE, OTHER), {
+            concurrency: 1,
+          }),
+          Effect.forEach(
+            ["u-invited-1", "u-invited-2"],
+            (accountId) => invite("g-1", accountId, GONE),
+            { concurrency: 1 },
+          ),
+          // An invitation neither to nor from the account stays.
+          invite("g-2", "u-invited-3", OTHER),
+        ],
+        { concurrency: 1, discard: true },
+      );
+    };
+
+    it("erases them in bounded batches, invitations counted against the same limit", async () => {
+      const world = makeWorld();
+      await run(seedMemberships(world));
+      const summary = await run(world.erasure({ batchSize: BATCH }).erase(GONE));
+      expect(summary.complete).toBe(true);
+      expect(summary.changed).toEqual({ memberships: 8 });
+      expect(Arr.map(world.memberships.rows(), (row) => row.accountId)).toEqual([
+        OTHER,
+        OTHER,
+        OTHER,
+        OTHER,
+      ]);
+      expect(Arr.map(world.memberships.pending(), (row) => row.accountId)).toEqual(["u-invited-3"]);
+      expect(recordedAccounts(world)).not.toContain(GONE);
+    });
+
+    it.each([1, 2])(
+      "resumes a run cut short every %i batches to one uninterrupted run's end state",
+      async (maxBatches) => {
+        const whole = makeWorld();
+        await run(seedMemberships(whole));
+        await run(whole.erasure({ batchSize: BATCH }).erase(GONE));
+
+        const cut = makeWorld();
+        await run(seedMemberships(cut));
+        const erasure = cut.erasure({ batchSize: BATCH });
+        const first = await run(erasure.erase(GONE, { maxBatches }));
+        expect(first.complete).toBe(false);
+        expect(first.changed).toEqual({ memberships: BATCH * maxBatches });
+        const runs = (count: number): Effect.Effect<number, unknown> =>
+          Effect.flatMap(
+            erasure.erase(GONE, { maxBatches }),
+            (summary: ErasureSummary): Effect.Effect<number, unknown> =>
+              summary.complete ? Effect.succeed(count) : runs(count + 1),
+          );
+        expect(await run(runs(2))).toBeGreaterThan(1);
+        expect(snapshot(cut)).toEqual(snapshot(whole));
+        expect(recordedAccounts(cut)).not.toContain(GONE);
+      },
+    );
+  });
 
   it("refuses before reading anything", async () => {
     const world = makeWorld();
