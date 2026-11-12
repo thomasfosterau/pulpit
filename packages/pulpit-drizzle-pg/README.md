@@ -71,6 +71,7 @@ Every module is a namespace on the root export (`import { VersionChain } from "@
 | [`./external-ids`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#external-ids) | `makeExternalIdTable` / `makeExternalIdStore`: the kernel's `ExternalIdStore`, an authority's identifiers linked to nodes. |
 | [`./social`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#social) | `makeRelationshipTable` / `makeSocialStore`: the kernel's `SocialStore`, follows, mutes and blocks over one relationship table. |
 | [`./memberships`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#memberships) | `makeMembershipTable` / `makeMembershipStore` / `makeGroupOwners`: the kernel's `MembershipStore` (members and pending invitations) and `GroupOwnerStore`. |
+| [`./erasure`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#erasure) | `makePurgeStore` / `makeAccountErasureStore`: the kernel's erasure seams, the purge's references and dependents and the account erasure's owner records and redaction marker. |
 | [`./filter`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#filter) | `renderListFilter` / `renderListOrder`: the kernel's `ListFilter` and list order as Drizzle SQL. |
 
 ## Links
