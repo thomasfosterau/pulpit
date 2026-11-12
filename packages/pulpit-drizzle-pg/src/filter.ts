@@ -136,9 +136,7 @@ const compare = (op: Comparison, column: FilterColumn, value: string | number | 
 };
 
 /** A literal set's values, or none when the set is outside the contract (too large, or holding a `NaN`). */
-const boundedSet = <A extends Operand>(
-  values: ReadonlyArray<A>,
-): Option.Option<ReadonlyArray<A>> =>
+const boundedSet = <A extends Operand>(values: ReadonlyArray<A>): Option.Option<ReadonlyArray<A>> =>
   values.length > MAX_SET_VALUES || Arr.some(values, isUnorderable)
     ? Option.none()
     : Option.some(values);
