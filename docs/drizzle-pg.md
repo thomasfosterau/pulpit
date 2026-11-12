@@ -22,7 +22,7 @@ The module guide for [`@thomasfosterau/pulpit-drizzle-pg`](../packages/pulpit-dr
 - **Landed:** the `SocialStore` ([`./social`](#social), pulpit#364), checked against the kernel's in-memory store on PostgreSQL, a block racing a follow in two transactions.
 - **Landed:** the `MembershipStore` and `GroupOwnerStore` ([`./memberships`](#memberships), pulpit#364), checked against the kernel's in-memory stores on PostgreSQL.
 - **Landed:** the erasure seams, `PurgeStore` and `AccountErasureStore` ([`./erasure`](#erasure), pulpit#361), checked against the kernel's in-memory stores on PostgreSQL, the purge as the whole chain or nothing and the redaction marker.
-- **Next:** the other stores that aren't tree-bound (reports, budgets, working copies, erasure, social and notification tables), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
+- **Next:** the other stores that aren't tree-bound (the `ReportStore`, [pulpit#360](https://github.com/thomasfosterau/pulpit/issues/360), waiting on the moderation state machine; budgets, working copies and the notification tables, unranked), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
 
 ## End to end
 
