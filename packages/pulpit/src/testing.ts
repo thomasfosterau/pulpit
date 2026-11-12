@@ -985,13 +985,15 @@ export const versionChainConformance = <E, R>(
     });
 
     describe("locales — the keyed level (pulpit#56)", () => {
+      // A translated column is never a shared one (a tree rejects a key both
+      // levels of one path declare), so the locale level writes `heading`.
       it("a version carries its locale level: set, drop (null) and carry forward, restored together", async () => {
         const { chain } = await harness.make();
         await value(
           chain.create({
             id: Option.some(ID),
-            state: { slug: "a" },
-            locales: { en: { title: "Hello" }, fr: { title: "Salut" } },
+            state: { title: "a" },
+            locales: { en: { heading: "Hello" }, fr: { heading: "Salut" } },
             actorId: ACTOR,
           }),
         );
@@ -999,15 +1001,15 @@ export const versionChainConformance = <E, R>(
           chain.update({
             id: ID,
             patch: {},
-            locales: { en: { title: "Hi" }, fr: null },
+            locales: { en: { heading: "Hi" }, fr: null },
             actorId: ACTOR,
           }),
         );
-        expect(localesOf(await value(chain.getVersion(ID, 1n)))).toEqual({ en: { title: "Hi" } });
+        expect(localesOf(await value(chain.getVersion(ID, 1n)))).toEqual({ en: { heading: "Hi" } });
         await value(chain.restoreVersion(ID, 0n, ACTOR));
         expect(localesOf(await value(chain.getVersion(ID, 2n)))).toEqual({
-          en: { title: "Hello" },
-          fr: { title: "Salut" },
+          en: { heading: "Hello" },
+          fr: { heading: "Salut" },
         });
       });
     });
@@ -2016,6 +2018,25 @@ export const makeInMemoryPublication = (options: {
       }),
     effective: (id) => Effect.map(instantOf(fixedNow), (now) => effectiveAt(id, now)),
     facts: (id, limit) => Effect.sync(() => log.filter((fact) => fact.id === id).slice(0, limit)),
+    scheduled: (ids) =>
+      Effect.map(instantOf(fixedNow), (now) =>
+        Arr.flatMap(Arr.dedupe(ids), (id) => {
+          const own = Arr.filter(log, (fact) => fact.id === id);
+          // The latest record naming a version, still ahead, that no later record overtakes.
+          return Option.toArray(
+            Arr.findLast(
+              own,
+              (fact, index) =>
+                Option.isSome(fact.version) &&
+                fact.at.getTime() > now.getTime() &&
+                !Arr.some(
+                  Arr.drop(own, index + 1),
+                  (later) => later.at.getTime() <= fact.at.getTime(),
+                ),
+            ),
+          );
+        }),
+      ),
   };
   const live: LiveView<LeafRow, InMemoryFollowing, never, never> = {
     get: (id) =>

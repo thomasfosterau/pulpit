@@ -45,6 +45,10 @@
  *   binding's `search`, under the viewer's search scope), hydrated through
  *   `getMany`, so a hit the viewer's gate hides is dropped and never counted.
  *   `X-WP-Total` counts the hydrated hits, capped at `MAX_PAGE_LIMIT`.
+ * - **A scheduled publication is `future`** (pulpit#220). For the items of a
+ *   page that a writer reads with no live version of a publish-gated leaf, one
+ *   batched `PublicationOps.scheduled` read supplies the pending instant,
+ *   which becomes the item's `date` and its status `future`.
  * - **`lang`** (pulpit#223). A localised leaf bound with a `defaultLocale`
  *   is read in the fallback order of the requested BCP 47 tag
  *   (`localePreferences`): a single item through `getLocalised`, a
@@ -275,7 +279,7 @@ export interface PostColumns {
 export interface PostTypeBinding<Resource, E, R, Following = never> {
   readonly ops: Pick<
     SubtypeOps<Resource, E, R, Following>,
-    "get" | "getMany" | "list" | "owners" | "getLocalised" | "listLocalised"
+    "get" | "getMany" | "list" | "owners" | "publication" | "getLocalised" | "listLocalised"
   >;
   readonly columns: PostColumns;
   readonly fields: (resource: Resource) => PostFields;
@@ -323,6 +327,12 @@ export interface SearchRequest<Following = never> {
 export interface ShownItem {
   readonly fields: PostFields;
   readonly serveable: boolean;
+  /**
+   * The instant a pending scheduled publication takes effect, for an item
+   * with no live version that a writer reads (pulpit#220): it reads
+   * `status: "future"` and its `date` is this instant. None otherwise.
+   */
+  readonly scheduled: Option.Option<Date>;
 }
 
 /**
@@ -395,6 +405,14 @@ export interface BoundPostType<R, Following = never> {
   >;
   /** The accounts owning a row the viewer may list, as `/users` reads them (`SubtypeOps.owners`). */
   readonly owners: (request: OwnersRequest) => Effect.Effect<Page<string>, unknown, R>;
+  /**
+   * The instants the pending scheduled publications of `ids` take effect,
+   * by node id, in one read (`PublicationOps.scheduled`, pulpit#220); empty
+   * for a leaf with no live pointer.
+   */
+  readonly scheduled: (
+    ids: ReadonlyArray<string>,
+  ) => Effect.Effect<HashMap.HashMap<string, Date>, unknown, R>;
 }
 
 /**
@@ -471,6 +489,7 @@ export const bind = <Resource, E, R, Following = never>(
   const shown = (resource: Resource): ShownItem => ({
     fields: binding.fields(resource),
     serveable: binding.serveable(resource),
+    scheduled: Option.none(),
   });
   // A pending file is missing to every reader until its bytes are confirmed (pulpit#221).
   const confirmed = Option.match(Option.fromUndefinedOr(binding.columns.bytesPending), {
@@ -502,6 +521,14 @@ export const bind = <Resource, E, R, Following = never>(
       (search) => (request: SearchRequest<Following>) =>
         Effect.map(search(request), (hits) => hits.map(({ id }) => id)),
     ),
+    scheduled: (ids) =>
+      Option.match(binding.ops.publication, {
+        onNone: () => Effect.succeed(HashMap.empty<string, Date>()),
+        onSome: (publication) =>
+          Effect.map(publication.scheduled(ids), (pending) =>
+            HashMap.map(pending, (fact) => fact.at),
+          ),
+      }),
     localised: Option.map(
       Option.fromNullishOr(binding.defaultLocale),
       (defaultLocale): LocalisedReads<R, Following> => ({
@@ -1401,9 +1428,10 @@ const userParams = (query: Query, timeZone: string): Effect.Effect<UserParams, W
 // ── Status ────────────────────────────────────────────────────────────
 
 /** An item's derived status: a tombstone, a draft, a non-public row, an unarrived stamp, in that order. */
-const statusOf = (type: PostType, fields: PostFields, now: Date): PostStatus => {
+const statusOf = (type: PostType, item: ShownItem, now: Date): PostStatus => {
+  const { fields } = item;
   if (fields.deleted) return "trash";
-  if (fields.draft) return "draft";
+  if (fields.draft) return Option.isSome(item.scheduled) ? "future" : "draft";
   if (fields.visibility !== "public") return "private";
   if (type === "attachment") return "inherit";
   return Option.exists(fields.date, (date) => date.getTime() > now.getTime())
@@ -1916,7 +1944,7 @@ export const defineWordPress = <R, Following = never>(
   ): Schema.JsonObject => {
     const { fields } = item;
     const id = wireOf(related, Option.some(fields.id));
-    const status = statusOf(type, fields, related.now);
+    const status = statusOf(type, item, related.now);
     const link = config.link(type, fields);
     const date = formatLocal(
       Option.getOrElse(fields.date, () => fields.modified),
@@ -1947,7 +1975,7 @@ export const defineWordPress = <R, Following = never>(
     });
     const _links = linksOf(type, item, related);
     /** The term fields of a page or attachment a taxonomy is bound to (a post always has both). */
-    const termFields: Schema.JsonObject = R.fromEntries(
+    const termFields = R.fromEntries(
       related.terms.map(([taxonomy]) => [
         taxonomyBase(taxonomy),
         termWires(related, taxonomy, fields.id),
@@ -2290,6 +2318,40 @@ export const defineWordPress = <R, Following = never>(
       Effect.fromOption(shown).pipe(Effect.mapError(missing)),
     );
 
+  /**
+   * The items a writer reads with no live version, shown as scheduled when
+   * a publication is pending (pulpit#220): one batched `scheduled` read per
+   * page, over the rows whose `draft` the viewer is shown, so a reader of
+   * the live version is never asked. The pending instant is the item's
+   * `date`, and its status `future`.
+   */
+  const withSchedules = (
+    type: PostType,
+    binding: BoundPostType<R, Following>,
+    items: ReadonlyArray<ShownItem>,
+  ): Effect.Effect<ReadonlyArray<ShownItem>, WpRestError, R> =>
+    Effect.gen(function* () {
+      // An attachment has no `future`: it is `inherit` once it is not a draft.
+      const undecided = Arr.filter(
+        items,
+        ({ fields }) => type !== "attachment" && fields.draft && !fields.deleted,
+      );
+      if (!Arr.isReadonlyArrayNonEmpty(undecided)) return items;
+      const pending = yield* internal(
+        binding.scheduled(Arr.map(undecided, ({ fields }) => fields.id)),
+      );
+      return Arr.map(items, (item) =>
+        Option.match(HashMap.get(pending, item.fields.id), {
+          onNone: () => item,
+          onSome: (at): ShownItem => ({
+            ...item,
+            scheduled: Option.some(at),
+            fields: { ...item.fields, date: Option.some(at) },
+          }),
+        }),
+      );
+    });
+
   /** The `?lang=` bound of a type: its localised reads, or `lang` is not supported for it. */
   const localisedOf = (binding: BoundPostType<R, Following>) =>
     Effect.fromOption(binding.localised).pipe(
@@ -2322,14 +2384,15 @@ export const defineWordPress = <R, Following = never>(
             : Effect.fail(invalidParams({ lang: LANG_MESSAGE })),
       });
       const id = yield* decodeOne(ids, rawId, invalidId);
-      const { item, served } = yield* Option.match(lang, {
+      const { item: found, served } = yield* Option.match(lang, {
         onNone: () =>
-          Effect.map(shownOr(binding.get(id), invalidId), (found) => ({
-            item: found,
+          Effect.map(shownOr(binding.get(id), invalidId), (item) => ({
+            item,
             served: Option.none<string>(),
           })),
         onSome: (tag) => localisedItem(binding, id, tag),
       });
+      const [item = found] = yield* withSchedules(type, binding, [found]);
       const viewer = yield* config.viewer;
       // The 404 comes first, so a refused context never confirms the row.
       if (Option.contains(query.scalar("context"), "edit")) {
@@ -2572,7 +2635,7 @@ export const defineWordPress = <R, Following = never>(
           total: sorted.length,
         };
       });
-      const { rows, total } = yield* Option.match(params.search, {
+      const { rows: shownRows, total } = yield* Option.match(params.search, {
         onNone: () => plain(),
         onSome: searched,
       });
@@ -2585,6 +2648,7 @@ export const defineWordPress = <R, Following = never>(
         });
       }
       const embed = embedsOf(query);
+      const rows = yield* withSchedules(type, binding, shownRows);
       const related = yield* relate(type, rows, embed);
       const collection = restUrl(`/wp/v2/${baseOf(type)}`);
       const pageLink = (to: number, rel: string): readonly [string, string] => [
@@ -3073,8 +3137,11 @@ export const defineWordPress = <R, Following = never>(
         Effect.catchTag("WpRestError", (error) =>
           Effect.succeed(respond(error.status, errorBody(error))),
         ),
-        Effect.map((response) =>
-          request.method === "HEAD" ? { ...response, body: Option.none() } : response,
+        // A HEAD answer is the GET answer's status and headers with no body.
+        Effect.map((response): WordPressResponse =>
+          request.method === "HEAD"
+            ? { status: response.status, headers: response.headers, body: Option.none() }
+            : response,
         ),
       ),
   };

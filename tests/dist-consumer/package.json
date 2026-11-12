@@ -2,11 +2,14 @@
   "name": "@pulpit/dist-consumer",
   "version": "0.0.0",
   "private": true,
-  "description": "Type-checks a consumer fixture against the EMITTED declarations of @thomasfosterau/pulpit and @thomasfosterau/pulpit-wordpress, asserting every exported type — the gate for the declaration-emit hazard a published library carries and its own tests cannot see.",
+  "description": "Type-checks a consumer fixture against the EMITTED declarations of @thomasfosterau/pulpit, @thomasfosterau/pulpit-wordpress and @thomasfosterau/pulpit-drizzle-pg, asserting every exported type — the gate for the declaration-emit hazard a published library carries and its own tests cannot see.",
   "type": "module",
   "dependencies": {
     "@thomasfosterau/effect-auth": "catalog:",
+    "@thomasfosterau/effect-drizzle-ext": "catalog:",
+    "@thomasfosterau/effect-drizzle-ext-pg": "catalog:",
     "@thomasfosterau/effect-jsonapi": "catalog:",
+    "drizzle-orm": "catalog:",
     "effect": "catalog:"
   },
   "devDependencies": {

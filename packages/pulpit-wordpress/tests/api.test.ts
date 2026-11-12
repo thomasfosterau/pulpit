@@ -42,6 +42,7 @@ import {
   makeInMemoryPathStore,
   makeInMemorySearchBranch,
   type InMemoryFollowing,
+  makeInMemoryPublication,
 } from "@thomasfosterau/pulpit/testing";
 import type { ColumnValue, LocaleStates } from "@thomasfosterau/pulpit/version-chain";
 import {
@@ -165,6 +166,8 @@ interface SiteOptions {
   readonly failing?: "render" | "list";
   /** Bind `category` and `post_tag` over two term leaves and their assignment families (phase 2). */
   readonly terms?: boolean;
+  /** Make the `posts` leaf publish-gated over `makeInMemoryPublication` (pulpit#220). */
+  readonly gated?: boolean;
   /** Make the `posts` leaf localised (`title` and `content` per locale, default `en`) and bind `?lang=` (pulpit#223). */
   readonly localised?: boolean;
   /**
@@ -195,6 +198,13 @@ const site = (options: SiteOptions = {}) => {
     const chain = makeInMemoryVersionChain("posts");
     return { chain, leaves: makeInMemoryLeafStore(chain, { columns, now: NOW }) };
   };
+  /** The posts' live pointer, when gated: the publication log and the head view with `draft` computed from it. */
+  const gatedPosts = (() => {
+    const chain = makeInMemoryVersionChain("posts");
+    const heads = makeInMemoryLeafStore(chain, { columns: COLUMNS, now: NOW });
+    return { chain, publication: makeInMemoryPublication({ chain, leaves: heads }) };
+  })();
+  const gated = options.gated === true;
   const localisedStore = () => {
     const chain = makeInMemoryVersionChain("posts");
     return {
@@ -202,8 +212,12 @@ const site = (options: SiteOptions = {}) => {
       leaves: makeInMemoryLeafStore(chain, { columns: COLUMNS, now: NOW, localised: true }),
     };
   };
+  const postStore = () => {
+    if (gated) return { chain: gatedPosts.chain, leaves: gatedPosts.publication.leaves };
+    return options.localised === true ? localisedStore() : store(COLUMNS);
+  };
   const leafStores = {
-    posts: options.localised === true ? localisedStore() : store(COLUMNS),
+    posts: postStore(),
     pages: store(COLUMNS),
     media: store(COLUMNS),
   };
@@ -218,6 +232,12 @@ const site = (options: SiteOptions = {}) => {
       followers,
       toResource: (row: LeafRow) => row,
     };
+    if (type === "posts" && gated) {
+      return defineSubtype({
+        ...declaration,
+        publication: { live: gatedPosts.publication.live, facts: gatedPosts.publication.facts },
+      });
+    }
     return type === "posts" && options.localised === true
       ? defineSubtype({
           ...declaration,
@@ -313,6 +333,8 @@ const site = (options: SiteOptions = {}) => {
     visibility: "visibility",
     mimeType: "mimeType",
   };
+  /** Every batch the posts binding asked `scheduled` for (pulpit#220). */
+  const scheduledReads: Array<ReadonlyArray<string>> = [];
   const postOps =
     options.failing === "list"
       ? { ...ops.posts, list: () => Effect.fail("the store is down") }
@@ -351,7 +373,21 @@ const site = (options: SiteOptions = {}) => {
             ),
           }),
     );
-  const postBinding = { ops: postOps, columns, fields: fieldsOf, serveable };
+  const postBinding = {
+    ops: {
+      ...postOps,
+      publication: Option.map(postOps.publication, (publication) => ({
+        ...publication,
+        scheduled: (ids: ReadonlyArray<string>) => {
+          scheduledReads.push(ids);
+          return publication.scheduled(ids);
+        },
+      })),
+    },
+    columns,
+    fields: fieldsOf,
+    serveable,
+  };
   const postType = () => {
     const localised = options.localised === true;
     if (options.search === undefined) {
@@ -516,6 +552,7 @@ const site = (options: SiteOptions = {}) => {
     renders,
     authorReads,
     mediaReads,
+    scheduledReads,
     termReads,
     as,
     chains: { posts: leafStores.posts.chain },
@@ -954,6 +991,83 @@ describe("the wp/v2 read API — conditional reads (pulpit#86, #65)", () => {
   });
 });
 
+describe("the wp/v2 read API — a publish-gated leaf (pulpit#46, #220)", () => {
+  /** `live` is published; `fresh` never was; `soon` is scheduled for later; `edited` is live with a newer version scheduled. */
+  const gatedSite = async () => {
+    const wp = site({ gated: true });
+    const publication = Option.match(wp.ops.posts.publication, {
+      onNone: () => expect.unreachable("a gated leaf has publication operations"),
+      onSome: (operations) => operations,
+    });
+    const publishAs = (id: string, options?: { readonly at: Date; readonly version: bigint }) =>
+      run(wp.as(Option.some(member), publication.publish(id, options)));
+    const live = await wp.create("posts", { slug: "live", draft: true });
+    await publishAs(live.id);
+    const fresh = await wp.create("posts", { slug: "fresh", draft: true });
+    const soon = await wp.create("posts", { slug: "soon", draft: true });
+    await publishAs(soon.id, { at: FUTURE, version: 0n });
+    const edited = await wp.create("posts", { slug: "edited", draft: true });
+    await publishAs(edited.id);
+    await run(
+      wp.as(Option.some(member), wp.ops.posts.update({ id: edited.id, patch: { title: "v2" } })),
+    );
+    await publishAs(edited.id, { at: FUTURE, version: 1n });
+    return { wp, live, fresh, soon, edited };
+  };
+  const statusAndDate = (response: WordPressResponse) =>
+    decodeBody(Schema.Struct({ status: Schema.String, date_gmt: Schema.NullOr(Schema.String) }))(
+      response,
+    );
+
+  it("serves readers the live version only, and a writer's unpublished node as draft or future", async () => {
+    const { wp, live, fresh, soon, edited } = await gatedSite();
+    const read = async (post: { readonly wireId: number }, who: Viewer) => {
+      const response = await wp.get(`/wp/v2/posts/${post.wireId}`, [], who);
+      return response.status === 200 ? statusAndDate(response).status : response.status;
+    };
+    const asOwner = Option.some(member);
+    expect(
+      await inSequence([live, fresh, soon, edited], async (post) => [
+        await read(post, Option.none()),
+        await read(post, Option.some(stranger)),
+        await read(post, asOwner),
+        await read(post, Option.some(moderator)),
+      ]),
+    ).toEqual([
+      ["publish", "publish", "publish", "publish"],
+      [404, 404, "draft", "draft"],
+      [404, 404, "future", "future"],
+      ["publish", "publish", "publish", "publish"],
+    ]);
+    // The scheduled instant is the item's date.
+    const scheduled = statusAndDate(await wp.get(`/wp/v2/posts/${soon.wireId}`, [], asOwner));
+    expect(scheduled.date_gmt).toBe("2999-01-01T00:00:00");
+  });
+
+  it("lists drafts and scheduled items for their writer, asking `scheduled` once per page, and never for a reader", async () => {
+    const { wp, soon, fresh } = await gatedSite();
+    const before = wp.scheduledReads.length;
+    const reader = await wp.get("/wp/v2/posts", [["status", "any"]]);
+    expect(reader.status).toBe(401);
+    const anonymous = await wp.get("/wp/v2/posts");
+    expect(listed(anonymous)).toHaveLength(2);
+    expect(wp.scheduledReads.length).toBe(before);
+    const own = await wp.get("/wp/v2/posts", [["status", "draft"]], Option.some(member));
+    expect(
+      decodeBody(Schema.Array(Schema.Struct({ id: Schema.Finite, status: Schema.String })))(own),
+    ).toEqual([
+      // Ordered by the stored stamp (equal here), not by the scheduled instant shown.
+      { id: fresh.wireId, status: "draft" },
+      { id: soon.wireId, status: "future" },
+    ]);
+    // One batch for the page, holding the writer's two undecided nodes.
+    expect(wp.scheduledReads.slice(before).map((ids) => ids.length)).toEqual([2]);
+    // A scheduled node is filed with the drafts: `status=future` selects by the stamp column, which it hasn't.
+    const future = await wp.get("/wp/v2/posts", [["status", "future"]], Option.some(member));
+    expect(listed(future)).toEqual([]);
+  });
+});
+
 describe("the wp/v2 read API — lang (pulpit#223)", () => {
   /** `hello` in en, pt and pt-BR; `plain` in en alone; `french` in fr alone; a draft in pt. */
   const localisedSite = async () => {
@@ -1204,6 +1318,33 @@ describe("the wp/v2 read API — search (pulpit#224)", () => {
     const none = await wp.get("/wp/v2/posts", [["search", "zucchini"]]);
     expect([listed(none), none.headers["x-wp-total"]]).toEqual([[], "0"]);
     expect(short.wireId).toBeGreaterThan(0);
+  });
+
+  it("shows a scheduled item found by search as future, with its scheduled date (pulpit#220)", async () => {
+    const wp = site({ gated: true, search: "scoped" });
+    const publication = Option.match(wp.ops.posts.publication, {
+      onNone: () => expect.unreachable("a gated leaf has publication operations"),
+      onSome: (operations) => operations,
+    });
+    const soon = await wp.create("posts", { title: "tomato soon", draft: true });
+    await run(
+      wp.as(Option.some(member), publication.publish(soon.id, { at: FUTURE, version: 0n })),
+    );
+    const found = await wp.get(
+      "/wp/v2/posts",
+      [
+        ["search", "tomato"],
+        ["status", "draft"],
+      ],
+      Option.some(member),
+    );
+    expect(
+      decodeBody(
+        Schema.Array(
+          Schema.Struct({ status: Schema.String, date_gmt: Schema.NullOr(Schema.String) }),
+        ),
+      )(found),
+    ).toEqual([{ status: "future", date_gmt: "2999-01-01T00:00:00" }]);
   });
 
   it("refuses lang with search as rest_invalid_param, which names lang (pulpit#326)", async () => {
