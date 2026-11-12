@@ -161,6 +161,13 @@ export * as Cache from "./cache.ts";
 export * as Collections from "./collections.ts";
 
 /**
+ * Ordered link lists: a flat, localised list of links under a parent node,
+ * read for one viewer with every entry whose target they can't follow
+ * omitted (`defineLinkList` over a `./collections` collection).
+ */
+export * as Links from "./links.ts";
+
+/**
  * The social graph: follow, mute and block between accounts, the follower
  * seam filled from it, and the opt-in read filter over silenced authors
  * (`defineSocial` over a `SocialStore`).
@@ -188,3 +195,10 @@ export * as Discovery from "./discovery.ts";
  * families take (`defineReshares`, `acceptedAnswerGate`, `nodeWriteGate`).
  */
 export * as Relations from "./relations.ts";
+
+/**
+ * Translation: lineage and staleness on a localised leaf's locales, the
+ * translator seam, and the sweep that lands machine translations directly
+ * or as proposals (`defineTranslation`, `humanLineageHook`).
+ */
+export * as Translation from "./translation.ts";

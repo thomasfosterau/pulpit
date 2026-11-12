@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Pages`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`, `Cache`, `Collections`, `Social`, `Discovery`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Pages`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`, `Cache`, `Collections`, `Links`, `Social`, `Discovery`). |
 | **Content model** |  |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`, `localised`) and `validateRegistry`. |
@@ -38,10 +38,12 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./paths` | Routable content: `routable`, a leaf's path claims tied to its chain over a `PathStore` seam, the aliases a path change leaves behind, and the gated `resolve`. |
 | `./pages` | The page recipe: `resolveLocalised`, a routable, localised leaf's one resolution read (a path and a locale to the node in the best locale it carries, a redirect from an alias, or not-found), and its `localeFallbacks` order. |
 | `./collections` | Ordered collections (`defineCollection` over a `CollectionStore` seam): positioned members of a parent node, with the order kept beside the chain (the default) or versioned with the parent. |
+| `./links` | Ordered link lists (`defineLinkList`): a flat, localised list of links under a parent node (a navigation menu, say) over a `./collections` collection, read for one viewer with every entry whose target they can't follow omitted. |
 | **Participation and user-generated content** |  |
 | `./budgets` | Write budgets: a declared ceiling on an account's writes of one kind in a rolling window, spent inside the write (`budgetHook` on a chain write; `bindBudget`'s `spend` on a proposal's `submit` or a report's `file`) over a `BudgetCounter` seam, refused as a rate-limited `WriteRejected` (the wire's 429). |
 | `./comments` | The comments family: threaded comments on any node as versioned owned leaves (`defineComments`), behind the target's read gate and the moderation gate, with a configurable reply depth. |
 | `./reactions` | Reactions (`defineReactions` over a `ReactionStore` seam): one per account per node, a kind from the family's own vocabulary, behind the target's read gate, with a grouped tally for a page of nodes. |
+| `./translation` | Translation lineage and staleness on a localised leaf (`lineageOf`, `defineTranslation`'s `pending`), the `Translator` and `TranslationCandidates` seams, the sweep that lands machine translations directly or as proposals, and `humanLineageHook`. |
 | `./discovery` | Discovery (`defineDiscovery`): the keyset-paged feed and sitemap enumeration of a leaf's anonymously readable, publicly serveable, live, routable nodes, the per-family metadata projection, and the purge-hint after hook (`purgeHintHook`). |
 | `./social` | The social graph (`defineSocial` over a `SocialStore` seam): follow, mute and block between accounts, the follower seam filled from it (`socialFollowers`), and the opt-in read filter over the authors a viewer silenced. |
 | `./audience` | Audiences (`defineAudience` over a `MembershipStore` seam): named groups a row can be shared with (the `group` visibility), who manages and who may leave them, and the audience seam filled from them (`audienceSeam`). |
@@ -105,7 +107,6 @@ The flag vocabulary an application's resource registry is declared in, and the c
 
 ```ts
 import { Resource } from "@thomasfosterau/effect-jsonapi";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
   parent,
@@ -124,8 +125,8 @@ const REGISTRY = [
   {
     key: "posts",
     parent: parent("content"),
-    resource: Option.some(PostResource),
-    id: Option.some(PostResource.Id),
+    resource: PostResource,
+    id: PostResource.Id,
     owned: true,
     pageable: true,
   },
@@ -137,8 +138,8 @@ registryWireTypes(REGISTRY, ["content"]).owned; // ["posts"]
 
 | Export | What it is |
 | --- | --- |
-| `RegistryEntry`, `RESOURCE_FLAGS` | The entry shape and its flags: `pageable`, `agent`, `owned`, `referenceData`, `searchable`, `routable`, `localised` (a locale level in its chain; see [Localisation](#subtype)). `owned` and `referenceData` are mutually exclusive. A leaf's `resource` and `id` are `Option.some(…)`; a marker level omits them (or passes `Option.none()`). A flag is literal `true` or omitted. |
-| `resourceOf(entry)` | The entry's resource as an `Option`: `Option.none()` for a marker level, whether `resource` is omitted or `Option.none()`. |
+| `RegistryEntry`, `RESOURCE_FLAGS` | The entry shape and its flags: `pageable`, `agent`, `owned`, `referenceData`, `searchable`, `routable`, `localised` (a locale level in its chain; see [Localisation](#subtype)). `owned` and `referenceData` are mutually exclusive. A marker level omits `resource` and `id`; a flag is literal `true` or omitted (never `undefined`). |
+| `resourceOf(entry)` | The entry's resource as an `Option`: `Option.none()` for a marker level, which omits `resource`. |
 | `parent(key)`, `root` | Declare an entry's parent with its key literal preserved (`Option.some` widens it to `string`, which empties every typed derivation). |
 | `validateRegistry(entries, checks?)` | Unique keys, parents resolve, a flag implies a resource, the trust axis, id / wire-type lockstep; then the application's own `RegistryCheck`s. |
 | `branchOf(entry, byKey, roots)` | The branch root an entry sits under, walking marker levels. |
@@ -169,6 +170,8 @@ const program = <E, R>(port: VersionChain<E, R>) =>
 ```
 
 These are the port's invariants, which every implementation holds and `./testing`'s `versionChainConformance` checks. Every write lands at `N_max + 1`; nothing is rewritten. A plain `update` never resurrects a tombstone (`restore` and `restoreVersion` do). A create is never an upsert (`NodeAlreadyExists`). `restoreVersion` refuses a version that cannot be fully reconstructed before writing anything. `history` is bounded (`MAX_HISTORY_LIMIT`).
+
+**Optional members** (pulpit#238). The chain's optional input, snapshot and hook members (`expectedVersion`, `locales`, `beforeAppend`, `beforeAppendLocales`) are bare `?: T`: a caller that has no value omits the key, and an explicit `undefined` does not type-check under `exactOptionalPropertyTypes`. `proposedBy` is `?: Option.Option<string>`, since none is a value a caller passes on. The tri-state patches (`ChainPatch`, `LocalePatch`) are the exception, a wire contract: there an `undefined` key is the carry-forward, as a decoded update input says it.
 
 **Optimistic concurrency.** `update`, `restore`, `delete` and `restoreVersion` take an optional `expectedVersion` (a `Precondition`): the head version the caller last read. If the head has moved, the write fails `StaleVersion`, which carries the head it found (`current`), and nothing is written. Without one, a write extends whatever the head is, so a column that two patches both set is last-writer-wins. The check runs against the same head read the append extends, and the append lands at that head + 1. A writer that slips in between therefore takes the `(id, version)` key first, and the later append fails `VersionConflict`. The `(id, version)` key is what makes the check atomic. **With hooks** (`defineVersionChain(type, port, hooks)`, which `./subtype`'s lifecycle hooks use) the kernel reads the head and its state, runs the hooks, and appends their patch with `expectedVersion` pinned to that head (the caller's own, when given), so the hooks always see the head the append extends; a writer that lands in between makes the write `StaleVersion` (both it and `VersionConflict` are the wire's 409), where an unhooked write without a precondition would report `VersionConflict`. A delete over a tombstone stays idempotent whatever the precondition (the delete it asked for has happened). A missing node is still `NodeNotFound`, and a plain `update` over a tombstone is still `NodeNotFound`, whatever version it expects.
 
@@ -234,6 +237,8 @@ Some inputs are outside the contract: SQL and `evaluate` can't be made to agree 
 
 `defineSubtype` binds a leaf's CRUD, version history and list over its `VersionChain`, a current-version `LeafStore`, and the viewer seam (`viewer`, `AccessPolicy`, `FollowerSeam`), gated by `LeafAccess`:
 
+The optional members of the declarations, requests and seams here (`followersOfColumn`, `groupColumn`, the follower seam's `isMember` / `groups`, `SubtypeDefinition`'s `sortable`, `hooks`, `search`, `locales` and `publication`, `orderBy`, `among`, a before hook's `locales`, `afterFailure`, `ownedAccess`'s options and the rest) are bare `?: T` (pulpit#238): a caller that has no value omits the key rather than passing `undefined`. `UpdateRequest.proposedBy` is `?: Option.Option<string>`.
+
 - `reference` — writes at the corpus-write rung; when the view has a `visibility` column, reads only `public` rows below the view-private rung, apart from soft-delete. A leaf whose rows may be `followers`-visible declares the view column that plays the owner's part, `{ kind: "reference", followersOfColumn: "curatorId" }` (see [Seams](#the-viewer-the-role-axes-and-the-follower-seam)): a `followers` row is then also read by the account that column names and by its followers, and by nobody else below the view-private rung (that account's `private` rows stay the rung's alone). Without the declaration a `followers` row is the rung's alone. A write or history read to an existing row also needs the caller to be able to `get` it: a row `get` hides from them (or a missing one) fails `NodeNotFound` before the chain is reached, so only the view-deleted rung can `restore` a tombstone.
 - `owned` — creates at any account (stamping the owner); other writes at owner-or-moderator; reads through `canViewOwned` (four-state visibility plus `draft` and, on a moderated leaf, the moderation state), lists through `ownedListFilter`, the same facts as a `ListFilter`. A leaf declaring `moderationColumn` (`ownedAccess({ moderation: true })` names `moderationState`) shows a row whose state isn't exactly `approved` only to its owner and the view-private rung, as it does a draft (pulpit#154). A row whose owner column holds no string (a `NULL`) has no owner: no viewer owns it and the follower seam is never asked about it, so it reads only when `public` and not a draft, or at the view-private rung. A leaf declaring `groupColumn` (`ownedAccess({ group: true })` names `groupId`) opens a `group` row, when published, to the members of the group that column names, as the audience seam answers (pulpit#194); a value that isn't a string (a deleted group's cleared column) names no group, so the row reads as `private`.
 
@@ -279,7 +284,7 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
 - **Declaration.** `defineLocaleLevel` throws `SubtypeDeclarationError` at import for no column, a repeat, or a name the view keeps for itself (`id`, `version`, `action`, `locale`). `defineSubtype` throws when a translated column, or `locale`, is not a view column, and when a translated column is one the read gate reads (an owned leaf's owner, visibility, draft and moderation columns; a reference leaf's `visibility` and `followersOfColumn`; a publish-gated leaf's `draft` and `publishedAt`). Access is the node's, never a locale's.
 - **Writes.** `create` takes `locales`, the whole level at version 0; `update` and `restore` take `locales`, a `LocalePatch` (a patch updates that locale, `null` drops it, an absent key carries it forward). Every write appends one version of the whole node, however few locales it touches. `restoreVersion` restores every locale together with the shared columns, and a tombstone carries them forward. A write fails `WriteRejected`, after the gate and with nothing appended, when its shared patch names a translated column, a locale's patch names a shared column, a locale tag is empty, or the leaf has no locale level.
 - **Before hooks see every locale, and fail closed.** A `BeforeWriteHook` declares a `locales` pass beside `run`: it is shown the write's locale patch and returns the one the write applies, so a hook that validates or rewrites a column does so in every locale. A write that carries a locale change through a hook with no `locales` pass is refused with `WriteRejected`, so writing a column per locale never bypasses a hook. A hook with nothing to do per locale passes the patch through: `locales: (event) => Effect.succeed(event.locales ?? {})`.
-- **On the wire** (pulpit#184; owner decision there: the locale travels in `Accept-Language` / `Content-Language`, never a query parameter). Pass `subtypeResourceHandlers` a `LocaleWire` as its third argument: the leaf's `level`, its `defaultLocale`, the request's `acceptLanguage` and `contentLanguage` headers as effects, and `served(locale)`, called once a read has found its locale. `get` answers through `getLocalised` with the request's `Content-Language` first (a write's response answers in the locale it wrote), then `acceptLanguage(header)`'s tags by weight, each followed by its shorter prefixes, then the default (`localePreferences`), and a node in none of them is `NodeNotFound`. `create` and `update` split the payload: the level's translated columns land in the `Content-Language` locale (its first tag; the default without one), the rest stay shared, one version of the whole node. effect-jsonapi's handlers see only the decoded params, query and payload, so the application reads the headers from its request context and sets the response's own in `served`: `Content-Language: <locale>` and `Vary: Accept-Language`. Configure `subtypeHandlers` with `localised: true` too, so writes evict every locale's cache entry rather than writing the shared row through (see [Seams](#resourcecacheseam-and-the-serveable-hook-the-resource-cache)). `list` is unchanged (one row per `(id, locale)`; a per-node fallback list is pulpit#272).
+- **On the wire** (pulpit#184; owner decision there: the locale travels in `Accept-Language` / `Content-Language`, never a query parameter). Pass `subtypeResourceHandlers` a `LocaleWire` as its third argument: the leaf's `level`, its `defaultLocale`, the request's `acceptLanguage` and `contentLanguage` headers as effects, `served(locale)`, called once a read has found its locale, and `varied`, called instead for a response carrying no single locale (a list whose items fell back to different locales, or an empty one). `get` answers through `getLocalised` with the request's `Content-Language` first (a write's response answers in the locale it wrote), then `acceptLanguage(header)`'s tags by weight, each followed by its shorter prefixes, then the default (`localePreferences`), and a node in none of them is `NodeNotFound`. `create` and `update` split the payload: the level's translated columns land in the `Content-Language` locale (its first tag; the default without one), the rest stay shared, one version of the whole node. effect-jsonapi's handlers see only the decoded params, query and payload, so the application reads the headers from its request context and sets the response's own in `served` (`Content-Language: <locale>` and `Vary: Accept-Language`) and `varied` (`Vary: Accept-Language` alone). Configure `subtypeHandlers` with `localised: true` too, so writes evict every locale's cache entry rather than writing the shared row through (see [Seams](#resourcecacheseam-and-the-serveable-hook-the-resource-cache)). `list` answers through `listLocalised` with the request's `Accept-Language` preferences, then the default: one item per node, in the first of them it carries (pulpit#272). A page whose items share one locale reports it through `served`; any other through `varied`.
 
   ```ts
   import * as HttpEffect from "effect/http/HttpEffect";
@@ -304,6 +309,9 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
           }),
         ),
       ),
+    varied: HttpEffect.appendPreResponseHandler((_, response) =>
+      Effect.succeed(HttpServerResponse.setHeader(response, "vary", "Accept-Language")),
+    ),
   };
   const handlers = subtypeResourceHandlers(
     subtypeHandlers(ops, { ...config, localised: true }),
@@ -312,7 +320,7 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
   );
   ```
 
-- **Reads.** The leaf's view has one row per `(id, locale)` the version carries, with the shared columns joined in and the tag in `locale` (a node carrying no locale is one row with a `NULL` locale). `list` reads those rows, so narrow it with the `locale([...])` filter arm. `get` / `getMany` read the node's shared row. `getLocalised(id, locales)` is the fallback read: after the node's own read gate, exactly as `get` runs it, one read of the requested locales' rows from the version the viewer reads (the head, or the live version on a publish-gated leaf), and the first locale in the caller's order the node carries, as `{ locale, resource }`. Each locale row passes the read gate again, so a store that joined one onto other access facts serves none. A node that is missing, hidden or carries none of the locales fails `NodeNotFound` (`SEC-AUTH-ENUM-001`).
+- **Reads.** The leaf's view has one row per `(id, locale)` the version carries, with the shared columns joined in and the tag in `locale` (a node carrying no locale is one row with a `NULL` locale). `list` reads those rows, so narrow it with the `locale([...])` filter arm. `get` / `getMany` read the node's shared row. `getLocalised(id, locales)` is the fallback read: after the node's own read gate, exactly as `get` runs it, one read of the requested locales' rows from the version the viewer reads (the head, or the live version on a publish-gated leaf), and the first locale in the caller's order the node carries, as `{ locale, resource }`. Each locale row passes the read gate again, so a store that joined one onto other access facts serves none. A node that is missing, hidden or carries none of the locales fails `NodeNotFound` (`SEC-AUTH-ENUM-001`). `listLocalised({ …listRequest, locales })` is the list's fallback (pulpit#272): under exactly `list`'s scope, `includeDeleted` rung and head-or-live choice, one item per node in the first of `locales` it carries, as `{ locale, resource }`; a node in none of them is omitted, and `total` counts nodes. A leaf without a locale level lists nothing.
 - **History.** `compare` reports the shared columns' `changes` and the per-locale `locales` (`diffLocales`).
 
 **Lifecycle hooks** (pulpit#45). A leaf's write side effects compose as `LifecycleHooks` on its definition, `hooks: Effect<LifecycleHooks<Resource, E, R>, never, R>`: an Effect, so the application holds them in a `Context` service, composes them per leaf type and provides them with a `Layer`. Omitted, a leaf has none, and a write reads nothing extra. Hooks run in array order (`composeHooks` concatenates sets), so the order is deterministic and the application's.
@@ -340,6 +348,7 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
 | `Unauthorized`, `Forbidden`, `InvalidListOrder` | The gates' failures: no signed-in viewer (401); a viewer below the rung (403, never used to hide a row). The first two are effect-auth's `Guard` errors, re-exported (pulpit#5), so they carry a `message` and an optional `code`. And `list`'s: an order key on a column that isn't sortable, or not shaped as an order (400; `column: ""` when the failing key has no string column). |
 | `SubtypeDeclarationError` | Thrown by `defineSubtype` when the leaf is declared: a `sortable`, `search` or `locales` entry that isn't a column of the view, or a translated column the read gate reads; and by `defineSearchProjection` and `defineLocaleLevel`, for a malformed declaration. |
 | `defineLocaleLevel(declaration)`, `LocaleLevel`, `LocalisedResource`, `SubtypeOps.getLocalised`, `CreateRequest`, `RestoreRequest` | A localised leaf's translated columns, the fallback read's `{ locale, resource }`, the read itself, and the write inputs that carry a locale level (see Localisation, above). |
+| `SubtypeOps.listLocalised`, `LocalisedListQuery` | The per-node fallback list (pulpit#272) and the store query it reads (`LeafStore` / `LiveView.listLocalised`; see Seams). |
 | `defineSearchProjection(declaration)`, `SearchProjection`, `SearchField`, `SearchWeight` | A leaf's searchable projection: its indexed view columns, their weights (`A`–`D`) and its language column. |
 | `searchScopeFilter(leaf, viewer, request)`, `hydrateSearchHits(ops, hits)` | The read scope a search applies to its hits, the same filter `list` reads under; and the hits' gated re-read, in rank order. |
 | `LeafStore`, `LeafRow`, `Page`, `ListRequest`, `ListOrder`, `MAX_PAGE_LIMIT` | The current-version view seam, its row (with the head `version`) and page shapes, the list request and one key of its order, and the page cap (1000). |
@@ -722,7 +731,7 @@ resolve("about", "pt-BR");
 - **An alias redirects without reading a locale.** The canonical path is the node's and is shared by every locale.
 - **Tags are compared exactly.** BCP 47 is case-insensitive, but the locale rows are not, so normalise a tag's case before it reaches the read.
 
-Navigation menus come later, as an ordered collection over `./collections` (pulpit#266), and there is no page builder.
+Navigation menus are an [ordered link list](#links) over `./collections` (pulpit#266), and there is no page builder.
 
 | Export | What it is |
 | --- | --- |
@@ -766,6 +775,43 @@ items.list(listId, { limit: 50, offset: 0 }); // { rows: [{ memberId, index, res
 | `hideRecordedOrder(column, toResource)` | A parent leaf's `toResource` without a versioned family's order column (`EDGE-001`). |
 | `CollectionStore`, `CollectionEntry`, `MAX_COLLECTION_SIZE` | The membership table seam (see [Seams](#seams)), one member's place and the size bound. |
 | `AlreadyMember`, `NotMember`, `CollectionFull` | The failures: 409, 404, 409. |
+
+## `./links`
+
+Ordered link lists (pulpit#266): a flat, ordered, localised list of links under a parent node, read for one viewer. A navigation menu is the usual example; the kernel names no menu type (a `menu` is a leaf the application binds, like a `page`), so the module is the generic shape and this section shows a menu. Nesting is a later, additive slice (pulpit#313): a sub-menu will be an entry whose target is another list.
+
+- **The list** is a `./collections` collection of entry nodes under the parent (the menu), in either order model.
+- **The entry leaf** is a `defineSubtype` leaf with a locale level. Its columns hold the target (a path, or a node id) and, translated, the label.
+- **The target** is a path, resolved through `./pages`' `resolveLocalised`, or a node, read through its leaf's gated `getMany`.
+
+```ts
+import { defineLinkList } from "@thomasfosterau/pulpit/links";
+import { resolveLocalised } from "@thomasfosterau/pulpit/pages";
+
+const nav = defineLinkList({
+  type: "menu-links",
+  defaultLocale: "en",
+  entries: menuItems, // defineCollection({ parent: menuOps, members: itemOps, store })
+  entryLeaf: itemOps, // a localised leaf: `label` is translated
+  target: (item) =>
+    typeof item.path === "string" ? Option.some({ kind: "path", path: item.path }) : Option.none(),
+  resolve: resolveLocalised(pages, { defaultLocale: "en" }),
+  nodes: pages, // for entries that name a node: `{ kind: "node", id }`
+});
+
+nav.list(menuId, "pt-BR");
+// [{ entryId, index, locale: "pt", entry, target: { kind: "path", id, path } }, …]
+```
+
+- **One gated read**, `list(parentId, locale)`: the links the viewer may follow, in the collection's order, with each entry read in the first of `localeFallbacks(locale, defaultLocale)` it carries. A path target that goes through an alias is returned as the node's canonical path.
+- **Omitted, never forbidden** (`SEC-AUTH-ENUM-001`). An entry is dropped when the viewer can't read the entry, when it carries none of the fallback locales, when `target` returns none, and when its target isn't followable: a hidden, unpublished, scheduled or tombstoned page, an unclaimed path, an alias to a hidden node, or a node `getMany` omits. The rest are renumbered from 0, so the result leaves no gap and carries neither an omitted entry's id nor its target. A parent the viewer can't read is `NodeNotFound`.
+- **Every rule is the leaves'.** The owner and the view-private rung read the head, so they see the entries others can't.
+- **Bounded** (`SEC-INPUT-003`): at most `MAX_COLLECTION_SIZE` entries, each read through its own gate.
+
+| Export | What it is |
+| --- | --- |
+| `defineLinkList(definition)`, `LinkListDefinition`, `LinkListOps` | The factory, its declaration and its one read, `list`. |
+| `Link`, `LinkTarget`, `FollowedTarget` | A returned link, what an entry points at, and what that resolved to. |
 
 ## `./moderation`
 
@@ -945,6 +991,7 @@ const erasure = defineAccountErasure({
   social,
   workingCopies,
   memberships, // `./audience`
+  groups: groupOwnerStore, // `./audience`: the groups the account owns go to the tombstone account
   relations: [{ name: "notifications", erase: eraseNotifications }], // the application's own
 });
 // erasure.erase(accountId, { maxBatches }) → { complete, batches, changed, purged }
@@ -960,6 +1007,7 @@ const erasure = defineAccountErasure({
   - **The marker** that keeps it to one: a node needs a redacting version when a version names the account (actor or `proposedBy`) and no later version is attributed the way the redacting one would be (the disposition's actor, no `proposedBy`); `AccountErasureStore.unredactedNodes` reads that off the version rows. A later write by another account keeps the node redacted; only a later version by the account itself makes it match again.
   - The node is evicted from its family's `cache` at the redacting version (`CACHE-AUTH-005`), and a node whose owner record changes, past its head. A redacting append that loses a race fails `StaleVersion` or `VersionConflict`; its batch rolls back and a re-run resumes.
 - **The kernel's stores:** pending, rejected and withdrawn proposals are deleted, and accepted ones keep their row under the tombstone account; reports filed are deleted, and a resolution names the tombstone; reactions, follows, mutes, blocks, group memberships (`./audience`) and working copies are deleted. Add the application's own (memberships, notifications, …) as `relations`.
+- **Groups the account owns** (owner decision on pulpit#274, 2026-11-12): every one is reassigned to the tombstone account through `groups` (a `GroupOwnerStore`, see [Seams](#seams)), so its members keep their access: their membership rows stay, and `isMember` still answers them. The step runs just before the memberships step, so the account owns none of the groups whose membership rows then go; those rows are deleted through the store, so `GroupOwnerMembership` (an operation's refusal, not the store's) never blocks erasure. The tombstone account owns the group with no membership row, so it reads none of its rows. **The override** is `disposeGroups: erase`, a bounded erase shaped like a relation's (`{ accountId, replacement, limit } → Effect<number>`) that runs in the reassignment's place: delete the groups (each with `MembershipStore.removeGroup`, so their `group` rows read as `private`), or hand them to an admin. Like every step it changes at most `limit` groups per call, each of which then no longer names the account as its owner. Without `groups` or `disposeGroups`, erasure touches no group. If a group is a node of an erasure family, its owner record is handled there instead.
 - **Bounded, resumable, idempotent.** Each step reads or writes at most `batchSize` rows or nodes (default 100, capped at `MAX_PAGE_LIMIT`, `PERF-DB-001`) in its own `transact`, and repeats until a batch changes fewer. Written rows stop matching, so a run cut short by `maxBatches` (it counts the batches that change rows) or a crash resumes on the next run, and a run over an erased account changes nothing and appends no version (`changed: {}`).
 - **The gate:** `canErase(actor, accountId)` is checked before anything is read (`Unauthorized` / `Forbidden`), and erasing the tombstone account itself fails `TombstoneErasure`.
 - **The application deletes the account row itself** once a run answers `complete: true`; nothing the kernel stores names it then, save the earlier versions' attribution, kept by design (so a version table's actor column must not hold a foreign key that blocks the delete, or must point at an account row kept for it).
@@ -1134,13 +1182,13 @@ audience.accept(groupId); // the invitee: the pending invitation becomes a membe
 - **The audience is the membership rows.** `audienceSeam(store)` is the `isMember` / `groups` pair of `./subtype`'s `FollowerSeam`; spread it into the seam a leaf or an edge family takes. The owner reads their own rows anyway; to read rows others share with the group, they need a membership too, so record one when the group is created.
 - **Deleting a group** (owner decision on pulpit#194): `removeGroup` (the owner only) deletes every membership, so its `group` rows open to nobody but their owners and the view-private rung, and read as `private`. Clear the rows' group column in the same transaction (in-the-dark's `ON DELETE SET NULL`); a column naming no group reads the same.
 - **Never cache-serveable.** A `group` row isn't `public`, so `isPubliclyServeable` refuses it (`CACHE-AUTH-005`).
-- **Account erasure** (pulpit#207) deletes an account's memberships through the store's `eraseAccount`, with its pending invitations and the pending invitations it sent, in bounded batches (pulpit#274).
+- **Account erasure** (pulpit#207) deletes an account's memberships through the store's `eraseAccount`, with its pending invitations and the pending invitations it sent, in bounded batches (pulpit#274). **A group the erased account owns is reassigned to the tombstone account first** (owner decision on pulpit#274, 2026-11-12), through the application's `GroupOwnerStore`, so its members keep reading its `group` rows; `GroupOwnership.ownerOf` then answers the tombstone account, which holds no membership. The erasure definition's `disposeGroups` overrides that (see [`./erasure`](#erasure)).
 
 | Export | What it is |
 | --- | --- |
 | `defineAudience(definition)`, `AudienceDefinition`, `AudienceOps`, `MembersPageRequest` | The factory, its declaration, the operations and a page request. |
 | `audienceSeam(store)`, `AudienceSeam` | The audience half of the follower seam, over the membership store. |
-| `MembershipStore`, `GroupOwnership`, `Membership`, `MembershipRole`, `Invitation` | The membership table seam (see [Seams](#seams)), the application's group owners, one membership, its roles, and one pending invitation. |
+| `MembershipStore`, `GroupOwnership`, `GroupOwnerStore`, `Membership`, `MembershipRole`, `Invitation` | The membership table seam (see [Seams](#seams)), the application's group owners, their bounded reassignment for account erasure (see [Seams](#seams)), one membership, its roles, and one pending invitation. |
 | `GroupNotFound`, `MemberNotFound`, `GroupOwnerMembership`, `InvitationNotFound`, `AlreadyMember`, `SelfInvitation` | The failures: 404, 404, 409, 404, 409 and 422. |
 
 ## `./discovery`
@@ -1261,6 +1309,52 @@ const byline = defineCollection({ type: "post-authors", parent: posts, members: 
 | `nodeWriteGate(column, type, leaf)` | An edge write gate admitting whoever may write the node at one end. |
 | `acceptedAnswerGate(declaration)`, `AcceptedAnswerDeclaration`, `AnswerNotOfQuestion` | The accepted-answer write gate and its 422. |
 
+## `./translation`
+
+Translation lineage and staleness (pulpit#208), after website's machine translation (`packages/jobs/src/translation/`, the `derivedFromId` lineage and the daily sweep). For a localised leaf (see [Localisation](#subtype)).
+
+```ts
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import { defineTranslation, humanLineageHook } from "@thomasfosterau/pulpit/translation";
+
+const declaration = {
+  type: "pages",
+  columns: ["title", "body"],
+  sourceLocale: "en",
+  targets: ["fr", "de"],
+};
+const translation = defineTranslation({
+  ...declaration,
+  chain: pagesChain, // the leaf's VersionChain port: the sweep reads `head` / `getVersion`
+  candidates, // the nodes the sweep may send to the model, by id
+  translator, // the application's model
+  landing: { kind: "direct", update: pagesOps.update, actorId: Option.some(botId) },
+  // or: { kind: "proposal", submit: botProposals.submit, hasPending: Option.some(hasPending) }
+});
+const hooks = { before: [humanLineageHook(declaration)], after: [] }; // the leaf's LifecycleHooks
+
+const nightly = Effect.gen(function* () {
+  const page = yield* translation.sweep({ after: Option.none(), limit: 100 }); // { landed, skipped, conflicts, next }
+  return page.next; // the cursor for the next page
+});
+```
+
+- **Lineage is three locale columns.** Each locale records the locale it was derived from, the node version whose source text it translates (a decimal string, so it stays JSON inside a proposal's locale patch), and the method, `human` or `machine` (`LineageColumns`, default `derivedFrom` / `derivedFromVersion` / `derivation`). Declare them in the leaf's `LocaleLevel` beside the translated columns, and list only the translatable ones in the declaration's `columns`. As ordinary locale columns they travel through every write path (the `VersionChain` port's `locales`, `SubtypeOps.update`, a proposal, `restoreVersion`), and new lineage is always a new version (`VERSION-CHAIN-001/002`). `lineageOf` reads them and fails closed: a missing or malformed column reads as an **original** locale, never stale.
+- **Stale and missing.** A derived locale is `stale` when its source's translatable columns at the head differ from those at the version it records, or that version can't be read. A target the node lacks, while the source locale is present, is `missing`. `pending` lists both for one keyset page of candidate nodes (`limit` clamped to `[1, MAX_PAGE_LIMIT]`): a chain read for the head, one for its snapshot, and one per distinct source version. A tombstoned node, a source the node dropped and a shared-column edit list nothing.
+- **A privileged sweep read.** The sweep reads the chain directly, without a read gate: it is a server job that never serves what it reads. **Which nodes may reach a model is the application's**: `TranslationCandidates.nodes` is where it leaves out owned or private content it must not send to a third party.
+- **Landing (owner decision on pulpit#208): per family.** `direct` writes one version per node through the leaf's hooked `update`, attributed to the bot, marked `machine`, and pinned to the head the sweep read (`expectedVersion`), so a concurrent edit is a `CONFLICT` entry, never overwritten. `proposal` submits one proposal per node through a `./proposals` instance whose viewer is the bot, so a person reviews it. `hasPending`, when given, skips a locale whose bot proposal is still pending, so a re-run doesn't propose it twice. A refused landing is a conflict entry named by its error's tag; a translator returning a column outside the family's is `TRANSLATOR_COLUMNS`. The translator's own failure stops the page, and a re-run from the same cursor resumes.
+- **Human edits.** `humanLineageHook(declaration)` is a before hook: a write that sets a derived locale's translatable column, but no lineage column, is stamped `human`, keeping its source and source version, so a person's revision still goes stale when the source moves on. `stampHumanLineage` is the same transform for a chain-level `ChainHooks.beforeAppendLocales`.
+- **Documents.** The `Translator` seam takes the source locale's translatable column values as they are. A ProseKit document column is the application's to translate segment by segment, without the model ever seeing its structure (prosekit-utilities; owner decision on pulpit#202).
+
+| Export | What it is |
+| --- | --- |
+| `defineTranslation(definition)`, `TranslationDeclaration`, `TranslationOps` | The factory, its declaration and the two operations (`pending`, `sweep`). |
+| `TranslationPair`, `TranslationPageRequest`, `PendingPage`, `SweepSummary`, `SweepConflict` | One pending locale, a page request, a page of pairs, a sweep page's summary and its conflict entries. |
+| `Translator`, `TranslationCandidates`, `TranslationLanding` | The model seam, the candidate-node seam and the landing mode. |
+| `LineageColumns`, `defaultLineageColumns`, `LocaleLineage`, `TranslationMethod`, `lineageOf`, `lineagePatch` | The lineage columns, their default names, a read lineage, its method, and its read and write. |
+| `humanLineageHook(declaration)`, `stampHumanLineage` | The before hook that marks a person's edit, and its pure transform. |
+
 ## `./testing`
 
 In-memory fakes of the kernel's seams, for tests: an adapter's or an application's suite can run the real operations (`defineVersionChain`, `defineSubtype`, `defineEdgeOps`, …) over them without a database. Each fake implements its seam's contract as stated under [Seams](#seams), in memory and with no SQL, and enforces what the real table's schema enforces (a primary or unique key) and nothing the operations are responsible for. They are the fakes the kernel's own suites run against, so they are its reference semantics for each seam.
@@ -1329,6 +1423,7 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | `makeInMemoryCollectionStore()`, `InMemoryCollectionStore` | [`CollectionStore`](#collectionstoree-r-the-membership-table), each parent's entries replaced whole and read back by position, then member id. | `rows()`. |
 | `makeInMemorySocialStore()`, `InMemorySocialStore` | [`SocialStore`](#socialstorefollowing-e-r-the-relationship-table), keyed `(kind, from, to)`; `followingOf` and `silencedBy` are `HashSet`s. | `rows()`. |
 | `makeInMemoryMembershipStore()`, `InMemoryMembershipStore` | [`MembershipStore`](#membershipstorefollowing-e-r-the-membership-table), keyed `(groupId, accountId)` across active rows and pending invitations; `groupsOf` is a `HashSet`. | `rows()` (active), `pending()`. |
+| `makeInMemoryGroupOwners(owners)`, `InMemoryGroupOwners` | [`GroupOwnership`](#audience) and [`GroupOwnerStore`](#groupownerstoree-r-the-groups-owners) over one map of group id to owner, seeded with `[groupId, ownerId]` pairs; `reassignOwner` takes the account's groups in group-id order. | `owners()`, `put(groupId, ownerId)`, `remove(groupId)`. |
 | `makeInMemoryFollowers(table)`, `InMemoryFollowing` | [`FollowerSeam`](#the-viewer-the-role-axes-and-the-follower-seam) over an explicit table of who follows whom; the `in` set is a `HashSet` of account ids, where SQL's is a subquery. |  |
 
 `now` is the instant the list filter's `published` / `notPublished` compare against (and, for the edge store, the base of the minted `createdAt`s). Pass a fixed `Date` for a deterministic suite; left out, each call reads the Effect `Clock`, so `TestClock` steers it. The role ladder and the `AccessPolicy` are the application's, so `./testing` ships none.
@@ -1343,7 +1438,7 @@ One leaf's chain, at the level of its operations (pulpit#246): `create`, `update
 
 Expected to be `@thomasfosterau/pulpit-drizzle-pg` (pulpit#247), delegating to `-pg/chain` over the tables effect-drizzle-ext derives from the application's tree:
 
-- `create` / `update` / `restore` / `delete` / `restoreVersion` / `getVersion` / `history` / `head` are `-pg/chain`'s own, with the kernel's errors one to one (`NodeAlreadyExists`, `NodeNotFound`, `VersionNotFound`, `StaleVersion`, `VersionConflict`; `BrokenChain` a defect). `actorId` maps to the root version row's actor; `proposedBy` (the contributor whose accepted proposal a version applies, pulpit#49) to a root version extra (`versionColumns: { proposedBy }`, passed per write as `root`); `locales` to the chain's keyed level (`keyed`), keyed by tag, which `getVersion` returns as `locales`, omitting the key for a version that carries none.
+- `create` / `update` / `restore` / `delete` / `restoreVersion` / `getVersion` / `history` / `head` are `-pg/chain`'s own, with the kernel's errors one to one (`NodeAlreadyExists`, `NodeNotFound`, `VersionNotFound`, `StaleVersion`, `VersionConflict`; `BrokenChain` a defect). `actorId` maps to the root version row's actor; `proposedBy` (the contributor whose accepted proposal a version applies, pulpit#49) to a root version extra (`versionColumns: { proposedBy }`, passed per write as `root`); `locales` to the chain's keyed level (`keyed`), keyed by tag, which `getVersion` returns as `locales`, omitting the key for a version that carries none. A family's translation lineage (pulpit#208, [`./translation`](#translation)) is three ordinary columns of that keyed level (`derivedFrom`, `derivedFromVersion` as text, `derivation`), so it needs nothing of the port beyond the locale level round-tripping every column it is given.
 - `purge(id)` deletes the node's identity row, which cascades through every level of its chain (effect-drizzle-ext#145), as [`./purge`](#purge)'s erasure, the documented exception to `VERSION-CHAIN-001/002`. It is a no-op for an unknown id.
 
 The kernel keeps what is not storage: `defineVersionChain` runs a leaf's before-append hooks over the port (reading `head` and `getVersion`, then appending with `expectedVersion` pinned to that head), and `compare` is two `getVersion` reads and `diffStates`.
@@ -1353,6 +1448,19 @@ The kernel keeps what is not storage: `defineVersionChain` runs a leaf's before-
 Expected to be a Drizzle store over the leaf's current-version view (pulpit#5). Each row is a `LeafRow`: the node's `id`, the head row's `version` (a `bigint`, pulpit#65) and `action`, and the leaf's columns. The view projects `version` itself, from the same head row it reads `action` from, so a read costs no second query against the chain. `id`, `version` and `action` are the view's own names: no leaf column may take one. `columns` is the view's column names as an Effect `HashSet` (`HashSet.fromIterable(Object.keys(getColumns(view)))`, which includes `version`); `get` / `getMany` are `id = $id` / `id = ANY($ids)` reads with `LIMIT`; `list` renders its `ListFilter` (below), orders totally by its `orderBy` (below), and returns the page plus the unpaged total as a window column; `distinct({ column, where, limit, offset })` (pulpit#186) is `SELECT DISTINCT <column> … WHERE <where> AND <column> IS NOT NULL ORDER BY <column> COLLATE "C" LIMIT … OFFSET …` with the distinct count as `total` (a `NULL` or non-string value is no value), over the same rows `list` reads; `ownerOf` / `stampOwner` read and insert the node's owner row (`core.node_owner`).
 
 **A localised leaf's view** (pulpit#56) is one row per `(id, locale)` the head carries: the locale level's row for that version, left-joined to the shared view, with the tag in a `locale` column (`LOCALE_COLUMN`). A node whose head carries no locale is one row with a `NULL` locale. `columns` includes `locale`; `list` reads these rows, and renders the `locale` filter arm over that column. `get` / `getMany` read the shared row, one per node, without the locale level. A publish-gated localised leaf's `LiveView.list` reads the same shape at the live version.
+
+**The localised list read** (pulpit#272), `listLocalised({ where, orderBy, limit, offset, locales })`, serves one of those rows per node: of a node's rows matching `where` whose locale is in `locales`, the one whose locale comes first there. A node carrying none is absent. The chosen rows are then ordered and paged as `list` orders them, and `total` counts nodes:
+
+```sql
+SELECT *, count(*) OVER () AS total FROM (
+  SELECT DISTINCT ON (id) * FROM view
+  WHERE <where> AND locale = ANY($locales)
+  ORDER BY id, array_position($locales, locale)
+) chosen
+ORDER BY <orderBy>, id LIMIT $limit OFFSET $offset
+```
+
+`LiveView.listLocalised` is the same over the rows `LiveView.list` chooses for its `headFor` (the head for the viewer's own rows, else the live version). A view without a locale level has no locale rows, so it reads none.
 
 The list order contract (pulpit#112). `orderBy` arrives checked: every column is sortable (in the leaf's `sortable` list or, without one, in `columns`), every direction is `asc` or `desc`, and no column appears twice. Empty means `id` ascending alone. The store renders it as
 
@@ -1539,7 +1647,7 @@ The live view is a view over the leaf's version tables. For each node it gives t
 
 A node whose effective fact is an unpublish, or that has none, has no live row.
 
-`get` / `getMany` read it by id. `list` is `UNION ALL` of the current-version view's rows matching `headFor` (the viewer's own rows; `never` for the anonymous) and the live rows of every other node, then `where`, the order and the page, as `LeafStore.list` renders them.
+`get` / `getMany` read it by id. `listLocalised` (pulpit#272) is `LeafStore.listLocalised` over the same chosen rows. `list` is `UNION ALL` of the current-version view's rows matching `headFor` (the viewer's own rows; `never` for the anonymous) and the live rows of every other node, then `where`, the order and the page, as `LeafStore.list` renders them.
 
 `distinct` (pulpit#186) reads the distinct values of one column over that same `UNION ALL` of chosen rows, as `LeafStore.distinct` reads the current-version view, so a reader counts a node through the row they would list.
 
@@ -1622,6 +1730,10 @@ Filled by the application over its own relationship table (gardeneria's `social.
 ### `MembershipStore<Following, E, R>`: the membership table
 
 Filled by the application over its own membership table (in-the-dark's `group_members`, gardeneria's `social.group_memberships`): `group_id` (a foreign key to the app's group table, `ON DELETE CASCADE`), `account_id` (`ON DELETE CASCADE`), `role` (`member | admin`), `status` (`active | pending`, pulpit#227), `invited_by` (the inviting account, `NULL` on an active row; `ON DELETE CASCADE`), `at` (`timestamptz NOT NULL DEFAULT now()`), primary key `(group_id, account_id)`, with an index on `(account_id)`. **Every membership read (`roleOf`, `list`, `isMember`, `groupsOf`) and `remove` and `setRole` take `status = 'active'` rows alone**; a pending row is an invitation, read and written only by the invitation methods. `add` is `INSERT … ON CONFLICT (group_id, account_id) DO UPDATE SET status = 'active', role = EXCLUDED.role, at = EXCLUDED.at WHERE memberships.status = 'pending' RETURNING` (a direct add activates a pending invitation; an active row is untouched); `setRole` is `UPDATE … SET role = $role WHERE … AND role <> $role RETURNING`; `remove` is `DELETE … RETURNING`; `roleOf` reads one row's role; `list` is one page `ORDER BY at, account_id` with the window total; `removeGroup` is `DELETE … WHERE group_id = $id`; `isMember` is the audience seam's `EXISTS` (a failure reads as `false`, failing closed); `groupsOf(account)` is the subquery `SELECT group_id … WHERE account_id = $account`, never materialised; `eraseAccount(accountId, limit)` deletes at most `limit` rows, of the account's rows of both statuses and the pending rows it invited, counted together (`DELETE … WHERE (group_id, account_id) IN (SELECT … WHERE account_id = $1 OR (status = 'pending' AND invited_by = $1) LIMIT $limit)`), and returns how many (pulpit#274); `removeGroup` deletes both statuses. The invitation methods: `invite` is `INSERT … status = 'pending' … ON CONFLICT DO NOTHING RETURNING`; `invitationOf` reads the pending row; `accept` is `UPDATE … SET status = 'active', at = $at, invited_by = NULL WHERE … AND status = 'pending' RETURNING`; `removeInvitation` is `DELETE … WHERE … AND status = 'pending' RETURNING`; `invitations` is one page of pending rows by group or by account, `ORDER BY at` then the other key, with the window total. It applies no policy and never opens a transaction.
+
+### `GroupOwnerStore<E, R>`: the groups' owners
+
+Filled by the application over its own group table (in-the-dark's `groups.owner_id`), the same records `GroupOwnership.ownerOf` reads, for account erasure (pulpit#274). `reassignOwner(accountId, to, limit)` makes `to` the owner of at most `limit` of the groups `accountId` owns and returns how many changed (`UPDATE groups SET owner_id = $to WHERE id IN (SELECT id … WHERE owner_id = $accountId ORDER BY id LIMIT $limit)`, `PERF-DB-001`). A reassigned group no longer names the account, so a repeated call moves on and answers `0` once none is left. It leaves the group's memberships and invitations alone, applies no policy and never opens a transaction.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 

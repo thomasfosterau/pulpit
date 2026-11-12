@@ -80,11 +80,6 @@ export default defineConfig({
       // signature, never a class instance) in the WordPress body builders as
       // a class spread: a false positive with no code-level fix.
       "typescript/no-misused-spread": "off",
-      // `return yield* new SomeError(…)` is Effect's early-failure idiom in an
-      // `Effect.fn` generator; the rule reads its `never` as a returned value
-      // and then demands one on the success path too, where the operation's
-      // published success type is `void`.
-      "typescript/consistent-return": "off",
       // Its "explicit `undefined` is unnecessary on an optional parameter"
       // check contradicts the workspace convention (AGENTS.md → Conventions):
       // an optional parameter is spelled `x?: T | undefined`, like an
@@ -94,10 +89,6 @@ export default defineConfig({
       // invariant, which `effect/require-safety-comment-for-type-assertion`
       // enforces; this rule would report each audited one again.
       "typescript/no-unsafe-type-assertion": "off",
-      // Reports the exact-type-identity idiom (`<X>() => X extends A ? 1 : 2`)
-      // the type-level tests and the dist-consumer check are built on, and
-      // `asMemberTuple`'s deliberate generic return target in registry.ts.
-      "typescript/no-unnecessary-type-parameters": "off",
       // The suites assert through helpers named `expect…` (`expectAgreement`
       // in tests/subtype.test.ts) as well as `expect` itself.
       "vitest/expect-expect": ["error", { assertFunctionNames: ["expect", "expect*"] }],

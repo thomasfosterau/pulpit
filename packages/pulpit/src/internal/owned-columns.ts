@@ -25,8 +25,7 @@ interface OwnedColumns {
   readonly draftColumn: Option.Option<string>;
   readonly moderationColumn: Option.Option<string>;
   /** The group column a `group` row's audience is read from (pulpit#194); absent, no `group` row opens beyond the owner and the rung. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- mirrors `./subtype`'s owned `LeafAccess`, whose optional field is `?: T | undefined` (AGENTS.md → Conventions)
-  readonly groupColumn?: string | undefined;
+  readonly groupColumn?: string;
 }
 
 /**
@@ -65,11 +64,7 @@ export interface PrivateRung<A> {
 /** @internal */
 export interface IsFollower<R> {
   readonly isFollower: (followerId: string, ownerId: string) => Effect.Effect<boolean, never, R>;
-  /* oxlint-disable effect/prefer-option-over-null -- mirrors `./subtype`'s `FollowerSeam`, whose optional member is `?: T | undefined` (AGENTS.md → Conventions) */
-  readonly isMember?:
-    | ((accountId: string, groupId: string) => Effect.Effect<boolean, never, R>)
-    | undefined;
-  /* oxlint-enable effect/prefer-option-over-null */
+  readonly isMember?: (accountId: string, groupId: string) => Effect.Effect<boolean, never, R>;
 }
 
 /**

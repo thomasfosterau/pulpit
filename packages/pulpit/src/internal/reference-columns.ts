@@ -34,10 +34,8 @@ import {
 
 /** The reference access declaration, structurally (`./subtype`'s reference `LeafAccess` fits). */
 interface ReferenceColumns {
-  // oxlint-disable-next-line effect/prefer-option-over-null -- mirrors `./subtype`'s reference `LeafAccess`, whose optional field is `?: T | undefined` (AGENTS.md → Conventions)
-  readonly followersOfColumn?: string | undefined;
-  // oxlint-disable-next-line effect/prefer-option-over-null -- as `followersOfColumn`
-  readonly groupColumn?: string | undefined;
+  readonly followersOfColumn?: string;
+  readonly groupColumn?: string;
 }
 
 /** The read scope the arm reads, structurally (`./subtype`'s `ReadScope` fits). */
@@ -48,8 +46,7 @@ type Scope<Following> =
       readonly kind: "member";
       readonly userId: string;
       readonly following: Following;
-      // oxlint-disable-next-line effect/prefer-option-over-null -- mirrors `./subtype`'s `ReadScope`, whose optional field is `?: T | undefined` (AGENTS.md → Conventions)
-      readonly groups?: Following | undefined;
+      readonly groups?: Following;
     };
 
 /** The reference axis's one column; a view without it rides no privacy axis. */

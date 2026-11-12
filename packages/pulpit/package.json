@@ -49,6 +49,7 @@
     "./paths": "./src/paths.ts",
     "./pages": "./src/pages.ts",
     "./collections": "./src/collections.ts",
+    "./links": "./src/links.ts",
     "./moderation": "./src/moderation.ts",
     "./working-copy": "./src/working-copy.ts",
     "./comments": "./src/comments.ts",
@@ -61,6 +62,7 @@
     "./audience": "./src/audience.ts",
     "./discovery": "./src/discovery.ts",
     "./relations": "./src/relations.ts",
+    "./translation": "./src/translation.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -125,6 +127,10 @@
         "types": "./dist/collections.d.ts",
         "default": "./dist/collections.js"
       },
+      "./links": {
+        "types": "./dist/links.d.ts",
+        "default": "./dist/links.js"
+      },
       "./moderation": {
         "types": "./dist/moderation.d.ts",
         "default": "./dist/moderation.js"
@@ -172,6 +178,10 @@
       "./relations": {
         "types": "./dist/relations.d.ts",
         "default": "./dist/relations.js"
+      },
+      "./translation": {
+        "types": "./dist/translation.d.ts",
+        "default": "./dist/translation.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",

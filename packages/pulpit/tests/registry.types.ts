@@ -12,7 +12,6 @@
  * @module tests/registry.types
  */
 
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Resource } from "@thomasfosterau/effect-jsonapi";
 import {
@@ -25,7 +24,9 @@ import {
 
 /** Whether two types are identical (not merely mutually assignable). */
 type Equals<A, B> =
-  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+  (<T>(value: T) => T extends A ? 1 : 2) extends <T>(value: T) => T extends B ? 1 : 2
+    ? true
+    : false;
 
 const CommentId = Schema.String.pipe(Schema.brand("CommentId"));
 const GardenId = Schema.String.pipe(Schema.brand("GardenId"));
@@ -40,15 +41,15 @@ const REGISTRY = [
   {
     key: "gardens",
     parent: parent("entity"),
-    resource: Option.some(GardenResource),
-    id: Option.some(GardenId),
+    resource: GardenResource,
+    id: GardenId,
     owned: true,
   },
   {
     key: "comments",
     parent: parent("content"),
-    resource: Option.some(CommentResource),
-    id: Option.some(CommentId),
+    resource: CommentResource,
+    id: CommentId,
     owned: true,
   },
 ] as const satisfies readonly RegistryEntry[];
@@ -84,45 +85,35 @@ export const discriminated: "comments" = ContentBranch.Type.type;
 // @ts-expect-error -- a garden is not in the content branch
 export const notInBranch: "gardens" = ContentBranch.Type.type;
 
-// ── An absent member is spelled by omission or `Option.none()` ──
+// ── An absent member is omitted ──
 //
 // The workspace compiles with `exactOptionalPropertyTypes`, and an optional
-// `RegistryEntry` member is `?: Option.Option<T>` (a flag `?: true`), so an
-// explicit `undefined` is rejected: a caller forwards absence as
-// `Option.none()` (AGENTS.md → Conventions).
+// `RegistryEntry` member is plain `?: T` (a flag `?: true`), so an explicit
+// `undefined` is rejected: a caller holding `undefined` omits the key
+// (AGENTS.md → Conventions).
 
-export const marker: RegistryEntry = {
-  key: "node",
-  parent: root,
-  resource: Option.none(),
-  id: Option.none(),
-};
+export const marker: RegistryEntry = { key: "node", parent: root };
 // @ts-expect-error -- a flag is literally `true` or absent, never `false`
 export const falseFlag: RegistryEntry = { key: "node", parent: root, pageable: false };
-// @ts-expect-error -- an absent resource is omitted or `Option.none()`, never `undefined`
+// @ts-expect-error -- an absent resource is omitted, never `undefined`
 export const undefinedResource: RegistryEntry = { key: "node", parent: root, resource: undefined };
-export const bareResource: RegistryEntry = {
-  key: "comments",
-  parent: root,
-  // @ts-expect-error -- a resource is wrapped in `Option.some`, never bare
-  resource: CommentResource,
-};
+// @ts-expect-error -- an absent id is omitted, never `undefined`
+export const undefinedId: RegistryEntry = { key: "node", parent: root, id: undefined };
 
 const EXPLICIT = [
-  { key: "node", parent: root, resource: Option.none(), id: Option.none() },
+  { key: "node", parent: root },
   {
     key: "gardens",
     parent: parent("node"),
-    resource: Option.some(GardenResource),
-    id: Option.some(GardenId),
+    resource: GardenResource,
+    id: GardenId,
     owned: true,
   },
-  { key: "tags", parent: parent("node"), resource: Option.none(), owned: true },
+  { key: "tags", parent: parent("node"), owned: true },
 ] as const satisfies readonly RegistryEntry[];
 
-// `PickResources` / `PickChildren` select only a declared resource: an
-// `Option.none()` resource (contextually `Option<Resource.Any>` here) is a
-// marker level, even when flagged.
+// `PickResources` / `PickChildren` select only a declared resource: an entry
+// that omits `resource` is a marker level, even when flagged.
 export const explicitOwned = flaggedMembers(EXPLICIT, "owned");
 export const explicitOwnedIsTuple: Equals<typeof explicitOwned, readonly [typeof GardenResource]> =
   true;

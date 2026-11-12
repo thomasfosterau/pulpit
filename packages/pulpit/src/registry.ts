@@ -94,9 +94,10 @@ export type RegistryFlag = (typeof RESOURCE_FLAGS)[number];
 
 /**
  * One node in an application's registry tree. Marker levels carry no
- * `resource`; concrete leaves carry the `Resource.make` definition as
- * `Option.some(resource)`. An absent `resource` or `id` reads as
- * `Option.none()` (AGENTS.md → Conventions). The capability flags are the
+ * `resource`; concrete leaves carry the `Resource.make` definition. A
+ * declaration member is plain optional (AGENTS.md → Conventions): a marker
+ * level omits `resource` and `id` rather than passing `undefined`. The
+ * capability flags are the
  * membership predicates the families / unions filter on; they must be literal
  * `true` (or absent) so the type-level derivation ({@link PickResources}) can
  * select them.
@@ -108,10 +109,10 @@ export interface RegistryEntry {
   readonly key: string;
   /** Parent key in the settled tree — `Option.none()` only for the root. */
   readonly parent: Option.Option<string>;
-  /** The `Resource.make` definition; absent (or `Option.none()`) for marker levels. */
-  readonly resource?: Option.Option<Resource.Any>;
+  /** The `Resource.make` definition; omitted for marker levels. */
+  readonly resource?: Resource.Any;
   /** The application's id brand for this level. For resource leaves it must equal `resource.Id`. */
-  readonly id?: Option.Option<BrandedId>;
+  readonly id?: BrandedId;
   /** Page-able: has a `/type/<id>` route and is a page-family member. */
   readonly pageable?: true;
   /** Agent: an agent-family member. */
@@ -129,8 +130,8 @@ export interface RegistryEntry {
 }
 
 /**
- * An entry's resource: `Option.none()` for a marker level, whose `resource`
- * is absent or `Option.none()`. Every reader in this module goes through it,
+ * An entry's resource: `Option.none()` for a marker level, which omits
+ * `resource`. Every reader in this module goes through it,
  * and an application's {@link RegistryCheck} can too.
  *
  * @example
@@ -147,7 +148,7 @@ export interface RegistryEntry {
  * const leaf = {
  *   key: "posts",
  *   parent: Registry.parent("content"),
- *   resource: Option.some(PostResource),
+ *   resource: PostResource,
  * };
  *
  * strictEqual(Option.isNone(Registry.resourceOf(marker)), true);
@@ -157,10 +158,10 @@ export interface RegistryEntry {
  * @since 0.2.0
  */
 export const resourceOf = (entry: RegistryEntry): Option.Option<Resource.Any> =>
-  entry.resource ?? Option.none();
+  Option.fromUndefinedOr(entry.resource);
 
-/** An entry's id brand: `Option.none()` when `id` is absent or `Option.none()`. */
-const idOf = (entry: RegistryEntry): Option.Option<BrandedId> => entry.id ?? Option.none();
+/** An entry's id brand: `Option.none()` when `id` is omitted. */
+const idOf = (entry: RegistryEntry): Option.Option<BrandedId> => Option.fromUndefinedOr(entry.id);
 
 /**
  * Declare an entry's `parent` with its key literal preserved —
@@ -294,8 +295,8 @@ const checkEntry = (
  *   {
  *     key: "posts",
  *     parent: Registry.parent("content"),
- *     resource: Option.some(PostResource),
- *     id: Option.some(PostResource.Id),
+ *     resource: PostResource,
+ *     id: PostResource.Id,
  *     owned: true,
  *   },
  * ] as const satisfies readonly Registry.RegistryEntry[];
@@ -367,21 +368,6 @@ export const branchOf = <Root extends string>(
 // (registry-declaration) order, which `validateRegistry` guarantees.
 
 /**
- * The resource an entry declares, at the type level: the `R` of its
- * `resource: Option.Option<R>`, or `never` for a marker level. A marker's
- * `resource` is absent or `Option.none()`, whose `R` is `never`, or, under a
- * `satisfies readonly RegistryEntry[]`, the contextual `Resource.Any`; neither
- * names a member, so both read as `never`.
- */
-type DeclaredResource<Entry> = Entry extends {
-  readonly resource: Option.Option<infer R extends Resource.Any>;
-}
-  ? [Resource.Any] extends [R]
-    ? never
-    : R
-  : never;
-
-/**
  * The resources of every entry whose `Flag` capability is literally `true`, as a tuple.
  *
  * @since 0.1.0
@@ -395,9 +381,9 @@ export type PickResources<
   ...infer Rest extends readonly RegistryEntry[],
 ]
   ? Head extends Record<Flag, true>
-    ? [DeclaredResource<Head>] extends [never]
-      ? PickResources<Rest, Flag, Acc>
-      : PickResources<Rest, Flag, readonly [...Acc, DeclaredResource<Head>]>
+    ? Head extends { readonly resource: infer R extends Resource.Any }
+      ? PickResources<Rest, Flag, readonly [...Acc, R]>
+      : PickResources<Rest, Flag, Acc>
     : PickResources<Rest, Flag, Acc>
   : Acc;
 
@@ -419,26 +405,11 @@ export type PickChildren<
   ...infer Rest extends readonly RegistryEntry[],
 ]
   ? Head extends { readonly parent: Option.Option<Parent> }
-    ? [DeclaredResource<Head>] extends [never]
-      ? PickChildren<Rest, Parent, Acc>
-      : PickChildren<Rest, Parent, readonly [...Acc, DeclaredResource<Head>]>
+    ? Head extends { readonly resource: infer R extends Resource.Any }
+      ? PickChildren<Rest, Parent, readonly [...Acc, R]>
+      : PickChildren<Rest, Parent, Acc>
     : PickChildren<Rest, Parent, Acc>
   : Acc;
-
-/**
- * Bridge a runtime member array onto the precise member tuple recovered at the
- * type level. Declared with an `unknown` parameter so the widening happens
- * once, here, rather than as a cast at every projection — the array and the
- * tuple follow the same (registry-declaration) order, which
- * {@link validateRegistry} guarantees.
- */
-const asMemberTuple = <T extends ReadonlyArray<Schema.Top>>(
-  members: ReadonlyArray<Schema.Top>,
-): T =>
-  // SAFETY: every caller builds `members` by filtering the same entries the
-  // tuple type `T` was derived from, in the same order; the runtime array and
-  // the static tuple cannot disagree once `validateRegistry` has run.
-  members as T;
 
 /**
  * The `identifier` (linkage-ref) schema of each resource in a member tuple.
@@ -460,14 +431,19 @@ export type Identifiers<Members extends readonly Resource.Any[]> = {
 export const flaggedMembers = <const T extends readonly RegistryEntry[], Flag extends RegistryFlag>(
   entries: T,
   flag: Flag,
-): PickResources<T, Flag> =>
-  asMemberTuple<PickResources<T, Flag>>(
-    Arr.filterMap(entries, (entry): Result.Result<Resource.Any, void> =>
+): PickResources<T, Flag> => {
+  const members: ReadonlyArray<Schema.Top> = Arr.filterMap(
+    entries,
+    (entry): Result.Result<Resource.Any, void> =>
       entry[flag] === true
         ? Result.fromOption(resourceOf(entry), () => undefined)
         : Result.failVoid,
-    ),
   );
+  // SAFETY: `members` filters the same entries the tuple type was derived
+  // from, in the same (registry-declaration) order, so the runtime array and
+  // the static tuple cannot disagree once `validateRegistry` has run.
+  return members as PickResources<T, Flag>;
+};
 
 /**
  * Runtime counterpart of {@link PickChildren} over a whole branch: every
@@ -493,13 +469,17 @@ export const branchMembers = <
   _parents?: ReadonlyArray<Parents>,
 ): PickChildren<T, Parents> => {
   const byKey = indexByKey(entries);
-  return asMemberTuple<PickChildren<T, Parents>>(
-    Arr.filterMap(entries, (entry): Result.Result<Resource.Any, void> =>
+  const members: ReadonlyArray<Schema.Top> = Arr.filterMap(
+    entries,
+    (entry): Result.Result<Resource.Any, void> =>
       Option.contains(branchOf(entry, byKey, roots), root)
         ? Result.fromOption(resourceOf(entry), () => undefined)
         : Result.failVoid,
-    ),
   );
+  // SAFETY: `members` filters the same entries the tuple type was derived
+  // from, in the same (registry-declaration) order, so the runtime array and
+  // the static tuple cannot disagree once `validateRegistry` has run.
+  return members as PickChildren<T, Parents>;
 };
 
 /**
@@ -509,8 +489,12 @@ export const branchMembers = <
  */
 export const identifiersOf = <const Members extends readonly Resource.Any[]>(
   members: Members,
-): Identifiers<Members> =>
-  asMemberTuple<Identifiers<Members>>(Arr.map(members, (member) => member.identifier));
+): Identifiers<Members> => {
+  const identifiers = Arr.map(members, (member) => member.identifier);
+  // SAFETY: `Arr.map` keeps the tuple's length and order, member for member,
+  // which its `Array` return type cannot say.
+  return identifiers as Identifiers<Members>;
+};
 
 // ── Derived wire identity ─────────────────────────────────────────────
 

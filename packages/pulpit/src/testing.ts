@@ -90,7 +90,13 @@ import {
 import type { ReactionRow, ReactionStore } from "./reactions.ts";
 import type { KvEntry, VersionedKv } from "./cache.ts";
 import type { CollectionEntry, CollectionStore } from "./collections.ts";
-import type { Invitation, Membership, MembershipStore } from "./audience.ts";
+import type {
+  GroupOwnerStore,
+  GroupOwnership,
+  Invitation,
+  Membership,
+  MembershipStore,
+} from "./audience.ts";
 import type { Relationship, SocialStore } from "./social.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
 import type { ReportRow, ReportStore } from "./moderation.ts";
@@ -102,6 +108,7 @@ import type {
   LeafStore,
   DistinctQuery,
   ListOrder,
+  LocalisedListQuery,
   Page,
   LiveView,
   PublicationFact,
@@ -223,6 +230,33 @@ const viewPage = (
     rows: matching.slice(query.offset, query.offset + query.limit),
     total: matching.length,
   };
+};
+
+/**
+ * A localised list page (pulpit#272): of the rows matching `where` whose
+ * locale is one of `locales`, per node the one whose locale comes first in
+ * `locales`, then ordered and paged as {@link viewPage} does, `total`
+ * counting nodes. `LeafStore.listLocalised`'s contract.
+ */
+const fallbackPage = (
+  rows: ReadonlyArray<LeafRow>,
+  query: LocalisedListQuery<InMemoryFollowing>,
+  now: Date,
+): Page<LeafRow> => {
+  const rank = (row: LeafRow): number => {
+    const tag = row[LOCALE_COLUMN];
+    return P.isString(tag) ? query.locales.indexOf(tag) : -1;
+  };
+  const chosen = Arr.reduce(
+    rows.filter((row) => rank(row) >= 0 && evaluate(query.where, row, contextAt(now))),
+    HashMap.empty<string, LeafRow>(),
+    (best, row) =>
+      Option.match(HashMap.get(best, row.id), {
+        onNone: () => HashMap.set(best, row.id, row),
+        onSome: (held) => (rank(row) < rank(held) ? HashMap.set(best, row.id, row) : best),
+      }),
+  );
+  return viewPage(HashMap.toValues(chosen), query, now);
 };
 
 /**
@@ -519,17 +553,15 @@ class ConformanceFailure extends Schema.TaggedError<
  *
  * @since 0.2.0
  */
-/* oxlint-disable effect/no-unknown-parameters, effect/no-object-parameters -- a test runner's assertions take any value by contract: this is vitest's `expect` signature, the boundary the suite hands its results across */
 export interface ConformanceRunner {
   readonly describe: (name: string, body: () => void) => void;
   readonly it: (name: string, body: () => Promise<void>) => void;
-  readonly expect: (actual: unknown) => {
-    readonly toEqual: (expected: unknown) => void;
-    readonly toBe: (expected: unknown) => void;
-    readonly toMatchObject: (expected: object) => void;
+  readonly expect: <A>(actual: A) => {
+    readonly toEqual: (expected: A) => void;
+    readonly toBe: (expected: A) => void;
+    readonly toMatchObject: (expected: Partial<A>) => void;
   };
 }
-/* oxlint-enable effect/no-unknown-parameters, effect/no-object-parameters */
 
 /**
  * One fresh {@link VersionChain} for a conformance case, and the faults the
@@ -543,11 +575,9 @@ export interface ConformanceRunner {
 export interface ConformanceChain<E, R> {
   readonly chain: VersionChain<E, R>;
   /** Make the state at `(id, version)` unreconstructable (a level with no row there). */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional member is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "this harness cannot simulate it"
-  readonly dropState?: ((id: string, version: bigint) => void | Promise<void>) | undefined;
+  readonly dropState?: (id: string, version: bigint) => void | Promise<void>;
   /** Make the next append for `id` find its version taken by a concurrent writer. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional member is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "this harness cannot simulate it"
-  readonly raceNextAppend?: ((id: string) => void | Promise<void>) | undefined;
+  readonly raceNextAppend?: (id: string) => void | Promise<void>;
 }
 
 /**
@@ -719,7 +749,7 @@ export const versionChainConformance = <E, R>(
         await value(chain.update({ id: ID, patch: { title: "Second" }, actorId: ACTOR }));
         await value(chain.update({ id: ID, patch: { title: "Third" }, actorId: ACTOR }));
         expect(await stateAt(chain, 0n)).toEqual(initial);
-        expect((await value(chain.history(ID))).slice(0, 1)).toEqual(before);
+        expect<typeof before>((await value(chain.history(ID))).slice(0, 1)).toEqual(before);
         expect(await actions(chain)).toEqual([
           [0n, "create"],
           [1n, "update"],
@@ -917,11 +947,10 @@ export const versionChainConformance = <E, R>(
           expect(await outcome(write(chain, { expectedVersion: 9n }))).toBe("StaleVersion");
           expect((await value(chain.history(ID))).length).toBe(2);
         });
-        it(`${name}: without one (absent or undefined) it extends whatever the head is`, async () => {
+        it(`${name}: without one it extends whatever the head is`, async () => {
           const { chain } = await created();
           await value(chain.update({ id: ID, patch: {}, actorId: ACTOR }));
           expect(await outcome(write(chain, {}))).toBe("success");
-          expect(await outcome(write(chain, { expectedVersion: undefined }))).toBe("success");
         });
       });
       it("restore over a tombstone checks the tombstone's version; update still refuses it", async () => {
@@ -1087,11 +1116,9 @@ export interface InMemoryLeafStoreOptions {
    * {@link LOCALE_COLUMN}, and `list` reads one row per `(id, locale)`.
    * `get` / `getMany` read the shared row either way.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is an unlocalised view
-  readonly localised?: boolean | undefined;
+  readonly localised?: boolean;
   /** The instant `published` / `notPublished` compare against; the Effect `Clock`'s at each `list` when absent. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option`
-  readonly now?: Date | undefined;
+  readonly now?: Date;
 }
 
 /**
@@ -1148,6 +1175,8 @@ export const makeInMemoryLeafStore = (
     get: (id) => Effect.sync(() => Arr.findFirst(view(), (row) => row.id === id)),
     getMany: (ids) => Effect.sync(() => view().filter((row) => ids.includes(row.id))),
     list: (query) => Effect.map(instantOf(fixedNow), (now) => viewPage(listed(), query, now)),
+    listLocalised: (query) =>
+      Effect.map(instantOf(fixedNow), (now) => fallbackPage(listed(), query, now)),
     distinct: (query) =>
       Effect.map(instantOf(fixedNow), (now) => distinctPage(listed(), query, now)),
     ownerOf: (id) => Effect.sync(() => HashMap.get(owners, id)),
@@ -2016,6 +2045,10 @@ export const makeInMemoryPublication = (options: {
       ),
     list: (query) =>
       atNow((now) => Effect.map(chosen(query.headFor, now), (rows) => viewPage(rows, query, now))),
+    listLocalised: (query) =>
+      atNow((now) =>
+        Effect.map(chosen(query.headFor, now), (rows) => fallbackPage(rows, query, now)),
+      ),
     distinct: (query) =>
       atNow((now) =>
         Effect.map(chosen(query.headFor, now), (rows) => distinctPage(rows, query, now)),
@@ -2035,6 +2068,16 @@ export const makeInMemoryPublication = (options: {
       atNow((now) =>
         Effect.map(heads(), (rows) =>
           viewPage(
+            Arr.flatMap(rows, (row) => listed(headOf(row, now))),
+            query,
+            now,
+          ),
+        ),
+      ),
+    listLocalised: (query) =>
+      atNow((now) =>
+        Effect.map(heads(), (rows) =>
+          fallbackPage(
             Arr.flatMap(rows, (row) => listed(headOf(row, now))),
             query,
             now,
@@ -2950,5 +2993,82 @@ export const makeInMemoryMembershipStore = (): InMemoryMembershipStore => {
       }),
     rows: () => rows,
     pending: () => pending,
+  };
+};
+
+/**
+ * In-memory groups: a {@link GroupOwnership} and a {@link GroupOwnerStore}
+ * over one map of group id to owner, plus the test hooks. In memory only;
+ * not for production.
+ *
+ * @since 0.2.0
+ */
+export interface InMemoryGroupOwners
+  extends GroupOwnership<never, never>, GroupOwnerStore<never, never> {
+  /** Every group's owner, by group id. */
+  readonly owners: () => HashMap.HashMap<string, string>;
+  /** Record a group and its owner (the application creating one), or replace its owner. */
+  readonly put: (groupId: string, ownerId: string) => Effect.Effect<void>;
+  /** Delete a group's record; whether it existed. `ownerOf` then answers none. */
+  readonly remove: (groupId: string) => Effect.Effect<boolean>;
+}
+
+/**
+ * In-memory groups seeded with `owners` (`[groupId, ownerId]` pairs): the
+ * group-owner store's contract (README → Seams → the group-owner store).
+ * `reassignOwner` takes the account's groups in group-id order, so a
+ * bounded batch is deterministic, and `ownerOf` reads the same map, so a
+ * reassigned group answers its new owner. In memory only; not for
+ * production.
+ *
+ * @example
+ * ```ts
+ * import { deepStrictEqual, strictEqual } from "node:assert";
+ * import * as Effect from "effect/Effect";
+ * import * as Option from "effect/Option";
+ * import { makeInMemoryGroupOwners } from "@thomasfosterau/pulpit/testing";
+ *
+ * const groups = makeInMemoryGroupOwners([
+ *   ["g-1", "u-1"],
+ *   ["g-2", "u-1"],
+ * ]);
+ * strictEqual(Effect.runSync(groups.reassignOwner("u-1", "u-deleted", 1)), 1);
+ * deepStrictEqual(Effect.runSync(groups.ownerOf("g-1")), Option.some("u-deleted"));
+ * deepStrictEqual(Effect.runSync(groups.ownerOf("g-2")), Option.some("u-1"));
+ * ```
+ *
+ * @since 0.2.0
+ */
+export const makeInMemoryGroupOwners = (
+  owners: Iterable<readonly [groupId: string, ownerId: string]> = [],
+): InMemoryGroupOwners => {
+  let groups = HashMap.fromIterable(owners);
+  return {
+    ownerOf: (groupId) => Effect.sync(() => HashMap.get(groups, groupId)),
+    reassignOwner: (accountId, to, limit) =>
+      Effect.sync(() => {
+        const owned = Arr.take(
+          Arr.sort(
+            Arr.filterMap(HashMap.toEntries(groups), ([groupId, ownerId]) =>
+              ownerId === accountId ? Result.succeed(groupId) : Result.failVoid,
+            ),
+            byCodePoint,
+          ),
+          limit,
+        );
+        groups = Arr.reduce(owned, groups, (map, groupId) => HashMap.set(map, groupId, to));
+        return owned.length;
+      }),
+    owners: () => groups,
+    put: (groupId, ownerId) =>
+      Effect.sync(() => {
+        groups = HashMap.set(groups, groupId, ownerId);
+      }),
+    remove: (groupId) =>
+      Effect.sync(() => {
+        const existed = HashMap.has(groups, groupId);
+        groups = HashMap.remove(groups, groupId);
+        return existed;
+      }),
   };
 };

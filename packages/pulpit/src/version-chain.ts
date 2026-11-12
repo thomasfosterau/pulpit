@@ -174,8 +174,7 @@ export interface VersionSnapshot extends VersionChainEntry {
    * version carries no locale. A store reconstructs it with the rest of the
    * snapshot, or reports the version absent.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no locale", the same as `{}`
-  readonly locales?: LocaleStates | undefined;
+  readonly locales?: LocaleStates;
 }
 
 /**
@@ -645,8 +644,7 @@ export interface CreateInput {
   /** The leaf's full state at version 0: its shared columns, on a localised leaf. */
   readonly state: ChainState;
   /** A localised leaf's locale level at version 0 (pulpit#56); absent, none. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no locale"
-  readonly locales?: LocaleStates | undefined;
+  readonly locales?: LocaleStates;
   /** The acting account, recorded on the version row; none for a write with no session behind it. */
   readonly actorId: Option.Option<string>;
 }
@@ -664,11 +662,10 @@ export interface Precondition {
   /**
    * The head version the caller last read. When present, the write fails
    * {@link StaleVersion}, writing nothing, unless the head it extends is
-   * exactly this version; absent (or `undefined`), the write extends whatever
+   * exactly this version; absent, the write extends whatever
    * the head is.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option`
-  readonly expectedVersion?: bigint | undefined;
+  readonly expectedVersion?: bigint;
 }
 
 /**
@@ -691,17 +688,15 @@ export interface UpdateInput extends Precondition {
    * absent, every locale carries forward. Even a write that touches one
    * locale appends one version of the whole node.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key carries every locale forward
-  readonly locales?: LocalePatch | undefined;
+  readonly locales?: LocalePatch;
   /** The acting account, recorded on the version row; none for a write with no session behind it. */
   readonly actorId: Option.Option<string>;
   /**
    * The contributor whose proposal this edit applies, recorded on the
-   * version row as `proposedBy`; absent (or `undefined`) for an ordinary
+   * version row as `proposedBy`; absent or none for an ordinary
    * edit. `./proposals`' `accept` sets it.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no proposal", and a given value is itself an `Option`
-  readonly proposedBy?: Option.Option<string> | undefined;
+  readonly proposedBy?: Option.Option<string>;
 }
 
 /**
@@ -789,8 +784,7 @@ export interface ChainAppendEvent {
   readonly prior: Option.Option<VersionSnapshot>;
   readonly patch: ChainPatch;
   /** The write's locale patch (see above); absent or `{}`, every locale carries forward. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key carries every locale forward
-  readonly locales?: LocalePatch | undefined;
+  readonly locales?: LocalePatch;
   /** The acting account the row will record. */
   readonly actorId: Option.Option<string>;
 }
@@ -808,10 +802,7 @@ export interface ChainHooks<E, R> {
    * the append extends, so the expected-version check (pinned to it) still
    * runs against that head after it. Absent, nothing extra is read.
    */
-  /* oxlint-disable effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined`; the omitted key is "no hook", read as such by `defineVersionChain` */
-  readonly beforeAppend?:
-    | ((event: ChainAppendEvent) => Effect.Effect<ChainPatch, E, R>)
-    | undefined;
+  readonly beforeAppend?: (event: ChainAppendEvent) => Effect.Effect<ChainPatch, E, R>;
   /**
    * The locale level's counterpart of `beforeAppend` (pulpit#56): runs at the
    * same point, shown the same event, and its {@link LocalePatch} replaces
@@ -819,10 +810,7 @@ export interface ChainHooks<E, R> {
    * does so in every locale too. Absent, the event's locale patch is applied
    * as given.
    */
-  readonly beforeAppendLocales?:
-    | ((event: ChainAppendEvent) => Effect.Effect<LocalePatch, E, R>)
-    | undefined;
-  /* oxlint-enable effect/prefer-option-over-null */
+  readonly beforeAppendLocales?: (event: ChainAppendEvent) => Effect.Effect<LocalePatch, E, R>;
 }
 
 /**

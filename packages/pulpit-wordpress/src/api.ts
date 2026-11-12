@@ -35,6 +35,12 @@
  *   {@link MAX_LIST_PARAMETER} values: a longer list is
  *   `400 rest_invalid_param`, answered before any id is decoded (WordPress
  *   core sets no such cap).
+ * - **Conditional reads** (pulpit#86, decision on #65). A single-item
+ *   response (an item, a term, a user) carries a weak `ETag`, the SHA-256 of
+ *   its body, so the tag changes whenever anything the body embeds does,
+ *   and holds with `_embed`, `_fields` and `context`. A request whose
+ *   `If-None-Match` matches (weak comparison, `*` included) is `304`, with the
+ *   `ETag` and `Cache-Control` and no body. Collections carry none.
  * - **Caching** (`CACHE-AUTH-005`). A response is `Cache-Control: public`
  *   only when its viewer is anonymous and every item in it, embeds included,
  *   is serveable by its binding's `serveable`; anything else is
@@ -72,7 +78,7 @@ import * as Order from "effect/Order";
 import * as P from "effect/Predicate";
 import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
-import { fileUrl, type BlobStore, type FileColumns } from "@thomasfosterau/pulpit/blobs";
+import { fileUrl, sha256Hex, type BlobStore, type FileColumns } from "@thomasfosterau/pulpit/blobs";
 import type { Visibility } from "@thomasfosterau/pulpit/content";
 import {
   always,
@@ -115,10 +121,12 @@ import {
   gmtOffset,
   invalidParams,
   linkValue,
+  matchesIfNoneMatch,
   noRoute,
   parseDateTime,
   projectFields,
   readQuery,
+  weakEtag,
   withQuery,
   WpRestError,
   type Query,
@@ -692,7 +700,9 @@ export interface WordPressConfig<R, Following = never> {
 
 /**
  * One request, as the adapter reads it: the method, the path from the site
- * root (`/wp-json/wp/v2/posts`) and the query string's pairs in order.
+ * root (`/wp-json/wp/v2/posts`), the query string's pairs in order and the
+ * `If-None-Match` header, when the request carried one (a single-item
+ * response answers `304` when it matches the item's `ETag`).
  *
  * @since 0.1.0
  */
@@ -700,6 +710,7 @@ export interface WordPressRequest {
   readonly method: string;
   readonly path: string;
   readonly query: ReadonlyArray<readonly [string, string]>;
+  readonly ifNoneMatch?: string;
 }
 
 /**
@@ -1296,6 +1307,9 @@ interface Related {
   /** The terms `_embed=wp:term` shows, read through their own binding's `getMany`. */
   readonly termItems: HashMap.HashMap<string, ShownTerm>;
 }
+
+/** A JSON body as the text an `ETag` hashes: its wire form. */
+const encodeBody = Schema.encodeEffect(Schema.fromJsonString(Schema.Json));
 
 const renderKey = (id: string, field: string) => `${id}\u0000${field}`;
 
@@ -2099,6 +2113,37 @@ export const defineWordPress = <R, Following = never>(
       ]);
     });
 
+  /**
+   * A single-item response with its weak `ETag` (pulpit#86, decision on #65):
+   * the SHA-256 of the body, so it holds with `_embed`, `_fields` and
+   * `context`, whatever the item embeds. A request whose `If-None-Match`
+   * matches is `304` with the tag and `Cache-Control` alone. An error, and
+   * any other route, is left as it is.
+   */
+  const tagged =
+    (request: WordPressRequest) =>
+    (response: WordPressResponse): Effect.Effect<WordPressResponse> =>
+      Option.match(response.body, {
+        onNone: () => Effect.succeed(response),
+        onSome: (body) =>
+          Effect.gen(function* () {
+            const text = yield* Effect.orDie(encodeBody(body));
+            const etag = weakEtag(yield* sha256Hex(new TextEncoder().encode(text)));
+            const matched =
+              request.ifNoneMatch !== undefined && matchesIfNoneMatch(request.ifNoneMatch, etag);
+            return matched
+              ? {
+                  status: 304,
+                  headers: {
+                    etag,
+                    ...R.filter(response.headers, (_, name) => name === "cache-control"),
+                  },
+                  body: Option.none(),
+                }
+              : { ...response, headers: { ...response.headers, etag } };
+          }),
+      });
+
   /** The decoded node ids of each id list, in one `decode`. */
   const decodeLists = (
     wireIds: WireIds<WireId, unknown, unknown, R>,
@@ -2529,13 +2574,15 @@ export const defineWordPress = <R, Following = never>(
           Option.map(bound(type), (binding) => ({ type, owners: binding.owners })),
         ),
       );
+      const request = { limit: MAX_PAGE_LIMIT, offset: 0, includeDeleted: false };
       const page = yield* internal(
-        readableOwners(leaves, {
-          limit: MAX_PAGE_LIMIT,
-          offset: 0,
-          includeDeleted: false,
-          among: Option.getOrUndefined(among),
-        }),
+        readableOwners(
+          leaves,
+          Option.match(among, {
+            onNone: () => request,
+            onSome: (accounts) => ({ ...request, among: accounts }),
+          }),
+        ),
       );
       // The union of several leaves can pass one page; answering a short list would hide authors.
       if (page.total > page.rows.length) return yield* internalError();
@@ -2657,6 +2704,7 @@ export const defineWordPress = <R, Following = never>(
     base: Option.Option<string>,
     id: Option.Option<string>,
     query: Query,
+    withEtag: (response: WordPressResponse) => Effect.Effect<WordPressResponse>,
   ): Effect.Effect<Option.Option<WordPressResponse>, WpRestError, R> => {
     const taxonomy = Option.flatMap(
       Arr.findFirst(TAXONOMIES, ([routed]) => Option.contains(base, routed)),
@@ -2673,7 +2721,9 @@ export const defineWordPress = <R, Following = never>(
         onSome: (rawId) =>
           ids.mode === "integer" && !/^\d+$/.test(rawId)
             ? Effect.fail(noRoute())
-            : Effect.asSome(getTerm(found, binding, decodeURIComponent(rawId), query)),
+            : Effect.asSome(
+                Effect.flatMap(getTerm(found, binding, decodeURIComponent(rawId), query), withEtag),
+              ),
       });
     }
     if (Option.contains(base, "users") && servesUsers()) {
@@ -2682,7 +2732,7 @@ export const defineWordPress = <R, Following = never>(
         onSome: (rawId) =>
           authors.ids.mode === "integer" && !/^\d+$/.test(rawId)
             ? Effect.fail(noRoute())
-            : Effect.asSome(getUser(decodeURIComponent(rawId), query)),
+            : Effect.asSome(Effect.flatMap(getUser(decodeURIComponent(rawId), query), withEtag)),
       });
     }
     return Effect.succeedNone;
@@ -2706,6 +2756,7 @@ export const defineWordPress = <R, Following = never>(
         Option.fromNullishOr(base),
         Option.fromNullishOr(rawId),
         query,
+        tagged(request),
       );
       if (Option.isSome(routed)) return routed.value;
       const type = yield* Effect.fromOption(
@@ -2715,7 +2766,10 @@ export const defineWordPress = <R, Following = never>(
       if (rawId === undefined) return yield* listItems(type, binding, query);
       // An integer route matches digits only, as core's `(?P<id>[\d]+)` does.
       if (ids.mode === "integer" && !/^\d+$/.test(rawId)) return yield* noRoute();
-      return yield* getItem(type, binding, decodeURIComponent(rawId), query);
+      return yield* Effect.flatMap(
+        getItem(type, binding, decodeURIComponent(rawId), query),
+        tagged(request),
+      );
     });
 
   return {

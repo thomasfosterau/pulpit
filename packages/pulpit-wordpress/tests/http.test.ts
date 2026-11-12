@@ -35,12 +35,12 @@ const api = {
     ),
 };
 
-const serve = (url: string, method = "GET") =>
+const serve = (url: string, method = "GET", headers: Record<string, string> = {}) =>
   Effect.runPromise(
     Effect.provideService(
       wordPressHttp(api),
       HttpServerRequest.HttpServerRequest,
-      HttpServerRequest.fromWeb(new Request(url, { method })),
+      HttpServerRequest.fromWeb(new Request(url, { method, headers })),
     ),
   );
 
@@ -56,6 +56,13 @@ describe("wordPressHttp", () => {
         ["page", "2"],
       ],
     });
+  });
+
+  it("hands the API the If-None-Match header when the request has one", async () => {
+    await serve("https://example.org/wp-json/", "GET", { "if-none-match": 'W/"abc"' });
+    expect(seen.at(-1)?.ifNoneMatch).toBe('W/"abc"');
+    await serve("https://example.org/wp-json/");
+    expect(seen.at(-1)).not.toHaveProperty("ifNoneMatch");
   });
 
   it("answers with the API's status and headers", async () => {

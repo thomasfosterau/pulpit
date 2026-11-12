@@ -52,7 +52,9 @@ import {
 /** A compile-time assertion: `T` must be exactly `true`. */
 type Assert<T extends true> = T;
 type Equals<A, B> =
-  (<X>() => X extends A ? 1 : 2) extends <X>() => X extends B ? 1 : 2 ? true : false;
+  (<X>(value: X) => X extends A ? 1 : 2) extends <X>(value: X) => X extends B ? 1 : 2
+    ? true
+    : false;
 /** Whether `A` is assignable to `B`: a fake satisfies its seam. */
 type Satisfies<A, B> = [A] extends [B] ? true : false;
 
@@ -181,6 +183,7 @@ export type _Request = Assert<
       readonly method: string;
       readonly path: string;
       readonly query: ReadonlyArray<readonly [string, string]>;
+      readonly ifNoneMatch?: string;
     }
   >
 >;

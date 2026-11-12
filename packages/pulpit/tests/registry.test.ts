@@ -62,15 +62,15 @@ const TaxonResource = Resource.make("taxa", {
 const ROOTS = ["entity", "content"] as const;
 
 const REGISTRY = [
-  { key: "node", parent: root, id: Option.some(NodeId) },
-  { key: "entity", parent: parent("node"), id: Option.some(EntityId) },
-  { key: "content", parent: parent("node"), id: Option.some(ContentId) },
-  { key: "place", parent: parent("entity"), id: Option.some(EntityId) },
+  { key: "node", parent: root, id: NodeId },
+  { key: "entity", parent: parent("node"), id: EntityId },
+  { key: "content", parent: parent("node"), id: ContentId },
+  { key: "place", parent: parent("entity"), id: EntityId },
   {
     key: "gardens",
     parent: parent("place"),
-    resource: Option.some(GardenResource),
-    id: Option.some(GardenId),
+    resource: GardenResource,
+    id: GardenId,
     owned: true,
     pageable: true,
     searchable: true,
@@ -78,8 +78,8 @@ const REGISTRY = [
   {
     key: "taxa",
     parent: parent("entity"),
-    resource: Option.some(TaxonResource),
-    id: Option.some(TaxonId),
+    resource: TaxonResource,
+    id: TaxonId,
     referenceData: true,
     pageable: true,
     routable: true,
@@ -88,8 +88,8 @@ const REGISTRY = [
   {
     key: "comments",
     parent: parent("content"),
-    resource: Option.some(CommentResource),
-    id: Option.some(CommentId),
+    resource: CommentResource,
+    id: CommentId,
     owned: true,
   },
 ] as const satisfies readonly RegistryEntry[];
@@ -158,26 +158,21 @@ describe("registry — construction-time validation", () => {
       {
         key: "comments",
         parent: parent("content"),
-        resource: Option.some(CommentResource),
-        id: Option.some(CommentId),
+        resource: CommentResource,
+        id: CommentId,
         owned: true,
       },
     ];
     expect(() => run(entries)).not.toThrow();
   });
 
-  it("reads an explicit Option.none() resource or id as absent", () => {
-    const marker: RegistryEntry = {
-      key: "node",
-      parent: root,
-      resource: Option.none(),
-      id: Option.none(),
-    };
+  it("reads an omitted resource or id as absent", () => {
+    const marker: RegistryEntry = { key: "node", parent: root };
     const leaf: RegistryEntry = {
       key: "comments",
       parent: parent("node"),
-      resource: Option.some(CommentResource),
-      id: Option.some(CommentId),
+      resource: CommentResource,
+      id: CommentId,
       owned: true,
     };
     const entries: readonly RegistryEntry[] = [marker, leaf];
@@ -192,27 +187,7 @@ describe("registry — construction-time validation", () => {
     expect(flaggedMembers(entries, "owned")).toEqual([CommentResource]);
     expect(branchMembers(entries, "node", ["node"])).toEqual([CommentResource]);
     expect(resourceOf(marker)).toEqual(Option.none());
-    expect(resourceOf({ key: "node", parent: root })).toEqual(Option.none());
     expect(resourceOf(leaf)).toEqual(Option.some(CommentResource));
-  });
-
-  it("still requires a resource when it is Option.none()", () => {
-    expect(() =>
-      run([{ key: "node", parent: root, resource: Option.none(), pageable: true }]),
-    ).toThrow(/flagged 'pageable' but declares no resource/);
-  });
-
-  it("still requires an id brand when it is Option.none()", () => {
-    expect(() =>
-      run([
-        {
-          key: "comments",
-          parent: root,
-          resource: Option.some(CommentResource),
-          id: Option.none(),
-        },
-      ]),
-    ).toThrow(/declares a resource but no ids.ts brand/);
   });
 
   it("throws the tagged declaration error", () => {
@@ -247,8 +222,8 @@ describe("registry — construction-time validation", () => {
       {
         key: "comments",
         parent: root,
-        resource: Option.some(CommentResource),
-        id: Option.some(CommentId),
+        resource: CommentResource,
+        id: CommentId,
         owned: true,
         referenceData: true,
       },
@@ -258,7 +233,7 @@ describe("registry — construction-time validation", () => {
 
   it("rejects a resource leaf with no ids.ts brand", () => {
     const entries: readonly RegistryEntry[] = [
-      { key: "comments", parent: root, resource: Option.some(CommentResource) },
+      { key: "comments", parent: root, resource: CommentResource },
     ];
     expect(() => run(entries)).toThrow(/declares a resource but no ids.ts brand/);
   });
@@ -268,8 +243,8 @@ describe("registry — construction-time validation", () => {
       {
         key: "comments",
         parent: root,
-        resource: Option.some(CommentResource),
-        id: Option.some(EntityId),
+        resource: CommentResource,
+        id: EntityId,
       },
     ];
     expect(() => run(entries)).toThrow(/ids.ts drift/);
@@ -280,8 +255,8 @@ describe("registry — construction-time validation", () => {
       {
         key: "remarks",
         parent: root,
-        resource: Option.some(CommentResource),
-        id: Option.some(CommentId),
+        resource: CommentResource,
+        id: CommentId,
       },
     ];
     expect(() => run(entries)).toThrow(/key does not match its resource wire type 'comments'/);
@@ -298,8 +273,8 @@ describe("registry — construction-time validation", () => {
       {
         key: "comments",
         parent: parent("node"),
-        resource: Option.some(CommentResource),
-        id: Option.some(CommentId),
+        resource: CommentResource,
+        id: CommentId,
         searchable: true,
       },
     ];

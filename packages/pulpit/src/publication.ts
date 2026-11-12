@@ -153,73 +153,89 @@ export interface ServeabilityOptions {
 }
 /* oxlint-enable effect/prefer-option-over-null */
 
-/* oxlint-disable effect/no-unknown-parameters, effect/no-unknown-returns -- the cache's security gate must accept whatever the KV hands back, including a value that fails to parse: refusing malformed input IS its contract, so the untyped value is the boundary itself */
 /**
- * Whether a serialised `publishedAt` names an instant that has arrived. The
- * value crosses KV as JSON, so it arrives as a string on a hit and as a
- * `Date` on populate; anything that does not parse to a finite instant is
- * refused rather than guessed at.
+ * Whether a serialised `publishedAt` names an instant that has arrived by
+ * `options.now` (the wall clock when omitted). The value crosses KV as JSON,
+ * so it arrives as a string on a hit and as a `Date` on populate; a string
+ * that does not parse to a finite instant is refused rather than guessed at.
  */
-const hasArrivedStamp = (publishedAt: unknown, now: Date): boolean => {
-  const instant =
-    publishedAt instanceof Date
-      ? publishedAt.getTime()
-      : P.isString(publishedAt)
-        ? Option.match(DateTime.make(publishedAt), {
-            onNone: () => Number.NaN,
-            onSome: DateTime.toEpochMillis,
-          })
-        : Number.NaN;
+const hasArrivedStamp = (publishedAt: Date | string, options: ServeabilityOptions): boolean => {
+  const instant = P.isString(publishedAt)
+    ? Option.match(DateTime.make(publishedAt), {
+        onNone: () => Number.NaN,
+        onSome: DateTime.toEpochMillis,
+      })
+    : publishedAt.getTime();
+  const now = options.now ?? DateTime.toDate(DateTime.nowUnsafe());
   return Number.isFinite(instant) && instant <= now.getTime();
 };
+
+/** A serialised stamp's two forms: a string on a KV hit, a `Date` on populate. */
+const isStamp = P.or(P.isDate, P.isString);
+
+/**
+ * What {@link isPubliclyServeable} has established of a resource it admits:
+ * an object with an `attributes` object (whose axes it has read and found
+ * serveable). A resource the cache holds as anything else is refused.
+ *
+ * @since 0.2.0
+ */
+export interface PubliclyServeableResource {
+  readonly attributes: object;
+}
 
 /**
  * Whether a cached resource may be served from the cache to a viewer who
  * reaches the cache at all (a viewer who bypasses it for freshness reads the
- * database directly). See the module doc for the rule.
+ * database directly). See the module doc for the rule. It is the cache's
+ * parser as well as its gate: the resource is whatever the KV hands back,
+ * so anything that is not an object with an `attributes` object refuses,
+ * and an admitted resource is narrowed to {@link PubliclyServeableResource}.
  *
  * @since 0.1.0
  */
 export const isPubliclyServeable = (
   resource: unknown,
   options: ServeabilityOptions = {},
-): boolean => {
+): resource is PubliclyServeableResource => {
   if (!P.isObject(resource)) return false;
   const attributes = resource["attributes"];
   // No attributes block to inspect: refuse rather than guess.
   if (!P.isObject(attributes)) return false;
-  const read = (key: string): unknown => attributes[key];
-  const visibility = read("visibility");
+  const visibility = attributes["visibility"];
   if (options.owned === true && visibility === undefined) return false;
+  // A `publishedAt` that is neither a `Date` nor a string (absent included)
+  // names no instant, so the publish gate refuses it.
+  const stamp = Option.liftPredicate(attributes["publishedAt"], isStamp);
   if (
     options.publishGated === true &&
-    !hasArrivedStamp(read("publishedAt"), options.now ?? DateTime.toDate(DateTime.nowUnsafe()))
+    !Option.exists(stamp, (publishedAt) => hasArrivedStamp(publishedAt, options))
   ) {
     return false;
   }
   if (visibility !== undefined && visibility !== "public") return false;
-  const moderationState = read("moderationState");
+  const moderationState = attributes["moderationState"];
   if (moderationState !== undefined && moderationState !== "approved") return false;
   // The draft axis: a draft is a gate wherever it is present, and a present
   // value that is not exactly `false` (`null` included) reads as a draft, as
   // the operation layer's row predicate reads it (SEC-AUTH-ENUM-001).
-  const draft = read("draft");
+  const draft = attributes["draft"];
   if (draft !== undefined && draft !== false) return false;
   // A tombstone is an admin-only read, and emitters omit the key while live
   // (#691): present at all — `null` included — refuses.
-  return read("deletedAt") === undefined;
+  return attributes["deletedAt"] === undefined;
 };
 
 /**
  * The `serveable` hook the application's resource cache takes, bound to a
- * family's posture: `(resource) => boolean`. The cache, which the application
- * owns (no library is expected to provide one; effect-web#33), applies it on
+ * family's posture: `(resource) => boolean`, narrowing an admitted resource
+ * as {@link isPubliclyServeable} does. The cache, which the application owns
+ * (no library is expected to provide one; effect-web#33), applies it on
  * both its read and write paths and evicts on a non-serveable write.
  *
  * @since 0.1.0
  */
 export const serveablePolicy =
   (options: Omit<ServeabilityOptions, "now"> = {}) =>
-  (resource: unknown): boolean =>
+  (resource: unknown): resource is PubliclyServeableResource =>
     isPubliclyServeable(resource, options);
-/* oxlint-enable effect/no-unknown-parameters, effect/no-unknown-returns */

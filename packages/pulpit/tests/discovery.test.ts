@@ -107,7 +107,7 @@ const fixture = (options: {
   const publication = makeInMemoryPublication({ chain, leaves: heads, now: NOW });
   const paths = makeInMemoryPathStore();
   let viewer: Viewer = as(member);
-  const leaf: SubtypeDefinition<LeafRow, Resource, InMemoryFollowing, never, never> = {
+  const base: SubtypeDefinition<LeafRow, Resource, InMemoryFollowing, never, never> = {
     type: "posts",
     access: ownedAccess({ draft: true, moderation: true }),
     chain,
@@ -116,9 +116,14 @@ const fixture = (options: {
     policy: gardeneriaPolicy,
     followers: makeInMemoryFollowers([[follower.id, [member.id]]]),
     toResource,
-    sortable: Option.getOrUndefined(options.sortable),
-    publication: options.gated ? { live: publication.live, facts: publication.facts } : undefined,
   };
+  const sorted = Option.match(options.sortable, {
+    onNone: () => base,
+    onSome: (sortable) => ({ ...base, sortable }),
+  });
+  const leaf = options.gated
+    ? { ...sorted, publication: { live: publication.live, facts: publication.facts } }
+    : sorted;
   const ops = defineSubtype(leaf);
   const create = (
     id: string,

@@ -32,6 +32,13 @@
  *   view-private rung, so they read as `private`. The application clears the
  *   rows' group column too (in-the-dark's `ON DELETE SET NULL`); a column
  *   naming no group reads the same way.
+ * - **Erasing a group's owner** (`./erasure`, owner decision on pulpit#274,
+ *   2026-11-12): every group the erased account owns is reassigned to the
+ *   application's tombstone account through a {@link GroupOwnerStore}, so
+ *   its members keep reading its rows; then the account's own memberships
+ *   go. The tombstone account holds no membership, so it reads nothing.
+ *   The erasure definition's `disposeGroups` overrides the reassignment
+ *   (deleting the groups, say, or handing them to an admin).
  *
  * @copyright Thomas Foster
  * @module pulpit/audience
@@ -260,6 +267,29 @@ export interface MembershipStore<Following, E, R> {
  */
 export interface GroupOwnership<E, R> {
   readonly ownerOf: (groupId: string) => Effect.Effect<Option.Option<string>, E, R>;
+}
+
+/**
+ * The write half of the application's groups that account erasure needs
+ * (pulpit#274): a bounded reassignment of the groups an account owns. The
+ * same records {@link GroupOwnership} reads, so once a group is reassigned
+ * its `ownerOf` answers the new owner. A store seam: no policy, never opens
+ * a transaction, fails only with its `E`. See the package README → Seams.
+ *
+ * @since 0.2.0
+ */
+export interface GroupOwnerStore<E, R> {
+  /**
+   * Make `to` the owner of at most `limit` of the groups `accountId` owns
+   * (`PERF-DB-001`); how many changed. A reassigned group no longer names
+   * `accountId`, so a repeated call moves on to the rest and answers `0`
+   * once none is left. Its memberships and invitations are left alone.
+   */
+  readonly reassignOwner: (
+    accountId: string,
+    to: string,
+    limit: number,
+  ) => Effect.Effect<number, E, R>;
 }
 
 /**
@@ -543,9 +573,11 @@ export const defineAudience = <Following, E, R>(
     const account: ViewerAccount = yield* signedIn;
     const owner = yield* ownerOf(groupId);
     yield* notOwner(groupId, owner, account.id);
-    if (!(yield* store.remove(groupId, account.id))) {
-      return yield* new MemberNotFound({ groupId, accountId: account.id });
-    }
+    yield* Effect.filterOrFail(
+      store.remove(groupId, account.id),
+      (done) => done,
+      () => new MemberNotFound({ groupId, accountId: account.id }),
+    );
   });
 
   const members = Effect.fn("audience.members")(function* (
@@ -592,23 +624,29 @@ export const defineAudience = <Following, E, R>(
   const accept = Effect.fn("audience.accept")(function* (groupId: string) {
     const account = yield* invitee(groupId);
     const at = yield* nowDate;
-    if (!(yield* store.accept(groupId, account.id, at))) {
-      return yield* new InvitationNotFound({ groupId, accountId: account.id });
-    }
+    yield* Effect.filterOrFail(
+      store.accept(groupId, account.id, at),
+      (done) => done,
+      () => new InvitationNotFound({ groupId, accountId: account.id }),
+    );
   });
 
   const decline = Effect.fn("audience.decline")(function* (groupId: string) {
     const account = yield* invitee(groupId);
-    if (!(yield* store.removeInvitation(groupId, account.id))) {
-      return yield* new InvitationNotFound({ groupId, accountId: account.id });
-    }
+    yield* Effect.filterOrFail(
+      store.removeInvitation(groupId, account.id),
+      (done) => done,
+      () => new InvitationNotFound({ groupId, accountId: account.id }),
+    );
   });
 
   const revoke = Effect.fn("audience.revoke")(function* (groupId: string, accountId: string) {
     yield* manager(groupId);
-    if (!(yield* store.removeInvitation(groupId, accountId))) {
-      return yield* new InvitationNotFound({ groupId, accountId });
-    }
+    yield* Effect.filterOrFail(
+      store.removeInvitation(groupId, accountId),
+      (done) => done,
+      () => new InvitationNotFound({ groupId, accountId }),
+    );
   });
 
   const invitations = Effect.fn("audience.invitations")(function* (

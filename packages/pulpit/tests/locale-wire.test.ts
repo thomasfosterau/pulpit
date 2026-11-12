@@ -22,6 +22,7 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as R from "effect/Record";
+import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import { makeResourceCache } from "../src/cache.ts";
@@ -151,6 +152,7 @@ const localisedPages = () => {
     acceptLanguage: Effect.sync(() => R.get(headers, "accept-language")),
     contentLanguage: Effect.sync(() => R.get(headers, "content-language")),
     served: (tag) => Effect.sync(() => void served.push(tag)),
+    varied: Effect.sync(() => void served.push("*")),
   };
   const handlers = subtypeResourceHandlers(
     record,
@@ -227,6 +229,49 @@ describe("a localised leaf's get, through Accept-Language", () => {
     );
     expect(outcome).toBe("NodeNotFound");
     expect(served).toEqual([]);
+  });
+});
+
+describe("a localised leaf's list, through Accept-Language (pulpit#272)", () => {
+  it("serves one item per node in its preferred locale and reports a shared one as Content-Language", async () => {
+    const { handlers, request, served, seed } = localisedPages();
+    const document = await run(
+      Effect.andThen(
+        seed,
+        request(accepting("fr"), handlers.list({ query: { offset: 0, limit: 10 } })),
+      ),
+    );
+    expect(Arr.map(document.data, (item) => item.attributes)).toEqual([
+      { title: "Bonjour", colour: "red" },
+    ]);
+    expect(served).toEqual(["fr"]);
+  });
+
+  it("reports Vary alone when the items fell back to different locales, or there are none", async () => {
+    const { ops, handlers, request, served, seed } = localisedPages();
+    const [mixed, empty] = await run(
+      Effect.gen(function* () {
+        yield* seed;
+        yield* ops.create({
+          id: Option.none(),
+          state: { colour: "blue", visibility: "public" },
+          locales: { de: { title: "Hallo" } },
+        });
+        const query = { query: { offset: 0, limit: 10 } };
+        return [
+          yield* request(accepting("de, fr;q=0.5"), handlers.list(query)),
+          yield* request(accepting("it"), handlers.list({ query: { offset: 5, limit: 10 } })),
+        ] as const;
+      }),
+    );
+    expect(
+      Arr.sort(
+        Arr.map(mixed.data, (item) => String(item.attributes.title)),
+        Order.String,
+      ),
+    ).toEqual(["Bonjour", "Hallo"]);
+    expect(empty.data).toEqual([]);
+    expect(served).toEqual(["*", "*"]);
   });
 });
 
