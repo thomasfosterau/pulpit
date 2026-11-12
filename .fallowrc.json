@@ -26,6 +26,7 @@
     "packages/pulpit/src/paths.ts",
     "packages/pulpit/src/pages.ts",
     "packages/pulpit/src/collections.ts",
+    "packages/pulpit/src/links.ts",
     "packages/pulpit/src/proposals.ts",
     "packages/pulpit/src/moderation.ts",
     "packages/pulpit/src/testing.ts",

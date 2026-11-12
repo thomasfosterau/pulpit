@@ -28,6 +28,7 @@ import {
   Reactions,
   Cache,
   Collections,
+  Links,
   Social,
   Audience,
   Discovery,
@@ -260,6 +261,7 @@ import {
   type CollectionMember,
   type CollectionOps,
 } from "@thomasfosterau/pulpit/collections";
+import { defineLinkList, type Link, type LinkListOps } from "@thomasfosterau/pulpit/links";
 import {
   defineSocial,
   socialFollowers,
@@ -1575,6 +1577,16 @@ export const groupAudience: FollowerSeam<Subquery, Transaction> = {
   ...socialSeam,
   ...audienceSeam(membershipStore),
 };
+
+// ── links (pulpit#266) ───────────────────────────────────────────────────
+
+export type _LinksBarrel = Assert<Equals<typeof Links.defineLinkList, typeof defineLinkList>>;
+export type _LinkList = Assert<
+  Equals<
+    ReturnType<LinkListOps<string, StoreFailure, Transaction>["list"]>,
+    Effect.Effect<ReadonlyArray<Link<string>>, NodeNotFound | StoreFailure, Transaction>
+  >
+>;
 
 // ── discovery (pulpit#203) ───────────────────────────────────────────────
 

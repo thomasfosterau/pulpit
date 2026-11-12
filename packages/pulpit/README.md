@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Pages`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`, `Cache`, `Collections`, `Social`, `Discovery`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Pages`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`, `Cache`, `Collections`, `Links`, `Social`, `Discovery`). |
 | **Content model** |  |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`, `localised`) and `validateRegistry`. |
@@ -38,6 +38,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./paths` | Routable content: `routable`, a leaf's path claims tied to its chain over a `PathStore` seam, the aliases a path change leaves behind, and the gated `resolve`. |
 | `./pages` | The page recipe: `resolveLocalised`, a routable, localised leaf's one resolution read (a path and a locale to the node in the best locale it carries, a redirect from an alias, or not-found), and its `localeFallbacks` order. |
 | `./collections` | Ordered collections (`defineCollection` over a `CollectionStore` seam): positioned members of a parent node, with the order kept beside the chain (the default) or versioned with the parent. |
+| `./links` | Ordered link lists (`defineLinkList`): a flat, localised list of links under a parent node (a navigation menu, say) over a `./collections` collection, read for one viewer with every entry whose target they can't follow omitted. |
 | **Participation and user-generated content** |  |
 | `./budgets` | Write budgets: a declared ceiling on an account's writes of one kind in a rolling window, spent inside the write (`budgetHook` on a chain write; `bindBudget`'s `spend` on a proposal's `submit` or a report's `file`) over a `BudgetCounter` seam, refused as a rate-limited `WriteRejected` (the wire's 429). |
 | `./comments` | The comments family: threaded comments on any node as versioned owned leaves (`defineComments`), behind the target's read gate and the moderation gate, with a configurable reply depth. |
@@ -726,7 +727,7 @@ resolve("about", "pt-BR");
 - **An alias redirects without reading a locale.** The canonical path is the node's and is shared by every locale.
 - **Tags are compared exactly.** BCP 47 is case-insensitive, but the locale rows are not, so normalise a tag's case before it reaches the read.
 
-Navigation menus come later, as an ordered collection over `./collections` (pulpit#266), and there is no page builder.
+Navigation menus are an [ordered link list](#links) over `./collections` (pulpit#266), and there is no page builder.
 
 | Export | What it is |
 | --- | --- |
@@ -770,6 +771,43 @@ items.list(listId, { limit: 50, offset: 0 }); // { rows: [{ memberId, index, res
 | `hideRecordedOrder(column, toResource)` | A parent leaf's `toResource` without a versioned family's order column (`EDGE-001`). |
 | `CollectionStore`, `CollectionEntry`, `MAX_COLLECTION_SIZE` | The membership table seam (see [Seams](#seams)), one member's place and the size bound. |
 | `AlreadyMember`, `NotMember`, `CollectionFull` | The failures: 409, 404, 409. |
+
+## `./links`
+
+Ordered link lists (pulpit#266): a flat, ordered, localised list of links under a parent node, read for one viewer. A navigation menu is the usual example; the kernel names no menu type (a `menu` is a leaf the application binds, like a `page`), so the module is the generic shape and this section shows a menu. Nesting is a later, additive slice (pulpit#313): a sub-menu will be an entry whose target is another list.
+
+- **The list** is a `./collections` collection of entry nodes under the parent (the menu), in either order model.
+- **The entry leaf** is a `defineSubtype` leaf with a locale level. Its columns hold the target (a path, or a node id) and, translated, the label.
+- **The target** is a path, resolved through `./pages`' `resolveLocalised`, or a node, read through its leaf's gated `getMany`.
+
+```ts
+import { defineLinkList } from "@thomasfosterau/pulpit/links";
+import { resolveLocalised } from "@thomasfosterau/pulpit/pages";
+
+const nav = defineLinkList({
+  type: "menu-links",
+  defaultLocale: "en",
+  entries: menuItems, // defineCollection({ parent: menuOps, members: itemOps, store })
+  entryLeaf: itemOps, // a localised leaf: `label` is translated
+  target: (item) =>
+    typeof item.path === "string" ? Option.some({ kind: "path", path: item.path }) : Option.none(),
+  resolve: resolveLocalised(pages, { defaultLocale: "en" }),
+  nodes: pages, // for entries that name a node: `{ kind: "node", id }`
+});
+
+nav.list(menuId, "pt-BR");
+// [{ entryId, index, locale: "pt", entry, target: { kind: "path", id, path } }, …]
+```
+
+- **One gated read**, `list(parentId, locale)`: the links the viewer may follow, in the collection's order, with each entry read in the first of `localeFallbacks(locale, defaultLocale)` it carries. A path target that goes through an alias is returned as the node's canonical path.
+- **Omitted, never forbidden** (`SEC-AUTH-ENUM-001`). An entry is dropped when the viewer can't read the entry, when it carries none of the fallback locales, when `target` returns none, and when its target isn't followable: a hidden, unpublished, scheduled or tombstoned page, an unclaimed path, an alias to a hidden node, or a node `getMany` omits. The rest are renumbered from 0, so the result leaves no gap and carries neither an omitted entry's id nor its target. A parent the viewer can't read is `NodeNotFound`.
+- **Every rule is the leaves'.** The owner and the view-private rung read the head, so they see the entries others can't.
+- **Bounded** (`SEC-INPUT-003`): at most `MAX_COLLECTION_SIZE` entries, each read through its own gate.
+
+| Export | What it is |
+| --- | --- |
+| `defineLinkList(definition)`, `LinkListDefinition`, `LinkListOps` | The factory, its declaration and its one read, `list`. |
+| `Link`, `LinkTarget`, `FollowedTarget` | A returned link, what an entry points at, and what that resolved to. |
 
 ## `./moderation`
 
