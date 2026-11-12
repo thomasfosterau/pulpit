@@ -41,6 +41,8 @@
  * - A collection holds at most {@link MAX_COLLECTION_SIZE} members, so every
  *   read and reorder is one bounded read (`SEC-INPUT-003`).
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/structure.md#collections.
+ *
  * @copyright Thomas Foster
  * @module pulpit/collections
  * @since 0.1.0
@@ -136,8 +138,7 @@ export interface CollectionEntry {
 /**
  * The membership table an application supplies, keyed
  * `(parent_id, member_id)` with both foreign keys cascading. A store seam:
- * no policy, never opens a transaction, fails only with its `E`. See the
- * package README → Seams.
+ * no policy, never opens a transaction, fails only with its `E`. See docs/seams.md.
  *
  * @since 0.1.0
  */

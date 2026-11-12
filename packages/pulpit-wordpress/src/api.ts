@@ -76,6 +76,8 @@
  * `400 rest_invalid_param`, never silently ignored, so a client never
  * mistakes an unfiltered list for a filtered one.
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/wordpress.md#api.
+ *
  * @copyright Thomas Foster
  * @module pulpit-wordpress/api
  * @since 0.1.0

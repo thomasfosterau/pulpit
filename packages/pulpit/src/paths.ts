@@ -27,6 +27,8 @@
  * syntax is the leaf attribute's schema (effect-schema-ext's `Ids.slug`, once
  * it publishes).
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/structure.md#paths.
+ *
  * @copyright Thomas Foster
  * @module pulpit/paths
  * @since 0.1.0

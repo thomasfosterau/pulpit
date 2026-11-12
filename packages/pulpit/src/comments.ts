@@ -39,6 +39,8 @@
  * existing comment are the comment leaf's own (its author, or the moderate
  * rung).
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/participation.md#comments.
+ *
  * @copyright Thomas Foster
  * @module pulpit/comments
  * @since 0.1.0

@@ -1,10 +1,12 @@
 /**
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#filter.
+ *
  * @copyright Thomas Foster
  *
  * The kernel's read predicates and list order, rendered to SQL (pulpit#247):
  * a `ListFilter` as a Drizzle `WHERE`, and a checked `ListOrder` as an
  * `ORDER BY`, over the columns of a view. The contract is the kernel's
- * (README → `./filter` and → Seams → `LeafStore`), which its in-memory
+ * (docs/content-model.md → `./filter`, and docs/seams.md → `LeafStore`), which its in-memory
  * `evaluate` and `makeInMemoryLeafStore` read too, so a SQL store and the
  * fakes agree row for row:
  *

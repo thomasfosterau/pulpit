@@ -110,6 +110,8 @@
  * (`maxBatches`, a crash) resumes where it stopped when it is run again,
  * and a run over an erased account changes nothing.
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/erasure.md#erasure.
+ *
  * @copyright Thomas Foster
  * @module pulpit/erasure
  * @since 0.2.0
@@ -202,8 +204,7 @@ export class TombstoneErasure extends Schema.TaggedError<
  * (`core.node_owner`) and its version tables, which it only reads: every
  * version erasure writes goes through the family's `VersionChain`. Like
  * every store it applies no policy, fails only with its `E`, and never
- * opens a transaction: each call runs in one of `transact`'s. See the
- * package README → Seams.
+ * opens a transaction: each call runs in one of `transact`'s. See docs/seams.md.
  *
  * @since 0.2.0
  */

@@ -34,6 +34,8 @@
  *
  * `/ask`-style retrieval stays application code over these reads.
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/discovery-and-search.md#search.
+ *
  * @copyright Thomas Foster
  * @module pulpit/search
  * @since 0.1.0
@@ -285,7 +287,7 @@ export interface BranchRequest<Following> {
  * One ranked query an application supplies: full text, trigram, a vector
  * nearest-neighbour search or a literal-identifier match, over its own
  * search view. A store seam: it applies the scope it is given and no other
- * policy, and fails only with its `E`. See the package README → Seams.
+ * policy, and fails only with its `E`. See docs/seams.md.
  *
  * @since 0.1.0
  */
@@ -410,7 +412,7 @@ export const hybridSearch =
  * The embedding queue and vector column an application supplies (the apps'
  * `embedding` job table and the document table's nullable `embedding`
  * column). A store seam: no policy, never opens a transaction, fails only
- * with its `E`. See the package README → Seams.
+ * with its `E`. See docs/seams.md.
  *
  * @since 0.1.0
  */

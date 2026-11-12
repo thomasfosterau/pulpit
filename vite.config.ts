@@ -28,7 +28,7 @@ export default defineConfig({
     ],
   },
   fmt: {
-    ignorePatterns: ["**/dist/**", "**/docs/**", "**/coverage/**"],
+    ignorePatterns: ["**/dist/**", "packages/*/docs/**", "**/coverage/**"],
     overrides: [
       {
         files: ["**/*.md"],
@@ -39,7 +39,7 @@ export default defineConfig({
     ],
   },
   lint: {
-    ignorePatterns: ["**/dist/**", "**/docs/**", "**/coverage/**", "**/node_modules/**"],
+    ignorePatterns: ["**/dist/**", "packages/*/docs/**", "**/coverage/**", "**/node_modules/**"],
     extends: [recommended, effect.configs.recommended],
     // oxlint's default plugins plus `import`, `promise`, `vitest` and `jsdoc`.
     plugins: ["eslint", "typescript", "unicorn", "oxc", "import", "promise", "vitest", "jsdoc"],

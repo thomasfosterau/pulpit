@@ -24,6 +24,8 @@
  *   counter that holds its own state (a Durable Object, a locked row)
  *   implements {@link BudgetCounter.take} directly.
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/participation.md#budgets.
+ *
  * @copyright Thomas Foster
  * @module pulpit/budgets
  * @since 0.1.0
@@ -121,7 +123,7 @@ export interface BudgetRequest {
  * implementation ({@link countingCounter}) reads the writes already made,
  * which the write itself then adds to; an atomic one (a Durable Object, a
  * row taken `FOR UPDATE`) records the spend itself, and must spend nothing
- * when it answers `false`. See the package README → Seams.
+ * when it answers `false`. See docs/seams.md.
  *
  * @since 0.1.0
  */

@@ -335,7 +335,7 @@ const localeChoice = (
 };
 
 /**
- * The kernel's localised `LeafStore` (README → Seams → `LeafStore` → "A
+ * The kernel's localised `LeafStore` (docs/seams.md → `LeafStore` → "A
  * localised leaf's view", pulpit#56, pulpit#272): `get` / `getMany` and the
  * owner stamp over the shared rows, `list` / `distinct` over the
  * `(id, locale)` rows (`columns` includes `locale`), and `listLocalised` one
@@ -424,7 +424,7 @@ export const storeOver = <I, Relations extends AnyRelations>(
 };
 
 /**
- * How a search branch ranks a source's rows for a query (README → Seams →
+ * How a search branch ranks a source's rows for a query (docs/seams.md →
  * `SearchBranch`): `matches`, the predicate a hit satisfies, and `score`, a
  * number read as `double precision`, higher first; none when the query can match nothing (a literal-id branch
  * handed a query that is no identifier, say).

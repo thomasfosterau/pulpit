@@ -42,4 +42,4 @@ Hooks are managed by Vite+; the editable [.vite-hooks/pre-commit](.vite-hooks/pr
 1. Run the gates in [AGENTS.md → Verification](AGENTS.md#verification), in order.
 2. A changeset for every change to a published package's behaviour.
 3. `git fetch origin trunk && git rebase origin/trunk`
-4. Docs: the package's `README.md` (`packages/pulpit/`, `packages/pulpit-wordpress/` or `packages/pulpit-drizzle-pg/`) for any exported change or new seam; its `AGENTS.md` for a new term, invariant or boundary rule; `SECURITY.md` → Invariant IDs for a newly cited ID.
+4. Docs: the export's TSDoc for any exported change; the module's guide in `docs/` for behaviour that spans exports, and `docs/seams.md` for a new or changed seam; the package's `README.md` (`packages/pulpit/`, `packages/pulpit-wordpress/` or `packages/pulpit-drizzle-pg/`) entry-point table for a new subpath; its `AGENTS.md` for a new term, invariant or boundary rule; `SECURITY.md` → Invariant IDs for a newly cited ID.

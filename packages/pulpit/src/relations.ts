@@ -41,7 +41,9 @@
  * Credit only (owner decision on pulpit#200): a byline grants no write
  * right, because the node's write gate (`requireWriter`, owner or the
  * moderate rung) never reads it, and the collection's own writes pass the
- * node's write gate. See the package README → `./relations`.
+ * node's write gate. See docs/structure.md → `./relations`.
+ *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/structure.md#relations.
  *
  * @copyright Thomas Foster
  * @module pulpit/relations

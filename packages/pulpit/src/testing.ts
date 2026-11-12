@@ -2,7 +2,7 @@
  * **In-memory fakes of the kernel's seams** — a store for each of the
  * version-chain, leaf, document, edge, proposal, path, report, publication, purge and embedding seams, an
  * endpoint view, a follower seam, a search branch (with a scope check) and a resource cache, all held in memory with no SQL. They are the reference semantics of
- * each seam's contract in the package README → Seams, and the fakes the
+ * each seam's contract in docs/seams.md, and the fakes the
  * kernel's own suites run against; an adapter's or an application's tests can
  * run the kernel's operations over them too.
  *
@@ -40,6 +40,8 @@
  *   [[id, 0n, "create"]],
  * );
  * ```
+ *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/seams.md#testing.
  *
  * @copyright Thomas Foster
  * @module pulpit/testing
@@ -278,7 +280,7 @@ const fallbackPage = (
  * follows. `isFollower` answers from the table and `following` returns the
  * follower's row as an {@link InMemoryFollowing} set (empty for an account the
  * table doesn't name), the in-memory reading of effect-auth's `IsFollower`
- * (README → Seams → the follower seam). In memory only; not for production.
+ * (docs/seams.md → the follower seam). In memory only; not for production.
  *
  * @since 0.1.0
  */
@@ -334,7 +336,7 @@ const nextContent = (
 
 /**
  * An in-memory {@link VersionChain} for leaf `type` (pulpit#246): the port's
- * contract (README → Seams → `VersionChain`) over an append log, holding
+ * contract (docs/seams.md → `VersionChain`) over an append log, holding
  * every invariant `./version-chain`'s module doc states, as
  * `versionChainConformance` checks. The log's `(id, version)` pair is
  * unique, as the Drizzle tables' primary key is: an append at a taken pair
@@ -1137,7 +1139,7 @@ export interface InMemoryLeafStoreOptions {
 }
 
 /**
- * An in-memory {@link LeafStore}: the seam's contract (README → Seams →
+ * An in-memory {@link LeafStore}: the seam's contract (docs/seams.md →
  * `LeafStore`) as a current-version view over an {@link InMemoryVersionChain}.
  * Each node's row is its head version's state with its head `version` and `action`, and
  * `ownerId` merged in from the owner stamps (the apps' `core.node_owner`
@@ -1220,7 +1222,7 @@ export interface InMemoryPathStore extends PathStore<never, never> {
 }
 
 /**
- * An in-memory {@link PathStore}: the seam's contract (README → Seams →
+ * An in-memory {@link PathStore}: the seam's contract (docs/seams.md →
  * `PathStore`) as one map from path to entry, its key the path table's
  * primary key, so each path is stored once. `claim` fails {@link PathTaken}
  * for another node's canonical path, replaces an alias at the path, and
@@ -1290,7 +1292,7 @@ const NO_LOCALE = "";
 
 /**
  * An in-memory {@link ResourceCacheSeam}: the seam's compare-on-set contract
- * (README → Seams → the resource cache, pulpit#121). It keeps, per id, the
+ * (docs/seams.md → the resource cache, pulpit#121). It keeps, per id, the
  * highest version either call has given it: a `set` below it is a no-op, a
  * `set` at or above it stores the resource when `serveable` admits it and
  * evicts it otherwise, and a `delete` evicts and raises the version. Each
@@ -1380,7 +1382,7 @@ export interface InMemoryDocumentStore<Document extends Schema.Json> extends Doc
 }
 
 /**
- * An in-memory {@link DocumentStore}: the seam's contract (README → Seams →
+ * An in-memory {@link DocumentStore}: the seam's contract (docs/seams.md →
  * `DocumentStore`), hash contract included. It hashes exactly as a Postgres
  * store does, SHA-256 over the UTF-8 bytes of the document's
  * {@link canonicalText}, so its hashes are the ones the database generates
@@ -1434,7 +1436,7 @@ export interface InMemoryNodes extends EndpointView<never, never> {
 
 /**
  * An in-memory {@link EndpointView}: an edge end's current-version view
- * (README → Seams → `EdgeStore`) as rows a test puts by hand, for an edge
+ * (docs/seams.md → `EdgeStore`) as rows a test puts by hand, for an edge
  * suite that doesn't need the endpoint leaf's version chain. Its `columns`
  * are `id`, `version`, `action` and `columns`. An {@link InMemoryLeafStore} is an
  * endpoint view too. In memory only; not for production.
@@ -1498,7 +1500,7 @@ const byCreation = Order.combine(
 );
 
 /**
- * An in-memory {@link EdgeStore}: the seam's contract (README → Seams →
+ * An in-memory {@link EdgeStore}: the seam's contract (docs/seams.md →
  * `EdgeStore`) over one edge family's rows. It enforces what an edge table's
  * schema enforces, the family's unique key (with `NULLS NOT DISTINCT`, as
  * gardeneria's `page_slugs_unique_variant`), and nothing the operations are
@@ -1723,7 +1725,7 @@ export interface InMemoryProposalStore extends ProposalStore<never, never> {
 }
 
 /**
- * An in-memory {@link ProposalStore}: the seam's contract (README → Seams →
+ * An in-memory {@link ProposalStore}: the seam's contract (docs/seams.md →
  * `ProposalStore`). A listing's `targetVersion` is the `chain`'s head for
  * the target, and the `targetOwnerId` its `list` filters on is `leaves`'
  * owner stamp (or `null`), as the SQL store's joins read them. `lock`
@@ -1817,7 +1819,7 @@ export interface InMemoryReportStore extends ReportStore<never, never> {
 }
 
 /**
- * An in-memory {@link ReportStore}: the seam's contract (README → Seams →
+ * An in-memory {@link ReportStore}: the seam's contract (docs/seams.md →
  * `ReportStore`). `list` evaluates the filter in memory, newest first with
  * `id` descending on a tie; `lock` locks nothing (one JavaScript thread has
  * no concurrent resolution to serialise); `mintId` mints sequential
@@ -1903,7 +1905,7 @@ export interface InMemoryBlobStore extends BlobStore<InMemoryBlobFailure, never>
 }
 
 /**
- * An in-memory {@link BlobStore}: the seam's contract (README → Seams →
+ * An in-memory {@link BlobStore}: the seam's contract (docs/seams.md →
  * `BlobStore`). `publicUrl` is `memory://<key>`; there is no signed upload
  * URL. `failNextPut` simulates the byte write failing after the commit. In
  * memory only; not for production.
@@ -1956,7 +1958,7 @@ export interface InMemoryMediaReferences extends MediaReferences<never, never> {
 }
 
 /**
- * An in-memory `MediaReferences` (README → Seams → `MediaReferences`): the
+ * An in-memory `MediaReferences` (docs/seams.md → `MediaReferences`): the
  * nodes recorded against each content hash, at most `limit` of them, in
  * insertion order. In memory only; not for production.
  *
@@ -2005,8 +2007,7 @@ export interface InMemoryPublication {
 }
 
 /**
- * The in-memory seams of a publish-gated leaf: the seam contracts (README →
- * Seams → `PublicationStore`, `LiveView`). The effective fact is the last
+ * The in-memory seams of a publish-gated leaf: the seam contracts (docs/seams.md → `PublicationStore`, `LiveView`). The effective fact is the last
  * recorded one whose `at` has arrived at `now` (the Effect `Clock`'s when
  * absent, so `TestClock` steers a schedule). A live row is the state at the
  * effective fact's version, with that version as its `version`, the
@@ -2186,8 +2187,7 @@ export interface InMemoryWorkingCopyStore extends WorkingCopyStore<never, never>
 }
 
 /**
- * An in-memory {@link WorkingCopyStore}: the seam's contract (README →
- * Seams → `WorkingCopyStore`), one copy per `(id, userId)`. In memory only;
+ * An in-memory {@link WorkingCopyStore}: the seam's contract (docs/seams.md → `WorkingCopyStore`), one copy per `(id, userId)`. In memory only;
  * not for production.
  *
  * @since 0.1.0
@@ -2266,7 +2266,7 @@ const hashesIn = (
 
 /**
  * An in-memory {@link PurgeStore} over in-memory chains and a document
- * store: the seam's contract (README → Seams → `PurgeStore`). `eraseNode`
+ * store: the seam's contract (docs/seams.md → `PurgeStore`). `eraseNode`
  * reads the node's rows from every chain (`definePurge` then deletes them
  * through the leaf's chain's `purge`) and runs the `dependents`;
  * a hash is referenced while any row left in any chain carries it in a
@@ -2326,7 +2326,7 @@ export interface InMemoryErasureLeaf {
 
 /**
  * An in-memory {@link AccountErasureStore} over in-memory leaves: the
- * seam's contract (README → Seams → `AccountErasureStore`). `ownedNodes`
+ * seam's contract (docs/seams.md → `AccountErasureStore`). `ownedNodes`
  * reads a leaf's owner stamps in id order, `setOwner` restamps or drops
  * one, and `unredactedNodes` reads the leaf's chain rows for the nodes
  * still to redact, in id order; it writes no version row. In memory only;
@@ -2579,7 +2579,7 @@ export interface InMemoryBudgetCounter extends BudgetCounter<never, never> {
 }
 
 /**
- * An in-memory atomic {@link BudgetCounter} (README → Seams →
+ * An in-memory atomic {@link BudgetCounter} (docs/seams.md →
  * `BudgetCounter`): it counts the spends it admitted at or after the
  * request's `since`, and records a spend only when it answers `true`. One
  * JavaScript thread makes its check-and-record atomic. In memory only; not
@@ -2617,7 +2617,7 @@ export interface InMemoryWriteCountStore extends WriteCountStore<never, never> {
 }
 
 /**
- * An in-memory {@link WriteCountStore} (README → Seams →
+ * An in-memory {@link WriteCountStore} (docs/seams.md →
  * `WriteCountStore`): `countSince` counts the recorded writes of the key at
  * or after `since`. In memory only; not for production.
  *
@@ -2916,7 +2916,7 @@ export interface InMemoryMembershipStore extends MembershipStore<InMemoryFollowi
 }
 
 /**
- * An in-memory {@link MembershipStore}: the seam's contract (README → Seams
+ * An in-memory {@link MembershipStore}: the seam's contract (docs/seams.md
  * → the membership store) over an array of active memberships and one of
  * pending invitations (pulpit#227), sharing the key `(groupId, accountId)`:
  * every membership read sees the active rows alone. `groupsOf` returns {@link InMemoryFollowing}, the
@@ -3089,7 +3089,7 @@ export interface InMemoryGroupOwners
 
 /**
  * In-memory groups seeded with `owners` (`[groupId, ownerId]` pairs): the
- * group-owner store's contract (README → Seams → the group-owner store).
+ * group-owner store's contract (docs/seams.md → the group-owner store).
  * `reassignOwner` takes the account's groups in group-id order, so a
  * bounded batch is deterministic, and `ownerOf` reads the same map, so a
  * reassigned group answers its new owner. In memory only; not for
@@ -3166,7 +3166,7 @@ export interface InMemoryOutbox<Kind extends string> extends OutboxStore<Kind, n
 }
 
 /**
- * An in-memory {@link OutboxStore}: the seam's contract (README → Seams →
+ * An in-memory {@link OutboxStore}: the seam's contract (docs/seams.md →
  * `OutboxStore`). Ids are sequential (`n-000001`, …), so `pending`'s order
  * is insertion order on equal instants. In memory only; not for production.
  *
@@ -3219,7 +3219,7 @@ export const makeInMemoryOutbox = <Kind extends string>(): InMemoryOutbox<Kind> 
 };
 
 /**
- * An in-memory {@link InboxStore}: the seam's contract (README → Seams →
+ * An in-memory {@link InboxStore}: the seam's contract (docs/seams.md →
  * `InboxStore`), newest first with `id` descending on a tie. In memory
  * only; not for production.
  *
@@ -3391,7 +3391,7 @@ export interface InMemoryExternalIdStore extends ExternalIdStore<never, never> {
 }
 
 /**
- * An in-memory {@link ExternalIdStore}: the seam's contract (README → Seams
+ * An in-memory {@link ExternalIdStore}: the seam's contract (docs/seams.md
  * → `ExternalIdStore`) over a list of links. It enforces what the table's
  * schema does, the two unique keys `(authority, externalId)` and
  * `(authority, nodeId)`, and nothing the import is responsible for. In

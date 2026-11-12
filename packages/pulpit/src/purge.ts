@@ -41,7 +41,9 @@
  *
  * The erasure itself is the application's {@link PurgeStore}: it knows
  * which tables hold rows keyed to a node and which columns carry a document
- * or content hash. The contract is stated in the package README → Seams.
+ * or content hash. The contract is stated in docs/seams.md.
+ *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/erasure.md#purge.
  *
  * @copyright Thomas Foster
  * @module pulpit/purge

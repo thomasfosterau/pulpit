@@ -14,7 +14,7 @@
  * and the **method** (`human` or `machine`). Because they are ordinary
  * locale columns they travel through every write path unchanged: the
  * `VersionChain` port's `locales` inputs and `getVersion` (so a Drizzle
- * adapter keeps them on the keyed level's rows, README → Seams), a
+ * adapter keeps them on the keyed level's rows, docs/seams.md), a
  * `./proposals` locale patch, `SubtypeOps.update`, `restoreVersion`. No
  * version is ever rewritten (`VERSION-CHAIN-001/002`): new lineage is a new
  * version. The source version is a decimal **string**, not a `bigint`, so
@@ -63,6 +63,8 @@
  * {@link Translator} seam takes the source locale's translatable column
  * values, opaque, and prosekit-utilities fills it for documents (the
  * owner decision on pulpit#202).
+ *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/participation.md#translation.
  *
  * @copyright Thomas Foster
  * @module pulpit/translation

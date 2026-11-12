@@ -1,7 +1,9 @@
 /**
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#search.
+ *
  * @copyright Thomas Foster
  *
- * The kernel's `SearchBranch` (README → Seams → `SearchBranch`, pulpit#204)
+ * The kernel's `SearchBranch` (docs/seams.md → `SearchBranch`, pulpit#204)
  * over a tree's views: one ranked statement per branch that renders the
  * leaf's read scope (`searchScopeFilter`) through `./filter` beside the rank,
  * so a row outside the scope is never ranked and never shifts another hit's

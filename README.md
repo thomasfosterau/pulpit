@@ -16,31 +16,13 @@ What the kernel covers, by capability:
 
 The kernel names no application type: a `page`, a `post` or an `album` is a leaf the application binds, with the capabilities it opts into. Extracted from the `thomasfosterau/website` and `thomasfosterau/gardeneria` applications; the plans are the epics [pulpit#1](https://github.com/thomasfosterau/pulpit/issues/1) (the kernel) and [pulpit#212](https://github.com/thomasfosterau/pulpit/issues/212) (the content systems the applications still build by hand: social interactions, pages and menus, media, discovery). The API is in flux: expect breaking changes before 1.0.
 
-## Packages
-
-The kernel depends on `effect`, `@thomasfosterau/effect-jsonapi` and `@thomasfosterau/effect-auth` alone, all peers (effect-auth since [pulpit#5](https://github.com/thomasfosterau/pulpit/issues/5): its role ladder, guard errors and owned-access rules are the kernel's). Anything tied to a protocol, an editor or a framework is an optional package with its own boundary, which peers on the kernel and which the kernel never imports.
-
-| Package | What it is | Peers |
-| --- | --- | --- |
-| [`@thomasfosterau/pulpit`](packages/pulpit/README.md) | The kernel: every capability above, as one subpath module each, behind seams, with the in-memory fakes of every seam (`./testing`). | `effect`, `@thomasfosterau/effect-jsonapi`, `@thomasfosterau/effect-auth` |
-| [`@thomasfosterau/pulpit-drizzle-pg`](packages/pulpit-drizzle-pg/README.md) | The kernel's tree-bound seams on PostgreSQL: the `VersionChain` port (and, as they land, the leaf store, the live pointer and search) over the tables and views `@thomasfosterau/effect-drizzle-ext` derives from an application's tree ([pulpit#247](https://github.com/thomasfosterau/pulpit/issues/247)). Not yet published. | `@thomasfosterau/pulpit`, `@thomasfosterau/effect-drizzle-ext`, `@thomasfosterau/effect-drizzle-ext-pg`, `drizzle-orm`, `effect` |
-| [`@thomasfosterau/pulpit-wordpress`](packages/pulpit-wordpress/README.md) | An optional protocol adapter: a WordPress-compatible (`wp/v2`), read-only REST API over the kernel's leaves, so a headless WordPress frontend reads a pulpit application unchanged ([pulpit#86](https://github.com/thomasfosterau/pulpit/issues/86)). Not yet published ([pulpit#115](https://github.com/thomasfosterau/pulpit/issues/115)). | `@thomasfosterau/pulpit`, `effect` |
-
-Further optional packages are proposed under [pulpit#212](https://github.com/thomasfosterau/pulpit/issues/212): a document-grammar package (allow-lists, serialisers and reference extractors for ProseKit documents, [pulpit#202](https://github.com/thomasfosterau/pulpit/issues/202)) and a UI package for the editorial surfaces ([pulpit#211](https://github.com/thomasfosterau/pulpit/issues/211)). Each is an owner decision still open on its issue.
-
-## Repository
-
-A pnpm workspace with three packages: `packages/pulpit` (the published kernel), `packages/pulpit-wordpress` (the WordPress adapter) and `packages/pulpit-drizzle-pg` (the Drizzle / PostgreSQL seams), the last two `"private": true` until the owner sets up their publishing, plus `tests/dist-consumer`, a private check of every package's emitted declarations. Each optional package peers on the kernel and the kernel never imports one; every later optional package follows the same layering.
-
-The kernel is extracted from two applications, `thomasfosterau/website` (the foundation) and `thomasfosterau/gardeneria` (the newer, multi-tenant copy), as scoped by the epics and the decisions on website#2015. Those applications, with in-the-dark and preferenceflow, are its consumers. Its toolchain (pnpm + Vite+ (`vp`), a strict catalog, the TypeScript 6/7 split, the Effect oxlint preset, fallow) is copied from them via `thomasfosterau/effect-drizzle-ext` and `thomasfosterau/effect-jsonapi`, so the library builds against exactly what they run.
-
 ## Install
 
 ```bash
 pnpm add @thomasfosterau/pulpit effect @thomasfosterau/effect-jsonapi @thomasfosterau/effect-auth
 ```
 
-Node.js 22 or newer. Each module is also a subpath (`@thomasfosterau/pulpit/version-chain`, `…/subtype`, `…/edges`, …); the [package README](packages/pulpit/README.md) is the API reference.
+Node.js 22 or newer. Each module is also a subpath (`@thomasfosterau/pulpit/version-chain`, `…/subtype`, `…/edges`, …); the [package README](packages/pulpit/README.md) lists them, each export's TSDoc is its reference, and [docs/](docs/README.md) holds the module guides and the seams' expected shapes.
 
 ## Example
 
@@ -66,8 +48,23 @@ const program = Effect.gen(function* () {
 Effect.runPromise(program).then(({ changes }) => console.log(changes));
 ```
 
+## Entry points
+
+The kernel depends on `effect`, `@thomasfosterau/effect-jsonapi` and `@thomasfosterau/effect-auth` alone, all peers (effect-auth since [pulpit#5](https://github.com/thomasfosterau/pulpit/issues/5): its role ladder, guard errors and owned-access rules are the kernel's). Anything tied to a protocol, an editor or a framework is an optional package with its own boundary, which peers on the kernel and which the kernel never imports.
+
+| Package | What it is | Peers |
+| --- | --- | --- |
+| [`@thomasfosterau/pulpit`](packages/pulpit/README.md) | The kernel: every capability above, as one subpath module each, behind seams, with the in-memory fakes of every seam (`./testing`). | `effect`, `@thomasfosterau/effect-jsonapi`, `@thomasfosterau/effect-auth` |
+| [`@thomasfosterau/pulpit-drizzle-pg`](packages/pulpit-drizzle-pg/README.md) | The kernel's tree-bound seams on PostgreSQL: the `VersionChain` port (and, as they land, the leaf store, the live pointer and search) over the tables and views `@thomasfosterau/effect-drizzle-ext` derives from an application's tree ([pulpit#247](https://github.com/thomasfosterau/pulpit/issues/247)). Not yet published. | `@thomasfosterau/pulpit`, `@thomasfosterau/effect-drizzle-ext`, `@thomasfosterau/effect-drizzle-ext-pg`, `drizzle-orm`, `effect` |
+| [`@thomasfosterau/pulpit-wordpress`](packages/pulpit-wordpress/README.md) | An optional protocol adapter: a WordPress-compatible (`wp/v2`), read-only REST API over the kernel's leaves, so a headless WordPress frontend reads a pulpit application unchanged ([pulpit#86](https://github.com/thomasfosterau/pulpit/issues/86)). Not yet published ([pulpit#115](https://github.com/thomasfosterau/pulpit/issues/115)). | `@thomasfosterau/pulpit`, `effect` |
+
+Further optional packages are proposed under [pulpit#212](https://github.com/thomasfosterau/pulpit/issues/212): a document-grammar package (allow-lists, serialisers and reference extractors for ProseKit documents, [pulpit#202](https://github.com/thomasfosterau/pulpit/issues/202)) and a UI package for the editorial surfaces ([pulpit#211](https://github.com/thomasfosterau/pulpit/issues/211)). Each is an owner decision still open on its issue.
+
+The workspace (these packages plus `tests/dist-consumer`, a private check of every package's emitted declarations), where the kernel comes from, and its toolchain are described in [docs/README.md → The repository](docs/README.md#the-repository).
+
 ## Links
 
+- [docs/](docs/README.md): the module guides, every seam's expected shape and SQL sketch ([docs/seams.md](docs/seams.md)), the read model, and the adapters' wiring.
 - [Contributing](CONTRIBUTING.md): setup, commands, CI, branches and pull requests. The conventions and the gates are in [AGENTS.md](AGENTS.md); Claude Code's session notes in [.claude/CLAUDE.md](.claude/CLAUDE.md).
 - [Publishing](PUBLISHING.md): the changesets release pipeline.
 - [Security](SECURITY.md): reporting a vulnerability, the supply-chain posture and the invariant IDs.

@@ -1,7 +1,9 @@
 /**
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#documents.
+ *
  * @copyright Thomas Foster
  *
- * The kernel's content-addressed `DocumentStore` (README → Seams →
+ * The kernel's content-addressed `DocumentStore` (docs/seams.md →
  * `DocumentStore`, pulpit#53) on PostgreSQL (pulpit#247): one table per
  * document family, the document as `jsonb`, keyed by the hash the database
  * generates to the kernel's contract, `digest(document::text,

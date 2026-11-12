@@ -5,7 +5,7 @@
  * over an application's codec ({@link integerIds}) and the opt-in string-id
  * passthrough ({@link stringIds}). pulpit never mints or stores the integer;
  * the application fills {@link IdCodec}, typically from a `bigserial` column
- * beside its node table (package README → Seams).
+ * beside its node table (docs/wordpress.md → Seams).
  *
  * Both modes work in batches. One `encode` maps every node id in a response,
  * one `decode` every wire id in an `include` / `exclude` list or a `{id}`
@@ -42,6 +42,8 @@
  *   Option.none(),
  * ]);
  * ```
+ *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/wordpress.md#ids.
  *
  * @copyright Thomas Foster
  * @module pulpit-wordpress/ids
