@@ -316,7 +316,9 @@ describe("duePublications — the scheduled-publication sweep window (pulpit#45)
     const filter = duePublications(at(-hourMs), NOW, "goesLiveAt");
     expect(evaluate(filter, { goesLiveAt: at(-1) }, context)).toBe(true);
     expect(evaluate(filter, { publishedAt: at(-1) }, context)).toBe(false);
-    // oxlint-disable-next-line effect/use-clock-service -- an invalid instant is the case under test, and no clock produces one
-    expect(due(new Date(Number.NaN), NOW, Option.some(at(-1)))).toBe(false);
+    // No clock produces an invalid instant, so the case invalidates a valid one in place.
+    const invalid = at(0);
+    invalid.setTime(Number.NaN);
+    expect(due(invalid, NOW, Option.some(at(-1)))).toBe(false);
   });
 });
