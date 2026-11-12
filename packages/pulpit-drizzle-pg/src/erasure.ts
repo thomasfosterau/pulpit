@@ -20,6 +20,7 @@ import { executeRows } from "@thomasfosterau/effect-drizzle-ext/query";
 import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import { ContentHash } from "@thomasfosterau/pulpit/blobs";
 import { DocumentHash } from "@thomasfosterau/pulpit/documents";
+import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
 import type { AccountErasureStore } from "@thomasfosterau/pulpit/erasure";
 import type { ErasedReferences, PurgeStore } from "@thomasfosterau/pulpit/purge";
 import { and, asc, eq, getTableColumns, sql, type AnyRelations, type SQL } from "drizzle-orm";
@@ -36,17 +37,29 @@ import type { NodeOwnerTable, StoreQueryError } from "./internal/owners.ts";
 import type { VersionChainTables } from "./version-chain.ts";
 
 /**
- * One version table whose rows may reference a document or bytes: the
- * table, its node-id column, and the `text` columns holding a
- * `DocumentHash` (`documents`) or a `ContentHash` (`blobs`), as hex.
+ * One `text` column of a version table that may carry a hash (a
+ * `DocumentHash` or a `ContentHash`, as hex), with its table and the
+ * table's node-id column.
  *
  * @since 0.0.0
  */
-export interface HashReferences {
+export interface HashColumn {
   readonly table: PgTable;
   readonly id: AnyPgColumn;
-  readonly documents?: ReadonlyArray<AnyPgColumn>;
-  readonly blobs?: ReadonlyArray<AnyPgColumn>;
+  readonly column: AnyPgColumn;
+}
+
+/**
+ * The documents a purge may delete: the document tables, and every version
+ * column that may reference one. Both are non-empty, so a store can never
+ * hold a document table without a column whose references keep its
+ * documents (the guard would be empty, and a referenced document deleted).
+ *
+ * @since 0.0.0
+ */
+export interface DocumentReferences {
+  readonly tables: Arr.NonEmptyReadonlyArray<DocumentTable>;
+  readonly references: Arr.NonEmptyReadonlyArray<HashColumn>;
 }
 
 /**
@@ -71,35 +84,40 @@ const valuesOf = (values: Arr.NonEmptyReadonlyArray<string>): SQL =>
     sql`, `,
   )}) AS candidate(hash)`;
 
-/** `NOT EXISTS` a row of any of `references`' `columns` holding `hash`. */
-const unreferenced = (
-  references: ReadonlyArray<HashReferences>,
-  columnsOf: (reference: HashReferences) => ReadonlyArray<AnyPgColumn>,
-  hash: SQL,
-): SQL =>
+/** `NOT EXISTS` a row of any of `references` holding `hash`: never empty, so it never reads as `TRUE`. */
+const unreferenced = (references: Arr.NonEmptyReadonlyArray<HashColumn>, hash: SQL): SQL =>
   sql.join(
-    [
-      sql`TRUE`,
-      ...Arr.flatMap(references, (reference) =>
-        Arr.map(
-          columnsOf(reference),
-          (column) => sql`NOT EXISTS (SELECT 1 FROM ${reference.table} WHERE ${column} = ${hash})`,
-        ),
-      ),
-    ],
+    Arr.map(
+      references,
+      ({ table, column }) => sql`NOT EXISTS (SELECT 1 FROM ${table} WHERE ${column} = ${hash})`,
+    ),
     sql` AND `,
   );
+
+/** Refuse, at module load, a list the types require to be non-empty but a cast emptied. */
+const nonEmpty = <A>(list: ReadonlyArray<A>, what: string): Arr.NonEmptyReadonlyArray<A> => {
+  if (Arr.isReadonlyArrayNonEmpty(list)) return list;
+  throw new DerivationError({
+    message: `makePurgeStore: ${what} is empty. A purge must never delete what it cannot prove unreferenced; declare at least one, or omit the option.`,
+  });
+};
 
 /**
  * Bind the kernel's `PurgeStore`, in the caller's `CurrentTransaction`:
  *
- * - `references` is every version table whose rows may carry a document or
- *   content hash, with those columns;
- * - `documents` is every document table an unreferenced hash is deleted
- *   from;
+ * - `documents` is the document tables an unreferenced hash is deleted
+ *   from, with every version column that may reference one
+ *   ({@link DocumentReferences}, both non-empty);
+ * - `blobs` is every version column that may carry a `ContentHash`;
  * - `dependents` is every table of rows the other seams keep for a node
  *   that the identity row's `ON DELETE CASCADE` does not take (the stores
  *   here all cascade, so it is the application's own tables).
+ *
+ * It fails closed. The types require a document table to come with a
+ * reference column, and the constructor throws effect-drizzle-ext's
+ * `DerivationError` at module load when a cast empties either list (or
+ * `blobs`). Omitting `documents` deletes no document, and omitting `blobs`
+ * reports no blob unreferenced, since neither can be proven.
  *
  * `eraseNode(id)` reads the hashes the node's version rows carry, each once,
  * then deletes its `dependents` rows; the version rows and the identity row
@@ -112,31 +130,38 @@ const unreferenced = (
  * @since 0.0.0
  */
 export const makePurgeStore = <I, Relations extends AnyRelations>(config: {
-  readonly references: ReadonlyArray<HashReferences>;
-  readonly documents?: ReadonlyArray<DocumentTable>;
+  readonly documents?: DocumentReferences;
+  readonly blobs?: Arr.NonEmptyReadonlyArray<HashColumn>;
   readonly dependents?: ReadonlyArray<NodeDependent>;
   readonly CurrentTransaction: Context.Service<I, PgTransaction<Relations>>;
 }): PurgeStore<StoreQueryError<Relations>, I> => {
-  const { references, CurrentTransaction } = config;
-  const documentTables = config.documents ?? [];
+  const { CurrentTransaction } = config;
+  const documentConfig = Option.map(Option.fromNullishOr(config.documents), (declared) => ({
+    tables: nonEmpty(declared.tables, "documents.tables"),
+    references: nonEmpty(declared.references, "documents.references"),
+  }));
+  const blobConfig = Option.map(Option.fromNullishOr(config.blobs), (declared) =>
+    nonEmpty(declared, "blobs"),
+  );
+  const documentColumns: ReadonlyArray<HashColumn> = Option.match(documentConfig, {
+    onNone: () => [],
+    onSome: ({ references }) => references,
+  });
+  const blobColumns: ReadonlyArray<HashColumn> = Option.getOrElse(blobConfig, () => []);
   const dependents = config.dependents ?? [];
-  const documentColumns = (reference: HashReferences) => reference.documents ?? [];
-  const blobColumns = (reference: HashReferences) => reference.blobs ?? [];
   const isDocumentHash = Schema.is(DocumentHash);
   const isContentHash = Schema.is(ContentHash);
 
-  /** The distinct values `columnsOf` hold across the node's rows. */
+  /** The distinct values `columns` hold across the node's rows. */
   const carried = (
     tx: PgTransaction<Relations>,
     id: string,
-    columnsOf: (reference: HashReferences) => ReadonlyArray<AnyPgColumn>,
+    columns: ReadonlyArray<HashColumn>,
   ) => {
-    const arms = Arr.flatMap(references, (reference) =>
-      Arr.map(
-        columnsOf(reference),
-        (column) =>
-          sql`SELECT ${column}::text AS hash FROM ${reference.table} WHERE ${reference.id} = ${id}::uuid AND ${column} IS NOT NULL`,
-      ),
+    const arms = Arr.map(
+      columns,
+      ({ table, id: nodeId, column }) =>
+        sql`SELECT ${column}::text AS hash FROM ${table} WHERE ${nodeId} = ${id}::uuid AND ${column} IS NOT NULL`,
     );
     if (!Arr.isReadonlyArrayNonEmpty(arms)) return Effect.succeed<ReadonlyArray<string>>([]);
     return Effect.gen(function* () {
@@ -167,24 +192,25 @@ export const makePurgeStore = <I, Relations extends AnyRelations>(config: {
           }),
     deleteUnreferencedDocuments: (hashes) => {
       const named = Arr.dedupe(Arr.filter(hashes, isDocumentHash));
-      if (!Arr.isReadonlyArrayNonEmpty(named) || !Arr.isReadonlyArrayNonEmpty(documentTables)) {
+      if (!Arr.isReadonlyArrayNonEmpty(named) || Option.isNone(documentConfig)) {
         return Effect.succeed([]);
       }
+      const { tables, references } = documentConfig.value;
       return Effect.gen(function* () {
         const tx = yield* CurrentTransaction;
         const deleted = yield* Effect.forEach(
-          documentTables,
-          (documents) =>
+          tables,
+          (table) =>
             Effect.flatMap(
               executeRows<{ readonly hash: string }>(
                 tx,
-                sql`DELETE FROM ${documents}
-                  WHERE ${documents.hashId} IN (${sql.join(
+                sql`DELETE FROM ${table}
+                  WHERE ${table.hashId} IN (${sql.join(
                     Arr.map(named, (hash) => sql`decode(${hash}, 'hex')`),
                     sql`, `,
                   )})
-                  AND ${unreferenced(references, documentColumns, sql`encode(${documents.hashId}, 'hex')`)}
-                  RETURNING encode(${documents.hashId}, 'hex') AS hash`,
+                  AND ${unreferenced(references, sql`encode(${table.hashId}, 'hex')`)}
+                  RETURNING encode(${table.hashId}, 'hex') AS hash`,
               ),
               (rows) => Effect.orDie(decodeHashes(rows)),
             ),
@@ -198,13 +224,16 @@ export const makePurgeStore = <I, Relations extends AnyRelations>(config: {
     },
     unreferencedBlobs: (hashes) => {
       const named = Arr.dedupe(Arr.filter(hashes, isContentHash));
-      if (!Arr.isReadonlyArrayNonEmpty(named)) return Effect.succeed([]);
+      if (!Arr.isReadonlyArrayNonEmpty(named) || Option.isNone(blobConfig)) {
+        return Effect.succeed([]);
+      }
+      const references = blobConfig.value;
       return Effect.gen(function* () {
         const tx = yield* CurrentTransaction;
         const rows = yield* executeRows<{ readonly hash: string }>(
           tx,
           sql`SELECT candidate.hash FROM ${valuesOf(named)}
-            WHERE ${unreferenced(references, blobColumns, sql`candidate.hash`)}
+            WHERE ${unreferenced(references, sql`candidate.hash`)}
             ORDER BY candidate.hash`,
         );
         const decoded = yield* Effect.orDie(decodeHashes(rows));

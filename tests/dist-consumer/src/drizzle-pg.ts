@@ -83,7 +83,9 @@ import type { PurgeStore } from "@thomasfosterau/pulpit/purge";
 import {
   makeAccountErasureStore,
   makePurgeStore,
+  type DocumentReferences,
   type ErasureRoot,
+  type HashColumn,
 } from "@thomasfosterau/pulpit-drizzle-pg/erasure";
 import type { CollectionStore } from "@thomasfosterau/pulpit/collections";
 import {
@@ -517,8 +519,17 @@ export type _GroupOwners = Assert<
 
 // ── ./erasure ────────────────────────────────────────────────────────────
 
+const attachments = schema.table("post_attachment", {
+  id: text("id").notNull(),
+  body: text("body"),
+  file: text("file"),
+});
 const purgeStore = makePurgeStore({
-  references: [{ table: tables.root.version, id: tables.root.version.id }],
+  documents: {
+    tables: [blocks],
+    references: [{ table: attachments, id: attachments.id, column: attachments.body }],
+  },
+  blobs: [{ table: attachments, id: attachments.id, column: attachments.file }],
   CurrentTransaction: database.CurrentTransaction,
 });
 const accountErasureStore = makeAccountErasureStore({
@@ -528,6 +539,10 @@ const accountErasureStore = makeAccountErasureStore({
 });
 
 export type _ErasureRoot = Assert<Satisfies<typeof tables.root, ErasureRoot>>;
+// A document table comes with at least one reference column: the guard is never empty.
+export type _DocumentReferences = Assert<
+  Equals<DocumentReferences["references"], readonly [HashColumn, ...HashColumn[]]>
+>;
 export type _PurgeStore = Assert<
   Equals<typeof purgeStore, PurgeStore<EffectDrizzleQueryError, Key>>
 >;

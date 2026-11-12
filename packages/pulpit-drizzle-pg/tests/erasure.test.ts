@@ -10,7 +10,8 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
-import { makeAccountErasureStore, makePurgeStore } from "../src/erasure.ts";
+import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
+import { makeAccountErasureStore, makePurgeStore, type HashColumn } from "../src/erasure.ts";
 import { makeNodeOwnerTable } from "../src/leaf-store.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
 import { database, documents, owners, plainTables, schema, tables } from "./fixtures/tree.ts";
@@ -34,8 +35,11 @@ const runWith = <A, E>(
 
 describe("makePurgeStore over canned rows", () => {
   const store = makePurgeStore({
-    references: [{ table: notes, id: notes.id, documents: [notes.body], blobs: [notes.summary] }],
-    documents: [documents],
+    documents: {
+      tables: [documents],
+      references: [{ table: notes, id: notes.id, column: notes.body }],
+    },
+    blobs: [{ table: notes, id: notes.id, column: notes.summary }],
     dependents: [{ table: owners, id: owners.nodeId }],
     CurrentTransaction: database.CurrentTransaction,
   });
@@ -64,18 +68,42 @@ describe("makePurgeStore over canned rows", () => {
     expect((await runWith([], store.unreferencedBlobs([]))).calls).toEqual([]);
   });
 
-  it("with no references or document tables, nothing is carried and nothing deleted", async () => {
-    const bare = makePurgeStore({
-      references: [],
-      CurrentTransaction: database.CurrentTransaction,
-    });
+  it("fails closed: without documents or blobs it deletes nothing and reports nothing", async () => {
+    const bare = makePurgeStore({ CurrentTransaction: database.CurrentTransaction });
     expect(await runWith([{ hash: HASH }], bare.eraseNode(NODE))).toEqual({
       value: { documents: [], blobs: [] },
       calls: [],
     });
-    expect((await runWith([], bare.deleteUnreferencedDocuments([HASH]))).calls).toEqual([]);
-    // No reference column: every candidate is unreferenced (the predicate is TRUE).
-    expect((await runWith([{ hash: HASH }], bare.unreferencedBlobs([HASH]))).value).toEqual([HASH]);
+    expect(await runWith([{ hash: HASH }], bare.deleteUnreferencedDocuments([HASH]))).toEqual({
+      value: [],
+      calls: [],
+    });
+    expect(await runWith([{ hash: HASH }], bare.unreferencedBlobs([HASH]))).toEqual({
+      value: [],
+      calls: [],
+    });
+  });
+
+  it("refuses at construction a document table with no reference column, or empty blobs", () => {
+    // The types require both lists non-empty; an untyped caller (or a list
+    // emptied after it was typed) reaches the runtime check instead.
+    const noReferences: [HashColumn, ...Array<HashColumn>] = [
+      { table: notes, id: notes.id, column: notes.body },
+    ];
+    noReferences.pop();
+    const noBlobs: [HashColumn, ...Array<HashColumn>] = [
+      { table: notes, id: notes.id, column: notes.summary },
+    ];
+    noBlobs.pop();
+    expect(() =>
+      makePurgeStore({
+        documents: { tables: [documents], references: noReferences },
+        CurrentTransaction: database.CurrentTransaction,
+      }),
+    ).toThrow(DerivationError);
+    expect(() =>
+      makePurgeStore({ blobs: noBlobs, CurrentTransaction: database.CurrentTransaction }),
+    ).toThrow(/blobs is empty/);
   });
 });
 

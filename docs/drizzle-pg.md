@@ -22,7 +22,7 @@ The module guide for [`@thomasfosterau/pulpit-drizzle-pg`](../packages/pulpit-dr
 - **Landed:** the `SocialStore` ([`./social`](#social), pulpit#364), checked against the kernel's in-memory store on PostgreSQL, a block racing a follow in two transactions.
 - **Landed:** the `MembershipStore` and `GroupOwnerStore` ([`./memberships`](#memberships), pulpit#364), checked against the kernel's in-memory stores on PostgreSQL.
 - **Landed:** the erasure seams, `PurgeStore` and `AccountErasureStore` ([`./erasure`](#erasure), pulpit#361), checked against the kernel's in-memory stores on PostgreSQL, the purge as the whole chain or nothing and the redaction marker.
-- **Next:** the other stores that aren't tree-bound (reports, budgets, working copies, erasure, social and notification tables), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
+- **Next:** the other stores that aren't tree-bound (the `ReportStore`, [pulpit#360](https://github.com/thomasfosterau/pulpit/issues/360), waiting on the moderation state machine; budgets, working copies and the notification tables, unranked), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
 
 ## End to end
 
@@ -415,10 +415,11 @@ The integration suite runs the same calls through these stores and the kernel's 
 
 The kernel's erasure seams ([seams.md → `PurgeStore`](seams.md#purgestoree-r-erasure) and [`AccountErasureStore`](seams.md#accounterasurestoree-r-owner-records-and-the-redaction-marker), pulpit#361). Erasure is the only path that deletes a version row, a document or bytes (`VERSION-CHAIN-001/002`, `DOC-001`). The version rows go through the leaf's `VersionChain.purge`, one identity-row delete that cascades through the chain, and nothing else may call this module's deletes. Every call runs in the caller's transaction, so `definePurge`'s single `transact` makes the purge the whole chain or nothing.
 
-- **`makePurgeStore({ references, documents?, dependents?, CurrentTransaction })`** binds the `PurgeStore`.
-  - `references` is every version table whose rows may carry a hash: `{ table, id, documents?, blobs? }`, the hash columns `text` holding the hex `DocumentHash` or `ContentHash`.
-  - `documents` is every document table ([`./documents`](#documents)) an unreferenced hash is deleted from.
+- **`makePurgeStore({ documents?, blobs?, dependents?, CurrentTransaction })`** binds the `PurgeStore`.
+  - `documents` is `{ tables, references }`: the document tables ([`./documents`](#documents)) an unreferenced hash is deleted from, and every version column that may reference one, each `{ table, id, column }` (a `text` column holding the hex `DocumentHash`). Both lists are non-empty tuples.
+  - `blobs` is every version column that may carry a `ContentHash`, in the same shape, also non-empty.
   - `dependents` is every table of rows kept for a node that the identity row's `ON DELETE CASCADE` does not take, by its node-id column. Every store in this package cascades, so it is the application's own tables.
+  - **It fails closed.** A document table without a reference column would leave the delete's `NOT EXISTS` guard empty, and a still-referenced document would go. So the types require both lists non-empty, and the constructor throws effect-drizzle-ext's `DerivationError` at module load when a cast or an untyped caller empties one (as `makeLeafStores` refuses a tree). The guard is built only from the declared columns, never from `TRUE`. Omitting `documents` deletes no document, and omitting `blobs` reports no blob unreferenced, since neither can be proven.
   - **`eraseNode(id)`** reads the distinct hashes the node's rows carry in those columns, then deletes its `dependents` rows. The version and identity rows are `VersionChain.purge`'s, which `definePurge` calls next.
   - **`deleteUnreferencedDocuments(hashes)`** is one `DELETE … WHERE hash IN (…) AND NOT EXISTS (…) RETURNING` per document table, the `NOT EXISTS` over every document column of every reference.
   - **`unreferencedBlobs(hashes)`** is one read of the candidates no blob column still carries. It deletes nothing: `definePurge` deletes the bytes after the commit.
@@ -433,7 +434,7 @@ Every `DELETE` the module issues, with its bound:
 | Method | Statement | Bound |
 | --- | --- | --- |
 | `PurgeStore.eraseNode(id)` | `DELETE FROM <dependent> WHERE <dependent.id> = $id::uuid`, once per declared dependent | one node's key (a canonical UUID; otherwise none runs) |
-| `PurgeStore.deleteUnreferencedDocuments(hashes)` | `DELETE FROM <documents> WHERE hash IN (decode($h, 'hex'), …) AND NOT EXISTS (SELECT 1 FROM <reference> WHERE <column> = encode(hash, 'hex')) [AND …] RETURNING encode(hash, 'hex')`, once per document table | the given hashes (`definePurge` passes the purged node's own), each only while no remaining row references it |
+| `PurgeStore.deleteUnreferencedDocuments(hashes)` | `DELETE FROM <documents> WHERE hash IN (decode($h, 'hex'), …) AND NOT EXISTS (SELECT 1 FROM <reference> WHERE <column> = encode(hash, 'hex')) [AND …] RETURNING encode(hash, 'hex')`, once per document table | the given hashes (`definePurge` passes the purged node's own), each only while none of the declared reference columns (at least one, by construction) still carries it |
 | `AccountErasureStore.setOwner({ id, ownerId: none })` | `DELETE FROM node_owner WHERE node_id = $id` | one node's key |
 
 The integration suite runs the same purges through this store and the kernel's `makeInMemoryPurgeStore` over the same chains, and the same queries through `makeInMemoryAccountErasureStore`, and checks every answer agrees. Beyond the fakes, it checks that a failure after `VersionChain.purge` rolls back the owner row, every version and the documents. It also pins the redaction marker: a version by `redactedAs` with no `proposedBy` clears a node, one carrying a `proposedBy` does not, and a tombstoned head never needs redacting.
