@@ -582,17 +582,17 @@ export const defineTranslation = <E, R, LE>(
       Effect.forEach(
         pairs,
         (pair) =>
-          Effect.map(hasPending(pair.id, pair.locale), (pending) => [pair, pending] as const),
+          Effect.map(hasPending(pair.id, pair.locale), (covered) => [pair, covered] as const),
         { concurrency: 1 },
       ),
       (checked) =>
         [
           Arr.map(
-            Arr.filter(checked, ([, pending]) => !pending),
+            Arr.filter(checked, ([, covered]) => !covered),
             ([pair]) => pair,
           ),
           Arr.map(
-            Arr.filter(checked, ([, pending]) => pending),
+            Arr.filter(checked, ([, covered]) => covered),
             ([pair]) => pair,
           ),
         ] as const,

@@ -417,8 +417,11 @@ describe("a localised leaf's fallback list (pulpit#272)", () => {
     const { ops, actAs } = pages();
     const [ids, page] = await run(
       Effect.gen(function* () {
-        const ids = yield* seeded(ops);
-        return [ids, yield* actAs(anonymous, ops.listLocalised({ ...request, locales }))] as const;
+        const seededIds = yield* seeded(ops);
+        return [
+          seededIds,
+          yield* actAs(anonymous, ops.listLocalised({ ...request, locales })),
+        ] as const;
       }),
     );
     const want = Arr.sort(
