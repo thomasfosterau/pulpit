@@ -409,8 +409,7 @@ export const commentRepliedHook = <E, R>(options: {
   readonly outbox: OutboxStore<KernelNotificationKind, E, R>;
   readonly authorOf: (parentId: string) => Effect.Effect<Option.Option<string>, E, R>;
   /** The reply's parent column; `parentId` when omitted. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is `./comments`' column
-  readonly parentColumn?: string | undefined;
+  readonly parentColumn?: string;
 }): BeforeWriteHook<E, R> =>
   notificationHook({
     name: "notifications.commentReplied",
