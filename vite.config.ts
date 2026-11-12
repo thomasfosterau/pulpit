@@ -123,6 +123,43 @@ export default defineConfig({
           "typescript/no-unsafe-type-assertion": "off",
         },
       },
+      // pulpit-drizzle-pg's `makeVersionChains` is the type-erasure seam
+      // between effect-drizzle-ext `-pg/chain`'s per-leaf typed chains and
+      // the kernel's untyped `VersionChain` port. Each leaf's chain is typed
+      // by conditional types over the application's unresolved tree (`S`,
+      // `T`: `ChainState<S, T, K>`, `LeafOf<S>`), and its inputs are
+      // contravariant in them, so TypeScript can relate it to the kernel's
+      // `ChainState` neither way, and the result record's keys exist only at
+      // the type level. The two `// SAFETY:`-commented assertions (the
+      // erased chains, and the ports under the tree's leaf names) are the
+      // whole crossing; `-pg/chain` crosses the same seam the other way.
+      // pulpit-drizzle-pg's unit suites drive each store over a stand-in for
+      // Drizzle's transaction (`tests/fixtures/canned.ts`): an Effect of
+      // canned rows whose builder methods return itself. A real
+      // `PgTransaction` needs a driver session, and the stand-in shares no
+      // type with it, so the one `// SAFETY:`-commented assertion is the
+      // fixture's whole reason to exist; the SQL it stands in for runs on
+      // PostgreSQL in `tests/integration/`.
+      // Both name `casting-awareness` beside `no-unsafe-type-assertion`: the
+      // same assertions, for the same reason, prompt both.
+      {
+        files: ["packages/pulpit-drizzle-pg/tests/fixtures/canned.ts"],
+        rules: {
+          "typescript/no-unsafe-type-assertion": "off",
+          "effect/casting-awareness": "off",
+          "effect/no-chained-type-assertions": "off",
+          "effect/avoid-any": "off",
+        },
+      },
+      {
+        files: ["packages/pulpit-drizzle-pg/src/version-chain.ts"],
+        rules: {
+          "typescript/no-unsafe-type-assertion": "off",
+          "effect/casting-awareness": "off",
+          "effect/no-chained-type-assertions": "off",
+          "effect/avoid-any": "off",
+        },
+      },
       // The type-level test slot: an expected-error directive IS the assertion
       // there (each paired with its positive control), so the rule that bans
       // suppressions has nothing to protect in these files.
@@ -157,17 +194,14 @@ export default defineConfig({
       },
       // The same boundary, seen by `@effect/tsgo`'s rules (raised from the
       // preset's level by the `suspicious` category): a test is the entry
-      // point where its layer is provided, a fault-injection helper takes
+      // point where its layer is provided, and a fault-injection helper takes
       // whatever effect the case hands it (its error is the case's, not the
-      // helper's), and a fixture row is `Record<string, unknown>` whose
-      // columns the test itself wrote as strings, so `String(row[…])` is a
-      // read, not a stringification of an object.
+      // helper's).
       {
         files: ["**/tests/**/*.ts"],
         rules: {
           "effecttsgo/strict-effect-provide": "off",
           "effecttsgo/any-unknown-in-error-context": "off",
-          "typescript/no-base-to-string": "off",
         },
       },
       // The adapter's HTTP surface is `effect/http`, which the pinned Effect

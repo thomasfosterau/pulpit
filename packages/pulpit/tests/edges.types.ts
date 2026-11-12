@@ -21,6 +21,7 @@ import {
   type LeafStore,
   type Viewer,
 } from "../src/subtype.ts";
+import { textOf } from "./fixtures.ts";
 
 export const assignments = <Following, E, R>(seams: {
   readonly terms: LeafStore<LeafRow, Following, E, R>;
@@ -51,7 +52,7 @@ export const assignments = <Following, E, R>(seams: {
     onConflict: "ignore",
     // A member classifies their own notes; a moderator anyone's.
     writeGate: ({ viewer, policy, edge }) => {
-      const noteId = String(edge["noteId"]);
+      const noteId = textOf(edge["noteId"]);
       return requireWriter(
         ownedAccess(),
         viewer,
