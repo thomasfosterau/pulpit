@@ -43,14 +43,18 @@ const ids = (rows: ReadonlyArray<{ readonly accountId: string }>) =>
 const setup = (visible?: (ids: ReadonlyArray<string>) => ReadonlyArray<string>) => {
   const store = makeInMemorySocialStore();
   let viewer: Viewer = Option.none();
-  const social = defineSocial({
-    store,
-    viewer: Effect.sync(() => viewer),
-    accounts:
-      visible === undefined
-        ? undefined
-        : { visible: (_, accountIds) => Effect.succeed(HashSet.fromIterable(visible(accountIds))) },
-  });
+  const base = { store, viewer: Effect.sync(() => viewer) };
+  const social = defineSocial(
+    visible === undefined
+      ? base
+      : {
+          ...base,
+          accounts: {
+            visible: (_: Viewer, accountIds: ReadonlyArray<string>) =>
+              Effect.succeed(HashSet.fromIterable(visible(accountIds))),
+          },
+        },
+  );
   const as = <A, E>(who: string, effect: Effect.Effect<A, E>) =>
     Effect.suspend(() => {
       viewer = Option.some({ id: who, role: "user" });

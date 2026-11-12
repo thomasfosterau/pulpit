@@ -72,7 +72,7 @@ const setup = async (
   let viewer: Viewer = Option.some(admin);
   const notes = defineVersionChain("notes", chain);
   const others = defineVersionChain("others", other);
-  const purge = definePurge({
+  const base: PurgeDefinition<never, unknown, never> = {
     type: "notes",
     chain,
     store: makeInMemoryPurgeStore({
@@ -92,9 +92,11 @@ const setup = async (
         Effect.andThen(effect),
         Effect.tap(() => Effect.sync(() => events.push("commit"))),
       ),
-    blobs: options.withoutBlobs === true ? undefined : (options.blobs ?? recording),
     cache,
-  });
+  };
+  const purge = definePurge(
+    options.withoutBlobs === true ? base : { ...base, blobs: options.blobs ?? recording },
+  );
   const put = (body: string) => Effect.map(documents.put({ body }), (stored) => stored.hash);
   const create = (state: ChainState) =>
     Effect.map(notes.create({ id: Option.none(), state, actorId: Option.none() }), (w) => w.id);

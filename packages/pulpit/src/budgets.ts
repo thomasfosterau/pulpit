@@ -85,8 +85,7 @@ export interface WriteBudget {
    * The rung that spends nothing, read from the access policy (as
    * `./edges`' `rungGate` reads one). Absent, the moderate rung.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- the optional-field convention (AGENTS.md → Conventions); absent is the moderate rung
-  readonly exempt?: ((policy: AccessPolicy) => (account: ViewerAccount) => boolean) | undefined;
+  readonly exempt?: (policy: AccessPolicy) => (account: ViewerAccount) => boolean;
 }
 
 /**

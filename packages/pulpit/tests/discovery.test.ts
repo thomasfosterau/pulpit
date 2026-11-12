@@ -142,13 +142,23 @@ const fixture = (options: {
   return { leaf, ops, paths, create, publication };
 };
 
+/** `request` resuming after `after`; none, the first page. */
+const afterCursor = (
+  request: Omit<DiscoveryRequest, "after">,
+  after: Option.Option<DiscoveryCursor>,
+): DiscoveryRequest =>
+  Option.match(after, {
+    onNone: () => request,
+    onSome: (cursor) => ({ ...request, after: cursor }),
+  });
+
 /** Walk every page of a read, `limit` at a time. */
 const walk = (
   read: (request: DiscoveryRequest) => Effect.Effect<DiscoveryPage<Resource>>,
   limit: number,
   after: Option.Option<DiscoveryCursor> = Option.none(),
 ): Effect.Effect<ReadonlyArray<string>> =>
-  Effect.flatMap(read({ limit, after: Option.getOrUndefined(after) }), (page) => {
+  Effect.flatMap(read(afterCursor({ limit }, after)), (page) => {
     const ids = Arr.map(page.items, (item) => item.id);
     return Option.isNone(page.next)
       ? Effect.succeed(ids)
@@ -300,10 +310,7 @@ describe("keyset paging", () => {
         );
         const discovery = defineDiscovery({ leaf, paths, feedColumn: "createdAt", project });
         const first = yield* discovery.feed({ limit: 1 });
-        const second = yield* discovery.feed({
-          limit: 1,
-          after: Option.getOrUndefined(first.next),
-        });
+        const second = yield* discovery.feed(afterCursor({ limit: 1 }, first.next));
         return { first, second };
       }),
     );
@@ -535,7 +542,7 @@ describe("a localised leaf", () => {
     request: Omit<DiscoveryRequest, "after">,
     after: Option.Option<DiscoveryCursor> = Option.none(),
   ): Effect.Effect<ReadonlyArray<DiscoveryItem<Resource>>> =>
-    Effect.flatMap(read({ ...request, after: Option.getOrUndefined(after) }), (page) =>
+    Effect.flatMap(read(afterCursor(request, after)), (page) =>
       Option.isNone(page.next)
         ? Effect.succeed(page.items)
         : Effect.map(walkItems(read, request, page.next), (rest) => [...page.items, ...rest]),

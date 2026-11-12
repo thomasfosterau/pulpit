@@ -226,8 +226,7 @@ export interface SocialDefinition<Following, E, R> {
   /** The request's viewer. */
   readonly viewer: Effect.Effect<Viewer, never, R>;
   /** Which accounts the follower and following lists show; omitted, every one. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key shows every account
-  readonly accounts?: AccountVisibility<R> | undefined;
+  readonly accounts?: AccountVisibility<R>;
 }
 
 /**

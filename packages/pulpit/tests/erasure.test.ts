@@ -115,17 +115,15 @@ const makeWorld = () => {
     chains,
     ops,
     erasure: (
-      /* oxlint-disable effect/prefer-option-over-null -- the workspace's optional-field convention (AGENTS.md → Conventions), as in the definition under test */
       options: {
-        readonly viewer?: Viewer | undefined;
-        readonly batchSize?: number | undefined;
+        readonly viewer?: Viewer;
+        readonly batchSize?: number;
         readonly disposeGroups?: (query: {
           readonly accountId: string;
           readonly replacement: string;
           readonly limit: number;
         }) => Effect.Effect<number>;
       } = {},
-      /* oxlint-enable effect/prefer-option-over-null */
     ) => {
       const definition = {
         viewer: Effect.succeed(options.viewer ?? ADMIN),
@@ -166,13 +164,16 @@ const makeWorld = () => {
         memberships,
         groups,
         relations: [{ name: "app.notifications", erase: () => Effect.succeed(0) }],
-        batchSize: options.batchSize,
       } satisfies AccountErasureDefinition<never, never, never>;
-      // The override, only when the test names one: the key is omitted otherwise.
+      // The batch size and the override, only when the test names them: each key is omitted otherwise.
+      const sized =
+        options.batchSize === undefined
+          ? definition
+          : { ...definition, batchSize: options.batchSize };
       return defineAccountErasure(
         options.disposeGroups === undefined
-          ? definition
-          : { ...definition, disposeGroups: options.disposeGroups },
+          ? sized
+          : { ...sized, disposeGroups: options.disposeGroups },
       );
     },
   };
