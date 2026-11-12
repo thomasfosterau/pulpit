@@ -14,6 +14,7 @@ import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ex
 import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
 import { makeDocumentTable } from "@thomasfosterau/pulpit-drizzle-pg/documents";
 import { makeEdgeTable } from "@thomasfosterau/pulpit-drizzle-pg/edges";
+import { makeExternalIdTable } from "@thomasfosterau/pulpit-drizzle-pg/external-ids";
 import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
 import { makeProposalTable } from "@thomasfosterau/pulpit-drizzle-pg/proposals";
 import { makePathTable } from "@thomasfosterau/pulpit-drizzle-pg/paths";
@@ -106,6 +107,8 @@ export const relations = makeEdgeTable({
   },
   uniqueKey: ["subjectId", "objectId", "role"],
 });
+/** The external-identifier table, over the identity table. */
+export const externalIds = makeExternalIdTable({ schema, identity: tables.root.identity });
 
 /** The owner table the leaf stores read and stamp. */
 export const owners = makeNodeOwnerTable({ schema, identity: tables.root.identity });
@@ -143,6 +146,7 @@ export const fixtureSchema = {
   paths,
   documents,
   relations,
+  externalIds,
   proposals,
   notesView: views.leaves.notes,
   linksView: views.leaves.links,

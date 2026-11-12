@@ -14,8 +14,9 @@
  * path table (`Paths`, `./paths`), the content-addressed `DocumentStore`
  * (`Documents`, `./documents`), and the `SearchBranch` over a tree's views
  * (`Search`, `./search`), the `ProposalStore` over a proposal table
- * (`Proposals`, `./proposals`), and the `EdgeStore` over one table per
- * edge family (`Edges`, `./edges`).
+ * (`Proposals`, `./proposals`), the `EdgeStore` over one table per edge
+ * family (`Edges`, `./edges`), and the `ExternalIdStore` over an
+ * external-identifier table (`ExternalIds`, `./external-ids`).
  *
  * @copyright Thomas Foster
  * @module pulpit-drizzle-pg
@@ -43,6 +44,8 @@ export * as Proposals from "./proposals.ts";
 
 /** The kernel's `EdgeStore`: one table per edge family, its ends joined to the tree's views. */
 export * as Edges from "./edges.ts";
+/** The kernel's `ExternalIdStore`: an authority's identifiers linked to a tree's nodes. */
+export * as ExternalIds from "./external-ids.ts";
 
 /** The kernel's `SearchBranch`: one ranked, scoped statement over a tree's view. */
 export * as Search from "./search.ts";
