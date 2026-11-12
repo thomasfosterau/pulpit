@@ -324,7 +324,7 @@ export interface AccountErasureDefinition<E, EB, R> {
    * before its memberships go, so the group's members keep their access.
    * Absent, erasure touches no group.
    */
-  readonly groups?: Option.Option<GroupOwnerStore<E, R>>;
+  readonly groups?: GroupOwnerStore<E, R>;
   /**
    * The application's override for the groups the account owns, run in
    * place of `groups`' reassignment (the module doc): a bounded erase that
@@ -332,7 +332,7 @@ export interface AccountErasureDefinition<E, EB, R> {
    * then no longer names the account as its owner. `replacement` is the
    * tombstone account.
    */
-  readonly disposeGroups?: Option.Option<AccountRelation<E, R>["erase"]>;
+  readonly disposeGroups?: AccountRelation<E, R>["erase"];
 }
 
 /**
@@ -686,9 +686,9 @@ export const defineAccountErasure = <E, EB, R>(
     ),
     ...Option.toArray(
       Option.map(
-        Option.orElse(definition.disposeGroups ?? Option.none(), () =>
+        Option.orElse(Option.fromUndefinedOr(definition.disposeGroups), () =>
           Option.map(
-            definition.groups ?? Option.none(),
+            Option.fromUndefinedOr(definition.groups),
             (groups) =>
               (query: {
                 readonly accountId: string;
