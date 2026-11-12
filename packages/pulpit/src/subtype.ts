@@ -3065,7 +3065,7 @@ export const subtypeHandlers = <Resource, E, R>(
               publication: Option.none(),
             }),
             reread.pipe(
-              Effect.map(Option.some),
+              Effect.asSome,
               Effect.catchTag("NodeNotFound", () => Effect.succeedNone),
               Effect.map((resource): CommittedWrite<Resource> => ({
                 id: written.id,

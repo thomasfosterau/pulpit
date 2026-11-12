@@ -2901,7 +2901,7 @@ export const defineWordPress = <R, Following = never>(
         : yield* Effect.flatMap(termPage(binding, request), (page) =>
             Effect.map(
               internal(binding.counts(page.rows.map(({ fields }) => fields.id))),
-              (counts) => ({ ...page, counts }),
+              (termCounts) => ({ ...page, counts: termCounts }),
             ),
           );
       const bodies = yield* termBodies(taxonomy, binding, rows, counts, params.context);

@@ -141,7 +141,7 @@ const site = () => {
       }),
     );
   const publish = (id: string, options?: PublishOptions) =>
-    Effect.flatMap(Effect.fromOption(pages.publication), (it) => it.publish(id, options));
+    Effect.flatMap(Effect.fromOption(pages.publication), (live) => live.publish(id, options));
 
   const page = (slug: string, visibility: string, titles: Record<string, string> = { en: slug }) =>
     pages.create({
@@ -270,9 +270,9 @@ describe("defineLinkList (pulpit#266)", () => {
     const ops = site();
     const [found, ids, pageIds, json] = await runAtNow(
       Effect.gen(function* () {
-        const { menuId, ids, pageIds } = yield* seeded(ops);
-        const found = yield* ops.read(anonymous, menuId);
-        return [found, ids, pageIds, Formatter.formatJson(found)] as const;
+        const seed = yield* seeded(ops);
+        const links = yield* ops.read(anonymous, seed.menuId);
+        return [links, seed.ids, seed.pageIds, Formatter.formatJson(links)] as const;
       }),
     );
     expect(Arr.map(found, (link) => link.entryId)).toEqual([ids.home, ids.contact]);

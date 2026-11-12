@@ -67,10 +67,7 @@ export default defineConfig({
       // of; hoisting each one would scatter one definition across a module
       // (94 sites when the category was turned on).
       "unicorn/consistent-function-scoping": "off",
-      // The module-as-namespace convention (`Option`, `Schema`, `Effect`, …)
-      // and the generic `R` / `A` / `E` parameters mean names deliberately
-      // recur in nested scopes.
-      "eslint/no-shadow": "off",
+      "eslint/no-shadow": "error",
       // The suites assert through helpers named `expect…` (`expectAgreement`
       // in tests/subtype.test.ts) as well as `expect` itself.
       "vitest/expect-expect": ["error", { assertFunctionNames: ["expect", "expect*"] }],

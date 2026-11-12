@@ -1,10 +1,10 @@
 {
   "name": "pulpit",
   // The Vite+ base image (Node + pnpm + the vp CLI), tagged at the catalog's
-  // `vite-plus` pin in pnpm-workspace.yaml (1.4.0). Dependabot's `devcontainers`
+  // `vite-plus` pin in pnpm-workspace.yaml (1.5.1). Dependabot's `devcontainers`
   // updates move only the features below, so bump this tag by hand on the
   // toolchain PR that moves `vite-plus`.
-  "image": "ghcr.io/voidzero-dev/vite-plus:1.4.0",
+  "image": "ghcr.io/voidzero-dev/vite-plus:1.5.1",
   "features": {
     "ghcr.io/devcontainers/features/github-cli:1": {},
     "ghcr.io/devcontainers-extra/features/ripgrep:1": {},
