@@ -17,6 +17,8 @@
  * - **Every operation is gated like a write** (the leaf's `authorize`):
  *   reading a copy shows unpublished state, so it is gated like the head.
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/history-and-review.md#working-copy.
+ *
  * @copyright Thomas Foster
  * @module pulpit/working-copy
  * @since 0.1.0
@@ -64,7 +66,7 @@ export interface WorkingCopyKey {
 /**
  * The overwritable buffer an application supplies (a table keyed by
  * `(node_id, user_id)`, or a KV namespace). Applies no policy and fails
- * only with its `E` (README → Seams).
+ * only with its `E` (docs/seams.md).
  *
  * @since 0.1.0
  */

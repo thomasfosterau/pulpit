@@ -1,0 +1,180 @@
+# Read model
+
+How a leaf is read and written: `defineSubtype`'s read gates, list order, version history, head version on the wire, search scope, the live pointer, localisation and lifecycle hooks (`./subtype`); the publication and serveability predicates (`./publication`); and the reference resource cache (`./cache`). The rationale of the invariant IDs cited here is in [SECURITY.md → Invariant IDs](../SECURITY.md#invariant-ids).
+
+## `./subtype`
+
+`defineSubtype` binds a leaf's CRUD, version history and list over its `VersionChain`, a current-version `LeafStore`, and the viewer seam (`viewer`, `AccessPolicy`, `FollowerSeam`), gated by `LeafAccess`:
+
+The optional members of the declarations, requests and seams here (`followersOfColumn`, `groupColumn`, the follower seam's `isMember` / `groups`, `SubtypeDefinition`'s `sortable`, `hooks`, `search`, `locales` and `publication`, `orderBy`, `among`, a before hook's `locales`, `afterFailure`, `ownedAccess`'s options and the rest) are bare `?: T` (pulpit#238): a caller that has no value omits the key rather than passing `undefined`. `UpdateRequest.proposedBy` is `?: Option.Option<string>`.
+
+- `reference` — writes at the corpus-write rung; when the view has a `visibility` column, reads only `public` rows below the view-private rung, apart from soft-delete. A leaf whose rows may be `followers`-visible declares the view column that plays the owner's part, `{ kind: "reference", followersOfColumn: "curatorId" }` (see [Seams](seams.md#the-viewer-the-role-axes-and-the-follower-seam)): a `followers` row is then also read by the account that column names and by its followers, and by nobody else below the view-private rung (that account's `private` rows stay the rung's alone). Without the declaration a `followers` row is the rung's alone. A write or history read to an existing row also needs the caller to be able to `get` it: a row `get` hides from them (or a missing one) fails `NodeNotFound` before the chain is reached, so only the view-deleted rung can `restore` a tombstone.
+- `owned` — creates at any account (stamping the owner); other writes at owner-or-moderator; reads through `canViewOwned` (four-state visibility plus `draft` and, on a moderated leaf, the moderation state), lists through `ownedListFilter`, the same facts as a `ListFilter`. A leaf declaring `moderationColumn` (`ownedAccess({ moderation: true })` names `moderationState`) shows a row whose state isn't exactly `approved` only to its owner and the view-private rung, as it does a draft (pulpit#154). A row whose owner column holds no string (a `NULL`) has no owner: no viewer owns it and the follower seam is never asked about it, so it reads only when `public` and not a draft, or at the view-private rung. A leaf declaring `groupColumn` (`ownedAccess({ group: true })` names `groupId`) opens a `group` row, when published, to the members of the group that column names, as the audience seam answers (pulpit#194); a value that isn't a string (a deleted group's cleared column) names no group, so the row reads as `private`.
+
+`get`, `getMany` and `list` treat a row the viewer may not see as missing (`NodeNotFound`, never `Forbidden`). So do a reference leaf's write and history operations. An owned leaf's don't, deliberately (pulpit#24): their gate answers `Forbidden` for an existing owned row the caller doesn't own, whatever its visibility, draft or delete state, so it confirms existence to a signed-in caller; see [SECURITY.md → Existence disclosure by the write gates](../SECURITY.md#existence-disclosure-by-the-write-gates). `subtypeHandlers(ops, { transact, cache })` wraps the operations as the handler record a JSON:API server is expected to accept (see [Seams](seams.md#seams)), writing every mutation through the resource cache.
+
+The version history is gated like a write (`READ-009`): `getVersion(id, version)` and `compare(id, from, to)` run the same gate as `update`, through one code path, before any version is read, and then delegate to the chain's `getVersion` / `compare`. So `compare` answers exactly as `getVersion` would for `from` and then `to`: `Unauthorized`, `Forbidden` or `NodeNotFound` from the gate, whichever version is asked for, and `VersionNotFound` (naming `from` first) only to a caller the gate admits. `subtypeHandlers` doesn't expose `compare`: no JSON:API operation exists for it, so an application calls it directly.
+
+`list` takes an optional `orderBy`, a list of `{ column, direction }` keys (`direction` is `"asc"` or `"desc"`); absent, empty or `null` is `id` ascending. The rows sort by each key in turn, a `NULL` (or absent) column after every value in both directions, then by `id` ascending, so the order is total and an offset page never skips or repeats a row. A string sorts by code point, a number or `bigint` by value, `false` before `true` and a `Date` by its instant. Each key is checked before the viewer or the store is read: a column that is not sortable, a direction other than `asc` / `desc`, or input not shaped as an order (an `orderBy` that isn't an array, a key that isn't an object, a `column` that isn't a string) fails `InvalidListOrder` and never reaches the store. Its `column` is the caller's own key, or `""` when the failing key (or a non-array `orderBy`) has no string column to name, which an adapter can map to JSON:API's `source.parameter` (the whole `sort`) rather than one field. A repeated column is dropped, since its first key already ordered every tie it could. The order decides only where the visible rows fall: the privacy, soft-delete and `where` filters choose them exactly as before, and `total` is the same under every order (`SEC-AUTH-ENUM-001`).
+
+**Which columns sort: `sortable`, and its default.** `defineSubtype` takes an optional per-leaf `sortable` allow-list of column names. Each entry must be one of the view's `LeafStore.columns`, or `defineSubtype` throws `SubtypeDeclarationError` when the leaf is declared. With a list, only its columns sort; any other column, a declared one included, fails `InvalidListOrder`. With a list, `id` sorts only if listed; `[]` admits only the default `id`-ascending order, so any non-empty `orderBy` fails `InvalidListOrder`. **When `sortable` is omitted, every declared view column is sortable**, including columns the resource never shows. That default discloses two things to any caller:
+
+- **The visible rows' ranking by any view column.** A caller can sort the rows it may already see by a column the API doesn't expose (a `rank`, a moderation score) and so learn that column's order among them.
+- **Which names are view columns.** The `InvalidListOrder` 400 answers a name that isn't one, and a list answers one that is.
+
+It reveals no hidden row and changes no total. Declare `sortable` to sort only by what the resource exposes; an adapter mapping a wire parameter (WordPress's `orderby`) should still map onto its own names. Every `sortable` column must hold a scalar orderable type (see the [order contract](seams.md#leafstorerow-following-e-r-the-current-version-view)).
+
+`update`, `restore`, `delete` and `restoreVersion` (and the handlers' `update`, `restore`, `delete` and `restoreVersion`) take the chain's optional `expectedVersion` and fail `StaleVersion` when it is not the head. The write gate runs first, so a refused caller learns nothing from the failure.
+
+**The head version on the wire** (pulpit#65). Every `LeafRow` carries its head `version` (see [Seams](seams.md#leafstorerow-following-e-r-the-current-version-view)), so a read can tell the client the version its next write should expect. The mapper stamps it as the resource object's `meta.version`, a decimal string (`bigint` has no JSON form), with `versionMeta(row)`: `toResource: (row) => ({ type: "posts", id: row.id, attributes: …, meta: versionMeta(row) })`. A single-resource response (`get`, `create`, `update`, `restore`, `restoreVersion`) also sends `versionEtag(resource)` as its `ETag` header: the strong tag `"<version>"`, read back from that `meta.version`, so the two never disagree. A collection response sends no `ETag`, since it has no single version; each resource in it still carries its own `meta.version`. The version reaches only a resource the read already serves the viewer, so it says nothing about a hidden row (`SEC-AUTH-ENUM-001`). What it does disclose about a row the viewer can see is how many versions its chain holds.
+
+**Search** (pulpit#54). The ranking queries (full text, trigram, vectors) are the application's SQL; pulpit owns three things around them here, and their fusion and the embedding pipeline in [`./search`](discovery-and-search.md#search) (pulpit#204).
+
+- **The projection.** `defineSearchProjection({ fields, languageColumn? })` declares, once and beside the leaf's registry entry, which view columns the leaf's search view indexes, each with a PostgreSQL `setweight` label (`A`–`D`), and the column naming each row's text search configuration. It throws `SubtypeDeclarationError` at import for no field, a column named twice or a weight outside `A`–`D`. Passed to `defineSubtype` as `search`, each column it names must be a view column, or `defineSubtype` throws too. The application's search-view generator reads the same value.
+- **The scope.** `searchScopeFilter({ access, columns, policy, followers }, viewer, { includeDeleted, where })` is the `ListFilter` a search must apply to its hits, rendered into the search query as a list store renders it. It is the very filter `list` reads under (`list` calls it), so a search surfaces no row `list` would hide (`SEC-AUTH-ENUM-001`): a hidden, draft or tombstoned row, or one the family's `where` excludes. On a leaf with the live pointer (pulpit#46, below), the search must also match over the rows its `LiveView.list` reads, not the head: the viewer's own rows (`headFor`) at the head and every other node's live row. Hydration re-reads the live version anyway, but a match scored against an unpublished head would still tell a reader that the draft contains the term. `searchHeadFor({ access, policy }, viewer)` (pulpit#346) is that `headFor`, exactly as `list` chooses it: every head (`always`) on a head-reading rung (the view-private rung, or a reference leaf's corpus writers), the viewer's own (`eq(ownerColumn, id)`) on an owned leaf, and none (`never`) otherwise. A search hands it to its branches as `BranchRequest.headFor`, beside the scope.
+- **Hydration.** `hydrateSearchHits(ops, hits)` re-reads the ranked hits through the leaf's gated `getMany` in one read, so a stale or poisoned index can't leak a row: a hidden or missing hit is dropped, the rest keep their rank order (a repeated id keeps its first), and each comes back as `{ hit, resource }`.
+
+**The live pointer** (pulpit#46, opt-in per leaf). A leaf that declares `publication: { live, facts, preview? }` is publish-gated: what readers see is the version its publication log makes **live**, not the head editors work on. Without the declaration, head and live are one, as before.
+
+- **Facts, not rewrites.** `publication` (on the operations, an `Option`) is `publish(id, { version?, at? })`, `unpublish(id)`, `discardDraft(id, precondition?)`, `facts(id)` and `scheduled(ids)`.
+  - `publish` and `unpublish` append a `PublicationFact` to the `PublicationStore` (`version`, or none for an unpublish, `at`, the actor, `recordedAt`). The live version is the version named by the most recently recorded fact whose `at` has arrived. So `publish(id, { at })` with a future `at` is a schedule: readers see the version at its stamp, with no write, and a later record supersedes it. `VERSION-CHAIN-001/002` are untouched.
+  - `scheduled(ids)` (pulpit#220) is the pending schedule per node, one batched read: for each node the viewer reads the head of (the view-private rung, a reference leaf's corpus writers, a row's own owner), visible and not tombstoned, the most recently recorded `publish` whose `at` is still ahead of the `Clock` and which no later record overtakes. Any other node, a hidden one and an unknown id are absent, so a reader below the head-reading rungs learns nothing of an unpublished schedule. A consumer shows such a node as WordPress's `future` (`pulpit-wordpress`).
+  - `discardDraft` appends the live version's state as a new version (a `restoreVersion`; it writes nothing when the head already is live, and fails `NotPublished` when nothing is).
+  - `facts` is the publication history, gated like `getVersion`.
+  - Each runs the write gate, then the leaf's before hooks with action `publish` / `unpublish` (the returned patch is ignored; a refusal records nothing). The lifecycle event fires when `publish` is called, not when `at` arrives (pulpit#45); `duePublications` drives an application's sweep.
+- **Who reads what.** The view-private rung, a reference leaf's corpus-write rung and a row's own owner read the **head**; everyone else reads the **live** version, and a node with none is hidden from them.
+  - `get` / `getMany` choose per row. `list` goes through the `LiveView`, whose `headFor` filter keeps the viewer's own rows at the head, so `get` and `list` never disagree.
+  - On a gated leaf, **`draft` means "no live version"**: both views compute it from the log, and the stored flag is ignored.
+- **Preview.** `preview` is the request's preview grant: the node id a signed, expiring token admits (signing and verifying it are the application's). `get` of exactly that node serves its head to whoever asks, unless it is tombstoned. `getMany`, `list` and every write ignore it.
+- **The cache only ever holds the live version** (`CACHE-AUTH-005`). On a gated leaf `subtypeHandlers` writes through `publicResource(id)`, the resource as an anonymous reader gets it, never the writer's re-read of the head. It evicts when there is none. `publication` on the handlers runs the operations in `transact`, then the after hooks and the cache refresh. A gated leaf's cache posture is `serveablePolicy({ publishGated: true })`: the live view supplies the stamp (`publishedAt`) the cache checks. A `publish` or `unpublish` appends no version, so its write-through and its event's `write.version` carry the node's head: the cache's compare-on-set (pulpit#121) then orders it after the edits before it, where the published version (often below the head) would be refused. Two publication operations on the same head compare equal, so their order isn't protected the way two chain writes' is: the application serialises publication per node (see [Seams](seams.md#publicationstoree-r-and-liveviewrow-following-e-r-the-live-pointer), pulpit#164).
+- **Autosave** lives outside the chain, in [`./working-copy`](history-and-review.md#working-copy).
+
+**Localisation** (pulpit#56, model (b): the locale is a level in the version chain). One node per content item; its locales share its history, its draft and visibility, its publication state and its path claim. A leaf flagged `localised` in the registry declares, beside its entry, which columns are translated: `defineLocaleLevel({ columns: ["title", "body"] })`, passed to `defineSubtype` as `locales`. Every other column is **shared**: it is held once, in the chain's `state`, so every locale of the node carries the same value. The translated columns live in the version's locale level (`locales: { en: { title: "Hello" }, fr: { title: "Bonjour" } }`).
+
+- **Declaration.** `defineLocaleLevel` throws `SubtypeDeclarationError` at import for no column, a repeat, or a name the view keeps for itself (`id`, `version`, `action`, `locale`). `defineSubtype` throws when a translated column, or `locale`, is not a view column, and when a translated column is one the read gate reads (an owned leaf's owner, visibility, draft and moderation columns; a reference leaf's `visibility` and `followersOfColumn`; a publish-gated leaf's `draft` and `publishedAt`). Access is the node's, never a locale's.
+- **Writes.** `create` takes `locales`, the whole level at version 0; `update` and `restore` take `locales`, a `LocalePatch` (a patch updates that locale, `null` drops it, an absent key carries it forward). Every write appends one version of the whole node, however few locales it touches. `restoreVersion` restores every locale together with the shared columns, and a tombstone carries them forward. A write fails `WriteRejected`, after the gate and with nothing appended, when its shared patch names a translated column, a locale's patch names a shared column, a locale tag is empty, or the leaf has no locale level.
+- **Before hooks see every locale, and fail closed.** A `BeforeWriteHook` declares a `locales` pass beside `run`: it is shown the write's locale patch and returns the one the write applies, so a hook that validates or rewrites a column does so in every locale. A write that carries a locale change through a hook with no `locales` pass is refused with `WriteRejected`, so writing a column per locale never bypasses a hook. A hook with nothing to do per locale passes the patch through: `locales: (event) => Effect.succeed(event.locales ?? {})`.
+- **On the wire** (pulpit#184; owner decision there: the locale travels in `Accept-Language` / `Content-Language`, never a query parameter). Pass `subtypeResourceHandlers` a `LocaleWire` as its third argument: the leaf's `level`, its `defaultLocale`, the request's `acceptLanguage` and `contentLanguage` headers as effects, `served(locale)`, called once a read has found its locale, and `varied`, called instead for a response carrying no single locale (a list whose items fell back to different locales, or an empty one). `get` answers through `getLocalised` with the request's `Content-Language` first (a write's response answers in the locale it wrote), then `acceptLanguage(header)`'s tags by weight, each followed by its shorter prefixes, then the default (`localePreferences`), and a node in none of them is `NodeNotFound`. `create` and `update` split the payload: the level's translated columns land in the `Content-Language` locale (its first tag; the default without one), the rest stay shared, one version of the whole node. effect-jsonapi's handlers see only the decoded params, query and payload, so the application reads the headers from its request context and sets the response's own in `served` (`Content-Language: <locale>` and `Vary: Accept-Language`) and `varied` (`Vary: Accept-Language` alone). Configure `subtypeHandlers` with `localised: true` too, so writes evict every locale's cache entry rather than writing the shared row through (see [Seams](seams.md#resourcecacheseam-and-the-serveable-hook-the-resource-cache)). `list` answers through `listLocalised` with the request's `Accept-Language` preferences, then the default: one item per node, in the first of them it carries (pulpit#272). A page whose items share one locale reports it through `served`; any other through `varied`.
+
+  ```ts
+  import * as HttpEffect from "effect/http/HttpEffect";
+  import * as HttpServerRequest from "effect/http/HttpServerRequest";
+  import * as HttpServerResponse from "effect/http/HttpServerResponse";
+
+  const header = (name: string) =>
+    Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
+      Option.fromUndefinedOr(request.headers[name]),
+    );
+  const wire: LocaleWire<HttpServerRequest.HttpServerRequest> = {
+    level: pageLocales,
+    defaultLocale: "en",
+    acceptLanguage: header("accept-language"),
+    contentLanguage: header("content-language"),
+    served: (locale) =>
+      HttpEffect.appendPreResponseHandler((_, response) =>
+        Effect.succeed(
+          HttpServerResponse.setHeaders(response, {
+            "content-language": locale,
+            vary: "Accept-Language",
+          }),
+        ),
+      ),
+    varied: HttpEffect.appendPreResponseHandler((_, response) =>
+      Effect.succeed(HttpServerResponse.setHeader(response, "vary", "Accept-Language")),
+    ),
+  };
+  const handlers = subtypeResourceHandlers(
+    subtypeHandlers(ops, { ...config, localised: true }),
+    pageConfig,
+    wire,
+  );
+  ```
+
+- **Reads.** The leaf's view has one row per `(id, locale)` the version carries, with the shared columns joined in and the tag in `locale` (a node carrying no locale is one row with a `NULL` locale). `list` reads those rows, so narrow it with the `locale([...])` filter arm. `get` / `getMany` read the node's shared row. `getLocalised(id, locales)` is the fallback read: after the node's own read gate, exactly as `get` runs it, one read of the requested locales' rows from the version the viewer reads (the head, or the live version on a publish-gated leaf), and the first locale in the caller's order the node carries, as `{ locale, resource }`. Each locale row passes the read gate again, so a store that joined one onto other access facts serves none. A node that is missing, hidden or carries none of the locales fails `NodeNotFound` (`SEC-AUTH-ENUM-001`). `listLocalised({ …listRequest, locales })` is the list's fallback (pulpit#272): under exactly `list`'s scope, `includeDeleted` rung and head-or-live choice, one item per node in the first of `locales` it carries, as `{ locale, resource }`; a node in none of them is omitted, and `total` counts nodes. A leaf without a locale level lists nothing.
+- **History.** `compare` reports the shared columns' `changes` and the per-locale `locales` (`diffLocales`).
+
+**Lifecycle hooks** (pulpit#45). A leaf's write side effects compose as `LifecycleHooks` on its definition, `hooks: Effect<LifecycleHooks<Resource, E, R>, never, R>`: an Effect, so the application holds them in a `Context` service, composes them per leaf type and provides them with a `Layer`. Omitted, a leaf has none, and a write reads nothing extra. Hooks run in array order (`composeHooks` concatenates sets), so the order is deterministic and the application's.
+
+- **Before hooks** run inside every write (`create`, `update`, `restore`, `delete`, `restoreVersion`), after its gate and the chain's head read and before the append, in the caller's transaction. Each is shown the leaf type, the action, the node, the head the write extends (`prior`, none for a create), the patch, and the viewer, and returns the patch the write applies (the event's, or a transformed one: a derived slug, a normalised field); the next hook sees that patch. One that fails, with `WriteRejected` or the store's `E`, fails the write with nothing appended. The expected-version check still runs after it, against the same head.
+- **After hooks** run in `subtypeHandlers`, once the write's `transact` has returned (the operations alone can't know when a write commits), and are shown the type, the action, the `{ id, version }` the write landed at, and the resource as the writer re-read it (none for a delete, or when the re-read failed). They never fail the write: a failure, a defect included, goes to `afterFailure`, `"log"` (the default: logged at error level, and the next hook still runs) or `"defect"` (the handler dies, though the write committed). They run uninterruptibly. The cache write-through is the first after hook (`cacheWriteThrough`), ahead of the leaf's own. Inside an outer transaction (the config's `inTransaction` reads true once `transact` returns, so `transact` was a SAVEPOINT and nothing has committed), the cache step evicts at the write's version instead of writing through, so a write the outer transaction later rolls back never reaches the cache (pulpit#124). The leaf's own after hooks still run there, before the outer commit; until `transact` gains an after-commit hook (pulpit#124's follow-up), a hook that must see only committed writes checks the same signal itself.
+- **Durable delivery is the application's.** An after hook runs once, in process, after the commit; a side effect that must not be lost (a queue message, a webhook) belongs in a before hook, as an outbox row the same transaction writes.
+- **Events fire on explicit writes only.** A delete of an already tombstoned node writes nothing and emits nothing. A version stamped to publish in the future emits nothing when its stamp arrives: drive a sweep from a cron with `./publication`'s `duePublications(since, now)` instead.
+
+| Export | What it is |
+| --- | --- |
+| `defineSubtype(definition)`, `SubtypeDefinition`, `SubtypeOps` | The factory, its declaration (type, access, stores, viewer seams, row → resource mapper) and the operations it produces. |
+| `subtypeHandlers(ops, config)`, `SubtypeHandlers`, `SubtypeHandlersConfig`, `ResourceCacheSeam` | The handler record with cache write-through, its `transact` boundary, the `inTransaction` signal that turns the write-through into an eviction inside an outer transaction (pulpit#124), and the cache's write side. |
+| `subtypeResourceHandlers(handlers, config, locale?)`, `SubtypeResourceHandlersConfig` | The record as effect-jsonapi's `ResourceHandlers.make` CRUD handlers, with the decoded-input mappings (see [Seams](seams.md#subtypehandlers-the-handler-record)); given a `LocaleWire`, a localised leaf's (see Localisation, above). |
+| `acceptLanguage(header)`, `localePreferences(requested, defaultLocale)`, `LocaleWire` | The locale on the wire (pulpit#184): an `Accept-Language` header's tags by weight, the fallback order a read tries (each tag, its prefixes, the default), and the request-header seam the localised handlers read. |
+| `LifecycleHooks`, `BeforeWriteHook`, `BeforeWriteEvent`, `AfterWriteHook`, `AfterWriteEvent`, `WriteRejected` | The lifecycle hook seam: a leaf's before hooks (inside the write; may transform the patch or refuse with `WriteRejected`) and after hooks (after the commit; never fail the write), and their events. |
+| `composeHooks(...sets)`, `noHooks()`, `cacheWriteThrough(cache)` | Concatenate hook sets in order; the empty set; the resource cache's write-through as an after hook. |
+| `LeafAccess`, `ownedAccess(options?)` | The gate selector (`reference`, with an optional `followersOfColumn` and `groupColumn`, / `owned` with its view columns, the draft, moderation and group columns among them), and the owned declaration with the conventional column names (`{ draft?, moderation?, group? }`). |
+| `Viewer`, `ViewerAccount`, `AccessPolicy` | The viewer seam and the four role axes (`canViewPrivate`, `canViewDeleted`, `canModerate`, `canWriteCorpus`). |
+| `FollowerSeam`, `nobodyFollows(nobody)` | The follower seam and its fail-closed default. |
+| `ReadScope`, `readScopeFor(viewer, policy, followers)` | A viewer's owned-material read scope (`all` / `public` / `member`). |
+| `canViewOwned`, `OwnedFacts` | The owned-row read predicate and the facts it reads. |
+| `ownedListFilter`, `softDeleteFilter`, `referencePrivacyFilter` | The list arms: owned visibility, the soft-delete axis, and the reference privacy axis (given `Option.some({ access, followers })`, with its followers arm). Pass that fourth argument whenever the leaf declares `followersOfColumn`: the three-argument form agrees with `get` only for a leaf without it. |
+| `requireCreator`, `requireWriter` | The write gates for a create and for a write to an existing row. On a reference leaf `requireWriter` is the rung check alone; `defineSubtype` follows it with `get`'s read check. |
+| `Unauthorized`, `Forbidden`, `InvalidListOrder` | The gates' failures: no signed-in viewer (401); a viewer below the rung (403, never used to hide a row). The first two are effect-auth's `Guard` errors, re-exported (pulpit#5), so they carry a `message` and an optional `code`. And `list`'s: an order key on a column that isn't sortable, or not shaped as an order (400; `column: ""` when the failing key has no string column). |
+| `SubtypeDeclarationError` | Thrown by `defineSubtype` when the leaf is declared: a `sortable`, `search` or `locales` entry that isn't a column of the view, or a translated column the read gate reads; and by `defineSearchProjection` and `defineLocaleLevel`, for a malformed declaration. |
+| `defineLocaleLevel(declaration)`, `LocaleLevel`, `LocalisedResource`, `SubtypeOps.getLocalised`, `CreateRequest`, `RestoreRequest` | A localised leaf's translated columns, the fallback read's `{ locale, resource }`, the read itself, and the write inputs that carry a locale level (see Localisation, above). |
+| `SubtypeOps.listLocalised`, `LocalisedListQuery` | The per-node fallback list (pulpit#272) and the store query it reads (`LeafStore` / `LiveView.listLocalised`; see Seams). |
+| `defineSearchProjection(declaration)`, `SearchProjection`, `SearchField`, `SearchWeight` | A leaf's searchable projection: its indexed view columns, their weights (`A`–`D`) and its language column. |
+| `searchScopeFilter(leaf, viewer, request)`, `searchHeadFor(leaf, viewer)`, `hydrateSearchHits(ops, hits)` | The read scope a search applies to its hits, the same filter `list` reads under; the heads a search over a publish-gated leaf ranks, the `headFor` `list` hands `LiveView.list`; and the hits' gated re-read, in rank order. |
+| `LeafStore`, `LeafRow`, `Page`, `ListRequest`, `ListOrder`, `MAX_PAGE_LIMIT` | The current-version view seam, its row (with the head `version`) and page shapes, the list request and one key of its order, and the page cap (1000). |
+| `versionMeta(row)`, `VersionMeta`, `versionEtag(resource)`, `VersionedResource` | The resource object's `meta` for the row's head version (`{ version: "3" }`), and a single-resource response's `ETag` value read back from it (`Option.some('"3"')`, none without a decimal `meta.version`). |
+| `PublicationDeclaration`, `LiveView`, `PublicationStore`, `PublicationFact` | The live pointer's opt-in: the live-version view and the append-only publication log (see [Seams](seams.md#seams)), and one fact. |
+| `PublicationOps`, `PublishOptions`, `PublicationWrite`, `NotPublished` | The publication operations (`publish`, `unpublish`, `discardDraft`, `facts`, `scheduled`), what `publish` takes and what both report, and `discardDraft`'s failure with nothing live (409). |
+| `SubtypeOps.owners(request)`, `OwnersRequest`, `readableOwners(leaves, request)`, `OwnerSetTooLarge` | The accounts that own at least one row the viewer may list ([#186](https://github.com/thomasfosterau/pulpit/issues/186)). `owners` is one leaf's distinct owner ids, read under exactly `list`'s scope (and its head-or-live choice on a publish-gated leaf), in code-point order with the distinct total, optionally narrowed to `among` (empty on a reference leaf). `readableOwners` is the exact union across leaves, one read per leaf; a leaf with more than `MAX_PAGE_LIMIT` readable owners fails `OwnerSetTooLarge` rather than answer a short union. A hidden row never contributes its owner (`SEC-AUTH-ENUM-001`). |
+| `SubtypeOps.publicResource`, `SubtypeOps.authorize` | The resource as an anonymous reader gets it (what a public cache may hold), and the write gate on its own, for a surface outside the chain. |
+
+## `./publication`
+
+The publication axis (stamped AND arrived), the moderation state, and the KV cache's serveability policy.
+
+| Export | What it is |
+| --- | --- |
+| `isPublishedAt(stamp, now)` / `isNotPublishedAt` | Stamped AND arrived, and its exact complement (a future stamp is scheduled, not out). |
+| `publishedFilter(column, wanted)` | The axis as a list-filter arm; none in, no predicate out. |
+| `duePublications(since, now, column?)` | The rows whose stamp arrived in `(since, now]`, as a list filter, for an application's cron to sweep scheduled publications: a write's events fire when it is made, never when a future stamp arrives. Abutting windows (each run's `now` the next run's `since`) see each row once. |
+| `ModerationState` | `pending \| approved \| rejected`. |
+| `isPubliclyServeable(resource, { owned?, publishGated?, now? })` | The KV cache's security gate (`CACHE-AUTH-005`): only what every viewer may read is serveable. |
+| `serveablePolicy(options)` | The same gate as a resource cache's `serveable` hook (see [Seams](seams.md#seams)). |
+
+## `./cache`
+
+The reference resource cache (pulpit#205; owner decision: in the kernel, behind a minimal KV seam). `makeResourceCache` is `./subtype`'s `ResourceCacheSeam`, the one `subtypeHandlers` writes through, plus the read-through `get` an application serves from, over a `VersionedKv` it supplies. It replaces each application's own `cache.ts`.
+
+```ts
+import { makeResourceCache } from "@thomasfosterau/pulpit/cache";
+import { serveablePolicy } from "@thomasfosterau/pulpit/publication";
+
+const postCache = makeResourceCache({
+  kv, // the application's VersionedKv: a Durable Object, Redis, a SQL table
+  schema: PostResource, // the resource's JSON codec
+  serveable: serveablePolicy({ owned: true }),
+  prefix: "posts:v3:", // bump the generation when the schema changes
+  ttlSeconds: 3600,
+});
+const handlers = subtypeHandlers(postOps, {
+  transact,
+  inTransaction,
+  cache: Option.some(postCache),
+});
+postCache.get(id); // Option<Post>
+```
+
+- **Compare-on-set** (pulpit#121). Every entry carries the version it speaks for, and the KV's one conditional write (`putIfNotBehind`) keeps the highest. A `set` or `delete` below the stored version changes nothing, and an eviction raises the version, so a racing writer's late write-through never re-caches an older resource. The KV must compare and write in one atomic step; Workers KV alone can't.
+- **An eviction wins a tie.** A tombstone outranks a value at the same version, so only a strictly newer write clears it: a read-through that loaded the row before an unpublish at that version (publication appends no version) can't re-cache it. The cache stores a rank as the entry's `version`, `2·version` for a value and `2·version + 1` for a tombstone, so the KV still compares one number. The cost: after an eviction, a fill at the same version is refused, and the item reads from the store until a newer version or the tombstone expires.
+- **Tombstones outlive values.** A tombstone is kept for `tombstoneTtlSeconds` (default `DEFAULT_TOMBSTONE_TTL_SECONDS`, a day; never less than `ttlSeconds`). Set it above the longest a write-through or read-through fill can be in flight: a stale write that lands after its tombstone expired is no longer refused.
+- **Serveability on both sides** (`CACHE-AUTH-005`). `set` refuses, and evicts, a resource the policy doesn't serve. `get` checks again and evicts, so a policy change never serves a stale cached private row.
+- **Decode or evict.** `get` decodes with the resource's schema, and a stored value that no longer decodes is evicted and read as a miss. Bump `prefix` with the schema to start a fresh generation.
+- **A TTL backstop** on every value write (`ttlSeconds`), so an entry no write evicted still expires.
+- **Locale keys under one generation** (pulpit#184, pulpit#271). A `set` or `get` that names a locale (a localised leaf's read-through fill) uses its own `(id, locale)` key, and the id's own key holds the **generation**, the rank of the newest write the id has seen. A locale `set` raises the generation first, with the same conditional write, and writes its entry only if that succeeded; a locale entry is served only while its rank equals the generation. So a fill behind the id's version, in any locale, is a no-op, a newer version in one locale retires every other locale's entry, an eviction wins a tie in every locale, and `delete` evicts every locale with one conditional write. The locale key is the id's key, U+001F and the locale; an id never holds U+001F. `get(id, locale)` reads a locale entry; an unlocalised `set` / `get` is unchanged.
+- **Never fails.** A KV failure reads as a miss and skips a write: the store stays the source of truth.
+
+| Export | What it is |
+| --- | --- |
+| `makeResourceCache(options)`, `ResourceCacheOptions`, `ResourceCache` | The cache, its options, and the seam plus `get`. |
+| `VersionedKv`, `KvEntry` | The KV seam (see [Seams](seams.md#seams)) and one stored entry (its rank and encoded value, none for an eviction). |
+| `DEFAULT_TOMBSTONE_TTL_SECONDS` | How long an eviction is kept by default: 86 400 seconds. |

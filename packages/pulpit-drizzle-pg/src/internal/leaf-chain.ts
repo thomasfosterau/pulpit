@@ -35,7 +35,7 @@ import { isNodeId } from "./node-id.ts";
 /**
  * The root version table's injected extras the port writes: the contributor
  * whose accepted proposal a version applies (`versionColumns: { proposedBy }`
- * in the tree's `makeTreeTables` config, README → `./version-chain`).
+ * in the tree's `makeTreeTables` config, docs/drizzle-pg.md → `./version-chain`).
  *
  * @since 0.0.0
  */

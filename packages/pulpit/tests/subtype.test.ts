@@ -4629,7 +4629,7 @@ describe("defineSubtype — the live pointer (pulpit#46)", () => {
    * A publish whose cache write-through is held until released, and an
    * unpublish on the same head, through one leaf: what pulpit#164's race
    * needs. `serialised` runs each handler call under one per-node lock, the
-   * serialisation the README asks the application for.
+   * serialisation docs/seams.md asks the application for.
    */
   const publicationRace = (serialised: boolean) =>
     Effect.gen(function* () {
@@ -4690,7 +4690,7 @@ describe("defineSubtype — the live pointer (pulpit#46)", () => {
   it("unserialised, the publish's late write-through re-caches past the unpublish: the gap pulpit#164 accepts", async () => {
     const outcome = await atClock(publicationRace(false));
     // Both stamp the same head, so compare-on-set admits the late `set`. The
-    // README → Seams makes serialising publication per node the store's job.
+    // docs/seams.md makes serialising publication per node the store's job.
     expect(outcome.live).toEqual(Option.none());
     expect(outcome.cached).toEqual(Option.some(expect.objectContaining({ title: "v0" })));
   });

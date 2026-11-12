@@ -1,4 +1,6 @@
 /**
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#version-chain.
+ *
  * @copyright Thomas Foster
  *
  * The kernel's `VersionChain` port (pulpit#246) over effect-drizzle-ext

@@ -4,7 +4,9 @@
  * An entry whose target the viewer can't follow (a private, unpublished,
  * scheduled or tombstoned page, an unclaimed path, an alias to a hidden
  * node) is omitted without a gap or a trace (`SEC-AUTH-ENUM-001`), and the
- * owner and the view-private rung see what others can't.
+ * owner and the view-private rung see what others can't. A nested list
+ * (pulpit#313) is read in place, and omitted when hidden, empty, cyclic or
+ * past the depth cap.
  *
  * @module tests/links
  */
@@ -18,9 +20,9 @@ import * as P from "effect/Predicate";
 import * as R from "effect/Record";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
-import { defineCollection } from "../src/collections.ts";
+import { defineCollection, MAX_COLLECTION_SIZE } from "../src/collections.ts";
 import { LOCALE_COLUMN } from "../src/filter.ts";
-import { defineLinkList, type LinkTarget } from "../src/links.ts";
+import { DEFAULT_LINK_DEPTH, defineLinkList, type Link, type LinkTarget } from "../src/links.ts";
 import { resolveLocalised } from "../src/pages.ts";
 import { routable } from "../src/paths.ts";
 import {
@@ -49,10 +51,11 @@ interface Entry {
   readonly label: unknown;
   readonly path: unknown;
   readonly nodeId: unknown;
+  readonly listId: unknown;
 }
 
 /** Pages (routable, localised, publish-gated), a menu leaf, entry leaf and their collection. */
-const site = () => {
+const site = (declared: { readonly maxDepth?: number } = {}) => {
   let viewer: Viewer = as(member);
   const viewerOf = Effect.sync(() => viewer);
 
@@ -95,7 +98,7 @@ const site = () => {
     access: ownedAccess(),
     chain: itemChain,
     leaves: makeInMemoryLeafStore(itemChain, {
-      columns: ["visibility", "path", "nodeId", "label"],
+      columns: ["visibility", "path", "nodeId", "listId", "label"],
       localised: true,
       now: NOW,
     }),
@@ -106,6 +109,7 @@ const site = () => {
       label: row["label"],
       path: row["path"],
       nodeId: row["nodeId"],
+      listId: row["listId"],
     }),
     locales: defineLocaleLevel({ columns: ["label"] }),
   });
@@ -118,6 +122,7 @@ const site = () => {
   const links = defineLinkList({
     type: "menu-links",
     defaultLocale: "en",
+    ...declared,
     entries: collection,
     entryLeaf: items,
     target: (entry: Entry): Option.Option<LinkTarget> =>
@@ -125,7 +130,9 @@ const site = () => {
         ? Option.some({ kind: "path", path: entry.path })
         : P.isString(entry.nodeId)
           ? Option.some({ kind: "node", id: entry.nodeId })
-          : Option.none(),
+          : P.isString(entry.listId)
+            ? Option.some({ kind: "list", id: entry.listId })
+            : Option.none(),
     resolve: resolveLocalised(pages, { defaultLocale: "en" }),
     nodes: pages,
   });
@@ -158,7 +165,7 @@ const site = () => {
   const entry = (
     menuId: string,
     labels: Record<string, string>,
-    target: { readonly path?: string; readonly nodeId?: string },
+    target: { readonly path?: string; readonly nodeId?: string; readonly listId?: string },
   ) =>
     Effect.gen(function* () {
       const { id } = yield* items.create({
@@ -388,5 +395,173 @@ describe("defineLinkList (pulpit#266)", () => {
     );
     expect(hidden).toBe("NodeNotFound");
     expect(empty).toEqual([]);
+  });
+});
+
+/** A read as nested labels: a nested list's label carries its own links'. */
+type Outline = string | readonly [string, ReadonlyArray<Outline>];
+const outlineOf = (links: ReadonlyArray<Link<Entry>>): ReadonlyArray<Outline> =>
+  Arr.map(links, (link): Outline => {
+    const label = String(link.entry.label);
+    return link.target.kind === "list" ? [label, outlineOf(link.target.links)] : label;
+  });
+
+describe("defineLinkList — nested lists (pulpit#313)", () => {
+  it("reads a nested list in place, in order, and omits a hidden or empty one without a gap", async () => {
+    const ops = site();
+    const [anon, owner, indices] = await runAtNow(
+      Effect.gen(function* () {
+        const home = yield* ops.page("home", "public");
+        yield* ops.publish(home.id);
+        const secret = yield* ops.page("secret", "private");
+        yield* ops.publish(secret.id);
+
+        const top = yield* ops.menu();
+        const about = yield* ops.menu();
+        const hidden = yield* ops.menu("private");
+        const empty = yield* ops.menu();
+        const bare = yield* ops.menu();
+        yield* ops.entry(about, { en: "Secret" }, { path: "secret" });
+        yield* ops.entry(about, { en: "Home again" }, { path: "home" });
+        yield* ops.entry(hidden, { en: "Behind" }, { path: "home" });
+        yield* ops.entry(empty, { en: "Only secret" }, { path: "secret" });
+
+        yield* ops.entry(top, { en: "Hidden" }, { listId: hidden });
+        yield* ops.entry(top, { en: "Home" }, { path: "home" });
+        yield* ops.entry(top, { en: "Empty" }, { listId: empty });
+        yield* ops.entry(top, { en: "About" }, { listId: about });
+        yield* ops.entry(top, { en: "Bare" }, { listId: bare });
+        yield* ops.entry(top, { en: "Missing" }, { listId: "no-such-menu" });
+        const read = yield* ops.read(anonymous, top);
+        return [
+          outlineOf(read),
+          outlineOf(yield* ops.read(as(member), top)),
+          Arr.map(read, (link) =>
+            link.target.kind === "list"
+              ? [link.index, Arr.map(link.target.links, (nested) => nested.index)]
+              : link.index,
+          ),
+        ] as const;
+      }),
+    );
+    expect(anon).toEqual(["Home", ["About", ["Home again"]]]);
+    expect(indices).toEqual([0, [1, [0]]]);
+    // The owner reads the private menu and the private page; a list with no entries stays out.
+    expect(owner).toEqual([
+      ["Hidden", ["Behind"]],
+      "Home",
+      ["Empty", ["Only secret"]],
+      ["About", ["Secret", "Home again"]],
+    ]);
+  });
+
+  it("reveals neither a hidden nested list's id nor its entries", async () => {
+    const ops = site();
+    const [json, hiddenId] = await runAtNow(
+      Effect.gen(function* () {
+        const home = yield* ops.page("home", "public");
+        yield* ops.publish(home.id);
+        const top = yield* ops.menu();
+        const hidden = yield* ops.menu("private");
+        yield* ops.entry(hidden, { en: "Behind" }, { path: "home" });
+        yield* ops.entry(top, { en: "Hidden" }, { listId: hidden });
+        yield* ops.entry(top, { en: "Home" }, { path: "home" });
+        return [Formatter.formatJson(yield* ops.read(anonymous, top)), hidden] as const;
+      }),
+    );
+    expect(json).not.toContain(hiddenId);
+    expect(json).not.toContain("Behind");
+  });
+
+  it("cuts a cycle: an entry to its own list or one above it is omitted", async () => {
+    const ops = site({ maxDepth: 10 });
+    const [fromA, fromB] = await runAtNow(
+      Effect.gen(function* () {
+        const home = yield* ops.page("home", "public");
+        yield* ops.publish(home.id);
+        const a = yield* ops.menu();
+        const b = yield* ops.menu();
+        yield* ops.entry(a, { en: "A home" }, { path: "home" });
+        yield* ops.entry(a, { en: "To B" }, { listId: b });
+        yield* ops.entry(a, { en: "To A" }, { listId: a });
+        yield* ops.entry(b, { en: "B home" }, { path: "home" });
+        yield* ops.entry(b, { en: "Back to A" }, { listId: a });
+        return [yield* ops.labels(anonymous, a), outlineOf(yield* ops.read(anonymous, b))] as const;
+      }),
+    );
+    expect(fromA).toEqual(["A home", "To B"]);
+    expect(fromB).toEqual(["B home", ["Back to A", ["A home"]]]);
+  });
+
+  it("nests to DEFAULT_LINK_DEPTH levels, or the declared maxDepth, and omits what lies deeper", async () => {
+    const chainOf = (ops: ReturnType<typeof site>) =>
+      Effect.gen(function* () {
+        const home = yield* ops.page("home", "public");
+        yield* ops.publish(home.id);
+        const lists = yield* Effect.forEach(Arr.range(1, 5), () => ops.menu(), {
+          concurrency: 1,
+        });
+        yield* Effect.forEach(
+          lists,
+          (id, at) =>
+            Effect.gen(function* () {
+              yield* ops.entry(id, { en: `Level ${at + 1}` }, { path: "home" });
+              const next = Arr.get(lists, at + 1);
+              if (Option.isSome(next)) {
+                yield* ops.entry(id, { en: `Into ${at + 2}` }, { listId: next.value });
+              }
+            }),
+          { concurrency: 1 },
+        );
+        return outlineOf(yield* ops.read(anonymous, Arr.headNonEmpty(lists)));
+      });
+    const [byDefault, flat, deep] = await runAtNow(
+      Effect.all(
+        [chainOf(site()), chainOf(site({ maxDepth: 1 })), chainOf(site({ maxDepth: 5 }))],
+        {
+          concurrency: 1,
+        },
+      ),
+    );
+    expect(DEFAULT_LINK_DEPTH).toBe(3);
+    expect(byDefault).toEqual(["Level 1", ["Into 2", ["Level 2", ["Into 3", ["Level 3"]]]]]);
+    expect(flat).toEqual(["Level 1"]);
+    expect(deep).toEqual([
+      "Level 1",
+      [
+        "Into 2",
+        ["Level 2", ["Into 3", ["Level 3", ["Into 4", ["Level 4", ["Into 5", ["Level 5"]]]]]]],
+      ],
+    ]);
+  });
+
+  it("reads at most MAX_COLLECTION_SIZE entries over every level, in reading order", async () => {
+    const ops = site();
+    const sizes = await runAtNow(
+      Effect.gen(function* () {
+        const home = yield* ops.page("home", "public");
+        yield* ops.publish(home.id);
+        const top = yield* ops.menu();
+        const wide = yield* ops.menu();
+        yield* Effect.forEach(
+          Arr.range(1, 25),
+          (n) => ops.entry(wide, { en: `Wide ${n}` }, { nodeId: home.id }),
+          { concurrency: 1 },
+        );
+        yield* Effect.forEach(
+          Arr.range(1, 40),
+          (n) => ops.entry(top, { en: `Into ${n}` }, { listId: wide }),
+          { concurrency: 1 },
+        );
+        const read = yield* ops.read(anonymous, top);
+        return Arr.map(read, (link) =>
+          link.target.kind === "list" ? link.target.links.length : 0,
+        );
+      }),
+    );
+    // The top list's 40 entries leave 960: 38 nested reads of 25, one of the 10
+    // left, and none for the last entry, whose list is left empty.
+    expect(MAX_COLLECTION_SIZE).toBe(1000);
+    expect(sizes).toEqual([...Arr.replicate(25, 38), 10]);
   });
 });

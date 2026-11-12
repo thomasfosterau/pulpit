@@ -27,7 +27,7 @@
  *   fields from what is *recorded*. It does not touch the bytes: an image's
  *   own EXIF block still carries its coordinates unless the application's
  *   transform (or its extractor's re-encode) strips them. See the package
- *   README → `./media` for the trade-off.
+ *   docs/media.md → `./media` for the trade-off.
  * - **A rendition is served only for bytes a node the viewer can read
  *   references** ({@link defineRenditions}): the kernel owns the width
  *   buckets, the format negotiation and that gate, and answers a blob no
@@ -39,6 +39,8 @@
  *   over `./collections`), its members drawn only from the declared media
  *   leaves: anything else is not a member it can find (`NodeNotFound`), and
  *   a member the viewer can't read is omitted from the read.
+ *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/media.md#media.
  *
  * @copyright Thomas Foster
  * @module pulpit/media

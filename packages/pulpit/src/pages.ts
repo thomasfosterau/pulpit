@@ -4,7 +4,7 @@
  * the best locale it carries, to a redirect from an alias, or to not-found.
  *
  * A page family is assembled from the existing modules; this one adds only
- * the read that joins them (see the package README → Pages):
+ * the read that joins them (see docs/structure.md → `./pages`):
  *
  * - **the leaf** — `./subtype`'s `defineSubtype`, usually a reference leaf
  *   (corpus material written at the corpus-write rung), with a locale level
@@ -22,6 +22,8 @@
  * tombstoned page resolves as {@link PathNotFound}, exactly as a path
  * nobody claims (`SEC-AUTH-ENUM-001`), and never as forbidden. Navigation
  * menus and page builders are not part of the recipe.
+ *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/structure.md#pages.
  *
  * @copyright Thomas Foster
  * @module pulpit/pages

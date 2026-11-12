@@ -56,6 +56,8 @@
  * cached evicts each `written` entry's version through its resource cache
  * after the batch's transaction commits.
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/participation.md#reference-import.
+ *
  * @copyright Thomas Foster
  * @module pulpit/reference-import
  * @since 0.2.0
@@ -138,8 +140,7 @@ export interface ExternalIdLink {
  * (or one table with a family column): keyed `(authority, external_id)`,
  * with a second unique key on `(authority, node_id)`, the node foreign key
  * cascading, and a nullable `jsonb` baseline. A store seam: no policy, never
- * opens a transaction, fails only with its `E`. See the package README →
- * Seams.
+ * opens a transaction, fails only with its `E`. See docs/seams.md.
  *
  * @since 0.2.0
  */

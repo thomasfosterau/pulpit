@@ -29,6 +29,8 @@
  * lists are public, filtered through the application's account visibility
  * ({@link AccountVisibility}).
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/participation.md#social.
+ *
  * @copyright Thomas Foster
  * @module pulpit/social
  * @since 0.1.0
@@ -110,8 +112,7 @@ export class SelfRelationship extends Schema.TaggedError<
  * `social.follows`, widened by a `kind` column), keyed
  * `(kind, from_id, to_id)` with both account foreign keys cascading. A store
  * seam: no policy, never opens a transaction, fails only with its `E`.
- * `Following` is the follower seam's set (a subquery in SQL). See the
- * package README → Seams.
+ * `Following` is the follower seam's set (a subquery in SQL). See docs/seams.md.
  *
  * @since 0.1.0
  */

@@ -59,15 +59,18 @@ Never guess at an Effect API: read the installed package. `node_modules/effect/A
 
 ## Documentation surfaces
 
-- `README.md` — the landing page: what the repository is, its packages and its toolchain.
-- `packages/pulpit/README.md` — the API reference consumers read on npm, including the seams' expected shapes.
+Each README is short (pulpit#362): what it is, install, one example, an entry-point table and links. Per-export detail lives in TSDoc; cross-cutting prose lives in `docs/`.
+
+- `README.md` — the landing page: what the repository is, its packages (the entry-point table), install, one example and links.
+- `packages/pulpit/README.md`, `packages/pulpit-wordpress/README.md`, `packages/pulpit-drizzle-pg/README.md` — what consumers read on npm: the same five parts, each subpath linking to its module guide. They use absolute `https://github.com/thomasfosterau/pulpit/blob/trunk/…` links, since npm renders them away from the repository.
+- **TSDoc** — the API reference: each export's contract, its error channel and the invariant IDs it honours (AGENTS.md → Conventions). A change to an export's behaviour updates its TSDoc.
+- `docs/` — the cross-cutting prose, indexed by [`docs/README.md`](docs/README.md) (which also describes the workspace and its toolchain): the kernel's module guides by capability (`content-model.md`, `read-model.md`, `history-and-review.md`, `structure.md`, `participation.md`, `media.md`, `discovery-and-search.md`, `erasure.md`), every seam's expected shape and SQL sketch with the `./testing` fakes (`seams.md`), and the optional packages' guides (`wordpress.md`, `drizzle-pg.md`). It is hand-written and committed; the gitignored `packages/*/docs/` is docgen's output, a different tree.
 - `packages/pulpit/AGENTS.md` — the kernel's boundary, invariants and terms (its `CLAUDE.md` imports it).
-- `packages/pulpit-wordpress/README.md` and `AGENTS.md` — the same two for the WordPress adapter.
-- `packages/pulpit-drizzle-pg/README.md` and `AGENTS.md` — the same two for the Drizzle / PostgreSQL package.
+- `packages/pulpit-wordpress/AGENTS.md`, `packages/pulpit-drizzle-pg/AGENTS.md` — the same for the WordPress adapter and the Drizzle / PostgreSQL package.
 - `CONTRIBUTING.md` — setup, commands, git hooks, CI, branches, pull requests and changesets; the gate list is [Verification](#verification) above.
 - `AGENTS.md` (this file) — agent conventions, pitfalls, the gates and the work tracker. `.claude/CLAUDE.md` — Claude Code's memory: its hooks, plugins and session notes, importing this file, `CONTRIBUTING.md` and `README.md`.
 - `PUBLISHING.md` — the release pipeline and one-time owner setup. `SECURITY.md` — reporting, supply-chain posture and the invariant-ID table.
-- Decisions go in issue comments. There is no `docs/` tree.
+- Decisions go in issue comments, not in `docs/`.
 
 ---
 

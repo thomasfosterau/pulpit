@@ -14,6 +14,8 @@
  * rule: a value sets, `null` clears a nullable column, `undefined` carries
  * forward — declared on the descriptor, never re-spelled at a call site).
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/content-model.md#content.
+ *
  * @copyright Thomas Foster
  * @module pulpit/content
  * @since 0.1.0

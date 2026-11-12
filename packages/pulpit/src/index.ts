@@ -168,9 +168,9 @@ export * as Cache from "./cache.ts";
 export * as Collections from "./collections.ts";
 
 /**
- * Ordered link lists: a flat, localised list of links under a parent node,
- * read for one viewer with every entry whose target they can't follow
- * omitted (`defineLinkList` over a `./collections` collection).
+ * Ordered link lists: a localised list of links under a parent node, with
+ * nested lists, read for one viewer with every entry whose target they
+ * can't follow omitted (`defineLinkList` over a `./collections` collection).
  */
 export * as Links from "./links.ts";
 

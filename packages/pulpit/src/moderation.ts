@@ -42,6 +42,8 @@
  * rows ({@link reviewQueueFilter}) plus the open member reports
  * ({@link defineReports}), both the moderate rung's alone.
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/history-and-review.md#moderation.
+ *
  * @copyright Thomas Foster
  * @module pulpit/moderation
  * @since 0.1.0
@@ -530,7 +532,7 @@ export interface ReportResolution {
 
 /**
  * The report table an application supplies. It applies no policy, never
- * opens a transaction, and fails only with its `E` (README → Seams).
+ * opens a transaction, and fails only with its `E` (docs/seams.md).
  *
  * @since 0.1.0
  */

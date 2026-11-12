@@ -1,7 +1,9 @@
 /**
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#paths.
+ *
  * @copyright Thomas Foster
  *
- * The kernel's `PathStore` (README → Seams → `PathStore`, pulpit#57) on
+ * The kernel's `PathStore` (docs/seams.md → `PathStore`, pulpit#57) on
  * PostgreSQL (pulpit#247): a path table per routable namespace, `(path
  * PRIMARY KEY, node_id, canonical)`, with at most one canonical row per
  * node held by a partial unique index on `node_id WHERE canonical`. It runs

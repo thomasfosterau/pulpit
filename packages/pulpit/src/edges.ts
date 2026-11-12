@@ -59,7 +59,7 @@
  *   Under `"fail"` a collision with a hidden edge answers exactly as one
  *   with a readable edge; under `"ignore"` only a readable, live edge
  *   resolves, and any other collision is {@link EdgeConflict}. The count
- *   reads only readable edges (README → `./edges` → What a write
+ *   reads only readable edges (docs/structure.md → `./edges` → What a write
  *   discloses).
  * - **Every list is bounded** (`SEC-INPUT-003`): a page is capped at
  *   `MAX_PAGE_LIMIT`.
@@ -68,9 +68,11 @@
  *
  * The edges are read and written through an {@link EdgeStore} the
  * application supplies (a Drizzle store over the edge table, joining each
- * end's current-version view; see the package README → Seams). Each end
+ * end's current-version view; see docs/seams.md). Each end
  * reads its nodes through an {@link EndpointView}, which a `./subtype`
  * `LeafStore` already satisfies.
+ *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/structure.md#edges.
  *
  * @copyright Thomas Foster
  * @module pulpit/edges
@@ -479,7 +481,7 @@ export interface EdgeStore<Row extends EdgeRow, Following, E, R> {
    * per bounded end in ascending `nodeId` order. A SQL store locks the node
    * first (`FOR NO KEY UPDATE`, under READ COMMITTED), so two creates at one
    * node serialise, and the sorted order means two creates locking the same
-   * pair of nodes cannot deadlock (README → Seams).
+   * pair of nodes cannot deadlock (docs/seams.md).
    */
   readonly countAt: (query: {
     readonly column: string;
@@ -737,7 +739,7 @@ export interface EdgeOps<Create, Resource, E, R, Following = never> {
    * `EdgeConflict` (`SEC-AUTH-ENUM-001`, pulpit#93). The count reads no
    * hidden edge ({@link EdgeEnd.maxEdges}). An `EdgeConflict` still says the
    * key is taken, which only a family whose unique key leaves an end out
-   * can say about a hidden edge (README → `./edges`).
+   * can say about a hidden edge (docs/structure.md → `./edges`).
    */
   readonly create: (
     input: Create,
@@ -881,7 +883,7 @@ const byNodeId = Order.mapInput(Order.String, (at: { readonly nodeId: string }) 
  * Bind an edge family's operations. Every produced operation is traced as
  * `${type}.<operation>`; the writes run in the caller's transaction (the
  * boundary is the caller's, website #1883), and a create's cardinality
- * count and insert share it (README → Seams).
+ * count and insert share it (docs/seams.md).
  *
  * Throws {@link EdgeDeclarationError}, when the family is declared, for an
  * end alias containing a `.` or a `maxEdges` that is not a positive safe
@@ -1045,7 +1047,7 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     // edge that is already there stays idempotent at a full end.
     const collided = yield* edges.existing(values);
     if (Option.isSome(collided)) return yield* resolveCollision(viewer, collided.value);
-    // Each bounded end's count locks its node (README → Seams), so the nodes
+    // Each bounded end's count locks its node (docs/seams.md), so the nodes
     // are visited in one global order: a self-referential family's two
     // bounded ends cannot deadlock two creates naming the pair both ways.
     // Only edges the viewer can read with every end live count (pulpit#77,

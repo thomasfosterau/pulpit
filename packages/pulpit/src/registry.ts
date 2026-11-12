@@ -48,6 +48,8 @@
  *
  * Client-safe (no Drizzle) and module-load-time static.
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/content-model.md#registry.
+ *
  * @copyright Thomas Foster
  * @module pulpit/registry
  * @since 0.1.0

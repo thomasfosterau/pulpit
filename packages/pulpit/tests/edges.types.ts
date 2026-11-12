@@ -1,8 +1,8 @@
 /**
- * The package README's Taxonomies example (README → `./edges` →
+ * The Taxonomies example in docs/structure.md (`./edges` →
  * Taxonomies), type-checked by the package's `check` task (`tsconfig.json`
- * includes `tests/`). Nothing checks the README's copy itself, so change the
- * two together. The code below is the README's with two changes: the import
+ * includes `tests/`). Nothing checks the docs' copy itself, so change the
+ * two together. The code below is the docs' with two changes: the import
  * specifiers name the sources rather than `@thomasfosterau/pulpit/<subpath>`,
  * and each binding is exported, so `noUnusedLocals` can't reject it.
  *

@@ -1,7 +1,7 @@
 /**
  * @copyright Thomas Foster
  *
- * The kernel's `ProposalStore` (README → Seams → `ProposalStore`, pulpit#55)
+ * The kernel's `ProposalStore` (docs/seams.md → `ProposalStore`, pulpit#55)
  * on PostgreSQL (pulpit#355): one proposal table of suggested edits against
  * a tree's nodes. Reads join the identity table for the target's leaf type
  * and the owner table for its owner, and read the target's head version as

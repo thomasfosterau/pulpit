@@ -1,7 +1,9 @@
 /**
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#leaf-store.
+ *
  * @copyright Thomas Foster
  *
- * The kernel's `LeafStore` (README → Seams → `LeafStore`) over the
+ * The kernel's `LeafStore` (docs/seams.md → `LeafStore`) over the
  * fail-closed current-version views effect-drizzle-ext's `makeTreeViews`
  * derives from a tree (pulpit#247), plus the owner table the kernel's owned
  * leaves stamp (`core.node_owner` in the applications), which is pulpit's
@@ -151,7 +153,7 @@ const checkMerge = (
  * - `listLocalised` reads none for a leaf with no keyed view (`views.keyed`).
  *
  * A keyed leaf (one in `views.keyed`, which `makeTreeViews` derives for a
- * leaf with a keyed level) reads its keyed view instead (README → Seams →
+ * leaf with a keyed level) reads its keyed view instead (docs/seams.md →
  * `LeafStore` → "A localised leaf's view", pulpit#56): `columns`, `list`
  * and `distinct` read its `(id, locale)` rows, one `NULL`-locale row for a
  * node with none, so the `locale` arm and the translated columns filter;
