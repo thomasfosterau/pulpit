@@ -251,6 +251,30 @@ export default defineConfig({
   },
   run: {
     tasks: {
+      // The whole of CI, as one task: `.github/workflows/ci.yml` runs
+      // `vp run ci` and nothing else, on every Node version in its matrix.
+      // The gates run in AGENTS.md → Verification's order (steps 1–6, then
+      // step 7's coverage gate), then pulpit-drizzle-pg's integration suite,
+      // which needs a PostgreSQL the `PG*` variables (or `DATABASE_URL_TEST`)
+      // name: CI gives it a `postgres` service container. An array runs its
+      // commands in order, as `&&` would, and stops at the first failure, so
+      // a red gate hides the verdicts of the gates after it. Each nested
+      // `vp run` is inlined as its own tasks, which keep their own cache
+      // settings; this task and its plain commands (`vp check`, the audit,
+      // whose answer moves with the advisory database) are never cached.
+      ci: {
+        command: [
+          "vp check",
+          "vp run check",
+          "vp run -r test:unit",
+          "vp run -r build",
+          "vp run -r docgen",
+          "pnpm audit --audit-level high",
+          "vp run -r test:coverage",
+          "vp run --filter ./packages/pulpit-drizzle-pg test:integration",
+        ],
+        cache: false,
+      },
       // The CI typecheck gate, as one task: each package's `check` (which also
       // type-checks its type-level tests), plus the dist-consumer check that
       // type-checks consumer fixtures against the EMITTED declarations of both
