@@ -13,6 +13,7 @@ import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
 import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
 import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
 import { makeDocumentTable } from "@thomasfosterau/pulpit-drizzle-pg/documents";
+import { makeEdgeTable } from "@thomasfosterau/pulpit-drizzle-pg/edges";
 import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
 import { makeProposalTable } from "@thomasfosterau/pulpit-drizzle-pg/proposals";
 import { makePathTable } from "@thomasfosterau/pulpit-drizzle-pg/paths";
@@ -89,6 +90,23 @@ export const documents = makeDocumentTable({ schema, name: "block_documents" });
 /** The proposal table, over the root tables. */
 export const proposals = makeProposalTable({ schema, root: tables.root });
 
+/**
+ * An edge family between posts: a role (nullable, part of the unique key,
+ * `NULLS NOT DISTINCT`) and a validity interval.
+ */
+export const relations = makeEdgeTable({
+  schema,
+  name: "relation",
+  identity: tables.root.identity,
+  ends: { subjectId: "subject_id", objectId: "object_id" },
+  columns: {
+    role: text("role"),
+    validFrom: timestamp("valid_from", { withTimezone: true }),
+    validTo: timestamp("valid_to", { withTimezone: true }),
+  },
+  uniqueKey: ["subjectId", "objectId", "role"],
+});
+
 /** The owner table the leaf stores read and stamp. */
 export const owners = makeNodeOwnerTable({ schema, identity: tables.root.identity });
 
@@ -124,6 +142,7 @@ export const fixtureSchema = {
   owners,
   paths,
   documents,
+  relations,
   proposals,
   notesView: views.leaves.notes,
   linksView: views.leaves.links,
