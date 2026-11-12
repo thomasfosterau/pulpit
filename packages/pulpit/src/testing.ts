@@ -2231,21 +2231,17 @@ export interface InMemoryPurgeStoreOptions {
    */
   readonly chains: ReadonlyArray<InMemoryVersionChain>;
   /** The documents an unreferenced hash is deleted from; omitted, none is deleted (or reported). */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no document store"
-  readonly documents?: Pick<InMemoryDocumentStore<Schema.Json>, "remove"> | undefined;
+  readonly documents?: Pick<InMemoryDocumentStore<Schema.Json>, "remove">;
   /** The state columns that carry a `DocumentHash`; omitted, none do. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no document columns"
-  readonly documentColumns?: ReadonlyArray<string> | undefined;
+  readonly documentColumns?: ReadonlyArray<string>;
   /** The state columns that carry a `ContentHash` (a file leaf's `contentHash`); omitted, none do. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no content columns"
-  readonly blobColumns?: ReadonlyArray<string> | undefined;
+  readonly blobColumns?: ReadonlyArray<string>;
   /**
    * What else `eraseNode` deletes for the node: the rows other fakes keep
    * for it (an owner stamp through `InMemoryLeafStore.dropOwner`, working
    * copies, edges, …), as a real store's `ON DELETE CASCADE` would.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "nothing else"
-  readonly dependents?: ReadonlyArray<(id: string) => void> | undefined;
+  readonly dependents?: ReadonlyArray<(id: string) => void>;
 }
 
 /** The string values `columns` hold across `rows`, each once. */

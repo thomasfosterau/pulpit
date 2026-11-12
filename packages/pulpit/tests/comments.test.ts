@@ -25,6 +25,7 @@ import {
   CommentDeclarationError,
   defineComments,
   moderationListFilter,
+  type CommentsDefinition,
 } from "../src/comments.ts";
 import { evaluate } from "../src/filter.ts";
 import { moderatedColumns, moderationHook } from "../src/moderation.ts";
@@ -157,7 +158,7 @@ const world = (maxDepth?: number) => {
       after: [],
     }),
   });
-  const comments = defineComments({
+  const definition: CommentsDefinition<LeafRow, InMemoryFollowing, never, never> = {
     comments: commentLeaf,
     leaves: commentLeaves,
     targets: { posts, terms },
@@ -165,8 +166,10 @@ const world = (maxDepth?: number) => {
     policy: gardeneriaPolicy,
     moderation,
     authorColumn: "ownerId",
-    maxDepth,
-  });
+  };
+  const comments = defineComments(
+    maxDepth === undefined ? definition : { ...definition, maxDepth },
+  );
   const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
     Effect.suspend(() => {
       viewer = who;

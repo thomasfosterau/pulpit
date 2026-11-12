@@ -196,8 +196,7 @@ export interface CollectionDefinition<Parent, Member, E, R> {
   readonly members: Pick<SubtypeOps<Member, E, R>, "getMany">;
   readonly store: CollectionStore<E, R>;
   /** The order's model; `mutable` when omitted. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is the default model
-  readonly mode?: CollectionMode<E, R> | undefined;
+  readonly mode?: CollectionMode<E, R>;
 }
 
 /**

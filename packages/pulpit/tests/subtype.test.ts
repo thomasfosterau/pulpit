@@ -169,13 +169,11 @@ describe("canViewOwned (the owned-material read predicate)", () => {
   const view = (
     visibility: Visibility,
     viewer: Viewer,
-    /* oxlint-disable effect/prefer-option-over-null -- the workspace's optional-field convention (AGENTS.md → Conventions), as in the options types under test */
     options: {
-      readonly draft?: boolean | undefined;
-      readonly unapproved?: boolean | undefined;
-      readonly followers?: typeof follows | undefined;
+      readonly draft?: boolean;
+      readonly unapproved?: boolean;
+      readonly followers?: typeof follows;
     } = {},
-    /* oxlint-enable effect/prefer-option-over-null */
   ) =>
     run(
       canViewOwned(viewer, gardeneriaPolicy, options.followers ?? follows, {
@@ -1625,8 +1623,7 @@ interface Seed {
   readonly owner: ViewerAccount;
   readonly state: { readonly [column: string]: Seeded };
   readonly deleted: boolean;
-  // oxlint-disable-next-line effect/prefer-option-over-null -- the workspace's optional-field convention (AGENTS.md → Conventions)
-  readonly unstamped?: boolean | undefined;
+  readonly unstamped?: boolean;
 }
 
 /** What one viewer's three reads answer for one seeded row. */

@@ -71,6 +71,8 @@ const copies = defineWorkingCopy({ leaf: postOps, chain, store: workingCopies })
 
 Suggested edits (pulpit#49). A contributor proposes a patch to a node they can read; the node's writer accepts it (appending it as a new version) or rejects it, and the proposer may withdraw it while it is pending. A proposal is a plain row, not a node: the target, the patch as submitted, the `baseVersion` it was written against (stamped from the target's head, never client-supplied), its status (`pending | accepted | rejected | withdrawn`), the decider and the timestamps.
 
+The optional members (`ProposalsDefinition`'s `forbidden`, `localeAttributes` and `budget`, `submit`'s `locales`, and `validateProposalPatch`'s `locales` and `localeAttributes`) are bare `?: T` (pulpit#238): a caller that has no value omits the key rather than passing `undefined`.
+
 ```ts
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -120,6 +122,8 @@ A [write budget](participation.md#budgets) (pulpit#199) throttles `submit` when 
 ## `./moderation`
 
 The moderation workflow (pulpit#51). The kernel owns the rules; the transport (a queue, running the classifier, an API-call ledger, moderator notifications) stays the application's. A leaf's moderation state is a column of its version row (`ModerationState`: `pending | approved | rejected`), so every decision is an appended version.
+
+`defineReports`' `budget` is a bare `?: BoundBudget<E, R>` (pulpit#238): omit the key for unthrottled reports rather than passing `undefined`.
 
 ```ts
 import * as Effect from "effect/Effect";

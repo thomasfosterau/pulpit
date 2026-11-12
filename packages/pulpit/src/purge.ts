@@ -188,14 +188,12 @@ export interface PurgeDefinition<E, EB, R> {
    * Omitted, every unreferenced content hash is reported in
    * {@link PurgeReport.bytesLeft}.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is "no blob store"
-  readonly blobs?: BlobStore<EB, R> | undefined;
+  readonly blobs?: BlobStore<EB, R>;
   /**
    * The resource cache, evicted after the commit at the version past the
    * purged head, so no cached copy outlives the erasure (`CACHE-AUTH-005`).
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "the leaf is not cached"
-  readonly cache?: ResourceCacheSeam<unknown, R> | undefined;
+  readonly cache?: ResourceCacheSeam<unknown, R>;
 }
 
 /**

@@ -270,11 +270,9 @@ export interface ErasureFamily<E, R> {
    * `null` (`anonymise`, `purge`). Omitted, the state is carried forward
    * unchanged: erasure knows no field a family doesn't declare.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no state column names an account"
-  readonly accountColumns?: ReadonlyArray<string> | undefined;
+  readonly accountColumns?: ReadonlyArray<string>;
   /** The family's resource cache, evicted for every node erasure appends to or whose owner record changes. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "the family is not cached"
-  readonly cache?: ResourceCacheSeam<unknown, R> | undefined;
+  readonly cache?: ResourceCacheSeam<unknown, R>;
 }
 
 // ── The operation ─────────────────────────────────────────────────────
@@ -302,23 +300,20 @@ export interface AccountErasureDefinition<E, EB, R> {
   /** The erasure seam a `purge` family's nodes go through (`./purge`). */
   readonly purge: PurgeStore<E, R>;
   /** The byte store a purge deletes unreferenced bytes from, after each commit. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no blob store", and the purge reports the bytes left
-  readonly blobs?: BlobStore<EB, R> | undefined;
+  readonly blobs?: BlobStore<EB, R>;
   /** Every family whose nodes or versions may name the account. */
   readonly families: ReadonlyArray<ErasureFamily<E, R>>;
-  /* oxlint-disable effect/prefer-option-over-null -- optional fields are `?: T | undefined` (AGENTS.md → Conventions); each omitted key is "the application keeps no such store" */
-  readonly proposals?: Pick<ProposalStore<E, R>, "eraseAuthor"> | undefined;
-  readonly reports?: Pick<ReportStore<E, R>, "eraseReporter"> | undefined;
-  readonly reactions?: Pick<ReactionStore<E, R>, "eraseAccount"> | undefined;
-  readonly social?: Pick<SocialStore<unknown, E, R>, "eraseAccount"> | undefined;
-  readonly workingCopies?: Pick<WorkingCopyStore<E, R>, "eraseAccount"> | undefined;
+  readonly proposals?: Pick<ProposalStore<E, R>, "eraseAuthor">;
+  readonly reports?: Pick<ReportStore<E, R>, "eraseReporter">;
+  readonly reactions?: Pick<ReactionStore<E, R>, "eraseAccount">;
+  readonly social?: Pick<SocialStore<unknown, E, R>, "eraseAccount">;
+  readonly workingCopies?: Pick<WorkingCopyStore<E, R>, "eraseAccount">;
   /** Group memberships (`./audience`): every membership and pending invitation of the account, and every pending invitation it sent, is deleted in bounded batches. */
-  readonly memberships?: Pick<MembershipStore<unknown, E, R>, "eraseAccount"> | undefined;
+  readonly memberships?: Pick<MembershipStore<unknown, E, R>, "eraseAccount">;
   /** The application's own relationships to erase. */
-  readonly relations?: ReadonlyArray<AccountRelation<E, R>> | undefined;
+  readonly relations?: ReadonlyArray<AccountRelation<E, R>>;
   /** Rows per batch, clamped to `[1, MAX_PAGE_LIMIT]`; {@link DEFAULT_ERASURE_BATCH} when omitted. */
-  readonly batchSize?: number | undefined;
-  /* oxlint-enable effect/prefer-option-over-null */
+  readonly batchSize?: number;
   /**
    * The application's groups (`./audience`, pulpit#274): every group the
    * account owns is reassigned to the tombstone account in bounded batches,
@@ -372,8 +367,7 @@ export interface AccountErasureOps<E, R> {
    */
   readonly erase: (
     accountId: string,
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "run until done"
-    options?: { readonly maxBatches?: number | undefined },
+    options?: { readonly maxBatches?: number },
   ) => Effect.Effect<
     ErasureSummary,
     Unauthorized | Forbidden | TombstoneErasure | StaleVersion | VersionConflict | E,
@@ -546,14 +540,12 @@ export const defineAccountErasure = <E, EB, R>(
    */
   const purgeOwned = (family: ErasureFamily<E, R>, accountId: string, limit: number) =>
     Effect.gen(function* () {
-      const purge = purgeNode<E, EB, R>({
-        type: family.type,
-        chain: family.chain,
-        store: definition.purge,
-        transact,
-        blobs: definition.blobs,
-        cache: family.cache,
-      });
+      const base = { type: family.type, chain: family.chain, store: definition.purge, transact };
+      const withBlobs =
+        definition.blobs === undefined ? base : { ...base, blobs: definition.blobs };
+      const purge = purgeNode<E, EB, R>(
+        family.cache === undefined ? withBlobs : { ...withBlobs, cache: family.cache },
+      );
       const ids = yield* transact(store.ownedNodes({ accountId, type: family.type, limit }));
       const reports = yield* Effect.forEach(
         ids,
@@ -772,8 +764,7 @@ export const defineAccountErasure = <E, EB, R>(
 
   const erase = Effect.fn("account.erase")(function* (
     accountId: string,
-    // oxlint-disable-next-line effect/prefer-option-over-null -- mirrors `AccountErasureOps.erase`'s optional field
-    options: { readonly maxBatches?: number | undefined } = {},
+    options: { readonly maxBatches?: number } = {},
   ) {
     yield* gate(accountId);
     const budget = options.maxBatches ?? Number.POSITIVE_INFINITY;

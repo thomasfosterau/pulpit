@@ -179,8 +179,7 @@ export interface DiscoveryCursor {
   readonly id: string;
   readonly key: Option.Option<Comparable>;
   /** The locale of the row the page ended on (pulpit#265); absent: none, or a leaf without a locale level. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is the row with no locale
-  readonly locale?: string | undefined;
+  readonly locale?: string;
 }
 
 /**
@@ -193,11 +192,9 @@ export interface DiscoveryCursor {
  */
 export interface DiscoveryRequest {
   readonly limit: number;
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is the first page
-  readonly after?: DiscoveryCursor | undefined;
+  readonly after?: DiscoveryCursor;
   /** One locale's items only (pulpit#265). */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is every locale
-  readonly locale?: string | undefined;
+  readonly locale?: string;
 }
 
 /**
@@ -264,8 +261,7 @@ export interface DiscoveryDefinition<Row extends LeafRow, Resource, Following, E
    * resource must carry `publishedAt`). It reads a JSON:API resource's
    * `attributes`; a resource without them is never listed.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is the leaf's own posture
-  readonly serveable?: ((resource: Resource) => boolean) | undefined;
+  readonly serveable?: (resource: Resource) => boolean;
 }
 
 /**
