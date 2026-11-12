@@ -68,7 +68,7 @@ catalog:
   # (oxlint 1.89.0, tsgolint 7.0.2004) is the pairing. Read the `components`
   # table in node_modules/@effect/tsgo/dist/effect-tsgo.cjs before bumping any
   # of the three.
-  "@effect/tsgo": 0.63.0
+  "@effect/tsgo": 0.67.7
   # The JSON:API model layer the `./content` and `./registry` subpaths build on.
   # pulpit-drizzle-pg's substrate (pulpit#247): the tree, its tables and
   # views (`./versioned-chain`) and the error classifier (`./errors`), and the
@@ -92,7 +92,7 @@ catalog:
   # in node_modules/vite-plus/dist/define-config-*.js), so this moves only with
   # vite-plus: pin it to the `vitest` entry below (vite-plus 1.4.0 → 5.0.5),
   # never ahead of it (pulpit#119).
-  "@vitest/coverage-istanbul": 5.0.5
+  "@vitest/coverage-istanbul": 5.1.0
   # The ORM pulpit-drizzle-pg renders its SQL with. 1.0 is still a release
   # candidate; effect-drizzle-ext(-pg) 0.2.0 peer on `>=1.0.0-rc.5` and are
   # built against exactly this one, so it is pinned exact.
@@ -125,9 +125,9 @@ catalog:
   # the toolchain PR), and `vitest` must match vite-plus's exact pin (1.4.0 →
   # 5.0.5) because the `vitest: "catalog:"` override forces every resolution
   # to the catalog singleton, as must `@vitest/coverage-istanbul` (above).
-  vite-plus: 1.4.0
+  vite-plus: 1.5.1
   vite: npm:@voidzero-dev/vite-plus-core@1.4.0
-  vitest: 5.0.5
+  vitest: 5.1.0
 
 # Peer ranges the packages under `packages/*` declare (the adapter's peer on
 # the kernel is `workspace:^` instead). Kept as a named catalog so the
