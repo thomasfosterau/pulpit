@@ -18,6 +18,7 @@ import { makeEdgeTable } from "@thomasfosterau/pulpit-drizzle-pg/edges";
 import { makeEmbeddingTables } from "@thomasfosterau/pulpit-drizzle-pg/embeddings";
 import { makeExternalIdTable } from "@thomasfosterau/pulpit-drizzle-pg/external-ids";
 import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
+import { makeReactionTable } from "@thomasfosterau/pulpit-drizzle-pg/reactions";
 import { makeProposalTable } from "@thomasfosterau/pulpit-drizzle-pg/proposals";
 import { makePathTable } from "@thomasfosterau/pulpit-drizzle-pg/paths";
 import { sql } from "drizzle-orm";
@@ -119,6 +120,16 @@ export const collection = makeCollectionTable({
   identity: tables.root.identity,
 });
 
+/** An account table, for the reaction table's cascading account key. */
+export const accounts = schema.table("account", { id: text("id").primaryKey() });
+
+/** The reaction table, its accounts cascading. */
+export const reactions = makeReactionTable({
+  schema,
+  identity: tables.root.identity,
+  accounts: accounts.id,
+});
+
 /** The block documents' embedding queue and vectors: `double precision[]`, so no extension is needed. */
 export const embeddings = makeEmbeddingTables({
   schema,
@@ -167,6 +178,8 @@ export const fixtureSchema = {
   embeddingVectors: embeddings.vectors,
   externalIds,
   collection,
+  accounts,
+  reactions,
   proposals,
   notesView: views.leaves.notes,
   linksView: views.leaves.links,

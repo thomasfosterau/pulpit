@@ -78,6 +78,12 @@ import {
   makeCollectionTable,
   type CollectionTable,
 } from "@thomasfosterau/pulpit-drizzle-pg/collections";
+import type { ReactionStore } from "@thomasfosterau/pulpit/reactions";
+import {
+  makeReactionStore,
+  makeReactionTable,
+  type ReactionTable,
+} from "@thomasfosterau/pulpit-drizzle-pg/reactions";
 import {
   makeEmbeddingStore,
   makeEmbeddingTables,
@@ -127,6 +133,7 @@ export type _Root = Assert<
     | "Embeddings"
     | "ExternalIds"
     | "Collections"
+    | "Reactions"
   >
 >;
 export type _RootChains = Assert<
@@ -427,4 +434,17 @@ const collectionStore = makeCollectionStore({
 export type _CollectionTable = Assert<Equals<typeof collectionTable, CollectionTable>>;
 export type _CollectionStore = Assert<
   Equals<typeof collectionStore, CollectionStore<EffectDrizzleQueryError, Key>>
+>;
+
+// ── ./reactions ──────────────────────────────────────────────────────────
+
+const reactionTable = makeReactionTable({ schema, identity: tables.root.identity });
+const reactionStore = makeReactionStore({
+  table: reactionTable,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _ReactionTable = Assert<Equals<typeof reactionTable, ReactionTable>>;
+export type _ReactionStore = Assert<
+  Equals<typeof reactionStore, ReactionStore<EffectDrizzleQueryError, Key>>
 >;
