@@ -6,7 +6,8 @@
  * leaf's read scope (`searchScopeFilter`) through `./filter` beside the rank,
  * so a row outside the scope is never ranked and never shifts another hit's
  * rank (`SEC-AUTH-ENUM-001`). A publish-gated leaf's branch is
- * `./publication`'s `searchBranch`, over the rows `LiveView.list` reads.
+ * `./publication`'s `searchBranch`, over the rows `LiveView.list` reads for
+ * the request's `headFor` (pulpit#346).
  *
  * @since 0.0.0
  */
@@ -59,7 +60,9 @@ export interface SearchBranchOptions {
  * `searchScopeFilter` scopes the ranking itself. A scope node over a column
  * the view lacks is `false`, so a branch view without a leaf's access
  * columns ranks none of its rows. `limit` is clamped to `[0,
- * MAX_PAGE_LIMIT]`. Applies no other policy, never opens a transaction, and
+ * MAX_PAGE_LIMIT]`. `request.headFor` is ignored: a leaf or branch view
+ * has no live pointer (a gated leaf's branch is `./publication`'s
+ * `searchBranch`). Applies no other policy, never opens a transaction, and
  * fails only with the driver's query error. The hits are ids for
  * `hydrateSearchHits`, which re-reads each through the leaf's gated
  * `getMany`.
@@ -110,12 +113,10 @@ export const makeSearchBranch = <I, Relations extends AnyRelations>(
     readonly owners: NodeOwnerTable;
     readonly CurrentTransaction: Context.Service<I, PgTransaction<Relations>>;
   },
-): SearchBranch<SQLWrapper, StoreQueryError<Relations>, I> =>
-  Rows.searchOver(
-    Rows.leafRows(config.name, config.view, config.owners, `${config.name}_search_rows`),
-    config,
-    config.CurrentTransaction,
-  );
+): SearchBranch<SQLWrapper, StoreQueryError<Relations>, I> => {
+  const rows = Rows.leafRows(config.name, config.view, config.owners, `${config.name}_search_rows`);
+  return Rows.searchOver(() => rows, config, config.CurrentTransaction);
+};
 
 /**
  * The full-text {@link SearchRank} the seam describes: `matches` is

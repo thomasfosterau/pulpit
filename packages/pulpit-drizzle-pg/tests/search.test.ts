@@ -5,7 +5,7 @@
  * PostgreSQL in `tests/integration/search.test.ts`.
  */
 
-import { always } from "@thomasfosterau/pulpit/filter";
+import { always, never } from "@thomasfosterau/pulpit/filter";
 import { sql } from "drizzle-orm";
 import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
@@ -48,7 +48,7 @@ describe("makeSearchBranch", () => {
   it("ranks in one statement and makes hits of the ids, in order", async () => {
     const { value, calls } = await runWith(
       [{ id: ID }, { id: "b" }],
-      branch.search({ query: "apple", scope: always, limit: 10 }),
+      branch.search({ query: "apple", scope: always, headFor: never, limit: 10 }),
     );
     expect(value).toEqual([{ id: ID }, { id: "b" }]);
     expect(calls).toEqual(["select", "from", "where", "orderBy", "limit"]);
@@ -61,7 +61,7 @@ describe("makeSearchBranch", () => {
   ])("reads nothing for %s", async (_name, query, limit) => {
     const { value, calls } = await runWith(
       [{ id: ID }],
-      branch.search({ query, scope: always, limit }),
+      branch.search({ query, scope: always, headFor: never, limit }),
     );
     expect({ value, calls }).toEqual({ value: [], calls: [] });
   });
@@ -77,11 +77,11 @@ describe("a gated leaf's searchBranch", () => {
     CurrentTransaction: database.CurrentTransaction,
   }).posts;
 
-  it("ranks over the chosen rows for its headFor, in one statement", async () => {
-    const search = gated.searchBranch({ name: "live text", rank })(always);
+  it("is one value that ranks the chosen rows for each request's headFor, in one statement", async () => {
+    const search = gated.searchBranch({ name: "live text", rank });
     const { value, calls } = await runWith(
       [{ id: ID }],
-      search.search({ query: "apple", scope: always, limit: 5 }),
+      search.search({ query: "apple", scope: always, headFor: always, limit: 5 }),
     );
     expect({ name: search.name, value }).toEqual({ name: "live text", value: [{ id: ID }] });
     expect(calls).toEqual(["select", "from", "where", "orderBy", "limit"]);

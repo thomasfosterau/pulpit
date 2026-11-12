@@ -219,6 +219,7 @@ describe("a leaf view's branch agrees with the in-memory branch under the read s
             viewer,
             request,
           ),
+          headFor: never,
           limit: 100,
         }),
       );
@@ -230,6 +231,7 @@ describe("a leaf view's branch agrees with the in-memory branch under the read s
             viewer,
             request,
           ),
+          headFor: never,
           limit: 100,
         }),
       );
@@ -243,13 +245,12 @@ describe("a leaf view's branch agrees with the in-memory branch under the read s
       Option.some({ id: "u-9", role: "admin" }),
       { includeDeleted: false, where: always },
     );
-    expect(await run(branch.search({ query: "a", scope: admin, limit: 100 }))).toEqual(
-      Arr.map([5, 2, 3, 1, 4, 8, 9, 7], (n) => ({ id: id(n) })),
-    );
-    expect(await run(branch.search({ query: "a", scope: admin, limit: 2 }))).toEqual([
-      { id: id(5) },
-      { id: id(2) },
-    ]);
+    expect(
+      await run(branch.search({ query: "a", scope: admin, headFor: never, limit: 100 })),
+    ).toEqual(Arr.map([5, 2, 3, 1, 4, 8, 9, 7], (n) => ({ id: id(n) })));
+    expect(
+      await run(branch.search({ query: "a", scope: admin, headFor: never, limit: 2 })),
+    ).toEqual([{ id: id(5) }, { id: id(2) }]);
     // The scope narrows the ranking, never the ranked page: the anonymous
     // reader's top hit is the best hit they can read.
     const anonymous = searchScopeFilter(
@@ -257,9 +258,9 @@ describe("a leaf view's branch agrees with the in-memory branch under the read s
       Option.none(),
       { includeDeleted: false, where: always },
     );
-    expect(await run(branch.search({ query: "a", scope: anonymous, limit: 1 }))).toEqual([
-      { id: id(1) },
-    ]);
+    expect(
+      await run(branch.search({ query: "a", scope: anonymous, headFor: never, limit: 1 })),
+    ).toEqual([{ id: id(1) }]);
   });
 });
 
@@ -277,7 +278,7 @@ describe("a gated leaf's branch agrees with the in-memory branch over the live r
     owners,
     CurrentTransaction,
   }).posts;
-  const searchFor = gated.searchBranch({ name: "substring", rank: substring });
+  const liveBranch = gated.searchBranch({ name: "substring", rank: substring });
 
   /** Each node: its owner, its versions' titles, and the version published now (if any). */
   const stories: ReadonlyArray<
@@ -372,17 +373,19 @@ describe("a gated leaf's branch agrees with the in-memory branch over the live r
       score: substringScore,
       now: NOW,
     });
-    const fromSql = await run(searchFor(headFor).search({ query, scope: always, limit: 100 }));
+    const fromSql = await run(liveBranch.search({ query, scope: always, headFor, limit: 100 }));
     expect(fromSql).toEqual(
-      await Effect.runPromise(reference.search({ query, scope: always, limit: 100 })),
+      await Effect.runPromise(reference.search({ query, scope: always, headFor, limit: 100 })),
     );
   });
 
   it("matches the live text for a reader and the head for its owner", async () => {
     // Node 1 is live at "apple" and headed at "pear"; node 2 the reverse.
-    const reader = await run(searchFor(never).search({ query: "pear", scope: always, limit: 10 }));
+    const reader = await run(
+      liveBranch.search({ query: "pear", scope: always, headFor: never, limit: 10 }),
+    );
     const owner = await run(
-      searchFor(eq("ownerId", "u-1")).search({ query: "pear", scope: always, limit: 10 }),
+      liveBranch.search({ query: "pear", scope: always, headFor: eq("ownerId", "u-1"), limit: 10 }),
     );
     expect({ reader, owner }).toEqual({ reader: [], owner: [{ id: id(1) }] });
   });
@@ -422,22 +425,32 @@ describe("the full-text rank over the entry branch view", () => {
   });
 
   it("ranks every leaf of the union by ts_rank_cd, ties by id", async () => {
-    expect(await run(fullText.search({ query: "tomato", scope: always, limit: 10 }))).toEqual([
-      { id: id(1) },
-      { id: id(2) },
-    ]);
-    expect(await run(fullText.search({ query: "salad", scope: always, limit: 10 }))).toEqual([
-      { id: id(3) },
-    ]);
-    expect(await run(fullText.search({ query: "   ", scope: always, limit: 10 }))).toEqual([]);
+    expect(
+      await run(fullText.search({ query: "tomato", scope: always, headFor: never, limit: 10 })),
+    ).toEqual([{ id: id(1) }, { id: id(2) }]);
+    expect(
+      await run(fullText.search({ query: "salad", scope: always, headFor: never, limit: 10 })),
+    ).toEqual([{ id: id(3) }]);
+    expect(
+      await run(fullText.search({ query: "   ", scope: always, headFor: never, limit: 10 })),
+    ).toEqual([]);
   });
 
   it("narrows by the identity's type and fails closed over a column the union lacks", async () => {
     expect(
-      await run(fullText.search({ query: "tomato", scope: eq("type", "links"), limit: 10 })),
+      await run(
+        fullText.search({ query: "tomato", scope: eq("type", "links"), headFor: never, limit: 10 }),
+      ),
     ).toEqual([{ id: id(2) }]);
     expect(
-      await run(fullText.search({ query: "tomato", scope: eq("visibility", "public"), limit: 10 })),
+      await run(
+        fullText.search({
+          query: "tomato",
+          scope: eq("visibility", "public"),
+          headFor: never,
+          limit: 10,
+        }),
+      ),
     ).toEqual([]);
   });
 });

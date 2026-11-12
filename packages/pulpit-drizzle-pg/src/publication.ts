@@ -82,17 +82,15 @@ export interface PublishGated<E, I> {
   readonly live: LiveView<LeafRow, SQLWrapper, E, I>;
   readonly leaves: LeafStore<LeafRow, SQLWrapper, E, I>;
   /**
-   * A `SearchBranch` over the rows `live.list` reads for `headFor` (per
-   * node, its head when it matches `headFor`, else its live row), ranked in
-   * the same statement as the scope (`./search`'s `makeSearchBranch`
-   * contract). Build it with the `headFor` the leaf's `list` would pass for
-   * the viewer (`never` for a reader, the viewer's own heads for an owner);
-   * a viewer on a head-reading rung searches the head store with
-   * `makeSearchBranch` over the leaf view.
+   * The leaf's `SearchBranch`, one value for every viewer: each request
+   * ranks the rows `live.list` reads for its `headFor` (pulpit#346: per
+   * node, its head when it matches `headFor`, else its live row), in the
+   * same statement as its scope (`./search`'s `makeSearchBranch`
+   * contract). The caller passes the kernel's `searchHeadFor(leaf,
+   * viewer)` as `headFor`, so a reader's search never scores a head's
+   * unpublished text and an owner's finds their own.
    */
-  readonly searchBranch: (
-    options: SearchBranchOptions,
-  ) => (headFor: ListFilter<SQLWrapper>) => SearchBranch<SQLWrapper, E, I>;
+  readonly searchBranch: (options: SearchBranchOptions) => SearchBranch<SQLWrapper, E, I>;
 }
 
 /**
@@ -239,8 +237,8 @@ export const makePublications = <Leaf extends string, I, Relations extends AnyRe
       facts: factsStore(log, CurrentTransaction),
       live,
       leaves: storeOver(leaf, heads(`${leaf}_rows`), owners, CurrentTransaction),
-      searchBranch: (options) => (headFor) =>
-        searchOver(chosen(headFor), options, CurrentTransaction),
+      searchBranch: (options) =>
+        searchOver((request) => chosen(request.headFor), options, CurrentTransaction),
     };
   };
 

@@ -20,7 +20,7 @@ import {
   MAX_SET_VALUES,
   type ListFilter,
 } from "@thomasfosterau/pulpit/filter";
-import type { RankedHit, SearchBranch } from "@thomasfosterau/pulpit/search";
+import type { BranchRequest, RankedHit, SearchBranch } from "@thomasfosterau/pulpit/search";
 import {
   MAX_PAGE_LIMIT,
   type DistinctQuery,
@@ -420,15 +420,17 @@ export type SearchRank = (
 ) => Option.Option<{ readonly matches: SQL; readonly score: SQL }>;
 
 /**
- * The kernel's `SearchBranch` over one row source: one statement that ranks
- * the rows matching the query and the scope together (never rank, then
- * filter), best score first, ties by id, at most `request.limit` (clamped
- * to `[0, MAX_PAGE_LIMIT]`).
+ * The kernel's `SearchBranch` over the row source `sourceFor` picks for a
+ * request (one source for every request on an ungated leaf; a gated leaf's
+ * chosen rows for `request.headFor`): one statement that ranks the rows
+ * matching the query and the scope together (never rank, then filter), best
+ * score first, ties by id, at most `request.limit` (clamped to `[0,
+ * MAX_PAGE_LIMIT]`).
  *
  * @since 0.0.0
  */
 export const searchOver = <I, Relations extends AnyRelations>(
-  source: RowSource,
+  sourceFor: (request: BranchRequest<SQLWrapper>) => RowSource,
   options: {
     readonly name: string;
     readonly weight?: number;
@@ -440,6 +442,7 @@ export const searchOver = <I, Relations extends AnyRelations>(
   weight: options.weight,
   search: (request) => {
     const limit = Math.max(0, Math.min(Math.trunc(request.limit), MAX_PAGE_LIMIT));
+    const source = sourceFor(request);
     const ranked = limit > 0 ? options.rank(source.columns, request.query) : Option.none();
     return Option.match(ranked, {
       onNone: () => Effect.succeed([]),

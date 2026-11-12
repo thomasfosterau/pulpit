@@ -208,8 +208,6 @@ export type _PublishGated = Assert<
       readonly leaves: LeafStore<LeafRow, SQLWrapper, EffectDrizzleQueryError, Key>;
       readonly searchBranch: (
         options: SearchBranchOptions,
-      ) => (
-        headFor: ListFilter<SQLWrapper>,
       ) => SearchBranch<SQLWrapper, EffectDrizzleQueryError, Key>;
     }
   >
