@@ -6,7 +6,7 @@ Releases are automated with [Changesets](https://github.com/changesets/changeset
 | --- | --- | --- |
 | `@thomasfosterau/pulpit` | `packages/pulpit` | Through the release flow below (no release yet). |
 | `@thomasfosterau/pulpit-wordpress` | `packages/pulpit-wordpress` | Not yet: `"private": true` until the owner completes [its one-time setup](#adding-pulpit-wordpress-to-the-release-flow). |
-| `@thomasfosterau/pulpit-drizzle-pg` | `packages/pulpit-drizzle-pg` | Not yet: `"private": true` until the owner makes it public and bootstraps it the same way ([the adapter's steps](#adding-pulpit-wordpress-to-the-release-flow), with this package's name and directory; [pulpit#247](https://github.com/thomasfosterau/pulpit/issues/247)). |
+| `@thomasfosterau/pulpit-drizzle-pg` | `packages/pulpit-drizzle-pg` | Not yet: `"private": true`, version `0.0.0`, until the owner completes [its one-time setup](#adding-pulpit-drizzle-pg-to-the-release-flow) ([pulpit#247](https://github.com/thomasfosterau/pulpit/issues/247)). |
 
 A private package is never versioned, tagged or published (`privatePackages` in `.changeset/config.json`; `pnpm publish -r` skips it), and neither is `tests/dist-consumer`, which is also listed under `ignore`.
 
@@ -31,7 +31,7 @@ Nothing in the pipeline requests [provenance](https://docs.npmjs.com/generating-
 
 ## Maintainer setup (one-time)
 
-Neither package is published yet. The steps below are the owner's, for `@thomasfosterau/pulpit`; [the next section](#adding-pulpit-wordpress-to-the-release-flow) repeats the per-package ones for `@thomasfosterau/pulpit-wordpress`.
+No package is published yet. The steps below are the owner's, for `@thomasfosterau/pulpit`; the sections after it repeat the per-package ones for [`@thomasfosterau/pulpit-wordpress`](#adding-pulpit-wordpress-to-the-release-flow) and [`@thomasfosterau/pulpit-drizzle-pg`](#adding-pulpit-drizzle-pg-to-the-release-flow).
 
 npm's trusted-publisher binding can only be configured on an existing package, so a package's first version is published by hand. Merging the "Version Packages" PR that first versions it starts a release job that waits for approval in the `release` environment, but only once that environment is protected: do steps 1–3 below before merging the first "Version Packages" PR, or the job runs unapproved and its publish fails. While it waits, check out that merge commit, run `pnpm install --frozen-lockfile` and `vp run -r build`, then run `pnpm publish --no-git-checks --ignore-scripts` from the package's directory, logged in to npm or with a one-time granular token, and never with `--provenance` (see above). `--no-git-checks` matches the `release` script: without it pnpm refuses to publish from a detached HEAD (`ERR_PNPM_GIT_UNKNOWN_BRANCH`) or from any branch but `main` / `master` (`ERR_PNPM_GIT_NOT_CORRECT_BRANCH`). The approved job's `pnpm publish -r` then skips that already-published version and `changeset git-tag` still tags it; without the manual publish, the job's OIDC publish of the package fails.
 
@@ -63,4 +63,19 @@ npm trusted publishing is configured **per package**, so `@thomasfosterau/pulpit
 3. **Publish its first version once by hand**, as [the setup above](#maintainer-setup-one-time) describes: before approving the release job of the "Version Packages" PR that first versions the adapter, run `pnpm publish --no-git-checks --ignore-scripts` from `packages/pulpit-wordpress` at that merge commit. That job then skips the adapter, so it doesn't validate a trusted-publisher binding: don't create one yet.
 4. **Configure its trusted publisher with its next release.** When a later "Version Packages" PR versions the adapter again (a changeset of its own, or the `patch` a kernel minor gives it), merge it, and while that release job waits for approval, add the adapter's binding on npmjs.com (`@thomasfosterau/pulpit-wordpress` → **Settings → Trusted Publisher**) with the same entry as the kernel's: **GitHub Actions**, `thomasfosterau` / `pulpit`, workflow filename `release.yml`, environment name `release`, and **`npm publish`** ticked under **Allowed actions**. Approve the job within 2 days, then revoke any one-time granular token used for step 3.
 
-Steps 1–3 of the kernel's setup above (workflow permissions, the `release` environment, `trunk` protection) are repository settings, done once for both packages.
+Steps 1–3 of the kernel's setup above (workflow permissions, the `release` environment, `trunk` protection) are repository settings, done once for every package.
+
+## Adding `pulpit-drizzle-pg` to the release flow
+
+`@thomasfosterau/pulpit-drizzle-pg` bootstraps exactly as the adapter does, with its own name and directory. Every step is the owner's: no agent flips `private`, publishes, creates the npm package or configures the binding.
+
+1. **Release the kernel first**, if it isn't on npm yet. The package peers on the kernel as `workspace:^`, so its published peer range is `^<the kernel's version at publish time>`, and, as for the adapter, a later kernel minor gives it a `patch` of its own. Its other peers are already on npm: `@thomasfosterau/effect-drizzle-ext` and `@thomasfosterau/effect-drizzle-ext-pg` (`>=0.2.0`), `drizzle-orm` (`>=1.0.0-rc.5`) and `effect`.
+2. **Make the package public in a PR.** In `packages/pulpit-drizzle-pg/package.json`, remove `"private": true` and leave `"version": "0.0.0"`. Add a changeset for `@thomasfosterau/pulpit-drizzle-pg` with the first release's bump (`minor` gives `0.1.0`, as the kernel's first release). In the same PR, update the package README's **Status** and **Install** sections and this file's table row.
+3. **Check the release flow picks it up.** Nothing in `release.yml` changes: the `release` script publishes every package under `./packages/*` that isn't private, and `.changeset/config.json` ignores only `@pulpit/dist-consumer`. On the PR's branch, `pnpm changeset status` lists the package with its bump. `vp run -r build` then `pnpm --filter ./packages/pulpit-drizzle-pg pack` shows a tarball whose manifest has the `publishConfig.exports` (every subpath to `dist/`) and rewritten peer ranges in place of `catalog:peers` / `workspace:^`.
+4. **Publish its first version once by hand**, as [the setup above](#maintainer-setup-one-time) describes. Before approving the release job of the "Version Packages" PR that first versions it, run `pnpm publish --no-git-checks --ignore-scripts` from `packages/pulpit-drizzle-pg` at that merge commit, never with `--provenance`. That job then skips the package, so it doesn't validate a binding: don't create one yet.
+5. **Configure its trusted publisher with its next release.** When a later "Version Packages" PR versions it again (a changeset of its own, or the `patch` a kernel minor gives it), merge it. While that release job waits for approval, add the binding on npmjs.com (`@thomasfosterau/pulpit-drizzle-pg` → **Settings → Trusted Publisher**) with the same entry as the kernel's: **GitHub Actions**, `thomasfosterau` / `pulpit`, workflow filename `release.yml`, environment name `release`, and **`npm publish`** ticked under **Allowed actions**. Approve the job within 2 days, then revoke any one-time granular token used for step 4.
+
+Specific to this package:
+
+- **Its integration suite is not a release gate.** CI's `integration` job runs `test:integration` against a `postgres` service on every PR and every push to `trunk`; the release job itself runs no tests (it builds and publishes). Check the `integration` job is green on the "Version Packages" PR's merge commit before approving its release.
+- **Node.js 22.18 or newer** (`engines`, effect-drizzle-ext's floor), above the kernel's 22.

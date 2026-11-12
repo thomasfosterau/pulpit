@@ -6,7 +6,7 @@ The tree-bound seams of [`@thomasfosterau/pulpit`](../pulpit/README.md) over the
 
 ## Status
 
-**Not published.** The package is `"private": true` until the owner sets up its publishing ([PUBLISHING.md](../../PUBLISHING.md)). The spec is [pulpit#247](https://github.com/thomasfosterau/pulpit/issues/247), and it lands in slices:
+**Not published.** The package is `"private": true`, at version `0.0.0`, until the owner sets up its publishing ([PUBLISHING.md → Adding `pulpit-drizzle-pg`](../../PUBLISHING.md#adding-pulpit-drizzle-pg-to-the-release-flow)). The spec is [pulpit#247](https://github.com/thomasfosterau/pulpit/issues/247), and it lands in slices:
 
 - **Landed:** the `VersionChain` port over `-pg/chain` ([`./version-chain`](#version-chain)), passing the kernel's `versionChainConformance` against PostgreSQL; the `LeafStore` over the tree's leaf views and the owner table ([`./leaf-store`](#leaf-store)), with the `ListFilter` → SQL renderer and the list order ([`./filter`](#filter)), checked row by row against the kernel's in-memory store on PostgreSQL.
 - **Landed:** the live pointer, `PublicationStore` / `LiveView` and the gated store, over the tree's pointer level ([`./publication`](#publication)), checked against the kernel's in-memory publication on PostgreSQL.
@@ -15,6 +15,7 @@ The tree-bound seams of [`@thomasfosterau/pulpit`](../pulpit/README.md) over the
 - **Landed:** the `PathStore` over a path table per routable namespace ([`./paths`](#paths)), checked step by step against the kernel's in-memory store on PostgreSQL.
 - **Landed:** `SearchBranch` over a tree's leaf and branch views and over a gated leaf's live rows ([`./search`](#search)), checked against the kernel's in-memory branch under every viewer's read scope on PostgreSQL.
 - **Landed:** the localised live view and gated store of a publish-gated keyed leaf ([`./publication`](#publication), pulpit#343), checked against the kernel's in-memory publication over a localised store on PostgreSQL.
+- **Next:** the stores that aren't tree-bound (edges, proposals, reports, budgets, working copies, erasure, embeddings, social and notification tables), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
 
 ## Install
 
@@ -41,6 +42,41 @@ Every module is a namespace on the root export (`import { VersionChain } from "@
 | `./paths` | `makePathTable` / `makePathStore`: the kernel's `PathStore`, one table per routable namespace. |
 | `./search` | `makeSearchBranch` / `fullTextRank`: the kernel's `SearchBranch`, one ranked and scoped statement over a view. |
 | `./filter` | `renderListFilter` / `renderListOrder`: the kernel's `ListFilter` and list order as Drizzle SQL. |
+
+## End to end
+
+One tree, its ports, and the kernel's leaf operations over them. `makePublications`' `@example` is the complete, runnable program (docgen type-checks and runs it):
+
+```ts
+const tables = makeTreeTables(tree, { schema: core, builders, root: { pointers: ["live"] } });
+const views = makeTreeViews(tree, tables, { schema: core, pointers: { live: ["post"] } });
+const owners = makeNodeOwnerTable({ schema: core, identity: tables.root.identity });
+
+const chains = makeVersionChains({ tree, tables, CurrentTransaction });
+const gated = makePublications({
+  views,
+  pointer: "live",
+  log: tables.pointers.live,
+  live: views.pointers.live.leaves,
+  owners,
+  CurrentTransaction,
+});
+
+const posts = defineSubtype({
+  type: "post",
+  access: ownedAccess({ draft: true }),
+  chain: chains.post,
+  leaves: gated.post.leaves,
+  publication: { live: gated.post.live, facts: gated.post.facts },
+  viewer,
+  policy,
+  followers,
+  toResource,
+});
+// Every operation needs `CurrentTransaction`: run it inside the application's `transact`.
+```
+
+An ungated leaf takes `makeLeafStores({ tree, tables, views, owners, CurrentTransaction })[leaf]` as its `leaves` instead, and a localised one also passes `keyed` (see [`./publication`](#publication)).
 
 ## `./version-chain`
 

@@ -136,6 +136,83 @@ const PUBLISHED_AT = "publishedAt";
  * effect-drizzle-ext's `DerivationError` at module load for a view without
  * an `id` column, and for a leaf keyed on one side only.
  *
+ * @example
+ * ```ts
+ * // A tree wired end to end, as an application does it: tables and views
+ * // from effect-drizzle-ext, the ports from this package, the leaf's
+ * // operations from the kernel's `defineSubtype`.
+ * import { deepStrictEqual } from "node:assert";
+ * import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
+ * import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
+ * import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
+ * import { makeLeafStores, makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
+ * import { makePublications } from "@thomasfosterau/pulpit-drizzle-pg/publication";
+ * import { makeVersionChains } from "@thomasfosterau/pulpit-drizzle-pg/version-chain";
+ * import { defineSubtype, ownedAccess, type LeafRow } from "@thomasfosterau/pulpit/subtype";
+ * import { sql } from "drizzle-orm";
+ * import { boolean, pgSchema, text } from "drizzle-orm/pg-core";
+ * import * as Effect from "effect/Effect";
+ * import * as Option from "effect/Option";
+ * import * as Schema from "effect/Schema";
+ *
+ * // 1. The tree, its tables (with a `live` pointer) and its views.
+ * const tree = defineTree({
+ *   post: {
+ *     leaf: {
+ *       title: dbColumn(Schema.NullOr(Schema.String), { column: "title", pg: "text", notNull: false }),
+ *       visibility: dbColumn(Schema.NullOr(Schema.String), { column: "visibility", pg: "text", notNull: false }),
+ *       draft: dbColumn(Schema.NullOr(Schema.Boolean), { column: "draft", pg: "boolean", notNull: false }),
+ *     },
+ *   },
+ * });
+ * const core = pgSchema("core");
+ * const tables = makeTreeTables(tree, {
+ *   schema: core,
+ *   builders: { text: (c: string) => text(c), boolean: (c: string) => boolean(c) },
+ *   root: { pointers: ["live"] },
+ * });
+ * const views = makeTreeViews(tree, tables, { schema: core, pointers: { live: ["post"] } });
+ * const owners = makeNodeOwnerTable({ schema: core, identity: tables.root.identity });
+ * const { CurrentTransaction } = makePgDatabase({ relations: {}, key: "Database" });
+ *
+ * // 2. The ports: the chain, the stores, and the gated leaf's publication.
+ * const chains = makeVersionChains({ tree, tables, CurrentTransaction });
+ * const stores = makeLeafStores({ tree, tables, views, owners, CurrentTransaction });
+ * const gated = makePublications({
+ *   views,
+ *   pointer: "live",
+ *   log: tables.pointers.live,
+ *   live: views.pointers.live.leaves,
+ *   owners,
+ *   CurrentTransaction,
+ * });
+ *
+ * // 3. The kernel's leaf operations over them.
+ * const posts = defineSubtype({
+ *   type: "post",
+ *   access: ownedAccess({ draft: true }),
+ *   chain: chains.post,
+ *   leaves: gated.post.leaves,
+ *   publication: { live: gated.post.live, facts: gated.post.facts },
+ *   viewer: Effect.succeed(Option.none()),
+ *   policy: {
+ *     canViewPrivate: () => false,
+ *     canViewDeleted: () => false,
+ *     canModerate: () => false,
+ *     canWriteCorpus: () => false,
+ *   },
+ *   followers: {
+ *     isFollower: () => Effect.succeed(false),
+ *     following: (id: string) => sql`select owner_id from core.follows where follower_id = ${id}`,
+ *   },
+ *   toResource: (row: LeafRow) => ({ id: row.id, title: row["title"] }),
+ * });
+ *
+ * // Effects needing the application's `CurrentTransaction`; run them in its `transact`.
+ * deepStrictEqual(typeof posts.list, "function");
+ * deepStrictEqual(Object.keys(stores), ["post"]);
+ * ```
+ *
  * @since 0.0.0
  */
 export const makePublications = <Leaf extends string, I, Relations extends AnyRelations>(config: {
