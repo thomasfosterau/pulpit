@@ -384,7 +384,7 @@ export const defineComments = <Resource, Following, E, R>(
       includeDeleted: request.includeDeleted,
       limit: Math.min(request.limit, MAX_PAGE_LIMIT),
       offset: request.offset,
-      orderBy: request.orderBy,
+      orderBy: request.orderBy ?? [],
     });
   });
 
