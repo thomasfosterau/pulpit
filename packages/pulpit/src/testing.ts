@@ -537,6 +537,16 @@ export const makeInMemoryVersionChain = (type: string): InMemoryVersionChain => 
 // ── The version chain's conformance suite ─────────────────────────────
 
 /**
+ * How a {@link versionChainConformance} case fails when the chain answers
+ * other than the case expects: thrown at the test runner's Promise boundary,
+ * which reports it as the case's failure.
+ */
+class ConformanceFailure extends Schema.TaggedError<
+  ConformanceFailure,
+  { readonly brand: unique symbol }
+>()("ConformanceFailure", { message: Schema.String }) {}
+
+/**
  * The slice of a test runner {@link versionChainConformance} registers its
  * cases through, passed in rather than imported so `./testing` needs no
  * test-runner dependency (pulpit#246, owner decision (b)): vitest's (and
@@ -630,12 +640,15 @@ export const versionChainConformance = <E, R>(
   const OTHER = "00000000-0000-4000-8000-00000000beef";
   const initial: ChainState = { title: "First", body: "Hello", summary: "s" };
 
-  /* oxlint-disable effect/avoid-untagged-errors, effect/no-unknown-returns -- the suite's helpers live at the test runner's Promise boundary: a thrown Error is how a case fails, and a case's typed failure is any of the port's errors, matched by its `_tag` */
+  // The suite's helpers live at the test runner's Promise boundary: a thrown
+  // `ConformanceFailure` is how a case fails.
   /** Run to the value, or throw the failure (so a case fails on it). */
   const value = async <A, E2>(effect: Effect.Effect<A, E2, R>): Promise<A> => {
     const exit = await harness.run(effect);
     if (Exit.isSuccess(exit)) return exit.value;
-    throw new Error(`${type} conformance: unexpected failure ${String(exit.cause)}`);
+    throw new ConformanceFailure({
+      message: `${type} conformance: unexpected failure ${String(exit.cause)}`,
+    });
   };
   /** The failure's `_tag`, `"success"`, or `"defect"` for a die. */
   const outcome = async <A, E2>(effect: Effect.Effect<A, E2, R>): Promise<string> => {
@@ -647,10 +660,12 @@ export const versionChainConformance = <E, R>(
         P.hasProperty(error, "_tag") && P.isString(error._tag) ? error._tag : "error",
     });
   };
-  /** The typed failure itself. */
-  const failure = async <A, E2>(effect: Effect.Effect<A, E2, R>): Promise<unknown> =>
-    Option.getOrUndefined(Exit.findErrorOption(await harness.run(effect)));
-  /* oxlint-enable effect/avoid-untagged-errors, effect/no-unknown-returns */
+  /** The typed failure itself, or throw (so a case fails) when there is none. */
+  const failure = async <A, E2>(effect: Effect.Effect<A, E2, R>): Promise<E2> => {
+    const error = Exit.findErrorOption(await harness.run(effect));
+    if (Option.isSome(error)) return error.value;
+    throw new ConformanceFailure({ message: `${type} conformance: expected a typed failure` });
+  };
 
   /** A fresh chain holding node `ID` at version 0 with `initial`. */
   const created = async () => {
@@ -1152,15 +1167,14 @@ export const makeInMemoryLeafStore = (
       rowOrder([]),
     );
   return {
-    // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is the native `ReadonlySet` `LeafStore.columns` names
-    columns: new Set([
+    columns: HashSet.make(
       "id",
       "version",
       "action",
       "ownerId",
       ...options.columns,
       ...(options.localised === true ? [LOCALE_COLUMN] : []),
-    ]),
+    ),
     get: (id) => Effect.sync(() => Arr.findFirst(view(), (row) => row.id === id)),
     getMany: (ids) => Effect.sync(() => view().filter((row) => ids.includes(row.id))),
     list: (query) => Effect.map(instantOf(fixedNow), (now) => viewPage(listed(), query, now)),
@@ -1422,8 +1436,7 @@ export interface InMemoryNodes extends EndpointView<never, never> {
 export const makeInMemoryNodes = (columns: ReadonlyArray<string>): InMemoryNodes => {
   let nodes = HashMap.empty<string, LeafRow>();
   return {
-    // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is a `ReadonlySet`, the type `LeafStore.columns` already has, so a `LeafStore` satisfies `EndpointView`
-    columns: new Set(["id", "version", "action", ...columns]),
+    columns: HashSet.make("id", "version", "action", ...columns),
     get: (id) => Effect.sync(() => HashMap.get(nodes, id)),
     put: (row) => {
       nodes = HashMap.set(nodes, row.id, row);
@@ -1959,7 +1972,7 @@ export const makeInMemoryPublication = (options: {
   readonly now?: Date | undefined;
 }): InMemoryPublication => {
   const fixedNow = Option.fromNullishOr(options.now);
-  const localised = options.leaves.columns.has(LOCALE_COLUMN);
+  const localised = HashSet.has(options.leaves.columns, LOCALE_COLUMN);
   /** A row as a localised view lists it: one per locale its version carries. */
   const listed = (row: LeafRow): ReadonlyArray<LeafRow> =>
     localised ? localeRows(row, localesAt(options.chain, row.id, row.version)) : [row];
