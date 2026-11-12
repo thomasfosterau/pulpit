@@ -80,11 +80,6 @@ export default defineConfig({
       // signature, never a class instance) in the WordPress body builders as
       // a class spread: a false positive with no code-level fix.
       "typescript/no-misused-spread": "off",
-      // Its "explicit `undefined` is unnecessary on an optional parameter"
-      // check contradicts the workspace convention (AGENTS.md → Conventions):
-      // an optional parameter is spelled `x?: T | undefined`, like an
-      // optional field, so a caller can forward its own optional value.
-      "typescript/no-duplicate-type-constituents": "off",
       // Every type assertion here carries a `// SAFETY:` comment stating its
       // invariant, which `effect/require-safety-comment-for-type-assertion`
       // enforces; this rule would report each audited one again.

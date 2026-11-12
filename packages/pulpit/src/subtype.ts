@@ -2636,8 +2636,7 @@ export interface ResourceCacheSeam<Resource, R> {
     id: string,
     resource: Resource,
     version: bigint,
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter, #302's half of the convention (pulpit#238 converts properties only), so every existing three-argument cache still fits the seam; the omitted argument is "no locale"
-    locale?: string | undefined,
+    locale?: string,
   ) => Effect.Effect<void, never, R>;
   /**
    * Evict the resource as of `version`, which a later `set` must reach to
@@ -3345,8 +3344,7 @@ export const subtypeResourceHandlers = <
     Targets,
     Resource["type"]
   >,
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter, #302's half of the convention (pulpit#238 converts properties only), so the existing two-argument calls keep compiling; the omitted argument is an unlocalised leaf
-  locale?: LocaleWire<R> | undefined,
+  locale?: LocaleWire<R>,
 ) => {
   const { type, listRequest, createInput, updateInput, ...rest } = config;
   const wire = Option.fromUndefinedOr(locale);

@@ -841,8 +841,7 @@ export interface EdgeOps<Create, Resource, E, R, Following = never> {
   readonly countBy: (
     end: string,
     ids: ReadonlyArray<string>,
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter, `?: T | undefined` (AGENTS.md → Conventions); the omitted value is `always`
-    where?: ListFilter<never> | undefined,
+    where?: ListFilter<never>,
   ) => Effect.Effect<HashMap.HashMap<string, number>, E, R>;
 }
 

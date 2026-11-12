@@ -146,11 +146,7 @@ export interface ResourceCache<Resource, R> extends ResourceCacheSeam<Resource, 
    * (since 0.2.0, pulpit#271), served only while it speaks for the id's
    * newest version. Never fails.
    */
-  readonly get: (
-    id: string,
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter is `?: T | undefined` (AGENTS.md → Conventions); the omitted argument is "no locale"
-    locale?: string | undefined,
-  ) => Effect.Effect<Option.Option<Resource>, never, R>;
+  readonly get: (id: string, locale?: string) => Effect.Effect<Option.Option<Resource>, never, R>;
 }
 
 /**
@@ -248,8 +244,7 @@ export const makeResourceCache = <Resource, E, R>(
       );
     });
 
-  // oxlint-disable-next-line effect/prefer-option-over-null -- the seam's optional `locale` parameter, `?: T | undefined` (AGENTS.md → Conventions)
-  const set = (id: string, resource: Resource, version: bigint, locale?: string | undefined) => {
+  const set = (id: string, resource: Resource, version: bigint, locale?: string) => {
     // Refuse (and evict) what the policy doesn't serve, or what doesn't encode.
     const encoded = serveable(resource) ? encode(resource) : Option.none();
     return locale === undefined
@@ -272,8 +267,7 @@ export const makeResourceCache = <Resource, E, R>(
       return resource;
     });
 
-  // oxlint-disable-next-line effect/prefer-option-over-null -- the optional `locale` parameter, `?: T | undefined` (AGENTS.md → Conventions)
-  const get = (id: string, locale?: string | undefined) =>
+  const get = (id: string, locale?: string) =>
     Effect.gen(function* () {
       const generation = yield* read(keyOf(id));
       if (Option.isNone(generation)) return Option.none<Resource>();
