@@ -76,10 +76,6 @@ export default defineConfig({
       // an optional parameter is spelled `x?: T | undefined`, like an
       // optional field, so a caller can forward its own optional value.
       "typescript/no-duplicate-type-constituents": "off",
-      // Reports the exact-type-identity idiom (`<X>() => X extends A ? 1 : 2`)
-      // the type-level tests and the dist-consumer check are built on, and
-      // `asMemberTuple`'s deliberate generic return target in registry.ts.
-      "typescript/no-unnecessary-type-parameters": "off",
       // The suites assert through helpers named `expect…` (`expectAgreement`
       // in tests/subtype.test.ts) as well as `expect` itself.
       "vitest/expect-expect": ["error", { assertFunctionNames: ["expect", "expect*"] }],

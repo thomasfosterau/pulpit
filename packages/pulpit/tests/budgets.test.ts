@@ -241,9 +241,8 @@ describe("budgetHook — a chain write's budget", () => {
       viewer: Option.some(member),
     };
     expect(Effect.runSync(hook.locales?.(event) ?? Effect.succeed({}))).toEqual(patch);
-    expect(
-      Effect.runSync(hook.locales?.({ ...event, locales: undefined }) ?? Effect.die("none")),
-    ).toEqual({});
+    const { locales: _omitted, ...withoutLocales } = event;
+    expect(Effect.runSync(hook.locales?.(withoutLocales) ?? Effect.die("none"))).toEqual({});
   });
 });
 

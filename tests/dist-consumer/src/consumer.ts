@@ -28,6 +28,7 @@ import {
   Reactions,
   Cache,
   Collections,
+  Links,
   Social,
   Audience,
   Discovery,
@@ -260,6 +261,7 @@ import {
   type CollectionMember,
   type CollectionOps,
 } from "@thomasfosterau/pulpit/collections";
+import { defineLinkList, type Link, type LinkListOps } from "@thomasfosterau/pulpit/links";
 import {
   defineSocial,
   socialFollowers,
@@ -302,7 +304,9 @@ import {
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
-  (<X>() => X extends A ? 1 : 2) extends <X>() => X extends B ? 1 : 2 ? true : false;
+  (<X>(value: X) => X extends A ? 1 : 2) extends <X>(value: X) => X extends B ? 1 : 2
+    ? true
+    : false;
 
 // ── content ──────────────────────────────────────────────────────────────
 
@@ -425,10 +429,7 @@ export type _Update = Assert<
     >
   >
 >;
-export type _Precondition = Assert<
-  // oxlint-disable-next-line effect/prefer-option-over-null -- asserts the emitted declaration keeps the workspace's `?: T | undefined` optional-field convention (AGENTS.md → Conventions)
-  Equals<Precondition, { readonly expectedVersion?: bigint | undefined }>
->;
+export type _Precondition = Assert<Equals<Precondition, { readonly expectedVersion?: bigint }>>;
 // The whole parameter list, read off a reference signature so the
 // precondition is pinned as an optional trailing parameter.
 export type _DeletePrecondition = Assert<
@@ -791,7 +792,6 @@ export type _LeafStoreDistinct = Assert<
     (query: DistinctQuery<Subquery>) => Effect.Effect<Page<string>, StoreFailure, Transaction>
   >
 >;
-/* oxlint-disable effect/prefer-option-over-null -- the assertion spells the emitted optional field */
 export type _OwnersRequest = Assert<
   Equals<
     OwnersRequest,
@@ -799,11 +799,10 @@ export type _OwnersRequest = Assert<
       readonly limit: number;
       readonly offset: number;
       readonly includeDeleted: boolean;
-      readonly among?: ReadonlyArray<string> | undefined;
+      readonly among?: ReadonlyArray<string>;
     }
   >
 >;
-/* oxlint-enable effect/prefer-option-over-null */
 // A list filter over the follower seam (pulpit#189): the member leaf's list takes memberFilter's output.
 export type _ListRequestFollowing = Assert<
   Equals<ListRequest<Subquery>["where"], ListFilter<Subquery>>
@@ -830,17 +829,17 @@ export type _SubtypeCompare = Assert<
 export type _ListOrder = Assert<
   Equals<ListOrder, { readonly column: string; readonly direction: "asc" | "desc" }>
 >;
-/* oxlint-disable effect/prefer-option-over-null -- the assertion must spell the emitted optional field exactly, and the workspace's optional fields are `?: T | undefined` */
 export type _ListRequestOrder = Assert<
-  Equals<ListRequest["orderBy"], ReadonlyArray<ListOrder> | undefined>
+  Equals<Pick<ListRequest, "orderBy">, { readonly orderBy?: ReadonlyArray<ListOrder> }>
 >;
 // The leaf's optional sortable allow-list (pulpit#112), and its declaration error.
 export type _SubtypeSortable = Assert<
   Equals<
-    SubtypeDefinition<LeafRow, unknown, never, never, never>["sortable"],
-    ReadonlyArray<string> | undefined
+    Pick<SubtypeDefinition<LeafRow, unknown, never, never, never>, "sortable">,
+    { readonly sortable?: ReadonlyArray<string> }
   >
 >;
+/* oxlint-disable effect/prefer-option-over-null -- the assertions spell wire shapes exactly: a JSON:API resource object's `meta`, a request header, effect-jsonapi's update presence */
 // The head version on the wire (pulpit#65).
 export type _LeafRowVersion = Assert<Equals<LeafRow["version"], bigint>>;
 export type _VersionMeta = Assert<
@@ -932,13 +931,13 @@ export type _HydrateSearchHits = Assert<
     >
   >
 >;
+/* oxlint-enable effect/prefer-option-over-null */
 export type _SubtypeSearch = Assert<
   Equals<
-    SubtypeDefinition<LeafRow, unknown, never, never, never>["search"],
-    SearchProjection | undefined
+    Pick<SubtypeDefinition<LeafRow, unknown, never, never, never>, "search">,
+    { readonly search?: SearchProjection }
   >
 >;
-/* oxlint-enable effect/prefer-option-over-null */
 export type _SubtypeDeclarationError = Assert<
   Equals<SubtypeDeclarationError["_tag"], "SubtypeDeclarationError">
 >;
@@ -958,13 +957,12 @@ export const ordered = posts.list({
   where: eq("visibility", "public"),
   orderBy: [{ column: "title", direction: "desc" }],
 });
-// A caller forwarding its own `undefined` (`exactOptionalPropertyTypes`).
+// A caller with no order omits the key (pulpit#238).
 export const unordered = posts.list({
   limit: 10,
   offset: 0,
   includeDeleted: false,
   where: { kind: "always" },
-  orderBy: undefined,
 });
 export type _SubtypeCompareParameters = Assert<
   Equals<Parameters<typeof posts.compare>, [id: string, from: bigint, to: bigint]>
@@ -979,8 +977,6 @@ export const bareTerms: LeafAccess = { kind: "reference" };
 export const moderatedComments: Option.Option<string> = ownedAccess({
   moderation: true,
 }).moderationColumn;
-// A caller forwarding its own `undefined` (`exactOptionalPropertyTypes`).
-export const forwardedTerms: LeafAccess = { kind: "reference", followersOfColumn: undefined };
 const closedPolicy = {
   canViewPrivate: () => false,
   canViewDeleted: () => false,
@@ -1573,6 +1569,16 @@ export const groupAudience: FollowerSeam<Subquery, Transaction> = {
   ...socialSeam,
   ...audienceSeam(membershipStore),
 };
+
+// ── links (pulpit#266) ───────────────────────────────────────────────────
+
+export type _LinksBarrel = Assert<Equals<typeof Links.defineLinkList, typeof defineLinkList>>;
+export type _LinkList = Assert<
+  Equals<
+    ReturnType<LinkListOps<string, StoreFailure, Transaction>["list"]>,
+    Effect.Effect<ReadonlyArray<Link<string>>, NodeNotFound | StoreFailure, Transaction>
+  >
+>;
 
 // ── discovery (pulpit#203) ───────────────────────────────────────────────
 

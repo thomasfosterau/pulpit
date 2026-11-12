@@ -348,13 +348,13 @@ describe("ownedListFilter ≡ canViewOwned", () => {
     expect(listed).toEqual(seen);
   });
 
-  it("reads an explicitly undefined draft option as no draft column", () => {
-    expect(ownedAccess({ draft: undefined })).toEqual(ownedAccess());
-    expect(ownedAccess({ draft: undefined }).draftColumn).toEqual(Option.none());
+  it("reads an absent or false draft option as no draft column", () => {
+    expect(ownedAccess({})).toEqual(ownedAccess());
+    expect(ownedAccess({ draft: false }).draftColumn).toEqual(Option.none());
   });
 
   it("declares the moderation column only when asked, by its conventional name", () => {
-    expect(ownedAccess({ moderation: undefined }).moderationColumn).toEqual(Option.none());
+    expect(ownedAccess({}).moderationColumn).toEqual(Option.none());
     expect(ownedAccess({ moderation: true }).moderationColumn).toEqual(
       Option.some("moderationState"),
     );
@@ -455,13 +455,9 @@ describe("the reference list predicates", () => {
       expect(privacy(as(follower), curated, Option.some({ kind: "reference" }))).toEqual(
         eq("visibility", "public"),
       );
-      expect(
-        privacy(
-          as(follower),
-          curated,
-          Option.some({ kind: "reference", followersOfColumn: undefined }),
-        ),
-      ).toEqual(eq("visibility", "public"));
+      expect(privacy(as(follower), curated, Option.some({ kind: "reference" }))).toEqual(
+        eq("visibility", "public"),
+      );
       // No follower seam: a member lists as the anonymous do.
       expect(privacy(as(follower), curated, Option.none())).toEqual(eq("visibility", "public"));
     });
@@ -1483,10 +1479,10 @@ describe("defineSubtype — list ordering (pulpit#112)", () => {
     expect((await run(page({}))).rows.map((row) => row.id)).toEqual(["a"]);
   });
 
-  it("without a sortable list (omitted or undefined), every declared view column sorts", async () => {
+  it("without a sortable list, every declared view column sorts", async () => {
     const columns = ["id", "action", "ownerId", "title", "rank", "publishedAt", "visibility"];
     const listed = await Promise.all(
-      Arr.map([{}, { sortable: undefined }], async (leaf) => {
+      Arr.map([{}, {}], async (leaf) => {
         const { page, queries } = await ranked([seed("a", { rank: 1 })], leaf);
         await run(
           Effect.forEach(columns, (column) => page({ orderBy: [desc(column)] }), {
@@ -2282,7 +2278,7 @@ describe("defineSubtype — a `group` row reads to its group's members (pulpit#1
   });
 
   it("declares the group column only when asked, by its conventional name", () => {
-    expect(ownedAccess({ group: undefined })).toEqual(ownedAccess());
+    expect(ownedAccess({ group: false })).toEqual(ownedAccess());
     expect(ownedAccess({ group: true }).groupColumn).toBe("groupId");
   });
 
@@ -3342,6 +3338,7 @@ describe("lifecycle hooks — before and after every write (pulpit#45)", () => {
       now: NOW,
     });
     const viewer: Viewer = as(member);
+    const lifecycle = { before: options.before ?? [], after: options.after ?? [] };
     const ops = defineSubtype<LeafRow, Post, Following, never, never>({
       type: "posts",
       access: ownedAccess({ draft: true }),
@@ -3351,11 +3348,11 @@ describe("lifecycle hooks — before and after every write (pulpit#45)", () => {
       policy: gardeneriaPolicy,
       followers: follows,
       toResource: (row) => ({ id: row.id, title: row["title"], slug: row["slug"] }),
-      hooks: Effect.succeed({
-        before: options.before ?? [],
-        after: options.after ?? [],
-        afterFailure: options.afterFailure,
-      }),
+      hooks: Effect.succeed(
+        options.afterFailure === undefined
+          ? lifecycle
+          : { ...lifecycle, afterFailure: options.afterFailure },
+      ),
     });
     const cached = MutableHashMap.empty<string, Post>();
     const handlers = subtypeHandlers(ops, {
@@ -3921,7 +3918,7 @@ describe("search: the projection and gated hydration (pulpit#54)", () => {
       now: NOW,
     });
     let viewer: Viewer = as(member);
-    const ops = defineSubtype({
+    const leaf = {
       type: "posts",
       access: ownedAccess(),
       chain,
@@ -3930,8 +3927,8 @@ describe("search: the projection and gated hydration (pulpit#54)", () => {
       policy: gardeneriaPolicy,
       followers: follows,
       toResource: (row: LeafRow) => ({ id: row.id, title: row["title"] }),
-      search,
-    });
+    };
+    const ops = defineSubtype(search === undefined ? leaf : { ...leaf, search });
     const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
       Effect.suspend(() => {
         viewer = who;

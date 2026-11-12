@@ -761,7 +761,10 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
     ): EdgeEnd<never, never> => ({
       column: "termId",
       type: "terms",
-      access: { kind: "reference", followersOfColumn },
+      access:
+        followersOfColumn === undefined
+          ? { kind: "reference" }
+          : { kind: "reference", followersOfColumn },
       nodes: makeInMemoryNodes(columns),
     });
     const variants = [

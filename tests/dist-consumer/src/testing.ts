@@ -51,7 +51,9 @@ import type { VersionChain, VersionRow } from "@thomasfosterau/pulpit/version-ch
 /** A compile-time assertion: `T` must be exactly `true`. */
 type Assert<T extends true> = T;
 type Equals<A, B> =
-  (<X>() => X extends A ? 1 : 2) extends <X>() => X extends B ? 1 : 2 ? true : false;
+  (<X>(value: X) => X extends A ? 1 : 2) extends <X>(value: X) => X extends B ? 1 : 2
+    ? true
+    : false;
 /** Whether `A` is assignable to `B`: a fake satisfies its seam. */
 type Satisfies<A, B> = [A] extends [B] ? true : false;
 
@@ -111,9 +113,9 @@ export type _LeafDropOwner = Assert<Equals<InMemoryLeafStore["dropOwner"], (id: 
 export type _LeafOwners = Assert<
   Equals<ReturnType<InMemoryLeafStore["owners"]>, HashMap.HashMap<string, string>>
 >;
-/* oxlint-disable effect/prefer-option-over-null -- the assertion must spell the emitted option exactly, and the workspace's optional fields are `?: T | undefined` */
-export type _LeafNow = Assert<Equals<InMemoryLeafStoreOptions["now"], Date | undefined>>;
-/* oxlint-enable effect/prefer-option-over-null */
+export type _LeafNow = Assert<
+  Equals<Pick<InMemoryLeafStoreOptions, "now">, { readonly now?: Date }>
+>;
 
 // The fakes compose into the kernel's factory with no services left over.
 const chain = makeInMemoryVersionChain("notes");

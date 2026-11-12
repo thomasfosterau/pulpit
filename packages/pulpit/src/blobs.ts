@@ -343,11 +343,10 @@ export const defineFileWrites = <Resource, E, R>(definition: {
   const replace = Effect.fn(`${leaf.type}.files.replace`)(function* (
     input: { readonly id: string; readonly upload: Upload } & Precondition,
   ) {
-    const columns = yield* columnsOf(input.upload);
-    const written = yield* transact(
-      leaf.update({ id: input.id, patch: { ...columns }, expectedVersion: input.expectedVersion }),
-    );
-    return yield* afterCommit(written, columns, input.upload);
+    const { id, upload, ...precondition } = input;
+    const columns = yield* columnsOf(upload);
+    const written = yield* transact(leaf.update({ id, patch: { ...columns }, ...precondition }));
+    return yield* afterCommit(written, columns, upload);
   });
 
   const confirmBytes = Effect.fn(`${leaf.type}.files.confirmBytes`)(function* (input: {
