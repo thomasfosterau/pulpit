@@ -75,8 +75,13 @@ export const packageConfig = (dir: string, options: PackageOptions = {}) => {
   const integration: { readonly [task: string]: { command: string; cache: false } } =
     options.integration === true
       ? {
+          // The suite's files share one database, so they run one at a time
+          // (`fileParallelism: false`). vitest applies `VITEST_MAX_WORKERS`
+          // after the config, overriding that, so the command pins it to 1:
+          // CI sets it to 2 for the unit suites, and `vp run ci` runs this
+          // suite in the same environment.
           "test:integration": {
-            command: "vp test run --config vitest.integration.config.ts",
+            command: "VITEST_MAX_WORKERS=1 vp test run --config vitest.integration.config.ts",
             cache: false as const,
           },
         }
