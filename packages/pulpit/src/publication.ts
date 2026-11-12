@@ -139,7 +139,6 @@ export const duePublications = <Following = never>(
   column: string = "publishedAt",
 ): ListFilter<Following> => and<Following>(gt(column, since), lte(column, now));
 
-/* oxlint-disable effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option` */
 /**
  * A family's cache posture: which absent axes are refusals.
  *
@@ -147,13 +146,12 @@ export const duePublications = <Following = never>(
  */
 export interface ServeabilityOptions {
   /** An owned family: a missing `visibility` refuses (#1096). */
-  readonly owned?: boolean | undefined;
+  readonly owned?: boolean;
   /** A stamp-gated family: a missing, unparseable or future `publishedAt` refuses. */
-  readonly publishGated?: boolean | undefined;
+  readonly publishGated?: boolean;
   /** The instant a stamp must have arrived by; the wall clock when omitted. */
-  readonly now?: Date | undefined;
+  readonly now?: Date;
 }
-/* oxlint-enable effect/prefer-option-over-null */
 
 /**
  * Whether a serialised `publishedAt` names an instant that has arrived by

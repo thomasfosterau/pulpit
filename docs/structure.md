@@ -17,6 +17,8 @@ Relations between nodes (`./edges`, taxonomies included), routable paths and ali
 
 Writes gate on the declaration's `writeGate`. The default, `corpusWriteGate`, is the corpus-write rung, right for an edge between two reference leaves. `rungGate((policy) => policy.canModerate)` puts a family on another rung. An owned-child edge (gardeneria's observation → disorder) passes a gate that reads its owned end's owner, typically `requireWriter` from `./subtype`.
 
+The optional members here (an end's `maxEdges`, the declaration's `onConflict`, `writeGate` and `validity`, and the store's `closeValidity`) are bare `?: T` (pulpit#238): a caller that has no value omits the key rather than passing `undefined`.
+
 On top of the port, pulpit enforces three rules:
 
 - **Endpoint visibility** (`EDGE-001`). Each end declares its endpoint leaf's `access` and its current-version view (`nodes`; the leaf's own `LeafStore` fits). An edge is readable only if the viewer can read the node at every end, by the rule that leaf's own `get` and `list` apply, a reference leaf's followers arm included. `get` fails `EdgeNotFound` for a hidden edge, and `list` omits it, never `Forbidden` (`SEC-AUTH-ENUM-001`). A related list (the edges at one node) is `list` filtered on that end's column, so it omits every edge whose other end is hidden, and the related list of a hidden node is empty. The list filter (`endpointFilter`) and the per-endpoint predicate (`canViewEndpoint`) read the same facts, so they never disagree. A create naming a node the viewer can't read fails `NodeNotFound`, before the write gate runs, so a 403 never confirms that the node exists.

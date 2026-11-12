@@ -130,7 +130,7 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
 
 ## `./publication`
 
-The publication axis (stamped AND arrived), the moderation state, and the KV cache's serveability policy.
+The publication axis (stamped AND arrived), the moderation state, and the KV cache's serveability policy. `ServeabilityOptions`' `owned`, `publishGated` and `now` are bare `?: T` (pulpit#238): a caller that has no value omits the key rather than passing `undefined`.
 
 | Export | What it is |
 | --- | --- |
@@ -166,7 +166,7 @@ postCache.get(id); // Option<Post>
 
 - **Compare-on-set** (pulpit#121). Every entry carries the version it speaks for, and the KV's one conditional write (`putIfNotBehind`) keeps the highest. A `set` or `delete` below the stored version changes nothing, and an eviction raises the version, so a racing writer's late write-through never re-caches an older resource. The KV must compare and write in one atomic step; Workers KV alone can't.
 - **An eviction wins a tie.** A tombstone outranks a value at the same version, so only a strictly newer write clears it: a read-through that loaded the row before an unpublish at that version (publication appends no version) can't re-cache it. The cache stores a rank as the entry's `version`, `2·version` for a value and `2·version + 1` for a tombstone, so the KV still compares one number. The cost: after an eviction, a fill at the same version is refused, and the item reads from the store until a newer version or the tombstone expires.
-- **Tombstones outlive values.** A tombstone is kept for `tombstoneTtlSeconds` (default `DEFAULT_TOMBSTONE_TTL_SECONDS`, a day; never less than `ttlSeconds`). Set it above the longest a write-through or read-through fill can be in flight: a stale write that lands after its tombstone expired is no longer refused.
+- **Tombstones outlive values.** A tombstone is kept for `tombstoneTtlSeconds` (a bare `?: number`, pulpit#238: omit it for the default, `DEFAULT_TOMBSTONE_TTL_SECONDS`, a day; never less than `ttlSeconds`). Set it above the longest a write-through or read-through fill can be in flight: a stale write that lands after its tombstone expired is no longer refused.
 - **Serveability on both sides** (`CACHE-AUTH-005`). `set` refuses, and evicts, a resource the policy doesn't serve. `get` checks again and evicts, so a policy change never serves a stale cached private row.
 - **Decode or evict.** `get` decodes with the resource's schema, and a stored value that no longer decodes is evicted and read as a miss. Bump `prefix` with the schema to start a fresh generation.
 - **A TTL backstop** on every value write (`ttlSeconds`), so an entry no write evicted still expires.

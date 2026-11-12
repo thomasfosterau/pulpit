@@ -85,8 +85,7 @@ export interface BranchRanking {
    * The branch's weight, `1` when omitted. A weight that is not a finite,
    * non-negative number scores nothing (fails closed).
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is weight 1
-  readonly weight?: number | undefined;
+  readonly weight?: number;
   /** Best first. A repeated id keeps its first, best rank. */
   readonly hits: ReadonlyArray<RankedHit>;
 }
@@ -110,14 +109,11 @@ export interface FusedHit {
  */
 export interface FusionOptions {
   /** The RRF constant; {@link RRF_K} when omitted or not a finite, positive number. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is RRF_K
-  readonly k?: number | undefined;
+  readonly k?: number;
   /** How many fused hits to return, clamped to `[1, MAX_PAGE_LIMIT]`; `MAX_PAGE_LIMIT` when omitted. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is MAX_PAGE_LIMIT
-  readonly limit?: number | undefined;
+  readonly limit?: number;
   /** How many of each branch's hits count, clamped as `limit` is; `MAX_PAGE_LIMIT` when omitted. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is MAX_PAGE_LIMIT
-  readonly perBranch?: number | undefined;
+  readonly perBranch?: number;
 }
 
 /** A count clamped to `[1, MAX_PAGE_LIMIT]` (`SEC-INPUT-003`), `MAX_PAGE_LIMIT` when absent or not a number. */
@@ -295,8 +291,7 @@ export interface SearchBranch<Following, E, R> {
   /** The branch's name, as {@link FusedHit.ranks} keys it. */
   readonly name: string;
   /** Its fusion weight; `1` when omitted (see {@link BranchRanking.weight}). */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is weight 1
-  readonly weight?: number | undefined;
+  readonly weight?: number;
   /** The hits in scope, best first, at most `request.limit`. */
   readonly search: (
     request: BranchRequest<Following>,
@@ -328,14 +323,11 @@ export class SearchScopeLeak extends Schema.TaggedError<
 export interface HybridSearchDefinition<Following, E, R> {
   readonly branches: ReadonlyArray<SearchBranch<Following, E, R>>;
   /** Reorders the fused candidates; omitted, the fused order stands. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no reranker"
-  readonly reranker?: RerankerSeam<E, R> | undefined;
+  readonly reranker?: RerankerSeam<E, R>;
   /** The RRF constant ({@link FusionOptions.k}). */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is RRF_K
-  readonly k?: number | undefined;
+  readonly k?: number;
   /** How many hits each branch is asked for ({@link FusionOptions.perBranch}). */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is MAX_PAGE_LIMIT
-  readonly perBranch?: number | undefined;
+  readonly perBranch?: number;
 }
 
 /**
@@ -388,15 +380,18 @@ export const hybridSearch =
               headFor: request.headFor,
               limit: perBranch,
             }),
-            (hits): BranchRanking => ({ name: branch.name, weight: branch.weight, hits }),
+            (hits): BranchRanking =>
+              branch.weight === undefined
+                ? { name: branch.name, hits }
+                : { name: branch.name, weight: branch.weight, hits },
           ),
         { concurrency: 1 },
       );
-      const fused = fuseRankings(rankings, {
-        k: definition.k,
-        perBranch,
-        limit: MAX_PAGE_LIMIT,
-      });
+      const fusion: FusionOptions = { perBranch, limit: MAX_PAGE_LIMIT };
+      const fused = fuseRankings(
+        rankings,
+        definition.k === undefined ? fusion : { ...fusion, k: definition.k },
+      );
       const limit = bounded(Option.some(request.limit));
       const reranker = definition.reranker;
       if (reranker === undefined || !Arr.isReadonlyArrayNonEmpty(fused)) {
