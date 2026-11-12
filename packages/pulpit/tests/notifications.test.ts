@@ -11,6 +11,7 @@
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import type * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import {
   accountSubject,
@@ -19,6 +20,7 @@ import {
   defineNotifications,
   emitting,
   followCreated,
+  mentionCreatedHook,
   mentionDrafts,
   moderationDecidedHook,
   nodeSubject,
@@ -42,7 +44,9 @@ import {
   type ViewerAccount,
 } from "../src/subtype.ts";
 import {
+  jsonMentionExtractor,
   makeInMemoryDelivery,
+  makeInMemoryDocumentStore,
   makeInMemoryFollowers,
   makeInMemoryInbox,
   makeInMemoryLeafStore,
@@ -61,9 +65,12 @@ const failureTag = <A, E extends { readonly _tag: string }>(effect: Effect.Effec
   run(Effect.match(effect, { onFailure: (error) => error._tag, onSuccess: () => "success" }));
 
 /** A posts leaf whose hooks are `before`, with a mutable viewer. */
-const postsLeaf = (before: ReadonlyArray<BeforeWriteHook<never, never>>) => {
+const postsLeaf = (
+  before: ReadonlyArray<BeforeWriteHook<never, never>>,
+  columns: ReadonlyArray<string> = ["body", "visibility"],
+) => {
   const chain = makeInMemoryVersionChain("posts");
-  const leaves = makeInMemoryLeafStore(chain, { columns: ["body", "visibility"], now: NOW });
+  const leaves = makeInMemoryLeafStore(chain, { columns, now: NOW });
   let viewer: Viewer = Option.none();
   const posts = defineSubtype<LeafRow, LeafRow, InMemoryFollowing, never, never>({
     type: "posts",
@@ -566,5 +573,207 @@ describe("the inbox is the viewer's own", () => {
         }),
       ),
     ).toBe("Unauthorized");
+  });
+});
+
+// ── Mentions (pulpit#198) ─────────────────────────────────────────────
+
+const mentionNode = (id: string): Schema.Json => ({ type: "mention", attrs: { id, label: id } });
+
+/** A posts leaf with `title` and `body` documents and the mention hook, plus a sweep gated on its `get`. */
+const mentioning = () => {
+  const outbox = makeInMemoryOutbox<KernelNotificationKind>();
+  const inbox = makeInMemoryInbox<KernelNotificationKind>();
+  const social = makeInMemorySocialStore();
+  const documents = makeInMemoryDocumentStore<Schema.Json>();
+  let reads = 0;
+  const hook = mentionCreatedHook({
+    outbox,
+    fields: ["title", "body"],
+    documents: {
+      getMany: (hashes) =>
+        Effect.suspend(() => {
+          reads += 1;
+          return documents.getMany(hashes);
+        }),
+    },
+    extract: jsonMentionExtractor,
+  });
+  const { posts, as } = postsLeaf([hook], ["title", "body", "visibility"]);
+  const asRecipient =
+    (recipientId: string) =>
+    <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Effect.andThen(
+        as(
+          Arr.findFirst(accounts, (account) => account.id === recipientId),
+          Effect.void,
+        ),
+        effect,
+      );
+  const notifications = defineNotifications({
+    outbox,
+    inbox,
+    preferences: makeInMemoryPreferenceStore(),
+    delivery: makeInMemoryDelivery<KernelNotificationKind>(),
+    subjects: { posts: subjectGateFromGet(posts.get, asRecipient) },
+    suppression: Option.some(socialSuppression(social)),
+    defaults,
+    viewer: Effect.succeedNone,
+  });
+  /** Store a document mentioning `ids`, and return its hash. */
+  const doc = (...ids: ReadonlyArray<string>) =>
+    run(
+      Effect.map(
+        documents.put({
+          type: "doc",
+          content: [{ type: "paragraph", content: Arr.map(ids, mentionNode) }],
+        }),
+        (put) => put.hash,
+      ),
+    );
+  const write = <A, E>(effect: Effect.Effect<A, E>) => run(as(Option.some(member), effect));
+  const create = async (state: ChainState) =>
+    (await write(posts.create({ id: Option.none(), state: { visibility: "public", ...state } })))
+      .id;
+  const recipients = () => Arr.map(outbox.events(), (queued) => queued.recipientId);
+  return {
+    outbox,
+    inbox,
+    social,
+    notifications,
+    posts,
+    doc,
+    write,
+    create,
+    recipients,
+    reads: () => reads,
+  };
+};
+
+describe("mention.created: only the mentions a write adds (pulpit#198)", () => {
+  it("a create notifies each account its documents mention, once, and never the author", async () => {
+    const { create, doc, outbox, recipients } = mentioning();
+    const id = await create({
+      title: await doc(otherMember.id),
+      body: await doc(otherMember.id, moderator.id, member.id),
+    });
+    expect(recipients()).toEqual([otherMember.id, moderator.id]);
+    expect(outbox.events()[0]).toMatchObject({
+      kind: "mention.created",
+      actorId: Option.some(member.id),
+      subject: nodeSubject("posts", id),
+    });
+  });
+
+  it("an edit that keeps a mention doesn't re-emit; one that adds a mention emits it alone", async () => {
+    const { create, doc, posts, write, recipients } = mentioning();
+    const id = await create({ body: await doc(otherMember.id) });
+    await write(posts.update({ id, patch: { body: await doc(otherMember.id, otherMember.id) } }));
+    expect(recipients()).toEqual([otherMember.id]);
+    await write(posts.update({ id, patch: { body: await doc(otherMember.id, moderator.id) } }));
+    expect(recipients()).toEqual([otherMember.id, moderator.id]);
+  });
+
+  it("a mention moved to another field is not new", async () => {
+    const { create, doc, posts, write, recipients } = mentioning();
+    const id = await create({ title: await doc(otherMember.id), body: await doc() });
+    await write(
+      posts.update({ id, patch: { title: await doc(), body: await doc(otherMember.id) } }),
+    );
+    expect(recipients()).toEqual([otherMember.id]);
+  });
+
+  it("a write that sets no new document reads nothing and emits nothing", async () => {
+    const { create, doc, posts, write, recipients, reads } = mentioning();
+    const body = await doc(otherMember.id);
+    const id = await create({ body });
+    const before = reads();
+    await write(posts.update({ id, patch: { visibility: "private" } }));
+    await write(posts.update({ id, patch: { body } }));
+    await write(posts.delete(id));
+    expect(reads()).toBe(before);
+    expect(recipients()).toEqual([otherMember.id]);
+  });
+
+  it("a mention removed and then restored notifies again (the diff is over the head)", async () => {
+    const { create, doc, posts, write, recipients } = mentioning();
+    const id = await create({ body: await doc(otherMember.id) });
+    await write(posts.update({ id, patch: { body: await doc() } }));
+    await write(posts.restoreVersion(id, 0n));
+    expect(recipients()).toEqual([otherMember.id, otherMember.id]);
+  });
+
+  it("a reference with no stored document mentions nobody", async () => {
+    const { create, recipients } = mentioning();
+    await create({ body: "0".repeat(64) });
+    expect(recipients()).toEqual([]);
+  });
+
+  it("a localised write diffs across every locale: a moved mention is not new", async () => {
+    const outbox = makeInMemoryOutbox<KernelNotificationKind>();
+    const documents = makeInMemoryDocumentStore<Schema.Json>();
+    const hook = mentionCreatedHook({
+      outbox,
+      fields: ["body"],
+      documents,
+      extract: jsonMentionExtractor,
+    });
+    const put = (...ids: ReadonlyArray<string>) =>
+      run(
+        Effect.map(documents.put({ content: Arr.map(ids, mentionNode) }), (stored) => stored.hash),
+      );
+    const prior: VersionSnapshot = {
+      version: 0n,
+      action: "create",
+      timestamp: NOW,
+      state: { visibility: "public" },
+      locales: { en: { body: await put(otherMember.id) } },
+    };
+    const write: BeforeWriteEvent = {
+      action: "update",
+      type: "posts",
+      id: "p-1",
+      prior: Option.some(prior),
+      patch: {},
+      locales: { en: null, fr: { body: await put(otherMember.id, moderator.id) }, de: undefined },
+      actorId: Option.some(member.id),
+      viewer: Option.some(member),
+    };
+    expect(await run(hook.run(write))).toEqual({});
+    expect(await run(hook.locales?.(write) ?? Effect.succeed({}))).toEqual(write.locales);
+    expect(Arr.map(outbox.events(), (stored) => stored.recipientId)).toEqual([moderator.id]);
+  });
+
+  it("the sweep tells a mentioned account only about a node it can read", async () => {
+    const { create, doc, inbox, notifications } = mentioning();
+    await create({ visibility: "private", body: await doc(otherMember.id, moderator.id) });
+    expect(await run(notifications.sweep(10))).toMatchObject({ processed: 2, suppressed: 1 });
+    expect(Arr.map(inbox.entries(), (entry) => entry.event.recipientId)).toEqual([moderator.id]);
+  });
+
+  it("the sweep drops a mention of an account that blocks the author", async () => {
+    const { create, doc, inbox, notifications, social } = mentioning();
+    await run(social.add({ kind: "block", from: otherMember.id, to: member.id, at: NOW }));
+    await create({ body: await doc(otherMember.id) });
+    expect(await run(notifications.sweep(10))).toMatchObject({ processed: 1, suppressed: 1 });
+    expect(inbox.entries()).toEqual([]);
+  });
+});
+
+describe("jsonMentionExtractor (the fake extractor)", () => {
+  it("reads every mention's string id at any depth, in document order", () => {
+    expect(
+      jsonMentionExtractor([
+        { type: "mention", attrs: { id: "a" } },
+        { nested: { content: [{ type: "mention", attrs: { id: "b" } }] } },
+        { type: "mention", attrs: { id: 1 } },
+        { type: "mention", attrs: ["c"] },
+        { type: "mention" },
+        "mention",
+        null,
+        7,
+        true,
+      ]),
+    ).toEqual(["a", "b"]);
   });
 });
