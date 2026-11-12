@@ -143,10 +143,13 @@ export default defineConfig({
       // type with it, so the one `// SAFETY:`-commented assertion is the
       // fixture's whole reason to exist; the SQL it stands in for runs on
       // PostgreSQL in `tests/integration/`.
+      // Both name `casting-awareness` beside `no-unsafe-type-assertion`: the
+      // same assertions, for the same reason, prompt both.
       {
         files: ["packages/pulpit-drizzle-pg/tests/fixtures/canned.ts"],
         rules: {
           "typescript/no-unsafe-type-assertion": "off",
+          "effect/casting-awareness": "off",
           "effect/no-chained-type-assertions": "off",
           "effect/avoid-any": "off",
         },
@@ -155,6 +158,7 @@ export default defineConfig({
         files: ["packages/pulpit-drizzle-pg/src/version-chain.ts"],
         rules: {
           "typescript/no-unsafe-type-assertion": "off",
+          "effect/casting-awareness": "off",
           "effect/no-chained-type-assertions": "off",
           "effect/avoid-any": "off",
         },
