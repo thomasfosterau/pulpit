@@ -40,6 +40,7 @@
     "./documents": "./src/documents.ts",
     "./filter": "./src/filter.ts",
     "./leaf-store": "./src/leaf-store.ts",
+    "./paths": "./src/paths.ts",
     "./version-chain": "./src/version-chain.ts"
   },
   "publishConfig": {
@@ -59,6 +60,10 @@
       "./leaf-store": {
         "types": "./dist/leaf-store.d.ts",
         "default": "./dist/leaf-store.js"
+      },
+      "./paths": {
+        "types": "./dist/paths.d.ts",
+        "default": "./dist/paths.js"
       },
       "./version-chain": {
         "types": "./dist/version-chain.d.ts",

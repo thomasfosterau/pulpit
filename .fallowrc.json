@@ -46,6 +46,7 @@
     "packages/pulpit-drizzle-pg/src/version-chain.ts",
     "packages/pulpit-drizzle-pg/src/leaf-store.ts",
     "packages/pulpit-drizzle-pg/src/filter.ts",
+    "packages/pulpit-drizzle-pg/src/paths.ts",
     "packages/pulpit-drizzle-pg/src/documents.ts",
     "packages/pulpit-drizzle-pg/tests/**/*.test.ts",
     "packages/pulpit-drizzle-pg/tests/**/*.types.ts",
