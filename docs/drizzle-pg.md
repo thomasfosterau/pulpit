@@ -14,7 +14,8 @@ The module guide for [`@thomasfosterau/pulpit-drizzle-pg`](../packages/pulpit-dr
 - **Landed:** `SearchBranch` over a tree's leaf and branch views and over a gated leaf's live rows ([`./search`](#search)), checked against the kernel's in-memory branch under every viewer's read scope on PostgreSQL.
 - **Landed:** the localised live view and gated store of a publish-gated keyed leaf ([`./publication`](#publication), pulpit#343), checked against the kernel's in-memory publication over a localised store on PostgreSQL.
 - **Landed:** the `ProposalStore` ([`./proposals`](#proposals), pulpit#355), checked against the kernel's in-memory store on PostgreSQL, its lock against a second transaction.
-- **Next:** the other stores that aren't tree-bound (edges, reports, budgets, working copies, erasure, embeddings, social and notification tables), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
+- **Landed:** the `EmbeddingStore` ([`./embeddings`](#embeddings), pulpit#357), checked against the kernel's in-memory store on PostgreSQL with `double precision[]` vectors; pgvector's form is pinned by unit tests.
+- **Next:** the other stores that aren't tree-bound (edges, reports, budgets, working copies, erasure, social and notification tables), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
 
 ## End to end
 
@@ -282,6 +283,29 @@ The kernel's `ProposalStore` ([seams.md → `ProposalStore`](seams.md), pulpit#3
   - An id that is no canonical UUID names no proposal.
 
 The integration suite checks every method against the kernel's `makeInMemoryProposalStore` over the same writes, the composite foreign key, and the lock against a second transaction's `FOR UPDATE NOWAIT`.
+
+## `./embeddings`
+
+The kernel's `EmbeddingStore` ([seams.md → `SearchBranch` and `EmbeddingStore`](seams.md#searchbranchfollowing-e-r-and-embeddingstoree-r-search-and-embeddings), pulpit#357): the embedding queue and the vectors of one document family ([`./documents`](#documents)).
+
+- **`makeEmbeddingTables({ schema, name, documents, vector })`** builds two tables, each keyed by the document's `hash` and referencing the document table `ON DELETE CASCADE`, so purging a document takes its queue row and vector with it:
+  - `${name}_queue`: `hash`, `queued_at` (`DEFAULT now()`, indexed) and a nullable `discarded_at`;
+  - `${name}_vector`: `hash` and `embedding`.
+  - `vector` picks the column: `{ kind: "pgvector", dimensions }` is pgvector's `vector(n)`, which a vector `SearchBranch` ranks with `<=>` (a migration must `CREATE EXTENSION vector` first); `{ kind: "float8" }` is `double precision[]`, for a database without the extension.
+- **`makeEmbeddingStore({ tables, documents, CurrentTransaction })`** binds the store, every call in the caller's transaction.
+  - **`enqueue(hash)`** inserts the queue row unless the document already has a vector. On a conflict it requeues only a discarded row (`DO UPDATE … WHERE discarded_at IS NOT NULL`), so it is idempotent.
+  - **`pending(limit)`** is one read: the undiscarded queue rows, oldest `queued_at` first, then (the sweep) stored documents with no vector and no queue row, by hash; at most `limit`, and nothing for a limit below one.
+  - **`write(vectors)`** is one CTE: it upserts each vector (`ON CONFLICT (hash) DO UPDATE SET embedding = EXCLUDED.embedding`) and deletes the queue rows it wrote. A vector is bound as its text literal, cast to `vector` or `float8[]`; a non-finite component is written as `0`.
+  - **`discard(hashes)`** marks each row discarded, inserting one for a swept document, so `pending` never hands it out again until it is enqueued anew.
+  - A string that is no `DocumentHash` names no document.
+
+The integration suite runs the same calls through this store and the kernel's `makeInMemoryEmbeddingStore` and checks the queue and vectors agree. It also pins the sweep, the discard and the cascade, which the fake does not model. Its fixture uses `double precision[]`, so CI's `postgres:17` service needs no pgvector; the pgvector column type and literal are checked by unit tests and by the dist-consumer types.
+
+| Export | What it is |
+| --- | --- |
+| `makeEmbeddingTables(options)`, `EmbeddingTables`, `VectorKind` | One family's queue and vector tables. |
+| `makeEmbeddingStore(config)` | The `EmbeddingStore` over them. |
+| `vectorLiteral(kind, values)` | A vector as its SQL literal. |
 
 ## `./search`
 

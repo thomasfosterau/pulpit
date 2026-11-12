@@ -13,6 +13,7 @@ import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
 import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
 import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
 import { makeDocumentTable } from "@thomasfosterau/pulpit-drizzle-pg/documents";
+import { makeEmbeddingTables } from "@thomasfosterau/pulpit-drizzle-pg/embeddings";
 import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
 import { makeProposalTable } from "@thomasfosterau/pulpit-drizzle-pg/proposals";
 import { makePathTable } from "@thomasfosterau/pulpit-drizzle-pg/paths";
@@ -89,6 +90,14 @@ export const documents = makeDocumentTable({ schema, name: "block_documents" });
 /** The proposal table, over the root tables. */
 export const proposals = makeProposalTable({ schema, root: tables.root });
 
+/** The block documents' embedding queue and vectors: `double precision[]`, so no extension is needed. */
+export const embeddings = makeEmbeddingTables({
+  schema,
+  name: "block_embedding",
+  documents,
+  vector: { kind: "float8" },
+});
+
 /** The owner table the leaf stores read and stamp. */
 export const owners = makeNodeOwnerTable({ schema, identity: tables.root.identity });
 
@@ -124,6 +133,8 @@ export const fixtureSchema = {
   owners,
   paths,
   documents,
+  embeddingQueue: embeddings.queue,
+  embeddingVectors: embeddings.vectors,
   proposals,
   notesView: views.leaves.notes,
   linksView: views.leaves.links,

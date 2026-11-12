@@ -14,7 +14,8 @@
  * path table (`Paths`, `./paths`), the content-addressed `DocumentStore`
  * (`Documents`, `./documents`), and the `SearchBranch` over a tree's views
  * (`Search`, `./search`), and the `ProposalStore` over a proposal table
- * (`Proposals`, `./proposals`).
+ * (`Proposals`, `./proposals`), and the `EmbeddingStore` over a document
+ * family's queue and vectors (`Embeddings`, `./embeddings`).
  *
  * @copyright Thomas Foster
  * @module pulpit-drizzle-pg
@@ -39,6 +40,9 @@ export * as Documents from "./documents.ts";
 
 /** The kernel's `ProposalStore`: suggested edits against a tree's nodes. */
 export * as Proposals from "./proposals.ts";
+
+/** The kernel's `EmbeddingStore`: a document family's embedding queue and vectors. */
+export * as Embeddings from "./embeddings.ts";
 
 /** The kernel's `SearchBranch`: one ranked, scoped statement over a tree's view. */
 export * as Search from "./search.ts";

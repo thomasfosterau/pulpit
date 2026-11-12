@@ -38,6 +38,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./documents": "./src/documents.ts",
+    "./embeddings": "./src/embeddings.ts",
     "./filter": "./src/filter.ts",
     "./leaf-store": "./src/leaf-store.ts",
     "./proposals": "./src/proposals.ts",
@@ -55,6 +56,10 @@
       "./documents": {
         "types": "./dist/documents.d.ts",
         "default": "./dist/documents.js"
+      },
+      "./embeddings": {
+        "types": "./dist/embeddings.d.ts",
+        "default": "./dist/embeddings.js"
       },
       "./filter": {
         "types": "./dist/filter.d.ts",
