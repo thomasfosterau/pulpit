@@ -21,6 +21,7 @@
     "packages/pulpit/src/audience.ts",
     "packages/pulpit/src/discovery.ts",
     "packages/pulpit/src/relations.ts",
+    "packages/pulpit/src/translation.ts",
     "packages/pulpit/src/blobs.ts",
     "packages/pulpit/src/paths.ts",
     "packages/pulpit/src/pages.ts",
