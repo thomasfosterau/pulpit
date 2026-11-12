@@ -69,6 +69,8 @@ Every module is a namespace on the root export (`import { VersionChain } from "@
 | [`./edges`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#edges) | `makeEdgeTable` / `makeEdgeStore`: the kernel's `EdgeStore`, one table per edge family, its ends joined to the tree's views. |
 | [`./collections`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#collections) | `makeCollectionTable` / `makeCollectionStore`: the kernel's `CollectionStore`, one membership table per ordered family. |
 | [`./external-ids`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#external-ids) | `makeExternalIdTable` / `makeExternalIdStore`: the kernel's `ExternalIdStore`, an authority's identifiers linked to nodes. |
+| [`./social`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#social) | `makeRelationshipTable` / `makeSocialStore`: the kernel's `SocialStore`, follows, mutes and blocks over one relationship table. |
+| [`./memberships`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#memberships) | `makeMembershipTable` / `makeMembershipStore` / `makeGroupOwners`: the kernel's `MembershipStore` (members and pending invitations) and `GroupOwnerStore`. |
 | [`./filter`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#filter) | `renderListFilter` / `renderListOrder`: the kernel's `ListFilter` and list order as Drizzle SQL. |
 
 ## Links

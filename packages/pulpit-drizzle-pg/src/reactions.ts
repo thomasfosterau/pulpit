@@ -28,6 +28,7 @@ import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { eraseBatch } from "./internal/erase.ts";
 import { isNodeId } from "./internal/node-id.ts";
 import type { StoreQueryError } from "./internal/owners.ts";
 import type { VersionChainTables } from "./version-chain.ts";
@@ -112,9 +113,6 @@ const decodeCounts = Schema.decodeUnknownEffect(
 const decodeKinds = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ kind: Schema.String })),
 );
-const decodeErased = Schema.decodeUnknownEffect(
-  Schema.Array(Schema.Struct({ erased: Schema.Int })),
-);
 
 /**
  * Bind the kernel's `ReactionStore` to the reaction table, in the caller's
@@ -127,7 +125,7 @@ const decodeErased = Schema.decodeUnknownEffect(
  *   node_id, kind` read; `byAccount` one page `ORDER BY reacted_at DESC,
  *   node_id`.
  * - `eraseAccount(accountId, limit)` deletes at most `limit` of the
- *   account's rows (`ORDER BY node_id`) and counts them (`PERF-DB-001`).
+ *   account's rows (by key) and counts them (`PERF-DB-001`).
  *
  * A node id that is no canonical UUID names no node: `upsert` writes
  * nothing and answers none, `delete` answers `false`, and `tally` leaves it
@@ -221,29 +219,13 @@ export const makeReactionStore = <I, Relations extends AnyRelations>(config: {
             return decoded;
           }),
     eraseAccount: (accountId, limit) =>
-      limit < 1
-        ? Effect.succeed(0)
-        : Effect.gen(function* () {
-            const tx = yield* CurrentTransaction;
-            const rows = yield* executeRows<{ readonly erased: number }>(
-              tx,
-              sql`WITH gone AS (
-                DELETE FROM ${table}
-                WHERE (node_id, account_id) IN (
-                  SELECT node_id, account_id FROM ${table}
-                  WHERE ${table.accountId} = ${accountId}
-                  ORDER BY node_id
-                  LIMIT ${Math.trunc(limit)}
-                )
-                RETURNING 1
-              )
-              SELECT count(*)::int AS erased FROM gone`,
-            );
-            const counted = yield* Effect.orDie(decodeErased(rows));
-            return Option.match(Arr.head(counted), {
-              onNone: () => 0,
-              onSome: ({ erased }) => erased,
-            });
-          }),
+      Effect.flatMap(CurrentTransaction, (tx) =>
+        eraseBatch(tx, {
+          table,
+          key: [table.nodeId, table.accountId],
+          where: sql`${table.accountId} = ${accountId}`,
+          limit,
+        }),
+      ),
   };
 };

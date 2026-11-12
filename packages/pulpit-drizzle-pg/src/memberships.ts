@@ -40,6 +40,7 @@ import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { countOf } from "./internal/count.ts";
 import { eraseBatch } from "./internal/erase.ts";
 import type { StoreQueryError } from "./internal/owners.ts";
 
@@ -130,11 +131,6 @@ const decodeInvitations = Schema.decodeUnknownEffect(
 const decodeRoles = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ role: MembershipRole })),
 );
-const decodeCount = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ n: Schema.Int })));
-
-/** The first row's count, or zero. */
-const countOf = (rows: ReadonlyArray<{ readonly n: number }>): number =>
-  Option.match(Arr.head(rows), { onNone: () => 0, onSome: ({ n }) => n });
 
 /**
  * Bind the kernel's `MembershipStore` to the membership table, in the
@@ -174,7 +170,7 @@ export const makeMembershipStore = <I, Relations extends AnyRelations>(config: {
         tx,
         sql`WITH written AS (${statement}) SELECT count(*)::int AS n FROM written`,
       );
-      return countOf(yield* Effect.orDie(decodeCount(rows)));
+      return yield* countOf(rows);
     });
   /** The rows matching `where`, counted (a page past the end reads no window total). */
   const counted = (where: SQL) =>
@@ -184,7 +180,7 @@ export const makeMembershipStore = <I, Relations extends AnyRelations>(config: {
         .select({ n: sql<number>`count(*)::int` })
         .from(table)
         .where(where);
-      return countOf(yield* Effect.orDie(decodeCount(rows)));
+      return yield* countOf(rows);
     });
   const totalOf = (page: ReadonlyArray<{ readonly total: number }>, where: SQL) =>
     Option.match(Arr.head(page), {
@@ -192,7 +188,7 @@ export const makeMembershipStore = <I, Relations extends AnyRelations>(config: {
       onNone: () => counted(where),
     });
   const window = sql<number>`(count(*) over ())::int`;
-  const isActive = (groupId: string, accountId: string) =>
+  const roleOf = (groupId: string, accountId: string) =>
     Effect.gen(function* () {
       const tx = yield* CurrentTransaction;
       const rows = yield* tx
@@ -200,7 +196,8 @@ export const makeMembershipStore = <I, Relations extends AnyRelations>(config: {
         .from(table)
         .where(keyed(groupId, accountId, "active"))
         .limit(1);
-      return Arr.isReadonlyArrayNonEmpty(rows);
+      const roles = yield* Effect.orDie(decodeRoles(rows));
+      return Option.map(Arr.head(roles), ({ role }) => role);
     });
 
   return {
@@ -233,17 +230,7 @@ export const makeMembershipStore = <I, Relations extends AnyRelations>(config: {
           .returning({ role: table.role });
         return Arr.isReadonlyArrayNonEmpty(gone);
       }),
-    roleOf: (groupId, accountId) =>
-      Effect.gen(function* () {
-        const tx = yield* CurrentTransaction;
-        const rows = yield* tx
-          .select({ role: table.role })
-          .from(table)
-          .where(keyed(groupId, accountId, "active"))
-          .limit(1);
-        const roles = yield* Effect.orDie(decodeRoles(rows));
-        return Option.map(Arr.head(roles), ({ role }) => role);
-      }),
+    roleOf,
     list: ({ groupId, limit, offset }) =>
       Effect.gen(function* () {
         const tx = yield* CurrentTransaction;
@@ -264,7 +251,7 @@ export const makeMembershipStore = <I, Relations extends AnyRelations>(config: {
     removeGroup: (groupId) =>
       wrote(sql`DELETE FROM ${table} WHERE ${table.groupId} = ${groupId} RETURNING 1`),
     isMember: (accountId, groupId) =>
-      Effect.orElseSucceed(isActive(groupId, accountId), () => false),
+      Effect.orElseSucceed(Effect.map(roleOf(groupId, accountId), Option.isSome), () => false),
     groupsOf: (accountId) =>
       sql`(SELECT ${table.groupId} FROM ${table} WHERE ${table.accountId} = ${accountId} AND ${table.status} = 'active')`,
     eraseAccount: (accountId, limit) =>
@@ -405,7 +392,7 @@ export const makeGroupOwners = <I, Relations extends AnyRelations>(config: {
               )
               SELECT count(*)::int AS n FROM moved`,
             );
-            return countOf(yield* Effect.orDie(decodeCount(rows)));
+            return yield* countOf(rows);
           }),
   };
 };

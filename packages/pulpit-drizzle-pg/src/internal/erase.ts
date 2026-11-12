@@ -22,6 +22,12 @@ const decodeErased = Schema.decodeUnknownEffect(
  * Delete at most `limit` of `table`'s rows matching `where`, the first by
  * `key` (the primary key's columns), and answer how many went; none for a
  * limit below one.
+ *
+ * It trusts its caller: `where` must already be bound to the one account
+ * being erased (an `account_id = $id` arm, or the store's own disjunction
+ * of them), and `key` must be the table's own columns. Nothing here checks
+ * either, so this stays internal (`src/internal/`, off the package's
+ * exports): only a store's `eraseAccount` calls it.
  */
 export const eraseBatch = <Relations extends AnyRelations>(
   tx: PgTransaction<Relations>,

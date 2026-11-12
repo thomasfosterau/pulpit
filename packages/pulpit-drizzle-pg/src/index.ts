@@ -20,7 +20,8 @@
  * `ExternalIdStore` over an external-identifier table (`ExternalIds`,
  * `./external-ids`), the `CollectionStore` over one membership table per
  * ordered family (`Collections`, `./collections`), the `ReactionStore`
- * over a reaction table (`Reactions`, `./reactions`), and the
+ * over a reaction table (`Reactions`, `./reactions`), the
+ * `SocialStore` over a relationship table (`Social`, `./social`), and the
  * `MembershipStore` and `GroupOwnerStore` over a group membership table and
  * the application's group table (`Memberships`, `./memberships`).
  *
@@ -53,6 +54,9 @@ export * as Collections from "./collections.ts";
 
 /** The kernel's `ReactionStore`: one account's reaction to one node per row. */
 export * as Reactions from "./reactions.ts";
+
+/** The kernel's `SocialStore`: follows, mutes and blocks between accounts. */
+export * as Social from "./social.ts";
 
 /** The kernel's `MembershipStore` and `GroupOwnerStore`: a group's members, invitations and owner. */
 export * as Memberships from "./memberships.ts";
