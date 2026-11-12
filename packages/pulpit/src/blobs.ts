@@ -76,6 +76,14 @@ export const ContentHash = Schema.String.check(
  */
 export type ContentHash = typeof ContentHash.Type;
 
+/** Web Crypto rejected the digest; `sha256Hex` turns it into a defect. */
+class DigestFailed extends Schema.TaggedError<DigestFailed, { readonly brand: unique symbol }>()(
+  "DigestFailed",
+  {
+    message: Schema.String,
+  },
+) {}
+
 /**
  * The SHA-256 content hash of `bytes`, through the platform's Web Crypto
  * (`globalThis.crypto.subtle`, in browsers, Node 22+ and Workers alike).
@@ -95,7 +103,10 @@ export type ContentHash = typeof ContentHash.Type;
  * @since 0.1.0
  */
 export const sha256Hex = (bytes: Uint8Array): Effect.Effect<ContentHash> =>
-  Effect.tryPromise(() => globalThis.crypto.subtle.digest("SHA-256", Uint8Array.from(bytes))).pipe(
+  Effect.tryPromise({
+    try: () => globalThis.crypto.subtle.digest("SHA-256", Uint8Array.from(bytes)),
+    catch: (cause) => new DigestFailed({ message: String(cause) }),
+  }).pipe(
     // Web Crypto's SHA-256 over bytes has no failure a caller could act on.
     Effect.orDie,
     Effect.map((digest) =>
