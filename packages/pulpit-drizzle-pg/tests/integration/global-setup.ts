@@ -35,6 +35,12 @@ const identity = `pulpit_test.${getTableName(tables.root.identity)}`;
 const rootVersion = `pulpit_test.${getTableName(tables.root.version)}`;
 
 /** The race switch (see the module doc). */
+/** The follower and membership tables the leaf-store suite's seams read as subqueries. */
+const seamStatements = [
+  "CREATE TABLE pulpit_test.follows (follower_id text NOT NULL, owner_id text NOT NULL)",
+  "CREATE TABLE pulpit_test.memberships (account_id text NOT NULL, group_id text NOT NULL)",
+];
+
 const raceStatements = [
   "CREATE TABLE pulpit_test.race (id uuid PRIMARY KEY)",
   `CREATE FUNCTION pulpit_test.race() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -61,6 +67,7 @@ export default async function setup() {
           applyMigrationList([
             { name: "fixture-tree", statements },
             { name: "race-switch", statements: raceStatements },
+            { name: "seams", statements: seamStatements },
           ]),
         ).pipe(Effect.provide(PgClient.layer({ url, maxConnections: 1 }))),
     }).pipe(Scope.provide(scope), Effect.provide(NodeServices.layer)),

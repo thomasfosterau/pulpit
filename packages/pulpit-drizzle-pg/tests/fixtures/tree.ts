@@ -1,19 +1,26 @@
 /**
  * The fixture tree the unit and integration suites share: one branch with a
  * plain leaf (`notes`: the columns the kernel's `versionChainConformance`
- * writes, and a keyed `locale` level) and a sibling leaf (`links`) whose
- * nodes a `notes` port must never touch. Its tables live in the `pulpit_test`
- * schema, and the root version table records `proposedBy`.
+ * writes, and a keyed `locale` level), a sibling leaf (`links`) whose nodes
+ * a `notes` port must never touch, and an owned leaf (`posts`: the owned
+ * access axes and one column of every orderable type, for the leaf store's
+ * filter and order). Its tables live in the `pulpit_test` schema, the
+ * identity table carries a `slug` extra, and the root version table records
+ * `proposedBy`.
  */
 
 import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
-import { makeTreeTables } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
+import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
 import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
-import { pgSchema, text } from "drizzle-orm/pg-core";
+import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
+import { boolean, doublePrecision, integer, pgSchema, text, timestamp } from "drizzle-orm/pg-core";
 import * as Schema from "effect/Schema";
 
 const nullableText = (column: string) =>
   dbColumn(Schema.NullOr(Schema.String), { column, pg: "text", notNull: false });
+
+const column = <S extends Schema.Top>(schema: S, name: string, pg: string) =>
+  dbColumn(Schema.NullOr(schema), { column: name, pg, notNull: false });
 
 export const tree = defineTree({
   entry: { columns: { title: nullableText("title") } },
@@ -23,20 +30,48 @@ export const tree = defineTree({
     keyed: { name: "locale", columns: { heading: nullableText("heading") } },
   },
   links: { parent: "entry", leaf: { href: nullableText("href") } },
+  posts: {
+    parent: "entry",
+    leaf: {
+      visibility: nullableText("visibility"),
+      draft: column(Schema.Boolean, "draft", "boolean"),
+      groupId: nullableText("group_id"),
+      rank: column(Schema.Finite, "rank", "integer"),
+      score: column(Schema.Finite, "score", "double"),
+      publishedAt: column(Schema.Date, "published_at", "timestamptz"),
+    },
+  },
 });
+
+/** The column builders the fixture's `pg` kinds name. */
+export const builders = {
+  text: (name: string) => text(name),
+  boolean: (name: string) => boolean(name),
+  integer: (name: string) => integer(name),
+  double: (name: string) => doublePrecision(name),
+  timestamptz: (name: string) => timestamp(name, { withTimezone: true }),
+};
 
 export const schema = pgSchema("pulpit_test");
 
 export const tables = makeTreeTables(tree, {
   schema,
-  builders: { text: (column: string) => text(column) },
-  root: { versionColumns: { proposedBy: text("proposed_by") } },
+  builders,
+  root: {
+    identityColumns: { slug: text("slug") },
+    versionColumns: { proposedBy: text("proposed_by") },
+  },
 });
+
+export const views = makeTreeViews(tree, tables, { schema });
+
+/** The owner table the leaf stores read and stamp. */
+export const owners = makeNodeOwnerTable({ schema, identity: tables.root.identity });
 
 /** The same tree without the `proposedBy` extra. */
 export const plainTables = makeTreeTables(tree, {
   schema: pgSchema("pulpit_plain"),
-  builders: { text: (column: string) => text(column) },
+  builders,
 });
 
 export const database = makePgDatabase({ relations: {}, key: "PulpitTestDatabase" });
@@ -56,4 +91,11 @@ export const fixtureSchema = {
   notesLocale: tables.keyed.notes,
   linksStable: tables.levels.links.stable,
   linksVersion: tables.levels.links.version,
+  postsStable: tables.levels.posts.stable,
+  postsVersion: tables.levels.posts.version,
+  owners,
+  notesView: views.leaves.notes,
+  linksView: views.leaves.links,
+  postsView: views.leaves.posts,
+  notesLocaleView: views.keyed.notes,
 };

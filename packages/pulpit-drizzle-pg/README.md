@@ -8,8 +8,8 @@ The tree-bound seams of [`@thomasfosterau/pulpit`](../pulpit/README.md) over the
 
 **Not published.** The package is `"private": true` until the owner sets up its publishing ([PUBLISHING.md](../../PUBLISHING.md)). The spec is [pulpit#247](https://github.com/thomasfosterau/pulpit/issues/247), and it lands in slices:
 
-- **Landed:** the `VersionChain` port over `-pg/chain` ([`./version-chain`](#version-chain)), passing the kernel's `versionChainConformance` against PostgreSQL.
-- **Next:** `LeafStore` (the `ListFilter` → SQL renderer, the list-order contract, `distinct`, `ownerOf` / `stampOwner`), then `PublicationStore` / `LiveView`, the localised `LeafStore` and `SearchBranch`.
+- **Landed:** the `VersionChain` port over `-pg/chain` ([`./version-chain`](#version-chain)), passing the kernel's `versionChainConformance` against PostgreSQL; the `LeafStore` over the tree's leaf views and the owner table ([`./leaf-store`](#leaf-store)), with the `ListFilter` → SQL renderer and the list order ([`./filter`](#filter)), checked row by row against the kernel's in-memory store on PostgreSQL.
+- **Next:** `PublicationStore` / `LiveView`, the content-addressed `DocumentStore`, the `PathStore`, the localised `LeafStore` and `SearchBranch`.
 
 ## Install
 
@@ -30,6 +30,8 @@ Every module is a namespace on the root export (`import { VersionChain } from "@
 | Subpath | Contents |
 | --- | --- |
 | `./version-chain` | `makeVersionChains`: the kernel's `VersionChain` port for every leaf of a tree. |
+| `./leaf-store` | `makeLeafStores`: the kernel's `LeafStore` for every leaf view of a tree; `makeNodeOwnerTable`, the owner table. |
+| `./filter` | `renderListFilter` / `renderListOrder`: the kernel's `ListFilter` and list order as Drizzle SQL. |
 
 ## `./version-chain`
 
@@ -110,6 +112,59 @@ No operation opens a transaction: each requires the application's `CurrentTransa
 | `VersionChains<Leaf, E, I>` | Its result: `{ readonly [K in Leaf]: VersionChain<E, I> }`. |
 | `VersionChainTables` | The tables it reads: `makeTreeTables`' output, with the identity table's `id` and `type`. |
 | `ChainQueryError<C>` | A `-pg/chain` leaf chain's query error (drizzle's `EffectDrizzleQueryError`). |
+
+## `./leaf-store`
+
+`makeLeafStores({ tree, tables, views, owners, CurrentTransaction })` returns one kernel `LeafStore<LeafRow, SQLWrapper, EffectDrizzleQueryError, CurrentTransaction>` per leaf view, ready for `defineSubtype`'s `store`. `views` is `makeTreeViews(tree, tables, { schema })`, and `owners` the owner table:
+
+```ts
+import { makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
+import { makeLeafStores, makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
+import { sql } from "drizzle-orm";
+
+const views = makeTreeViews(tree, tables, { schema: core });
+// core.node_owner: node_id → node.id (cascading), owner_id. Export it with the schema, so migrations create it.
+export const nodeOwner = makeNodeOwnerTable({ schema: core, identity: tables.root.identity });
+
+const stores = makeLeafStores({ tree, tables, views, owners: nodeOwner, CurrentTransaction });
+
+// The follower seam hands the list filter SQL subqueries, never arrays.
+const followers = {
+  isFollower: (follower: string, owner: string) => /* a one-row read */ Effect.succeed(false),
+  following: (follower: string) =>
+    sql`select owner_id from core.follows where follower_id = ${follower}`,
+};
+
+// defineSubtype({ type: "post", chain: chains.post, store: stores.post, access: ownedAccess({ draft: true }), followers, … })
+```
+
+What each store does, over the leaf's view:
+
+- **Rows** are the view's (`id`, the head's `version` and `action`, the identity extras, every level's columns from the branch root down, `timestamp`, `createdAt`) with the node's owner LEFT JOINed in as `ownerId`, the column `ownedAccess` reads. `columns` is that key set. A node with no owner row has a `NULL` owner, which the kernel reads as none.
+- **`get` / `getMany`** are `id = $id` / `id IN (…)` reads with a `LIMIT`. An id that is no canonical UUID (the identity table's type) names no node: none, or omitted, never a query error. The `VersionChain` ports answer one the same way (`NodeNotFound` / `VersionNotFound`).
+- **`list`** renders its `ListFilter` with [`renderListFilter`](#filter), orders by [`renderListOrder`](#filter), pages by `LIMIT` / `OFFSET` and reads the unpaged total off `count(*) OVER ()`, so a page past the end reports `total: 0`.
+- **`distinct`** reads one column's distinct non-`NULL` values, by code point, over the same rows, with the distinct count. A column that decodes to no string has none.
+- **`listLocalised`** reads none over a leaf view, which has no locale level; the localised store over the keyed view is a later slice.
+- **`ownerOf` / `stampOwner`** read and insert the owner row.
+- **Every read and write runs in the caller's `CurrentTransaction`**: no store opens a connection or a transaction, so a handler's `transact` covers the chain write, the owner stamp and the read back.
+
+**The view-merge trap is refused at module load.** A tree view merges its sources by key (`{ ...identityExtras, ...levels, timestamp, createdAt }`), so a key two sources share keeps the later silently: an identity `slug` shadowed by a level's `slug`, or a level column named `createdAt` shadowed by the birth timestamp. `makeLeafStores` throws a `DerivationError` naming both sources instead, for any key an identity extra, a level on the leaf's path and the view's own projection (`id`, `version`, `action`, `timestamp`, `createdAt`, `ownerId`) share.
+
+| Export | What it is |
+| --- | --- |
+| `makeLeafStores(config)` | One `LeafStore` per leaf view. |
+| `LeafStores<Leaf, E, I>` | Its result. |
+| `makeNodeOwnerTable({ schema, identity, name? })`, `NodeOwnerTable` | The owner table (`node_owner` by default): `node_id` primary key, cascading from the identity row, and `owner_id`, indexed. |
+| `OWNER_COLUMN` | `"ownerId"`, the key the owner joins in under. |
+| `StoreQueryError<Relations>` | The driver's query error. |
+
+## `./filter`
+
+The kernel's read predicates as Drizzle SQL, to the contract table under the kernel's [`./filter`](../pulpit/README.md#filter), so the SQL store and the kernel's `evaluate` agree row for row (the integration suite checks every node, and every row × viewer through the kernel's own read scope, against the in-memory store):
+
+- `renderListFilter(filter, columns)` is the `WHERE`, or `undefined` for `always`. A node over a column `columns` lacks is `false` (fail closed). `in` / `notIn` embed the seam's subquery. A string comparison and sort is by code point (`col::text COLLATE "C"`); a `uuid` column compares as text, so a value that is no UUID compares unequal instead of failing the query. A `NaN` or invalid-`Date` comparand, an empty `anyOf` and a set past `MAX_SET_VALUES` are `false`; an empty `noneOf` is `true`; `±Infinity` is bound as a `float8` literal. `anyOf` / `noneOf` render as `IN (…)` / `NOT IN (…)` lists of bound values, with the same `NULL` semantics as `= ANY` / `<> ALL`.
+- `renderListOrder(orderBy, columns, id)` is `<key> ASC|DESC NULLS LAST, …, id ASC`.
+- `distinctKey(column)` is a string column's code-point form, the key `distinct` reads.
 
 ## License
 

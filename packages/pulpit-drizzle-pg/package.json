@@ -2,7 +2,7 @@
   "name": "@thomasfosterau/pulpit-drizzle-pg",
   "version": "0.0.0",
   "private": true,
-  "description": "The tree-bound seams of @thomasfosterau/pulpit (the version-chain port, the leaf store) over the tables and views @thomasfosterau/effect-drizzle-ext derives from an application's tree, on PostgreSQL.",
+  "description": "The tree-bound seams of @thomasfosterau/pulpit (the version-chain port, the leaf store and its list filter renderer) over the tables and views @thomasfosterau/effect-drizzle-ext derives from an application's tree, on PostgreSQL.",
   "keywords": [
     "cms",
     "drizzle",
@@ -37,6 +37,8 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
+    "./filter": "./src/filter.ts",
+    "./leaf-store": "./src/leaf-store.ts",
     "./version-chain": "./src/version-chain.ts"
   },
   "publishConfig": {
@@ -44,6 +46,14 @@
       ".": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      },
+      "./filter": {
+        "types": "./dist/filter.d.ts",
+        "default": "./dist/filter.js"
+      },
+      "./leaf-store": {
+        "types": "./dist/leaf-store.d.ts",
+        "default": "./dist/leaf-store.js"
       },
       "./version-chain": {
         "types": "./dist/version-chain.d.ts",

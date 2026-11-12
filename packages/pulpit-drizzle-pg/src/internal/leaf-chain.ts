@@ -30,6 +30,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
+import { isNodeId } from "./node-id.ts";
 
 /**
  * The root version table's injected extras the port writes: the contributor
@@ -151,7 +152,10 @@ const writeError = <E>(error: E | Pg.NodeNotFound | Pg.StaleVersion | Pg.Version
  * (`NodeAlreadyExists`, `NodeNotFound`, `VersionNotFound`, `StaleVersion`,
  * `VersionConflict`; `BrokenChain` stays a defect). `purge` is the
  * caller's identity delete. A `proposedBy` the root version table cannot
- * record dies {@link ProposedByUnrecorded}.
+ * record dies {@link ProposedByUnrecorded}. An id that is no canonical UUID
+ * (the identity table's type) names no node: `NodeNotFound` or
+ * `VersionNotFound` as for an unknown id, none from `head`, and a no-op
+ * `purge`, without reaching the chain.
  *
  * @since 0.0.0
  */
@@ -184,7 +188,7 @@ export const fromLeafChain = <E, I>(
         }),
       ).pipe(Effect.mapError(writeError));
 
-  return {
+  const port: VersionChain<E, I> = {
     create: (input) =>
       chain
         .create({
@@ -237,5 +241,36 @@ export const fromLeafChain = <E, I>(
         ),
     head: chain.head,
     purge: options.purge,
+  };
+
+  // The identity `id` is a `uuid`: an id of any other form names no node,
+  // so it answers as an unknown one does, never as a query error.
+  const { type } = options;
+  return {
+    ...port,
+    update: (input) =>
+      isNodeId(input.id)
+        ? port.update(input)
+        : Effect.fail(new NodeNotFound({ type, id: input.id })),
+    restore: (input) =>
+      isNodeId(input.id)
+        ? port.restore(input)
+        : Effect.fail(new NodeNotFound({ type, id: input.id })),
+    delete: (id, actorId, precondition) =>
+      isNodeId(id)
+        ? port.delete(id, actorId, precondition)
+        : Effect.fail(new NodeNotFound({ type, id })),
+    restoreVersion: (id, version, actorId, precondition) =>
+      isNodeId(id)
+        ? port.restoreVersion(id, version, actorId, precondition)
+        : Effect.fail(new VersionNotFound({ type, id, version })),
+    getVersion: (id, version) =>
+      isNodeId(id)
+        ? port.getVersion(id, version)
+        : Effect.fail(new VersionNotFound({ type, id, version })),
+    history: (id, limit) =>
+      isNodeId(id) ? port.history(id, limit) : Effect.fail(new NodeNotFound({ type, id })),
+    head: (id) => (isNodeId(id) ? port.head(id) : Effect.succeedNone),
+    purge: (id) => (isNodeId(id) ? port.purge(id) : Effect.void),
   };
 };
