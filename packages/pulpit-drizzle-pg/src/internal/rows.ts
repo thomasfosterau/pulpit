@@ -46,6 +46,7 @@ import {
 import * as Arr from "effect/Array";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
@@ -293,9 +294,8 @@ export const leafRows = (
 };
 
 /** A source's key set, as `LeafStore.columns`. */
-const columnSet = (columns: FilterColumns): ReadonlySet<string> =>
-  // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is the native `ReadonlySet` `LeafStore.columns` names (a `HashSet` once #309 lands)
-  new Set(R.keys(columns));
+const columnSet = (columns: FilterColumns): HashSet.HashSet<string> =>
+  HashSet.fromIterable(R.keys(columns));
 
 /**
  * One row per node of a localised source (pulpit#272): of the node's rows
