@@ -106,6 +106,7 @@ import {
   type ListFilter,
 } from "./filter.ts";
 import { renameColumns } from "./internal/filter-columns.ts";
+import { knownViewer } from "./internal/delegated-access.ts";
 import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
 import { canViewReferenceRow, referenceListFilter } from "./internal/reference-columns.ts";
 import {
@@ -315,7 +316,7 @@ export const canViewEndpoint = <E, R>(
   node: Option.Option<LeafRow>,
 ): Effect.Effect<boolean, never, R> => {
   if (Option.isNone(node)) return Effect.succeed(false);
-  if (!isLive(node.value) && !Option.exists(viewer, policy.canViewDeleted)) {
+  if (!isLive(node.value) && !Option.exists(knownViewer(viewer), policy.canViewDeleted)) {
     return Effect.succeed(false);
   }
   const { access } = end;
@@ -345,7 +346,9 @@ export const endpointFilter = <Following, E, R>(
   followers: FollowerSeam<Following, unknown>,
 ): ListFilter<Following> => {
   const scope = readScopeFor(viewer, policy, followers);
-  const lifecycle = Option.exists(viewer, policy.canViewDeleted) ? always : liveFilter<Following>();
+  const lifecycle = Option.exists(knownViewer(viewer), policy.canViewDeleted)
+    ? always
+    : liveFilter<Following>();
   return and<Following>(
     ...R.toEntries(ends).map(([alias, end]) =>
       qualify(

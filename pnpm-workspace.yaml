@@ -140,13 +140,15 @@ catalog:
 # `@thomasfosterau/effect-jsonapi` is `>=0.20.0`, effect-auth 0.2.0's optional
 # effect-jsonapi peer; the dev pins are effect-jsonapi 0.22 and effect-auth 0.4,
 # whose own optional effect-jsonapi peer is `^0.22.0`. `@thomasfosterau/effect-auth`
-# is `>=0.2.0`: the kernel imports only its `Guard` errors and the `Guard` /
-# `Ladder` types, unchanged since 0.2.0; `tests/effect-auth.test.ts` runs its
-# parity suite against the 0.4 pin, whose `OwnedAccess` carries the group,
-# moderation and reference axes pulpit#5 will delegate to.
+# is `>=0.3.0`, set by hand (pulpit#5): the kernel's read predicates delegate to
+# its `OwnedAccess` / `ReferenceAccess` / `Cacheability`, and 0.3.0 is the first
+# release with `ReferenceAccess`, `OwnedAccess.IsMember`, `OwnedRow`'s
+# `unapproved` / `groupId` / optional owner, the extended `serveableAxes` and the
+# empty-id rule (effect-auth#637, #639, #661); `tests/effect-auth.test.ts` runs
+# its parity suite against the 0.4 pin.
 catalogs:
   peers:
-    "@thomasfosterau/effect-auth": ">=0.2.0"
+    "@thomasfosterau/effect-auth": ">=0.3.0"
     # pulpit-drizzle-pg's substrate: 0.2.0 is the first release with `-pg`'s
     # `./chain` (`LeafChain.head` included) and core's tree views, pointer
     # logs and keyed levels.

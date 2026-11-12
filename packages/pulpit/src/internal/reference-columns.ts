@@ -8,8 +8,10 @@
  * predicate for itself.
  *
  * The row's facts are read by `ownedFacts`, so an owner-like value that is
- * not a string reads as no owner and never reaches the follower seam
- * (pulpit#85, pulpit#100).
+ * not a non-empty string reads as no owner and never reaches the follower
+ * seam (pulpit#85, pulpit#100). The row predicate's decision is effect-auth's
+ * `ReferenceAccess.canView` (pulpit#5); the list filter stays the kernel's,
+ * since effect-auth's drizzle filter renders no group arm (effect-auth#638).
  *
  * Internal: not a package entry point (absent from `package.json`
  * `exports`) and excluded from the generated API docs (`docgen.json`).
@@ -17,7 +19,7 @@
  *
  * @internal
  */
-import * as Effect from "effect/Effect";
+import type * as Effect from "effect/Effect";
 import * as HashSet from "effect/HashSet";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
@@ -25,12 +27,13 @@ import * as P from "effect/Predicate";
 import { always, and, eq, isIn, never, or, type ListFilter } from "../filter.ts";
 import type { ColumnValue } from "../version-chain.ts";
 import {
-  inGroupAudience,
-  ownedFacts,
+  canViewReferenceDelegated,
+  referenceRowOf,
   type Account,
-  type IsFollower,
   type PrivateRung,
-} from "./owned-columns.ts";
+  type Seam,
+} from "./delegated-access.ts";
+import { ownedFacts } from "./owned-columns.ts";
 
 /** The reference access declaration, structurally (`./subtype`'s reference `LeafAccess` fits). */
 interface ReferenceColumns {
@@ -144,19 +147,22 @@ export const referenceListFilter = <Following>(
 
 /**
  * The reference privacy arm as a row predicate, the same facts as
- * {@link referenceListFilter}: a view without a `visibility` column shows
- * the row; otherwise it shows when its visibility is exactly `public`, to
- * the view-private rung, or, when it is exactly `followers` and the leaf
- * declares a followers column the view carries, to the signed-in account
- * that column names and to its followers, as the follower seam answers
- * (pulpit#92). A `group` row shows to the members of the group its
+ * {@link referenceListFilter}, decided by effect-auth's
+ * `ReferenceAccess.canView` (pulpit#5): a view without a `visibility`
+ * column shows the row; otherwise it shows when its visibility is exactly
+ * `public`, to the view-private rung, or, when it is exactly `followers` and
+ * the leaf declares a followers column the view carries, to the signed-in
+ * account that column names and to its followers, as the follower seam
+ * answers (pulpit#92). A `group` row shows to the members of the group its
  * declared `groupColumn` (one the view carries) names, as the audience
- * seam's `isMember` answers (pulpit#194). That account's `private` rows stay the view-private rung's
- * alone. A column value that is not a string names no account, so it never
- * matches the viewer and the seam is never asked about it (pulpit#85,
- * pulpit#100). Anything else is hidden, which the
- * caller answers as `NodeNotFound` (`SEC-AUTH-ENUM-001`). The soft-delete
- * axis is the caller's. Never fails.
+ * seam's `isMember` answers (pulpit#194). That account's `private` rows stay
+ * the view-private rung's alone. A visibility outside the enum (a `NULL`
+ * included) reads as `private`, never as an absent axis. A column value that
+ * is not a non-empty string names no account, so it never matches the
+ * viewer and the seam is never asked about it (pulpit#85, pulpit#100). A
+ * viewer whose id is empty reads as anonymous (effect-auth#661). Anything
+ * else is hidden, which the caller answers as `NodeNotFound`
+ * (`SEC-AUTH-ENUM-001`). The soft-delete axis is the caller's. Never fails.
  *
  * @internal
  */
@@ -165,45 +171,32 @@ export const canViewReferenceRow = <A extends Account, R>(
   viewColumns: HashSet.HashSet<string>,
   viewer: Option.Option<A>,
   policy: PrivateRung<A>,
-  followers: IsFollower<R>,
+  followers: Seam<R>,
   row: { readonly [column: string]: ColumnValue },
-): Effect.Effect<boolean, never, R> => {
-  if (!HashSet.has(viewColumns, VISIBILITY)) return Effect.succeed(true);
-  const visibility = row[VISIBILITY];
-  if (visibility === "public") return Effect.succeed(true);
-  if (Option.isNone(viewer)) return Effect.succeed(false);
-  const account = viewer.value;
-  if (policy.canViewPrivate(account)) return Effect.succeed(true);
-  if (visibility === "group") {
-    return inGroupAudience(
-      followers,
-      account.id,
-      Option.flatMap(groupColumnOf(access, viewColumns), (column) =>
+): Effect.Effect<boolean, never, R> =>
+  canViewReferenceDelegated(
+    viewer,
+    policy,
+    followers,
+    referenceRowOf({
+      visibility: HashSet.has(viewColumns, VISIBILITY)
+        ? Option.some(row[VISIBILITY])
+        : Option.none(),
+      followersOf: Option.flatMap(
+        followersColumn(access, viewColumns),
+        (column) =>
+          ownedFacts(
+            {
+              ownerColumn: column,
+              visibilityColumn: VISIBILITY,
+              draftColumn: Option.none(),
+              moderationColumn: Option.none(),
+            },
+            row,
+          ).ownerId,
+      ),
+      groupId: Option.flatMap(groupColumnOf(access, viewColumns), (column) =>
         Option.liftPredicate(row[column], P.isString),
       ),
-    );
-  }
-  if (visibility !== "followers") return Effect.succeed(false);
-  return Option.match(followersColumn(access, viewColumns), {
-    onNone: () => Effect.succeed(false),
-    onSome: (column) =>
-      Option.match(
-        ownedFacts(
-          {
-            ownerColumn: column,
-            visibilityColumn: VISIBILITY,
-            draftColumn: Option.none(),
-            moderationColumn: Option.none(),
-          },
-          row,
-        ).ownerId,
-        {
-          onNone: () => Effect.succeed(false),
-          onSome: (ownerId) =>
-            ownerId === account.id
-              ? Effect.succeed(true)
-              : followers.isFollower(account.id, ownerId),
-        },
-      ),
-  });
-};
+    }),
+  );

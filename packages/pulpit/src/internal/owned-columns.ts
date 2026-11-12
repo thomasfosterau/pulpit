@@ -2,7 +2,8 @@
  * **The owned leaf's row reading**, shared by `./subtype` and `./edges` so
  * the two cannot read the same view or row differently: the declared-column
  * check (pulpit#79), the facts read off a row (pulpit#80), and the predicate
- * over those facts, which `canViewOwned` delegates to (pulpit#85).
+ * over those facts, which `canViewOwned` delegates to (pulpit#85) and which
+ * itself delegates to effect-auth's `OwnedAccess.canView` (pulpit#5).
  *
  * Internal: not a package entry point (absent from `package.json`
  * `exports`) and excluded from the generated API docs (`docgen.json`).
@@ -10,13 +11,20 @@
  *
  * @internal
  */
-import * as Effect from "effect/Effect";
+import type * as Effect from "effect/Effect";
 import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
 import * as Schema from "effect/Schema";
+import * as Str from "effect/String";
 import { Visibility } from "../content.ts";
 import type { ColumnValue } from "../version-chain.ts";
+import {
+  canViewOwnedDelegated,
+  type Account,
+  type PrivateRung,
+  type Seam,
+} from "./delegated-access.ts";
 
 /** The owned access declaration's column names, structurally (`./subtype`'s owned `LeafAccess` fits). */
 interface OwnedColumns {
@@ -47,43 +55,6 @@ interface OwnedRowFacts {
    */
   readonly groupId: Option.Option<string>;
 }
-
-/**
- * The parts of `./subtype`'s viewer, policy and follower seam the owned and
- * reference readings read, structurally.
- *
- * @internal
- */
-export interface Account {
-  readonly id: string;
-}
-/** @internal */
-export interface PrivateRung<A> {
-  readonly canViewPrivate: (account: A) => boolean;
-}
-/** @internal */
-export interface IsFollower<R> {
-  readonly isFollower: (followerId: string, ownerId: string) => Effect.Effect<boolean, never, R>;
-  readonly isMember?: (accountId: string, groupId: string) => Effect.Effect<boolean, never, R>;
-}
-
-/**
- * Whether a signed-in account is in a `group` row's audience: the member
- * check of the audience seam, asked only for a group the row names. A row
- * naming no group, or a seam without `isMember`, opens to nobody (fail
- * closed, pulpit#194).
- *
- * @internal
- */
-export const inGroupAudience = <R>(
-  seam: IsFollower<R>,
-  accountId: string,
-  groupId: Option.Option<string>,
-): Effect.Effect<boolean, never, R> => {
-  const { isMember } = seam;
-  if (isMember === undefined || Option.isNone(groupId)) return Effect.succeed(false);
-  return isMember(accountId, groupId.value);
-};
 
 const isVisibility = Schema.is(Visibility);
 
@@ -121,8 +92,9 @@ export const declaresColumns = (
  * exactly `"approved"` reads as unapproved, since the filter's
  * `eq(moderation, "approved")` arms list only `approved`; a leaf without the
  * axis reads `unapproved: false`. A group column holding anything but a
- * string, or none declared, names no group (pulpit#194). An owner column holding anything but a string
- * (a `NULL`, an absent key, a value outside the type) reads as no owner,
+ * string, or none declared, names no group (pulpit#194). An owner column holding anything but a
+ * non-empty string (a `NULL`, an absent key, a value outside the type, or
+ * `""`, which names nobody as in effect-auth, effect-auth#661) reads as no owner,
  * never as its `String` form (pulpit#85; see pulpit#75): its `eq(owner, …)`
  * and `in(owner, following)` arms match no `NULL`. Callers check
  * {@link declaresColumns} first. Never throws.
@@ -133,7 +105,7 @@ export const ownedFacts = (
   access: OwnedColumns,
   row: { readonly [column: string]: ColumnValue },
 ): OwnedRowFacts => ({
-  ownerId: Option.liftPredicate(row[access.ownerColumn], P.isString),
+  ownerId: Option.filter(Option.liftPredicate(row[access.ownerColumn], P.isString), Str.isNonEmpty),
   visibility: Option.getOrElse(
     Option.liftPredicate(row[access.visibilityColumn], isVisibility),
     (): Visibility => "private",
@@ -154,34 +126,31 @@ export const ownedFacts = (
 /**
  * The owned-material read predicate over {@link ownedFacts}: `canViewOwned`
  * in `./subtype` is this with a present owner, and `defineSubtype`'s
- * `get` / `getMany` and `./edges`' `canViewEndpoint` call it directly. A
- * `group` row is read by its owner, the rung and, when published, the
- * members of the group it names ({@link inGroupAudience}; pulpit#194). A
+ * `get` / `getMany` and `./edges`' `canViewEndpoint` call it directly. The
+ * decision is effect-auth's `OwnedAccess.canView` (pulpit#5), through the
+ * bridge in `./delegated-access.ts`: a `public` row that is neither a draft
+ * nor unapproved shows to everyone; otherwise its owner and the view-private
+ * rung read it, and, when published, the owner's followers a `followers`
+ * row and the members of the group it names a `group` row (pulpit#194). A
  * row with no owner skips the owner arm and the follower check, so no
- * viewer's id matches it and the follower seam is never asked about it:
- * it is visible only when it is `public`, not a draft and not unapproved, or to the
- * view-private rung, as `ownedListFilter` lists it (`SEC-AUTH-ENUM-001`).
- * Never fails.
+ * viewer's id matches it and the follower seam is never asked about it: it
+ * is visible only when it is `public`, not a draft and not unapproved, or to
+ * the view-private rung, as `ownedListFilter` lists it
+ * (`SEC-AUTH-ENUM-001`). A viewer whose id is empty reads as anonymous
+ * (effect-auth#661). Never fails.
  *
  * @internal
  */
 export const canViewOwnedRow = <A extends Account, R>(
   viewer: Option.Option<A>,
   policy: PrivateRung<A>,
-  followers: IsFollower<R>,
+  followers: Seam<R>,
   row: OwnedRowFacts,
-): Effect.Effect<boolean, never, R> => {
-  if (!row.draft && !row.unapproved && row.visibility === "public") return Effect.succeed(true);
-  if (Option.isNone(viewer)) return Effect.succeed(false);
-  const account = viewer.value;
-  if (Option.contains(row.ownerId, account.id)) return Effect.succeed(true);
-  if (policy.canViewPrivate(account)) return Effect.succeed(true);
-  // Not the owner, not privileged: a draft, or a row not approved, is hidden whatever its visibility.
-  if (row.draft || row.unapproved) return Effect.succeed(false);
-  if (row.visibility === "private") return Effect.succeed(false);
-  if (row.visibility === "group") return inGroupAudience(followers, account.id, row.groupId);
-  return Option.match(row.ownerId, {
-    onNone: () => Effect.succeed(false),
-    onSome: (ownerId) => followers.isFollower(account.id, ownerId),
+): Effect.Effect<boolean, never, R> =>
+  canViewOwnedDelegated(viewer, policy, followers, {
+    ownerId: Option.getOrUndefined(row.ownerId),
+    visibility: row.visibility,
+    draft: row.draft,
+    unapproved: row.unapproved,
+    groupId: Option.getOrUndefined(row.groupId),
   });
-};
