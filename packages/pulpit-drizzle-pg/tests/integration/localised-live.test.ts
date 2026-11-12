@@ -271,6 +271,30 @@ describe("the localised live view agrees with the in-memory one", () => {
   });
 });
 
+describe("a localised gated leaf's search branch", () => {
+  it("ranks one hit per node over the shared rows a live list reads", async () => {
+    const branch = gated.searchBranch({
+      name: "title",
+      rank: (columns, query) =>
+        Option.map(Option.fromNullishOr(columns["title"]), (title) => ({
+          matches: sql`strpos(${title}, ${query}) > 0`,
+          score: sql`0`,
+        })),
+    });
+    const hits = (headFor: ListFilter<never>) =>
+      run(branch.search({ query: "note", scope: always, headFor, limit: 10 }));
+    // A reader: the live nodes only, each once whatever its locales.
+    expect(await hits(never)).toEqual([{ id: id(1) }, { id: id(3) }, { id: id(4) }]);
+    // u-1's heads add their unpublished node.
+    expect(await hits(eq("ownerId", "u-1"))).toEqual([
+      { id: id(1) },
+      { id: id(2) },
+      { id: id(3) },
+      { id: id(4) },
+    ]);
+  });
+});
+
 describe("the localised gated store agrees with the in-memory one", () => {
   it("list reads the head's locale rows, draft computed as no live row", async () => {
     const query = { where: always, orderBy: [], limit: 100, offset: 0 };
