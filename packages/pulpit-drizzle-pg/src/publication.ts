@@ -59,6 +59,8 @@ import { renderListFilter } from "./filter.ts";
 import { isNodeId } from "./internal/node-id.ts";
 import type { NodeOwnerTable, StoreQueryError } from "./internal/owners.ts";
 import {
+  localisedPage,
+  localisedStoreOver,
   readsOver,
   ownedSelection,
   sourceOf,
@@ -109,10 +111,17 @@ const PUBLISHED_AT = "publishedAt";
  *   with.
  * - `leaves` is the current-version store with `draft = NOT EXISTS (a live
  *   row)`, the stored draft column ignored.
+ * - A leaf in `keyed` (its keyed head view and the pointer's keyed view,
+ *   pulpit#343) reads one row per locale: `live.list` / `distinct` the
+ *   locale rows of the version each node is read at (its head when its
+ *   shared head matches `headFor`, else its live version), and
+ *   `live.listLocalised` each node's most preferred carried locale of them;
+ *   `leaves` is the localised store over the keyed heads. `live.get` /
+ *   `getMany` read the shared live row.
  *
  * Every id that is no canonical UUID names no node. Throws
  * effect-drizzle-ext's `DerivationError` at module load for a view without
- * an `id` column.
+ * an `id` column, and for a leaf keyed on one side only.
  *
  * @since 0.0.0
  */
@@ -121,6 +130,15 @@ export const makePublications = <Leaf extends string, I, Relations extends AnyRe
   readonly pointer: string;
   readonly log: PointerTable;
   readonly live: { readonly [K in Leaf]: PgView };
+  /**
+   * A localised leaf's keyed views: `views` its keyed head views
+   * (`views.keyed`) and `live` the pointer's (`views.pointers[pointer].keyed`).
+   * A leaf in both reads one row per locale (pulpit#343).
+   */
+  readonly keyed?: {
+    readonly views: { readonly [leaf: string]: PgView };
+    readonly live: { readonly [leaf: string]: PgView };
+  };
   readonly owners: NodeOwnerTable;
   readonly CurrentTransaction: Context.Service<I, PgTransaction<Relations>>;
 }): Publications<Leaf, StoreQueryError<Relations>, I> => {
@@ -131,100 +149,155 @@ export const makePublications = <Leaf extends string, I, Relations extends AnyRe
     const headView = Option.getOrElse(R.get(config.views.leaves, leaf), () => {
       throw new DerivationError({ message: `makePublications: "${leaf}" has no leaf view` });
     });
-    const headId = viewId(leaf, headView);
     const liveId = viewId(leaf, liveView);
-    const liveFields = ownedSelection(liveView, owners);
     const pointerAt = `${config.pointer}At`;
-    const pointerAtField = Option.getOrElse(R.get(liveFields, pointerAt), () => {
-      throw new DerivationError({
-        message: `makePublications: leaf "${leaf}"'s pointer view has no ${pointerAt} column; is "${config.pointer}" its pointer?`,
-      });
-    });
 
-    /** The gated head selection: the head view, the owner, `draft` as "no live row". */
-    const headSelection = (): FilterColumns => {
-      const own = ownedSelection(headView, owners, {
-        draft: sql<boolean>`NOT EXISTS (SELECT 1 FROM ${liveView} WHERE ${liveId} = ${headId})`.as(
-          "draft",
-        ),
+    /** The gated head selection over `view`: the owner, `draft` as "no live row". */
+    const headSelection = (view: PgView): FilterColumns => {
+      const own = ownedSelection(view, owners, {
+        draft:
+          sql<boolean>`NOT EXISTS (SELECT 1 FROM ${liveView} WHERE ${liveId} = ${viewId(leaf, view)})`.as(
+            "draft",
+          ),
       });
       return R.has(own, PUBLISHED_AT)
         ? own
         : { ...own, [PUBLISHED_AT]: sql`NULL::timestamptz`.as("published_at") };
     };
-    const keys = R.keys(headSelection());
 
-    /** The gated head rows, under `name`. */
-    const heads = (name: string): RowSource => {
-      const relation = qb
-        .select(headSelection())
-        .from(headView)
-        .leftJoin(owners, eq(owners.nodeId, sql`${headId}`))
-        .as(name);
-      return sourceOf(relation, keys, leaf);
-    };
-
-    /** The live rows, under `name`: the pointed row, `draft = false`, the fact's `at` as `publishedAt`. */
-    const lives = (name: string): RowSource => {
-      const fields: FilterColumns = {
-        ...R.remove(liveFields, pointerAt),
-        draft: sql<boolean>`false`.as("draft"),
-        [PUBLISHED_AT]: sql<Date>`${pointerAtField}`.as("published_at"),
+    /**
+     * A head view and the pointer view resolved at the same leaf (the shared
+     * pair, or the keyed pair of a localised leaf), as gated head rows and
+     * live rows whose keys line up for a union.
+     */
+    const sourcesOver = (head: PgView, pointed: PgView) => {
+      const keys = R.keys(headSelection(head));
+      const pointedFields = ownedSelection(pointed, owners);
+      const pointerAtField = Option.getOrElse(R.get(pointedFields, pointerAt), () => {
+        throw new DerivationError({
+          message: `makePublications: leaf "${leaf}"'s pointer view has no ${pointerAt} column; is "${config.pointer}" its pointer?`,
+        });
+      });
+      const heads = (name: string): RowSource => {
+        const relation = qb
+          .select(headSelection(head))
+          .from(head)
+          .leftJoin(owners, eq(owners.nodeId, sql`${viewId(leaf, head)}`))
+          .as(name);
+        return sourceOf(relation, keys, leaf);
       };
-      // The same keys in the same order as the heads, so the two arms of a union line up.
-      const ordered = R.fromEntries(
-        Arr.flatMap(keys, (key) =>
-          Option.toArray(Option.map(R.get(fields, key), (f) => [key, f] as const)),
-        ),
-      );
-      const relation = qb
-        .select(ordered)
-        .from(liveView)
-        .leftJoin(owners, eq(owners.nodeId, sql`${liveId}`))
-        .as(name);
-      return sourceOf(relation, keys, leaf);
+      /** The live rows: the pointed row, `draft = false`, the fact's `at` as `publishedAt`. */
+      const lives = (name: string): RowSource => {
+        const fields: FilterColumns = {
+          ...R.remove(pointedFields, pointerAt),
+          draft: sql<boolean>`false`.as("draft"),
+          [PUBLISHED_AT]: sql<Date>`${pointerAtField}`.as("published_at"),
+        };
+        // The same keys in the same order as the heads, so the two arms of a union line up.
+        const ordered = R.fromEntries(
+          Arr.flatMap(keys, (key) =>
+            Option.toArray(Option.map(R.get(fields, key), (f) => [key, f] as const)),
+          ),
+        );
+        const relation = qb
+          .select(ordered)
+          .from(pointed)
+          .leftJoin(owners, eq(owners.nodeId, sql`${viewId(leaf, pointed)}`))
+          .as(name);
+        return sourceOf(relation, keys, leaf);
+      };
+      return { keys, heads, lives };
     };
+
+    const shared = sourcesOver(headView, liveView);
 
     /** A predicate over a source, `true` for `always`. */
     const predicate = (filter: ListFilter<SQLWrapper>, source: RowSource): SQL =>
       Option.getOrElse(renderListFilter(filter, source.columns), () => sql`true`);
 
-    /** Per node, its head row when it matches `headFor`, else its live row, else none. */
-    const chosen = (headFor: ListFilter<SQLWrapper>): RowSource => {
-      const head = heads(`${leaf}_chosen_head`);
-      const match = heads(`${leaf}_chosen_match`);
-      const live = lives(`${leaf}_chosen_live`);
-      const relation = unionAll(
-        qb.select(head.columns).from(head.relation).where(predicate(headFor, head)),
-        qb
-          .select(live.columns)
-          .from(live.relation)
-          .where(
-            sql`${live.id} NOT IN (${qb
-              .select({ id: match.id })
-              .from(match.relation)
-              .where(predicate(headFor, match))})`,
-          ),
-      ).as(`${leaf}_chosen`);
-      return sourceOf(relation, keys, leaf);
-    };
+    /**
+     * Per node, the rows of `over` (the shared pair, or the keyed pair: one
+     * row per locale) at its head when its shared head matches `headFor`,
+     * else at its live version, else none. `headFor` is always read off the
+     * shared head, as the kernel's `LiveView` reads it.
+     */
+    const chosenOver =
+      (over: ReturnType<typeof sourcesOver>, name: string) =>
+      (headFor: ListFilter<SQLWrapper>): RowSource => {
+        const head = over.heads(`${name}_head`);
+        const live = over.lives(`${name}_live`);
+        const match = shared.heads(`${name}_match`);
+        const matching = qb
+          .select({ id: match.id })
+          .from(match.relation)
+          .where(predicate(headFor, match));
+        const relation = unionAll(
+          qb
+            .select(head.columns)
+            .from(head.relation)
+            .where(sql`${head.id} IN (${matching})`),
+          qb
+            .select(live.columns)
+            .from(live.relation)
+            .where(sql`${live.id} NOT IN (${matching})`),
+        ).as(name);
+        return sourceOf(relation, over.keys, leaf);
+      };
+    const chosen = chosenOver(shared, `${leaf}_chosen`);
 
     const reads = readsOver(leaf, CurrentTransaction);
-    const liveRows = lives(`${leaf}_live`);
+    const liveRows = shared.lives(`${leaf}_live`);
+    const sharedHeads = shared.heads(`${leaf}_rows`);
 
-    const live: LiveView<LeafRow, SQLWrapper, StoreQueryError<Relations>, I> = {
-      ...reads.byId(liveRows),
-      list: (query) => reads.page(chosen(query.headFor), query),
-      distinct: (query) => reads.distinct(chosen(query.headFor), query),
-      // The localised live view reads the pointer's keyed view (pulpit#343).
-      listLocalised: () => Effect.succeed({ rows: [], total: 0 }),
-    };
+    /** A localised leaf's keyed pair: its keyed head view and the pointer's keyed view. */
+    const keyed = Option.zipWith(
+      R.get(config.keyed?.views ?? {}, leaf),
+      R.get(config.keyed?.live ?? {}, leaf),
+      (head, pointed) => sourcesOver(head, pointed),
+    );
+    if (
+      Option.isSome(R.get(config.keyed?.views ?? {}, leaf)) !==
+      Option.isSome(R.get(config.keyed?.live ?? {}, leaf))
+    ) {
+      throw new DerivationError({
+        message: `makePublications: leaf "${leaf}" has a keyed view on one side only; pass both \`views.keyed\` and the pointer's \`keyed\` views`,
+      });
+    }
 
-    return {
-      facts: factsStore(log, CurrentTransaction),
-      live,
-      leaves: storeOver(leaf, heads(`${leaf}_rows`), owners, CurrentTransaction),
-    };
+    return Option.match(keyed, {
+      onNone: () => ({
+        facts: factsStore(log, CurrentTransaction),
+        live: {
+          ...reads.byId(liveRows),
+          list: (query) => reads.page(chosen(query.headFor), query),
+          distinct: (query) => reads.distinct(chosen(query.headFor), query),
+          // An unkeyed leaf has no locale rows to choose among.
+          listLocalised: () => Effect.succeed({ rows: [], total: 0 }),
+        },
+        leaves: storeOver(leaf, sharedHeads, owners, CurrentTransaction),
+      }),
+      onSome: (pair) => {
+        const chosenKeyed = chosenOver(pair, `${leaf}_chosen_keyed`);
+        return {
+          facts: factsStore(log, CurrentTransaction),
+          // `get` / `getMany` read the shared live row; the lists read one row per locale.
+          live: {
+            ...reads.byId(liveRows),
+            list: (query) => reads.page(chosenKeyed(query.headFor), query),
+            distinct: (query) => reads.distinct(chosenKeyed(query.headFor), query),
+            listLocalised: (query) =>
+              localisedPage(leaf, chosenKeyed(query.headFor), query, CurrentTransaction),
+          },
+          leaves: localisedStoreOver(
+            leaf,
+            sharedHeads,
+            pair.heads(`${leaf}_locale_rows`),
+            owners,
+            CurrentTransaction,
+          ),
+        };
+      },
+    });
   };
 
   return R.map(config.live, (view, leaf) => gatedOf(leaf, view));

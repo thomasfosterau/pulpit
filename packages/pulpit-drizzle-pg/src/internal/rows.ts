@@ -25,6 +25,7 @@ import type {
   LeafRow,
   LeafStore,
   ListOrder,
+  LocalisedListQuery,
   Page,
 } from "@thomasfosterau/pulpit/subtype";
 import { VersionAction } from "@thomasfosterau/pulpit/version-chain";
@@ -353,15 +354,31 @@ export const localisedStoreOver = <I, Relations extends AnyRelations>(
     columns: columnSet(keyed.columns),
     list: (query) => reads.page(keyed, query),
     distinct: (query) => reads.distinct(keyed, query),
-    listLocalised: (query) =>
-      Arr.isReadonlyArrayNonEmpty(query.locales) && query.locales.length <= MAX_SET_VALUES
-        ? reads.page(localeChoice(leaf, keyed, query.locales, query.where), {
-            ...query,
-            where: always,
-          })
-        : Effect.succeed({ rows: [], total: 0 }),
+    listLocalised: (query) => localisedPage(leaf, keyed, query, CurrentTransaction),
   };
 };
+
+/**
+ * One page of a localised source's rows, one per node in its most preferred
+ * carried locale of `query.locales` ({@link localeChoice}), then the filter,
+ * order and page; none for an empty `locales` or one past `MAX_SET_VALUES`.
+ * The read `LeafStore.listLocalised` and a gated leaf's
+ * `LiveView.listLocalised` share.
+ *
+ * @since 0.0.0
+ */
+export const localisedPage = <I, Relations extends AnyRelations>(
+  leaf: string,
+  source: RowSource,
+  query: LocalisedListQuery<SQLWrapper>,
+  CurrentTransaction: Context.Service<I, PgTransaction<Relations>>,
+): Effect.Effect<Page<LeafRow>, StoreQueryError<Relations>, I> =>
+  Arr.isReadonlyArrayNonEmpty(query.locales) && query.locales.length <= MAX_SET_VALUES
+    ? readsOver(leaf, CurrentTransaction).page(
+        localeChoice(leaf, source, query.locales, query.where),
+        { ...query, where: always },
+      )
+    : Effect.succeed({ rows: [], total: 0 });
 
 /**
  * The kernel's `LeafStore` over one row source: id reads, the page, the

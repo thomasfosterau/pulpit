@@ -13,7 +13,8 @@ The tree-bound seams of [`@thomasfosterau/pulpit`](../pulpit/README.md) over the
 - **Landed:** the content-addressed `DocumentStore` ([`./documents`](#documents)), its hashes checked against the kernel's `canonicalText` on PostgreSQL.
 - **Landed:** the localised `LeafStore` over a tree's keyed views ([`./leaf-store`](#localised-leaves)), checked against the kernel's localised in-memory store on PostgreSQL.
 - **Landed:** the `PathStore` over a path table per routable namespace ([`./paths`](#paths)), checked step by step against the kernel's in-memory store on PostgreSQL.
-- **Next:** `SearchBranch` (#336) and the localised live view (#343).
+- **Landed:** the localised live view and gated store of a publish-gated keyed leaf ([`./publication`](#publication), pulpit#343), checked against the kernel's in-memory publication over a localised store on PostgreSQL.
+- **Next:** `SearchBranch` (#336).
 
 ## Install
 
@@ -187,6 +188,8 @@ const gated = makePublications({
   pointer: "live",
   log: tables.pointers.live,
   live: views.pointers.live.leaves,
+  // A publish-gated leaf with a locale level (optional): its keyed head and pointer views.
+  keyed: { views: views.keyed, live: views.pointers.live.keyed },
   owners: nodeOwner,
   CurrentTransaction,
 });
@@ -199,7 +202,14 @@ const gated = makePublications({
 - **`live`**, the `LiveView`: `get` / `getMany` read the row at the effective fact's version, with that version as its `version`, the head's `action` (a tombstone hides it too), `draft = false` and the fact's `at` as `publishedAt`; `list` / `distinct` read the `UNION ALL` of the head rows matching `headFor` (the viewer's own) and the live rows of every other node, under the same filter, order and page as `./leaf-store`. `publishedAt <= now()` is the gate the kernel's `isPubliclyServeable` reads (`CACHE-AUTH-005`).
 - **`leaves`**, the gated current-version store: the head rows with `draft` computed as `NOT EXISTS (a live row)`, a stored draft column ignored, as README → Seams asks.
 
-`listLocalised` reads none on both for now; the localised live view over the pointer's keyed view is #343. An id that is no canonical UUID names no node and has no facts.
+**A localised gated leaf** (pulpit#343): a leaf with a keyed level, listed under the pointer in `makeTreeViews` (`pointers: { live: ["post"] }` derives `views.pointers.live.keyed.post` beside its leaf view), reads one row per locale once `keyed` names both its keyed head view (`views.keyed`) and the pointer's keyed view; a leaf named on one side only is a `DerivationError` at module load.
+
+- `live.list` / `distinct` read, per node, the locale rows of its head when its **shared** head matches `headFor` (as the kernel's `LiveView` reads it), else those of its live version: the `UNION ALL` of the keyed head rows of the matching nodes and the keyed live rows of every other.
+- `live.listLocalised` picks each node's most preferred carried locale over those same rows, then the filter, order and page, as [`./leaf-store`'s](#localised-leaves) does. A reader sees the live version's locales, an owner their head's.
+- `live.get` / `getMany` read the shared live row, one per node.
+- `leaves` is the localised store over the keyed head rows, `draft` computed as "no live row".
+
+An unkeyed gated leaf's `listLocalised` reads none on both. An id that is no canonical UUID names no node and has no facts.
 
 | Export | What it is |
 | --- | --- |

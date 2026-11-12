@@ -66,7 +66,10 @@ export const tables = makeTreeTables(tree, {
   },
 });
 
-export const views = makeTreeViews(tree, tables, { schema, pointers: { live: ["posts"] } });
+export const views = makeTreeViews(tree, tables, {
+  schema,
+  pointers: { live: ["posts", "notes"] },
+});
 
 /** A routable namespace's path table. */
 export const paths = makePathTable({ schema, name: "post_paths", identity: tables.root.identity });
@@ -103,6 +106,8 @@ export const fixtureSchema = {
   postsVersion: tables.levels.posts.version,
   livePointer: tables.pointers.live,
   postsLiveView: views.pointers.live.leaves.posts,
+  notesLiveView: views.pointers.live.leaves.notes,
+  notesLocaleLiveView: views.pointers.live.keyed.notes,
   owners,
   paths,
   documents,

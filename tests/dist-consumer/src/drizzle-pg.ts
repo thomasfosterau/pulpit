@@ -195,6 +195,16 @@ const publications = makePublications({
   CurrentTransaction: database.CurrentTransaction,
 });
 
+// A localised gated leaf names its keyed head and pointer views (pulpit#343).
+export type _PublicationsKeyed = Assert<
+  Equals<
+    Required<Parameters<typeof makePublications>[0]>["keyed"],
+    {
+      readonly views: { readonly [leaf: string]: PgView };
+      readonly live: { readonly [leaf: string]: PgView };
+    }
+  >
+>;
 export type _Publications = Assert<
   Equals<typeof publications, Publications<"post", EffectDrizzleQueryError, Key>>
 >;
