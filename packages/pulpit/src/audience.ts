@@ -32,6 +32,13 @@
  *   view-private rung, so they read as `private`. The application clears the
  *   rows' group column too (in-the-dark's `ON DELETE SET NULL`); a column
  *   naming no group reads the same way.
+ * - **Erasing a group's owner** (`./erasure`, owner decision on pulpit#274,
+ *   2026-11-12): every group the erased account owns is reassigned to the
+ *   application's tombstone account through a {@link GroupOwnerStore}, so
+ *   its members keep reading its rows; then the account's own memberships
+ *   go. The tombstone account holds no membership, so it reads nothing.
+ *   The erasure definition's `disposeGroups` overrides the reassignment
+ *   (deleting the groups, say, or handing them to an admin).
  *
  * @copyright Thomas Foster
  * @module pulpit/audience
@@ -260,6 +267,29 @@ export interface MembershipStore<Following, E, R> {
  */
 export interface GroupOwnership<E, R> {
   readonly ownerOf: (groupId: string) => Effect.Effect<Option.Option<string>, E, R>;
+}
+
+/**
+ * The write half of the application's groups that account erasure needs
+ * (pulpit#274): a bounded reassignment of the groups an account owns. The
+ * same records {@link GroupOwnership} reads, so once a group is reassigned
+ * its `ownerOf` answers the new owner. A store seam: no policy, never opens
+ * a transaction, fails only with its `E`. See the package README → Seams.
+ *
+ * @since 0.2.0
+ */
+export interface GroupOwnerStore<E, R> {
+  /**
+   * Make `to` the owner of at most `limit` of the groups `accountId` owns
+   * (`PERF-DB-001`); how many changed. A reassigned group no longer names
+   * `accountId`, so a repeated call moves on to the rest and answers `0`
+   * once none is left. Its memberships and invitations are left alone.
+   */
+  readonly reassignOwner: (
+    accountId: string,
+    to: string,
+    limit: number,
+  ) => Effect.Effect<number, E, R>;
 }
 
 /**

@@ -38,6 +38,26 @@
  * mutes, blocks, group memberships and working copies are deleted. An application adds its
  * own (memberships, notifications, …) as {@link AccountRelation}s.
  *
+ * ## Groups the account owns (owner decision on pulpit#274, 2026-11-12)
+ *
+ * Every group the account owns (`./audience`) is reassigned to the
+ * tombstone account, through the definition's `groups`
+ * (`GroupOwnerStore.reassignOwner`), so its members keep their access: their
+ * membership rows are untouched, and `isMember` still answers them. The
+ * step runs before the memberships step, so by the time the account's own
+ * membership rows go it owns none of their groups. Those rows are deleted
+ * through the store, not through `defineAudience`'s operations, so
+ * `GroupOwnerMembership` (the owner can't be removed) never applies. The
+ * tombstone account owns the group with no membership row, so it reads
+ * none of the group's rows (the audience is the membership rows alone).
+ *
+ * An application that wants another outcome (the groups deleted, so their
+ * `group` rows read as `private`; or handed to an admin) sets
+ * `disposeGroups`, a bounded erase in the shape of an
+ * {@link AccountRelation}'s, which runs in the reassignment's place. It
+ * must change only rows that then stop naming the account as an owner, so
+ * the step stays resumable.
+ *
  * ## A redacting version, never a rewrite
  *
  * The chain stays strictly append-only (`VERSION-CHAIN-001/002`, owner
@@ -100,7 +120,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
-import type { MembershipStore } from "./audience.ts";
+import type { GroupOwnerStore, MembershipStore } from "./audience.ts";
 import type { BlobStore } from "./blobs.ts";
 import { purgeNode } from "./internal/purge-node.ts";
 import type { ReportStore } from "./moderation.ts";
@@ -298,6 +318,21 @@ export interface AccountErasureDefinition<E, EB, R> {
   /** Rows per batch, clamped to `[1, MAX_PAGE_LIMIT]`; {@link DEFAULT_ERASURE_BATCH} when omitted. */
   readonly batchSize?: number | undefined;
   /* oxlint-enable effect/prefer-option-over-null */
+  /**
+   * The application's groups (`./audience`, pulpit#274): every group the
+   * account owns is reassigned to the tombstone account in bounded batches,
+   * before its memberships go, so the group's members keep their access.
+   * Absent, erasure touches no group.
+   */
+  readonly groups?: Option.Option<GroupOwnerStore<E, R>>;
+  /**
+   * The application's override for the groups the account owns, run in
+   * place of `groups`' reassignment (the module doc): a bounded erase that
+   * answers how many groups it changed (at most `limit`), each of which
+   * then no longer names the account as its owner. `replacement` is the
+   * tombstone account.
+   */
+  readonly disposeGroups?: Option.Option<AccountRelation<E, R>["erase"]>;
 }
 
 /**
@@ -377,7 +412,9 @@ interface Step<E, R> {
  * nodes (purged, or their owner record reassigned or removed, with a cache
  * eviction); then per family, one redacting version on each node the
  * account wrote (the module doc's marker keeps it to one); then the kernel
- * stores given, then the application's relations.
+ * stores given (the groups the account owns reassigned to the tombstone
+ * account, or `disposeGroups`, just before its memberships go), then the
+ * application's relations.
  *
  * @example
  * ```ts
@@ -645,6 +682,23 @@ export const defineAccountErasure = <E, EB, R>(
     ...Option.toArray(
       Option.map(Option.fromUndefinedOr(definition.workingCopies), (copies) =>
         counted("workingCopies", copies.eraseAccount),
+      ),
+    ),
+    ...Option.toArray(
+      Option.map(
+        Option.orElse(definition.disposeGroups ?? Option.none(), () =>
+          Option.map(
+            definition.groups ?? Option.none(),
+            (groups) =>
+              (query: {
+                readonly accountId: string;
+                readonly replacement: string;
+                readonly limit: number;
+              }) =>
+                groups.reassignOwner(query.accountId, query.replacement, query.limit),
+          ),
+        ),
+        (dispose) => counted("groups", (accountId, limit) => dispose(replaced(accountId, limit))),
       ),
     ),
     ...Option.toArray(
