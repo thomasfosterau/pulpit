@@ -200,6 +200,8 @@ Navigation menus are an [ordered link list](#links) over `./collections` (pulpit
 
 Ordered collections (pulpit#193): positioned members of a parent node, such as a list's items, an album's media, a byline's authors or a menu's entries.
 
+`CollectionDefinition.mode` is a bare `?: CollectionMode<E, R>` (pulpit#238): omit the key for the default model rather than passing `undefined`.
+
 ```ts
 import { defineCollection } from "@thomasfosterau/pulpit/collections";
 
