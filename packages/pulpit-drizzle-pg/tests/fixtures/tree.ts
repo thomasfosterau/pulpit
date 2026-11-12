@@ -5,8 +5,8 @@
  * a `notes` port must never touch, and an owned leaf (`posts`: the owned
  * access axes and one column of every orderable type, for the leaf store's
  * filter and order). Its tables live in the `pulpit_test` schema, the
- * identity table carries a `slug` extra, and the root version table records
- * `proposedBy`.
+ * identity table carries a `slug` extra, the root version table records
+ * `proposedBy`, and the `entry` branch view projects a `search` vector.
  */
 
 import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
@@ -15,6 +15,7 @@ import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
 import { makeDocumentTable } from "@thomasfosterau/pulpit-drizzle-pg/documents";
 import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
 import { makePathTable } from "@thomasfosterau/pulpit-drizzle-pg/paths";
+import { sql } from "drizzle-orm";
 import { boolean, doublePrecision, integer, pgSchema, text, timestamp } from "drizzle-orm/pg-core";
 import * as Schema from "effect/Schema";
 
@@ -66,7 +67,18 @@ export const tables = makeTreeTables(tree, {
   },
 });
 
-export const views = makeTreeViews(tree, tables, { schema, pointers: { live: ["posts"] } });
+export const views = makeTreeViews(tree, tables, {
+  schema,
+  pointers: { live: ["posts"] },
+  // The search union view over every entry: its `search` vector, per leaf.
+  branches: {
+    entry: {
+      project: (_leaf, columns) => ({
+        search: sql<string>`to_tsvector('simple', coalesce(${columns["title"]}, ''))`.as("search"),
+      }),
+    },
+  },
+});
 
 /** A routable namespace's path table. */
 export const paths = makePathTable({ schema, name: "post_paths", identity: tables.root.identity });
@@ -110,4 +122,5 @@ export const fixtureSchema = {
   linksView: views.leaves.links,
   postsView: views.leaves.posts,
   notesLocaleView: views.keyed.notes,
+  entryView: views.branches.entry,
 };

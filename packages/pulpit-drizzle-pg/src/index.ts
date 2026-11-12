@@ -11,8 +11,9 @@
  * the `ListFilter` → SQL renderer it reads through (`Filter`, `./filter`),
  * the live pointer, `PublicationStore` / `LiveView` over the tree's
  * pointer level (`Publication`, `./publication`), the `PathStore` over a
- * path table (`Paths`, `./paths`), and the content-addressed
- * `DocumentStore` (`Documents`, `./documents`).
+ * path table (`Paths`, `./paths`), the content-addressed `DocumentStore`
+ * (`Documents`, `./documents`), and the `SearchBranch` over a tree's views
+ * (`Search`, `./search`).
  *
  * @copyright Thomas Foster
  * @module pulpit-drizzle-pg
@@ -34,3 +35,6 @@ export * as Publication from "./publication.ts";
 export * as Paths from "./paths.ts";
 /** The kernel's content-addressed `DocumentStore`, one table per document family. */
 export * as Documents from "./documents.ts";
+
+/** The kernel's `SearchBranch`: one ranked, scoped statement over a tree's view. */
+export * as Search from "./search.ts";
