@@ -19,6 +19,10 @@
  * - Memberships (pulpit#274): more membership rows and invitations than a
  *   batch go in bounded batches, and an interrupted run resumes to one
  *   uninterrupted run's end state.
+ * - Owned groups (pulpit#274, owner decision 2026-11-12): every group the
+ *   account owns is reassigned to the tombstone account in bounded
+ *   batches, before its memberships go, so the other members still read
+ *   the group's rows; `disposeGroups` overrides the reassignment.
  * - The gate: anonymous, a refused actor and the tombstone account itself
  *   are refused before anything is read.
  * - The cache: an anonymised comment is evicted at its redacting version.
@@ -30,9 +34,11 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
+import * as Order from "effect/Order";
 import * as P from "effect/Predicate";
 import { describe, expect, it } from "vite-plus/test";
 import { defineAccountErasure, ErasurePresets, type ErasureSummary } from "../src/erasure.ts";
+import { audienceSeam } from "../src/audience.ts";
 import type { ProposalRow } from "../src/proposals.ts";
 import type { ReportRow } from "../src/moderation.ts";
 import type { Viewer } from "../src/subtype.ts";
@@ -41,6 +47,7 @@ import { NOW as AT } from "./fixtures.ts";
 import {
   makeInMemoryAccountErasureStore,
   makeInMemoryDocumentStore,
+  makeInMemoryGroupOwners,
   makeInMemoryLeafStore,
   makeInMemoryMembershipStore,
   makeInMemoryProposalStore,
@@ -76,6 +83,7 @@ const makeWorld = () => {
   const social = makeInMemorySocialStore();
   const workingCopies = makeInMemoryWorkingCopyStore();
   const memberships = makeInMemoryMembershipStore();
+  const groups = makeInMemoryGroupOwners();
   const commentCache = makeInMemoryResourceCache<unknown>(() => true);
   const chains = [postChain, commentChain, taxonChain];
   const ops = {
@@ -97,6 +105,7 @@ const makeWorld = () => {
     social,
     workingCopies,
     memberships,
+    groups,
     commentCache,
     chains,
     ops,
@@ -105,6 +114,13 @@ const makeWorld = () => {
       options: {
         readonly viewer?: Viewer | undefined;
         readonly batchSize?: number | undefined;
+        readonly disposeGroups?: Option.Option<
+          (query: {
+            readonly accountId: string;
+            readonly replacement: string;
+            readonly limit: number;
+          }) => Effect.Effect<number>
+        >;
       } = {},
       /* oxlint-enable effect/prefer-option-over-null */
     ) =>
@@ -145,6 +161,8 @@ const makeWorld = () => {
         social,
         workingCopies,
         memberships,
+        groups: Option.some(groups),
+        disposeGroups: options.disposeGroups ?? Option.none(),
         relations: [{ name: "app.notifications", erase: () => Effect.succeed(0) }],
         batchSize: options.batchSize,
       }),
@@ -264,6 +282,10 @@ const seed = (world: World) =>
     yield* world.social.add({ kind: "mute", from: OTHER, to: TOMBSTONE, at: AT });
     yield* world.memberships.add({ groupId: "g-1", accountId: GONE, role: "admin", at: AT });
     yield* world.memberships.add({ groupId: "g-1", accountId: OTHER, role: "member", at: AT });
+    // A group the account owns, with its owner's own membership (audience's model).
+    yield* world.groups.put("g-own", GONE);
+    yield* world.memberships.add({ groupId: "g-own", accountId: GONE, role: "admin", at: AT });
+    yield* world.memberships.add({ groupId: "g-own", accountId: OTHER, role: "member", at: AT });
     yield* world.workingCopies.put(
       { id: theirs.id, userId: GONE },
       { patch: {}, baseVersion: 0n, savedAt: AT },
@@ -309,10 +331,13 @@ const recordedAccounts = (world: World): ReadonlyArray<string> => [
   ...Arr.flatMap(world.social.rows(), (row) => [row.from, row.to]),
   ...Arr.map(world.memberships.rows(), (row) => row.accountId),
   ...Arr.flatMap(world.memberships.pending(), (row) => [row.accountId, row.invitedBy]),
+  ...HashMap.toValues(world.groups.owners()),
   ...Arr.map(Arr.fromIterable(HashMap.keys(world.workingCopies.copies())), (key) =>
     key.slice(key.indexOf(":") + 1),
   ),
 ];
+
+const byGroupId = Order.mapInput(Order.String, ([groupId]: readonly [string, string]) => groupId);
 
 /** The world's state, comparable across runs. */
 const snapshot = (world: World) => ({
@@ -329,6 +354,7 @@ const snapshot = (world: World) => ({
   social: world.social.rows(),
   memberships: world.memberships.rows(),
   invitations: world.memberships.pending(),
+  groups: Arr.sort(HashMap.toEntries(world.groups.owners()), byGroupId),
   copies: HashMap.toEntries(world.workingCopies.copies()),
   documents: HashMap.size(world.documents.stored()),
 });
@@ -468,7 +494,11 @@ describe("defineAccountErasure", () => {
     expect(Arr.map(world.reactions.rows(), (row) => row.accountId)).toEqual([OTHER]);
     expect(Arr.map(world.social.rows(), (row) => row.kind)).toEqual(["mute"]);
     expect(HashMap.size(world.workingCopies.copies())).toBe(0);
-    expect(Arr.map(world.memberships.rows(), (row) => row.accountId)).toEqual([OTHER]);
+    expect(Arr.map(world.memberships.rows(), (row) => [row.groupId, row.accountId])).toEqual([
+      ["g-1", OTHER],
+      ["g-own", OTHER],
+    ]);
+    expect(HashMap.toEntries(world.groups.owners())).toEqual([["g-own", TOMBSTONE]]);
   });
 
   it("changes nothing when run again", async () => {
@@ -596,6 +626,140 @@ describe("defineAccountErasure", () => {
         expect(recordedAccounts(cut)).not.toContain(GONE);
       },
     );
+  });
+
+  describe("owned groups at a batch boundary (pulpit#274)", () => {
+    const BATCH = 2;
+    const OWNED = ["g-a", "g-b", "g-c", "g-d", "g-e"];
+    /** More groups owned by `GONE` than a batch, each with `GONE`'s own membership and `OTHER`'s; and one group `OTHER` owns. */
+    const seedGroups = (world: World) =>
+      Effect.andThen(
+        Effect.forEach(
+          OWNED,
+          (groupId) =>
+            Effect.all(
+              [
+                world.groups.put(groupId, GONE),
+                world.memberships.add({ groupId, accountId: GONE, role: "admin", at: AT }),
+                world.memberships.add({ groupId, accountId: OTHER, role: "member", at: AT }),
+              ],
+              { concurrency: 1, discard: true },
+            ),
+          { concurrency: 1, discard: true },
+        ),
+        world.groups.put("g-theirs", OTHER),
+      );
+    const audience = (world: World) => audienceSeam(world.memberships);
+
+    it("reassigns every group to the tombstone account before the memberships go, and its members keep their access", async () => {
+      const world = makeWorld();
+      await run(seedGroups(world));
+      const summary = await run(world.erasure({ batchSize: BATCH }).erase(GONE));
+      expect(summary.complete).toBe(true);
+      expect(summary.changed).toEqual({ groups: OWNED.length, memberships: OWNED.length });
+      expect(Arr.sort(HashMap.toEntries(world.groups.owners()), byGroupId)).toEqual([
+        ...Arr.map(OWNED, (groupId) => [groupId, TOMBSTONE]),
+        ["g-theirs", OTHER],
+      ]);
+      const seam = audience(world);
+      // The tombstone account owns each group but holds no membership, so it reads nothing.
+      const access = await run(
+        Effect.forEach(
+          OWNED,
+          (groupId) =>
+            Effect.all(
+              [
+                seam.isMember(OTHER, groupId),
+                seam.isMember(GONE, groupId),
+                seam.isMember(TOMBSTONE, groupId),
+                world.groups.ownerOf(groupId),
+              ],
+              { concurrency: 1 },
+            ),
+          { concurrency: 1 },
+        ),
+      );
+      expect(access).toEqual(Arr.map(OWNED, () => [true, false, false, Option.some(TOMBSTONE)]));
+      expect(recordedAccounts(world)).not.toContain(GONE);
+    });
+
+    it("changes nothing when run again", async () => {
+      const world = makeWorld();
+      await run(seedGroups(world));
+      await run(world.erasure({ batchSize: BATCH }).erase(GONE));
+      const before = snapshot(world);
+      const again = await run(world.erasure({ batchSize: BATCH }).erase(GONE));
+      expect(again).toMatchObject({ complete: true, changed: {} });
+      expect(snapshot(world)).toEqual(before);
+    });
+
+    it.each([1, 2])(
+      "resumes a run cut short every %i batches to one uninterrupted run's end state",
+      async (maxBatches) => {
+        const whole = makeWorld();
+        await run(seedGroups(whole));
+        await run(whole.erasure({ batchSize: BATCH }).erase(GONE));
+
+        const cut = makeWorld();
+        await run(seedGroups(cut));
+        const erasure = cut.erasure({ batchSize: BATCH });
+        const first = await run(erasure.erase(GONE, { maxBatches }));
+        expect(first.complete).toBe(false);
+        expect(first.changed).toEqual({ groups: BATCH * maxBatches });
+        // Cut short mid-reassignment: the account still holds its memberships, and no member lost access.
+        expect(await run(audience(cut).isMember(OTHER, "g-a"))).toBe(true);
+        const runs = (count: number): Effect.Effect<number, unknown> =>
+          Effect.flatMap(
+            erasure.erase(GONE, { maxBatches }),
+            (summary: ErasureSummary): Effect.Effect<number, unknown> =>
+              summary.complete ? Effect.succeed(count) : runs(count + 1),
+          );
+        expect(await run(runs(2))).toBeGreaterThan(1);
+        expect(snapshot(cut)).toEqual(snapshot(whole));
+        expect(recordedAccounts(cut)).not.toContain(GONE);
+      },
+    );
+
+    it("runs the application's disposeGroups in the reassignment's place", async () => {
+      const world = makeWorld();
+      await run(seedGroups(world));
+      // An application that deletes the groups instead: each with its memberships, a batch at a time.
+      const deleteOwned = (query: {
+        readonly accountId: string;
+        readonly replacement: string;
+        readonly limit: number;
+      }) =>
+        Effect.gen(function* () {
+          const owned = Arr.take(
+            Arr.sort(
+              Arr.map(
+                Arr.filter(
+                  HashMap.toEntries(world.groups.owners()),
+                  ([, ownerId]) => ownerId === query.accountId,
+                ),
+                ([groupId]) => groupId,
+              ),
+              Order.String,
+            ),
+            query.limit,
+          );
+          yield* Effect.forEach(
+            owned,
+            (groupId) =>
+              Effect.andThen(world.memberships.removeGroup(groupId), world.groups.remove(groupId)),
+            { concurrency: 1, discard: true },
+          );
+          return owned.length;
+        });
+      const summary = await run(
+        world.erasure({ batchSize: BATCH, disposeGroups: Option.some(deleteOwned) }).erase(GONE),
+      );
+      expect(summary.complete).toBe(true);
+      expect(summary.changed).toEqual({ groups: OWNED.length });
+      expect(HashMap.toEntries(world.groups.owners())).toEqual([["g-theirs", OTHER]]);
+      expect(world.memberships.rows()).toEqual([]);
+      expect(await run(audience(world).isMember(OTHER, "g-a"))).toBe(false);
+    });
   });
 
   it("refuses before reading anything", async () => {

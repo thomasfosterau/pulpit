@@ -90,7 +90,13 @@ import {
 import type { ReactionRow, ReactionStore } from "./reactions.ts";
 import type { KvEntry, VersionedKv } from "./cache.ts";
 import type { CollectionEntry, CollectionStore } from "./collections.ts";
-import type { Invitation, Membership, MembershipStore } from "./audience.ts";
+import type {
+  GroupOwnerStore,
+  GroupOwnership,
+  Invitation,
+  Membership,
+  MembershipStore,
+} from "./audience.ts";
 import type { Relationship, SocialStore } from "./social.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
 import type { ReportRow, ReportStore } from "./moderation.ts";
@@ -2937,5 +2943,82 @@ export const makeInMemoryMembershipStore = (): InMemoryMembershipStore => {
       }),
     rows: () => rows,
     pending: () => pending,
+  };
+};
+
+/**
+ * In-memory groups: a {@link GroupOwnership} and a {@link GroupOwnerStore}
+ * over one map of group id to owner, plus the test hooks. In memory only;
+ * not for production.
+ *
+ * @since 0.2.0
+ */
+export interface InMemoryGroupOwners
+  extends GroupOwnership<never, never>, GroupOwnerStore<never, never> {
+  /** Every group's owner, by group id. */
+  readonly owners: () => HashMap.HashMap<string, string>;
+  /** Record a group and its owner (the application creating one), or replace its owner. */
+  readonly put: (groupId: string, ownerId: string) => Effect.Effect<void>;
+  /** Delete a group's record; whether it existed. `ownerOf` then answers none. */
+  readonly remove: (groupId: string) => Effect.Effect<boolean>;
+}
+
+/**
+ * In-memory groups seeded with `owners` (`[groupId, ownerId]` pairs): the
+ * group-owner store's contract (README → Seams → the group-owner store).
+ * `reassignOwner` takes the account's groups in group-id order, so a
+ * bounded batch is deterministic, and `ownerOf` reads the same map, so a
+ * reassigned group answers its new owner. In memory only; not for
+ * production.
+ *
+ * @example
+ * ```ts
+ * import { deepStrictEqual, strictEqual } from "node:assert";
+ * import * as Effect from "effect/Effect";
+ * import * as Option from "effect/Option";
+ * import { makeInMemoryGroupOwners } from "@thomasfosterau/pulpit/testing";
+ *
+ * const groups = makeInMemoryGroupOwners([
+ *   ["g-1", "u-1"],
+ *   ["g-2", "u-1"],
+ * ]);
+ * strictEqual(Effect.runSync(groups.reassignOwner("u-1", "u-deleted", 1)), 1);
+ * deepStrictEqual(Effect.runSync(groups.ownerOf("g-1")), Option.some("u-deleted"));
+ * deepStrictEqual(Effect.runSync(groups.ownerOf("g-2")), Option.some("u-1"));
+ * ```
+ *
+ * @since 0.2.0
+ */
+export const makeInMemoryGroupOwners = (
+  owners: Iterable<readonly [groupId: string, ownerId: string]> = [],
+): InMemoryGroupOwners => {
+  let groups = HashMap.fromIterable(owners);
+  return {
+    ownerOf: (groupId) => Effect.sync(() => HashMap.get(groups, groupId)),
+    reassignOwner: (accountId, to, limit) =>
+      Effect.sync(() => {
+        const owned = Arr.take(
+          Arr.sort(
+            Arr.filterMap(HashMap.toEntries(groups), ([groupId, ownerId]) =>
+              ownerId === accountId ? Result.succeed(groupId) : Result.failVoid,
+            ),
+            byCodePoint,
+          ),
+          limit,
+        );
+        groups = Arr.reduce(owned, groups, (map, groupId) => HashMap.set(map, groupId, to));
+        return owned.length;
+      }),
+    owners: () => groups,
+    put: (groupId, ownerId) =>
+      Effect.sync(() => {
+        groups = HashMap.set(groups, groupId, ownerId);
+      }),
+    remove: (groupId) =>
+      Effect.sync(() => {
+        const existed = HashMap.has(groups, groupId);
+        groups = HashMap.remove(groups, groupId);
+        return existed;
+      }),
   };
 };
