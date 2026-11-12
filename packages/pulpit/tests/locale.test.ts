@@ -42,7 +42,7 @@ import {
   localesOf,
   type ColumnValue,
 } from "../src/version-chain.ts";
-import { gardeneriaPolicy, member, moderator, NOW, otherMember } from "./fixtures.ts";
+import { gardeneriaPolicy, member, moderator, NOW, otherMember, textOf } from "./fixtures.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 const as = (account: ViewerAccount): Viewer => Option.some(account);
@@ -631,7 +631,7 @@ describe("a localised leaf's before hooks (pulpit#56)", () => {
         R.map(event.locales ?? {}, (change) =>
           change === null || change === undefined
             ? change
-            : { ...change, title: String(change["title"]).toUpperCase() },
+            : { ...change, title: textOf(change["title"] ?? null).toUpperCase() },
         ),
       ),
   };

@@ -267,8 +267,9 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
 
 **The live pointer** (pulpit#46, opt-in per leaf). A leaf that declares `publication: { live, facts, preview? }` is publish-gated: what readers see is the version its publication log makes **live**, not the head editors work on. Without the declaration, head and live are one, as before.
 
-- **Facts, not rewrites.** `publication` (on the operations, an `Option`) is `publish(id, { version?, at? })`, `unpublish(id)`, `discardDraft(id, precondition?)` and `facts(id)`.
+- **Facts, not rewrites.** `publication` (on the operations, an `Option`) is `publish(id, { version?, at? })`, `unpublish(id)`, `discardDraft(id, precondition?)`, `facts(id)` and `scheduled(ids)`.
   - `publish` and `unpublish` append a `PublicationFact` to the `PublicationStore` (`version`, or none for an unpublish, `at`, the actor, `recordedAt`). The live version is the version named by the most recently recorded fact whose `at` has arrived. So `publish(id, { at })` with a future `at` is a schedule: readers see the version at its stamp, with no write, and a later record supersedes it. `VERSION-CHAIN-001/002` are untouched.
+  - `scheduled(ids)` (pulpit#220) is the pending schedule per node, one batched read: for each node the viewer reads the head of (the view-private rung, a reference leaf's corpus writers, a row's own owner), visible and not tombstoned, the most recently recorded `publish` whose `at` is still ahead of the `Clock` and which no later record overtakes. Any other node, a hidden one and an unknown id are absent, so a reader below the head-reading rungs learns nothing of an unpublished schedule. A consumer shows such a node as WordPress's `future` (`pulpit-wordpress`).
   - `discardDraft` appends the live version's state as a new version (a `restoreVersion`; it writes nothing when the head already is live, and fails `NotPublished` when nothing is).
   - `facts` is the publication history, gated like `getVersion`.
   - Each runs the write gate, then the leaf's before hooks with action `publish` / `unpublish` (the returned patch is ignored; a refusal records nothing). The lifecycle event fires when `publish` is called, not when `at` arrives (pulpit#45); `duePublications` drives an application's sweep.
@@ -354,7 +355,7 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
 | `LeafStore`, `LeafRow`, `Page`, `ListRequest`, `ListOrder`, `MAX_PAGE_LIMIT` | The current-version view seam, its row (with the head `version`) and page shapes, the list request and one key of its order, and the page cap (1000). |
 | `versionMeta(row)`, `VersionMeta`, `versionEtag(resource)`, `VersionedResource` | The resource object's `meta` for the row's head version (`{ version: "3" }`), and a single-resource response's `ETag` value read back from it (`Option.some('"3"')`, none without a decimal `meta.version`). |
 | `PublicationDeclaration`, `LiveView`, `PublicationStore`, `PublicationFact` | The live pointer's opt-in: the live-version view and the append-only publication log (see [Seams](#seams)), and one fact. |
-| `PublicationOps`, `PublishOptions`, `PublicationWrite`, `NotPublished` | The publication operations (`publish`, `unpublish`, `discardDraft`, `facts`), what `publish` takes and what both report, and `discardDraft`'s failure with nothing live (409). |
+| `PublicationOps`, `PublishOptions`, `PublicationWrite`, `NotPublished` | The publication operations (`publish`, `unpublish`, `discardDraft`, `facts`, `scheduled`), what `publish` takes and what both report, and `discardDraft`'s failure with nothing live (409). |
 | `SubtypeOps.owners(request)`, `OwnersRequest`, `readableOwners(leaves, request)`, `OwnerSetTooLarge` | The accounts that own at least one row the viewer may list ([#186](https://github.com/thomasfosterau/pulpit/issues/186)). `owners` is one leaf's distinct owner ids, read under exactly `list`'s scope (and its head-or-live choice on a publish-gated leaf), in code-point order with the distinct total, optionally narrowed to `among` (empty on a reference leaf). `readableOwners` is the exact union across leaves, one read per leaf; a leaf with more than `MAX_PAGE_LIMIT` readable owners fails `OwnerSetTooLarge` rather than answer a short union. A hidden row never contributes its owner (`SEC-AUTH-ENUM-001`). |
 | `SubtypeOps.publicResource`, `SubtypeOps.authorize` | The resource as an anonymous reader gets it (what a public cache may hold), and the write gate on its own, for a surface outside the chain. |
 
@@ -1330,7 +1331,7 @@ const translation = defineTranslation({
   candidates, // the nodes the sweep may send to the model, by id
   translator, // the application's model
   landing: { kind: "direct", update: pagesOps.update, actorId: Option.some(botId) },
-  // or: { kind: "proposal", submit: botProposals.submit, hasPending: Option.some(hasPending) }
+  // or: { kind: "proposal", submit: botProposals.submit, hasPending }
 });
 const hooks = { before: [humanLineageHook(declaration)], after: [] }; // the leaf's LifecycleHooks
 
@@ -1636,6 +1637,7 @@ The publication log is an append-only table: `node_id`, `version` (`bigint`, `NU
 - `record` inserts a fact.
 - `effective(id)` is the most recently recorded fact whose `at` has arrived: `SELECT … WHERE node_id = $id AND at <= now() ORDER BY seq DESC LIMIT 1`.
 - `facts(id, limit)` is `ORDER BY seq LIMIT $limit`.
+- `scheduled(ids)` (pulpit#220) is, per node, the most recently recorded fact that names a version, whose `at` is still ahead, and that no later-recorded fact overtakes (a later record whose `at` is no later than its own would be effective by then, so the schedule never takes effect), in one read: `SELECT DISTINCT ON (node_id) … FROM fact f WHERE node_id = ANY($ids) AND version IS NOT NULL AND at > now() AND NOT EXISTS (SELECT 1 FROM fact g WHERE g.node_id = f.node_id AND g.seq > f.seq AND g.at <= f.at) ORDER BY node_id, seq DESC`. A node with none is absent.
 
 The live view is a view over the leaf's version tables. For each node it gives the row at the effective fact's version (joined through the same `DISTINCT ON (node_id) … ORDER BY node_id, seq DESC` over the facts with `at <= now()`), with:
 
