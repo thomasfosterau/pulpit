@@ -260,11 +260,9 @@ export type TranslationLanding<E, R, LE = unknown> =
         readonly locales: Schema.Json;
         readonly rationale: Option.Option<string>;
       }) => Effect.Effect<unknown, LE, R>;
-      /* oxlint-disable effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key proposes every pending locale */
-      readonly hasPending?:
-        | ((id: string, locale: string) => Effect.Effect<boolean, E, R>)
-        | undefined;
-      /* oxlint-enable effect/prefer-option-over-null */
+      readonly hasPending?: Option.Option<
+        (id: string, locale: string) => Effect.Effect<boolean, E, R>
+      >;
     };
 
 // ── The declaration ───────────────────────────────────────────────────
@@ -279,9 +277,8 @@ export interface TranslationDeclaration {
   readonly type: string;
   /** The translatable columns: the leaf's locale-level columns minus the lineage ones. */
   readonly columns: LocaleLevel["columns"];
-  /** The lineage columns; omitted, {@link defaultLineageColumns}. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is the conventional names
-  readonly lineage?: LineageColumns | undefined;
+  /** The lineage columns; omitted or none, {@link defaultLineageColumns}. */
+  readonly lineage?: Option.Option<LineageColumns>;
   /** The locale missing targets are translated from (the family's default). */
   readonly sourceLocale: string;
   /** The locales the family keeps a translation in; a node lacking one has a `missing` pair. */
@@ -385,7 +382,10 @@ export const defineTranslation = <E, R, LE>(
   },
 ): TranslationOps<E, R> => {
   const { chain, candidates, translator, landing, sourceLocale, targets } = definition;
-  const lineage = definition.lineage ?? defaultLineageColumns;
+  const lineage = Option.getOrElse(
+    definition.lineage ?? Option.none(),
+    () => defaultLineageColumns,
+  );
   const translatable = HashSet.fromIterable(definition.columns);
   /** The snapshot at `(id, version)`, none when it can't be reconstructed; the chain's own `E` propagates. */
   const readVersion = (id: string, version: bigint) =>
@@ -574,28 +574,29 @@ export const defineTranslation = <E, R, LE>(
 
   /** The pairs to land and the ones a pending bot proposal already covers. */
   const pendingOf = (pairs: ReadonlyArray<TranslationPair>) => {
-    const hasPending = landing.kind === "proposal" ? landing.hasPending : undefined;
-    return hasPending === undefined
-      ? Effect.succeed([pairs, []] as const)
-      : Effect.map(
-          Effect.forEach(
-            pairs,
-            (pair) =>
-              Effect.map(hasPending(pair.id, pair.locale), (pending) => [pair, pending] as const),
-            { concurrency: 1 },
+    const pending =
+      landing.kind === "proposal" ? (landing.hasPending ?? Option.none()) : Option.none();
+    if (Option.isNone(pending)) return Effect.succeed([pairs, []] as const);
+    const hasPending = pending.value;
+    return Effect.map(
+      Effect.forEach(
+        pairs,
+        (pair) =>
+          Effect.map(hasPending(pair.id, pair.locale), (pending) => [pair, pending] as const),
+        { concurrency: 1 },
+      ),
+      (checked) =>
+        [
+          Arr.map(
+            Arr.filter(checked, ([, pending]) => !pending),
+            ([pair]) => pair,
           ),
-          (checked) =>
-            [
-              Arr.map(
-                Arr.filter(checked, ([, pending]) => !pending),
-                ([pair]) => pair,
-              ),
-              Arr.map(
-                Arr.filter(checked, ([, pending]) => pending),
-                ([pair]) => pair,
-              ),
-            ] as const,
-        );
+          Arr.map(
+            Arr.filter(checked, ([, pending]) => pending),
+            ([pair]) => pair,
+          ),
+        ] as const,
+    );
   };
 
   return {
@@ -673,7 +674,10 @@ export const stampHumanLineage = (
   declaration: Pick<TranslationDeclaration, "columns" | "lineage">,
   event: Pick<BeforeWriteEvent, "prior" | "locales">,
 ): LocalePatch => {
-  const columns = declaration.lineage ?? defaultLineageColumns;
+  const columns = Option.getOrElse(
+    declaration.lineage ?? Option.none(),
+    () => defaultLineageColumns,
+  );
   const translatable = HashSet.fromIterable(declaration.columns);
   const prior = Option.match(event.prior, { onNone: (): LocaleStates => ({}), onSome: localesOf });
   // oxlint-disable-next-line effect/prefer-option-over-null -- a LocalePatch entry is tri-state (`null` drops the locale, `undefined` carries it), and this passes each through unchanged

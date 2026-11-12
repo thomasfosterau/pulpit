@@ -293,7 +293,7 @@ describe("the proposal sweep", () => {
       translation({
         kind: "proposal",
         submit: (input) => Effect.sync(() => submitted.push(input)),
-        hasPending: (_, locale) => Effect.succeed(locale === "fr"),
+        hasPending: Option.some((_, locale) => Effect.succeed(locale === "fr")),
       }).sweep(first),
     );
     expect(Arr.map(summary.landed, ({ locale }) => locale)).toEqual(["de"]);
@@ -325,7 +325,7 @@ describe("the proposal sweep", () => {
     const skipping = translation({
       kind: "proposal",
       submit: () => Effect.void,
-      hasPending: () => Effect.succeed(true),
+      hasPending: Option.some(() => Effect.succeed(true)),
     });
     const all = await run(skipping.sweep(first));
     expect(all.landed).toEqual([]);
