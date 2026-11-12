@@ -359,8 +359,8 @@ const REGISTRY = [
   {
     key: "posts",
     parent: parent("content"),
-    resource: Option.some(Post),
-    id: Option.some(Post.Id),
+    resource: Post,
+    id: Post.Id,
     owned: true,
   },
 ] as const satisfies readonly RegistryEntry[];
