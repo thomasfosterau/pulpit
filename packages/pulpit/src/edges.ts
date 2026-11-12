@@ -403,9 +403,16 @@ export const rungGate =
   (rung: (policy: AccessPolicy) => (account: ViewerAccount) => boolean) =>
   (request: EdgeWriteRequest): Effect.Effect<ViewerAccount, Unauthorized | Forbidden> =>
     Option.match(request.viewer, {
-      onNone: () => Effect.fail(new Unauthorized()),
+      onNone: () =>
+        Effect.fail(new Unauthorized({ message: "This operation needs a signed-in viewer." })),
       onSome: (account) =>
-        rung(request.policy)(account) ? Effect.succeed(account) : Effect.fail(new Forbidden()),
+        rung(request.policy)(account)
+          ? Effect.succeed(account)
+          : Effect.fail(
+              new Forbidden({
+                message: "The viewer's role is below the rung this edge write needs.",
+              }),
+            ),
     });
 
 /**

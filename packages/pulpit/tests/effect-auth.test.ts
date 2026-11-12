@@ -14,9 +14,14 @@
  *   `Cacheability.publiclyServeable`, and on attributes carrying the kernel's
  *   further axes (`moderationState`, `deletedAt`) it is never more lenient.
  *
- * The bridge here (`policyFor`, `viewerFrom`) is how an application wires
- * effect-auth's guards into the kernel's seams; the kernel itself never
- * imports effect-auth (packages/pulpit/AGENTS.md → Boundary).
+ * - The bridge: `accessPolicyFromGuards` (the guard kit's ladder) answers
+ *   each of the four role axes exactly as the kit's own `decideRole` does,
+ *   and fails closed off the ladder; `viewerFromGuards` is the kit's viewer.
+ *
+ * effect-auth is a required peer of the kernel (pulpit#5, option (c)). These
+ * matrices become the parity acceptance tests once `OwnedAccess` gains the
+ * axes the kernel still spells itself (the effect-auth issue drafted on
+ * pulpit#5), and the kernel delegates to it.
  *
  * @module tests/effect-auth
  */
@@ -27,15 +32,18 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as R from "effect/Record";
+import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 import { isPubliclyServeable } from "../src/publication.ts";
 import {
   type AccessPolicy,
+  accessPolicyFromGuards,
   canViewOwned,
   type FollowerSeam,
   readScopeFor,
   type Viewer,
   type ViewerAccount,
+  viewerFromGuards,
 } from "../src/subtype.ts";
 
 /** gardeneria's ladder and axes, as effect-auth spells them. */
@@ -48,28 +56,27 @@ class CurrentViewer extends Context.Service<CurrentViewer, Option.Option<ViewerA
 const guards = Guard.make({ ladder: Roles, viewer: CurrentViewer });
 const owned = OwnedAccess.make({ guards, viewPrivate: "moderator" });
 
-/** The kernel's `AccessPolicy`, each axis one of the guards' rungs. */
-const policyFor = (axes: {
-  readonly viewPrivate: Ladder.RungOf<typeof Roles>;
-  readonly viewDeleted: Ladder.RungOf<typeof Roles>;
-  readonly moderate: Ladder.RungOf<typeof Roles>;
-  readonly writeCorpus: Ladder.RungOf<typeof Roles>;
-}): AccessPolicy => ({
-  canViewPrivate: (account) => guards.decideRole(account, axes.viewPrivate),
-  canViewDeleted: (account) => guards.decideRole(account, axes.viewDeleted),
-  canModerate: (account) => guards.decideRole(account, axes.moderate),
-  canWriteCorpus: (account) => guards.decideRole(account, axes.writeCorpus),
-});
-
-const policy = policyFor({
+/** gardeneria's four axes on that ladder. */
+const axes = {
   viewPrivate: "moderator",
   viewDeleted: "moderator",
   moderate: "moderator",
   writeCorpus: "contributor",
-});
+} as const;
+
+/** The kernel's `AccessPolicy` from the guards, through the exported helper (pulpit#5). */
+const policy = accessPolicyFromGuards(guards, axes);
+
+/** The same four questions asked of the guard kit's own role gate, `decideRole`. */
+const decided: AccessPolicy = {
+  canViewPrivate: (account) => guards.decideRole(account, axes.viewPrivate),
+  canViewDeleted: (account) => guards.decideRole(account, axes.viewDeleted),
+  canModerate: (account) => guards.decideRole(account, axes.moderate),
+  canWriteCorpus: (account) => guards.decideRole(account, axes.writeCorpus),
+};
 
 /** The kernel's `Viewer`, read from the guards' viewer service. */
-const viewerFrom: Effect.Effect<Viewer, never, CurrentViewer> = guards.viewer;
+const viewerFrom: Effect.Effect<Viewer, never, CurrentViewer> = viewerFromGuards(guards);
 
 const OWNER = "u-owner";
 const accounts: ReadonlyArray<readonly [string, Viewer]> = [
@@ -201,5 +208,33 @@ describe("isPubliclyServeable ≡ Cacheability.publiclyServeable (CACHE-AUTH-005
     );
     expect(kernelServes.length).toBeGreaterThan(0);
     expect(Arr.filter(kernelServes, (attributes) => !authServeable(attributes))).toEqual([]);
+  });
+});
+
+describe("accessPolicyFromGuards ≡ the guard kit's decideRole", () => {
+  const questions = ["canViewPrivate", "canViewDeleted", "canModerate", "canWriteCorpus"] as const;
+  const cases = Arr.flatMap(
+    Arr.filterMap(accounts, ([name, viewer]) =>
+      Option.match(viewer, {
+        onNone: () => Result.failVoid,
+        onSome: (account) => Result.succeed({ name, account }),
+      }),
+    ),
+    ({ name, account }) =>
+      Arr.map(questions, (question) => ({ label: `${name} × ${question}`, account, question })),
+  );
+
+  it.each(cases)("$label", ({ account, question }) => {
+    expect(policy[question](account)).toBe(decided[question](account));
+  });
+
+  it("fails closed for a role outside the ladder", () => {
+    const outsider = { id: "u-outsider", role: "superuser" };
+    expect(Arr.map(questions, (question) => policy[question](outsider))).toEqual([
+      false,
+      false,
+      false,
+      false,
+    ]);
   });
 });

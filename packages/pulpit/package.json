@@ -191,6 +191,7 @@
     "tsx": "catalog:"
   },
   "peerDependencies": {
+    "@thomasfosterau/effect-auth": "catalog:peers",
     "@thomasfosterau/effect-jsonapi": "catalog:peers",
     "effect": "catalog:peers"
   },

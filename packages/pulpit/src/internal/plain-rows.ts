@@ -23,7 +23,12 @@ export const nowDate: Effect.Effect<Date> = Effect.map(Clock.currentTimeMillis, 
 export const signedIn = <R>(
   viewer: Effect.Effect<Viewer, never, R>,
 ): Effect.Effect<ViewerAccount, Unauthorized, R> =>
-  Effect.flatMap(viewer, (account) => Effect.fromOption(account, () => new Unauthorized()));
+  Effect.flatMap(viewer, (account) =>
+    Effect.fromOption(
+      account,
+      () => new Unauthorized({ message: "This operation needs a signed-in viewer." }),
+    ),
+  );
 
 /**
  * A list request's store query: the leaf's rows under the viewer's `scope`,

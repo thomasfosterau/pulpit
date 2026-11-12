@@ -18,11 +18,11 @@ The kernel names no application type: a `page`, a `post` or an `album` is a leaf
 
 ## Packages
 
-The kernel depends on `effect` and `@thomasfosterau/effect-jsonapi` alone. Anything tied to a protocol, an editor or a framework is an optional package with its own boundary, which peers on the kernel and which the kernel never imports.
+The kernel depends on `effect`, `@thomasfosterau/effect-jsonapi` and `@thomasfosterau/effect-auth` alone, all peers (effect-auth since [pulpit#5](https://github.com/thomasfosterau/pulpit/issues/5): its role ladder, guard errors and owned-access rules are the kernel's). Anything tied to a protocol, an editor or a framework is an optional package with its own boundary, which peers on the kernel and which the kernel never imports.
 
 | Package | What it is | Peers |
 | --- | --- | --- |
-| [`@thomasfosterau/pulpit`](packages/pulpit/README.md) | The kernel: every capability above, as one subpath module each, behind seams, with the in-memory fakes of every seam (`./testing`). | `effect`, `@thomasfosterau/effect-jsonapi` |
+| [`@thomasfosterau/pulpit`](packages/pulpit/README.md) | The kernel: every capability above, as one subpath module each, behind seams, with the in-memory fakes of every seam (`./testing`). | `effect`, `@thomasfosterau/effect-jsonapi`, `@thomasfosterau/effect-auth` |
 | [`@thomasfosterau/pulpit-wordpress`](packages/pulpit-wordpress/README.md) | An optional protocol adapter: a WordPress-compatible (`wp/v2`), read-only REST API over the kernel's leaves, so a headless WordPress frontend reads a pulpit application unchanged ([pulpit#86](https://github.com/thomasfosterau/pulpit/issues/86)). Not yet published ([pulpit#115](https://github.com/thomasfosterau/pulpit/issues/115)). | `@thomasfosterau/pulpit`, `effect` |
 
 Further optional packages are proposed under [pulpit#212](https://github.com/thomasfosterau/pulpit/issues/212): a document-grammar package (allow-lists, serialisers and reference extractors for ProseKit documents, [pulpit#202](https://github.com/thomasfosterau/pulpit/issues/202)) and a UI package for the editorial surfaces ([pulpit#211](https://github.com/thomasfosterau/pulpit/issues/211)). Each is an owner decision still open on its issue.
@@ -36,7 +36,7 @@ The kernel is extracted from two applications, `thomasfosterau/website` (the fou
 ## Install
 
 ```bash
-pnpm add @thomasfosterau/pulpit effect @thomasfosterau/effect-jsonapi
+pnpm add @thomasfosterau/pulpit effect @thomasfosterau/effect-jsonapi @thomasfosterau/effect-auth
 ```
 
 Node.js 22 or newer. Each module is also a subpath (`@thomasfosterau/pulpit/version-chain`, `…/subtype`, `…/edges`, …); the [package README](packages/pulpit/README.md) is the API reference.

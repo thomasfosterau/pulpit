@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type { Guard } from "@thomasfosterau/effect-auth";
 import { Resource } from "@thomasfosterau/effect-jsonapi";
 import {
   Blobs,
@@ -165,6 +166,8 @@ import {
   validAt,
 } from "@thomasfosterau/pulpit/edges";
 import type {
+  AccessPolicy,
+  accessPolicyFromGuards,
   AfterWriteEvent,
   BeforeWriteEvent,
   BeforeWriteHook,
@@ -1583,3 +1586,12 @@ export type _AcceptedAnswerGate = Assert<
   >
 >;
 export type _AnswerTag = Assert<Equals<AnswerNotOfQuestion["_tag"], "AnswerNotOfQuestion">>;
+
+// ── effect-auth as a kernel peer (pulpit#5) ───────────────────────────
+
+// The gate errors are effect-auth's own classes, re-exported, not look-alikes.
+export type _UnauthorizedIsEffectAuths = Assert<Equals<Unauthorized, Guard.Unauthorized>>;
+export type _ForbiddenIsEffectAuths = Assert<Equals<Forbidden, Guard.Forbidden>>;
+export type _AccessPolicyFromGuards = Assert<
+  Equals<ReturnType<typeof accessPolicyFromGuards>, AccessPolicy>
+>;

@@ -695,9 +695,13 @@ export const defineAccountErasure = <E, EB, R>(
       definition.viewer,
       (viewer): Effect.Effect<void, Unauthorized | Forbidden | TombstoneErasure> =>
         Option.match(viewer, {
-          onNone: () => Effect.fail(new Unauthorized()),
+          onNone: () =>
+            Effect.fail(new Unauthorized({ message: "This operation needs a signed-in viewer." })),
           onSome: (actor) => {
-            if (!definition.canErase(actor, accountId)) return Effect.fail(new Forbidden());
+            if (!definition.canErase(actor, accountId))
+              return Effect.fail(
+                new Forbidden({ message: "This viewer may not erase this account." }),
+              );
             return accountId === tombstoneAccountId
               ? Effect.fail(new TombstoneErasure({ accountId }))
               : Effect.void;

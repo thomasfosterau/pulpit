@@ -5,6 +5,7 @@
   "description": "Type-checks a consumer fixture against the EMITTED declarations of @thomasfosterau/pulpit and @thomasfosterau/pulpit-wordpress, asserting every exported type — the gate for the declaration-emit hazard a published library carries and its own tests cannot see.",
   "type": "module",
   "dependencies": {
+    "@thomasfosterau/effect-auth": "catalog:",
     "@thomasfosterau/effect-jsonapi": "catalog:",
     "effect": "catalog:"
   },
