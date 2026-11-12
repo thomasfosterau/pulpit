@@ -38,7 +38,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./paths` | Routable content: `routable`, a leaf's path claims tied to its chain over a `PathStore` seam, the aliases a path change leaves behind, and the gated `resolve`. |
 | `./pages` | The page recipe: `resolveLocalised`, a routable, localised leaf's one resolution read (a path and a locale to the node in the best locale it carries, a redirect from an alias, or not-found), and its `localeFallbacks` order. |
 | `./collections` | Ordered collections (`defineCollection` over a `CollectionStore` seam): positioned members of a parent node, with the order kept beside the chain (the default) or versioned with the parent. |
-| `./links` | Ordered link lists (`defineLinkList`): a flat, localised list of links under a parent node (a navigation menu, say) over a `./collections` collection, read for one viewer with every entry whose target they can't follow omitted. |
+| `./links` | Ordered link lists (`defineLinkList`): a localised list of links under a parent node (a navigation menu, say) over a `./collections` collection, with nested lists (sub-menus), read for one viewer with every entry whose target they can't follow omitted. |
 | **Participation and user-generated content** |  |
 | `./budgets` | Write budgets: a declared ceiling on an account's writes of one kind in a rolling window, spent inside the write (`budgetHook` on a chain write; `bindBudget`'s `spend` on a proposal's `submit` or a report's `file`) over a `BudgetCounter` seam, refused as a rate-limited `WriteRejected` (the wire's 429). |
 | `./comments` | The comments family: threaded comments on any node as versioned owned leaves (`defineComments`), behind the target's read gate and the moderation gate, with a configurable reply depth. |
@@ -853,11 +853,11 @@ items.list(listId, { limit: 50, offset: 0 }); // { rows: [{ memberId, index, res
 
 ## `./links`
 
-Ordered link lists (pulpit#266): a flat, ordered, localised list of links under a parent node, read for one viewer. A navigation menu is the usual example; the kernel names no menu type (a `menu` is a leaf the application binds, like a `page`), so the module is the generic shape and this section shows a menu. Nesting is a later, additive slice (pulpit#313): a sub-menu will be an entry whose target is another list.
+Ordered link lists (pulpit#266): an ordered, localised list of links under a parent node, read for one viewer, with nested lists (pulpit#313). A navigation menu is the usual example; the kernel names no menu type (a `menu` is a leaf the application binds, like a `page`), so the module is the generic shape and this section shows a menu and its sub-menus.
 
 - **The list** is a `./collections` collection of entry nodes under the parent (the menu), in either order model.
 - **The entry leaf** is a `defineSubtype` leaf with a locale level. Its columns hold the target (a path, or a node id) and, translated, the label.
-- **The target** is a path, resolved through `./pages`' `resolveLocalised`, or a node, read through its leaf's gated `getMany`.
+- **The target** is a path, resolved through `./pages`' `resolveLocalised`, a node, read through its leaf's gated `getMany`, or another list: a nested list (a sub-menu) is an entry whose target is another parent of the same collection, so it needs no storage of its own.
 
 ```ts
 import { defineLinkList } from "@thomasfosterau/pulpit/links";
@@ -869,24 +869,32 @@ const nav = defineLinkList({
   entries: menuItems, // defineCollection({ parent: menuOps, members: itemOps, store })
   entryLeaf: itemOps, // a localised leaf: `label` is translated
   target: (item) =>
-    typeof item.path === "string" ? Option.some({ kind: "path", path: item.path }) : Option.none(),
+    typeof item.path === "string"
+      ? Option.some({ kind: "path", path: item.path })
+      : typeof item.submenu === "string"
+        ? Option.some({ kind: "list", id: item.submenu }) // another menu: a sub-menu
+        : Option.none(),
   resolve: resolveLocalised(pages, { defaultLocale: "en" }),
   nodes: pages, // for entries that name a node: `{ kind: "node", id }`
+  maxDepth: 3, // the default, DEFAULT_LINK_DEPTH: the menu and two levels of sub-menus
 });
 
 nav.list(menuId, "pt-BR");
-// [{ entryId, index, locale: "pt", entry, target: { kind: "path", id, path } }, …]
+// [{ entryId, index, locale: "pt", entry, target: { kind: "path", id, path } },
+//  { entryId, index, locale, entry, target: { kind: "list", id, links: [/* the sub-menu's links */] } }, …]
 ```
 
 - **One gated read**, `list(parentId, locale)`: the links the viewer may follow, in the collection's order, with each entry read in the first of `localeFallbacks(locale, defaultLocale)` it carries. A path target that goes through an alias is returned as the node's canonical path.
 - **Omitted, never forbidden** (`SEC-AUTH-ENUM-001`). An entry is dropped when the viewer can't read the entry, when it carries none of the fallback locales, when `target` returns none, and when its target isn't followable: a hidden, unpublished, scheduled or tombstoned page, an unclaimed path, an alias to a hidden node, or a node `getMany` omits. The rest are renumbered from 0, so the result leaves no gap and carries neither an omitted entry's id nor its target. A parent the viewer can't read is `NodeNotFound`.
 - **Every rule is the leaves'.** The owner and the view-private rung read the head, so they see the entries others can't.
-- **Bounded** (`SEC-INPUT-003`): at most `MAX_COLLECTION_SIZE` entries, each read through its own gate.
+- **Nested lists, read in place.** A `{ kind: "list", id }` target is read by the same gated read, recursively, and returned as `{ kind: "list", id, links }` with its links renumbered from 0. It is omitted like any hidden entry (`SEC-AUTH-ENUM-001`) when the viewer can't read its parent, when none of its links is one they may follow (it is never returned empty), when it is the list it sits in or one above it (a cycle), and when it would sit deeper than `maxDepth` levels (the top list is level 1; `1` reads a flat list; `DEFAULT_LINK_DEPTH`, 3, when absent). A list reached by two entries, not above either, is read under each. Cycles are cut at read time, not refused at write time: the collection's writes know nothing of what an entry targets.
+- **Bounded** (`SEC-INPUT-003`): at most `MAX_COLLECTION_SIZE` entries over every level together, each read through its own gate, taken in reading order (the top list's entries, then each nested list where its entry sits); a nested list the budget leaves empty is omitted.
 
 | Export | What it is |
 | --- | --- |
 | `defineLinkList(definition)`, `LinkListDefinition`, `LinkListOps` | The factory, its declaration and its one read, `list`. |
-| `Link`, `LinkTarget`, `FollowedTarget` | A returned link, what an entry points at, and what that resolved to. |
+| `Link`, `LinkTarget`, `FollowedTarget` | A returned link, what an entry points at (a path, a node or a nested list), and what that resolved to. |
+| `DEFAULT_LINK_DEPTH` | The nesting cap a definition without `maxDepth` reads under: 3. |
 
 ## `./moderation`
 

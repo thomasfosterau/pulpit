@@ -1,6 +1,7 @@
 /**
- * **Ordered link lists** (pulpit#266) — a flat, ordered, localised list of
- * links under a parent node, read for one viewer: a site's navigation, a
+ * **Ordered link lists** (pulpit#266) — an ordered, localised list of
+ * links under a parent node, read for one viewer, with nested lists
+ * (pulpit#313): a site's navigation and its sub-menus, a
  * footer's links, a "related reading" strip. A menu is the usual example,
  * but the kernel names no application type, so this is the generic shape an
  * application binds (see the package README → Link lists).
@@ -15,8 +16,9 @@
  *   per locale, its label. The application declares the columns, and
  *   {@link LinkListDefinition.target} reads the target off the resource;
  * - **the target** — a path, resolved through `./pages`' `resolveLocalised`
- *   (or `./paths`' `resolve` behind it), or a node, read through its leaf's
- *   gated `getMany`;
+ *   (or `./paths`' `resolve` behind it), a node, read through its leaf's
+ *   gated `getMany`, or another list under the same collection (a nested
+ *   list: a sub-menu), read by the same gated read;
  * - **the read** — {@link LinkListOps.list}, here.
  *
  * ## The gate (`SEC-AUTH-ENUM-001`)
@@ -32,7 +34,18 @@
  * targets' own gates give, so they see the entries others can't. A parent
  * the viewer can't read is `NodeNotFound`, as for any collection.
  *
- * Nesting is not part of this module (pulpit#313): the list is flat.
+ * ## Nesting (pulpit#313)
+ *
+ * A nested list is an entry whose target is another parent node of the same
+ * collection, so it needs no storage of its own. The read recurses into it
+ * and keeps it only when the viewer can read its parent and it has at least
+ * one link the viewer may follow: a nested list that is hidden, or ends up
+ * empty, is omitted exactly as a hidden entry is (`SEC-AUTH-ENUM-001`).
+ * Recursion is cut two ways, so a cycle never loops: an entry whose target
+ * is the list it sits in, or any list above it, is omitted, and so is one
+ * that would nest past {@link LinkListDefinition.maxDepth}. The whole read,
+ * every level together, reads at most `MAX_COLLECTION_SIZE` entries
+ * (`SEC-INPUT-003`).
  *
  * @copyright Thomas Foster
  * @module pulpit/links
@@ -42,7 +55,9 @@
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import { MAX_COLLECTION_SIZE, type CollectionOps } from "./collections.ts";
 import { localeFallbacks, type LocalisedResolution } from "./pages.ts";
 import type { PathNotFound } from "./paths.ts";
@@ -50,24 +65,41 @@ import type { LocalisedResource, SubtypeOps } from "./subtype.ts";
 import type { NodeNotFound } from "./version-chain.ts";
 
 /**
+ * How deep a read nests by default when its definition declares no
+ * {@link LinkListDefinition.maxDepth}: the top list and two levels of
+ * nested lists below it.
+ *
+ * @since 0.2.0
+ */
+export const DEFAULT_LINK_DEPTH = 3;
+
+/**
  * What an entry points at: a path (resolved for the viewer, and followed
- * through an alias to its canonical path) or a node (read for the viewer).
+ * through an alias to its canonical path), a node (read for the viewer) or
+ * another list's parent node (a nested list, read for the viewer).
  *
  * @since 0.2.0
  */
 export type LinkTarget =
   | { readonly kind: "path"; readonly path: string }
-  | { readonly kind: "node"; readonly id: string };
+  | { readonly kind: "node"; readonly id: string }
+  | { readonly kind: "list"; readonly id: string };
 
 /**
- * What a followable entry's target resolved to: the node it names, and for
- * a path target the canonical path the viewer is sent to.
+ * What a followable entry's target resolved to: the node it names; for a
+ * path target the canonical path the viewer is sent to; and for a nested
+ * list its links the viewer may follow, never empty.
  *
  * @since 0.2.0
  */
-export type FollowedTarget =
+export type FollowedTarget<Entry> =
   | { readonly kind: "path"; readonly id: string; readonly path: string }
-  | { readonly kind: "node"; readonly id: string };
+  | { readonly kind: "node"; readonly id: string }
+  | {
+      readonly kind: "list";
+      readonly id: string;
+      readonly links: Arr.NonEmptyReadonlyArray<Link<Entry>>;
+    };
 
 /**
  * One link as {@link LinkListOps.list} returns it: the entry's id, its
@@ -82,7 +114,7 @@ export interface Link<Entry> {
   /** The locale the entry was read in: the first of {@link localeFallbacks} it carries. */
   readonly locale: string;
   readonly entry: Entry;
-  readonly target: FollowedTarget;
+  readonly target: FollowedTarget<Entry>;
 }
 
 /**
@@ -96,7 +128,17 @@ export interface LinkListDefinition<Entry, E, R> {
   readonly type: string;
   /** The family's default locale: the last fallback every read tries. */
   readonly defaultLocale: string;
-  /** The ordered collection of entry nodes under the parent: its `list` gates the parent and each entry. */
+  /**
+   * How many levels a read nests, the top list being the first: an entry
+   * whose nested list would sit deeper is omitted. `1` reads a flat list.
+   * {@link DEFAULT_LINK_DEPTH} when absent.
+   */
+  readonly maxDepth?: number;
+  /**
+   * The ordered collection of entry nodes under the parent: its `list`
+   * gates the parent and each entry. A nested list is another parent of
+   * this same collection.
+   */
   readonly entries: Pick<CollectionOps<Entry, E, R>, "list">;
   /** The entry leaf, which carries a locale level: its `getLocalised` reads the entry in the viewer's locale. */
   readonly entryLeaf: Pick<SubtypeOps<Entry, E, R>, "getLocalised">;
@@ -133,10 +175,16 @@ export interface LinkListOps<Entry, E, R> {
    * order and in `locale` (falling back as {@link localeFallbacks} does).
    * An entry is omitted when the viewer can't read it, when it carries none
    * of the fallback locales, when it has no target, and when its target
-   * isn't one the viewer can read; the rest are renumbered from 0.
+   * isn't one the viewer can read; the rest are renumbered from 0. A nested
+   * list is read the same way and is omitted too when its parent is hidden,
+   * when it is left empty, when it is the list it sits in or one above it
+   * (a cycle), or when it would nest past
+   * {@link LinkListDefinition.maxDepth}.
    * Fails `NodeNotFound` for a parent the viewer can't read
    * (`SEC-AUTH-ENUM-001`), with the families' `E` otherwise. The read is
-   * bounded by `MAX_COLLECTION_SIZE` entries (`SEC-INPUT-003`).
+   * bounded by `MAX_COLLECTION_SIZE` entries over every level together
+   * (`SEC-INPUT-003`), taken in reading order: the top
+   * list's entries, each nested list's read where its entry sits.
    */
   readonly list: (
     parentId: string,
@@ -150,8 +198,8 @@ interface ReadEntry<Entry> extends LocalisedResource<Entry> {
 }
 
 /**
- * Bind one family's link list: the gated read over its collection, entry
- * leaf and target reads. Traced as `${type}.list`.
+ * Bind one family's link list: the gated, nesting read over its collection,
+ * entry leaf and target reads. Traced as `${type}.list`.
  *
  * @example
  * ```ts
@@ -193,7 +241,7 @@ interface ReadEntry<Entry> extends LocalisedResource<Entry> {
  *     viewer,
  *     policy,
  *     followers: nobodyFollows(HashSet.empty<string>()),
- *     toResource: (row) => ({ id: row.id, path: row["path"], label: row["label"] }),
+ *     toResource: (row) => ({ id: row.id, path: row["path"], list: row["list"], label: row["label"] }),
  *     ...(translated.length > 0 ? { locales: defineLocaleLevel({ columns: translated }) } : {}),
  *   });
  *   return { chain, ops };
@@ -206,7 +254,7 @@ interface ReadEntry<Entry> extends LocalisedResource<Entry> {
  *   chain: pageLeaf.chain,
  * });
  * const menus = leaf("menus", [], []);
- * const items = leaf("menu-items", ["path", "label"], ["label"]);
+ * const items = leaf("menu-items", ["path", "list", "label"], ["label"]);
  * const collection = defineCollection({
  *   type: "menu-items",
  *   parent: menus.ops,
@@ -221,7 +269,9 @@ interface ReadEntry<Entry> extends LocalisedResource<Entry> {
  *   target: (entry) =>
  *     typeof entry.path === "string"
  *       ? Option.some({ kind: "path" as const, path: entry.path })
- *       : Option.none(),
+ *       : typeof entry.list === "string"
+ *         ? Option.some({ kind: "list" as const, id: entry.list })
+ *         : Option.none(),
  *   resolve: resolveLocalised(pages, { defaultLocale: "en" }),
  *   nodes: pages,
  * });
@@ -239,10 +289,23 @@ interface ReadEntry<Entry> extends LocalisedResource<Entry> {
  *     locales: { en: { label: "About us" }, pt: { label: "Sobre nós" } },
  *   });
  *   yield* collection.append(menuId, itemId);
+ *   // A nested list: an entry whose target is another menu.
+ *   const { id: subId } = yield* menus.ops.create({ id: Option.none(), state: {} });
+ *   yield* collection.append(subId, itemId);
+ *   const { id: subEntry } = yield* items.ops.create({
+ *     id: Option.none(),
+ *     state: { list: subId },
+ *     locales: { en: { label: "More" } },
+ *   });
+ *   yield* collection.append(menuId, subEntry);
  *   return yield* links.list(menuId, "pt-BR");
  * });
- * const [link] = Effect.runSync(program);
+ * const [link, more] = Effect.runSync(program);
  * deepStrictEqual([link?.locale, link?.target.kind, link?.index], ["pt", "path", 0]);
+ * deepStrictEqual(
+ *   more?.target.kind === "list" ? more.target.links.map((nested) => nested.target.kind) : [],
+ *   ["path"],
+ * );
  * ```
  *
  * @since 0.2.0
@@ -251,6 +314,7 @@ export const defineLinkList = <Entry, E, R>(
   definition: LinkListDefinition<Entry, E, R>,
 ): LinkListOps<Entry, E, R> => {
   const { type, defaultLocale, entries, entryLeaf, target, resolve, nodes } = definition;
+  const maxDepth = definition.maxDepth ?? DEFAULT_LINK_DEPTH;
 
   /** The entry in the first fallback locale it carries; an unreadable one, or one in none, is absent. */
   const readEntry = (entryId: string, locales: ReadonlyArray<string>) =>
@@ -262,7 +326,7 @@ export const defineLinkList = <Entry, E, R>(
   /** The target a path resolves to for the viewer; none when it resolves for nobody they are. */
   const followPath = (path: string, locale: string) =>
     resolve(path, locale).pipe(
-      Effect.map((resolved): Option.Option<FollowedTarget> =>
+      Effect.map((resolved): Option.Option<FollowedTarget<Entry>> =>
         Option.some({
           kind: "path",
           id: resolved.id,
@@ -273,51 +337,98 @@ export const defineLinkList = <Entry, E, R>(
       Effect.catchTag("PathNotFound", () => Effect.succeedNone),
     );
 
-  const list = Effect.fn(`${type}.list`)(function* (parentId: string, locale: string) {
-    // The collection's own gates: the parent (`NodeNotFound`) and each entry.
-    const page = yield* entries.list(parentId, { limit: MAX_COLLECTION_SIZE, offset: 0 });
-    const locales = localeFallbacks(locale, defaultLocale);
-    const read = Arr.getSomes(
-      yield* Effect.forEach(page.rows, (row) => readEntry(row.memberId, locales), {
-        concurrency: 1,
-      }),
-    );
-    const targeted = Arr.getSomes(
-      Arr.map(read, (found) => Option.map(target(found.resource), (to) => ({ found, to }))),
-    );
-    // One gated read for every node target.
-    const nodeIds = Arr.dedupe(
-      Arr.getSomes(
-        Arr.map(targeted, ({ to }) => (to.kind === "node" ? Option.some(to.id) : Option.none())),
-      ),
-    );
-    const readable = Arr.isReadonlyArrayNonEmpty(nodeIds)
-      ? yield* nodes.getMany(nodeIds)
-      : HashMap.empty<string, unknown>();
-    const follow = (to: LinkTarget): Effect.Effect<Option.Option<FollowedTarget>, E, R> =>
-      to.kind === "path"
-        ? followPath(to.path, locale)
-        : Effect.succeed(
-            HashMap.has(readable, to.id)
-              ? Option.some<FollowedTarget>({ kind: "node", id: to.id })
-              : Option.none(),
-          );
-    const followed = yield* Effect.forEach(
-      targeted,
-      ({ found, to }) =>
-        Effect.map(
-          follow(to),
-          Option.map((resolved) => ({ found, resolved })),
+  /**
+   * One list's links, read under the shared entry `budget`. `open` holds the
+   * lists on the way down, `parentId` last, so its length is this list's
+   * depth.
+   */
+  const readList = (
+    parentId: string,
+    locale: string,
+    open: Arr.NonEmptyReadonlyArray<string>,
+    budget: Ref.Ref<number>,
+  ): Effect.Effect<ReadonlyArray<Link<Entry>>, NodeNotFound | E, R> =>
+    Effect.gen(function* () {
+      // The collection's own gates: the parent (`NodeNotFound`) and each entry.
+      const page = yield* entries.list(parentId, { limit: MAX_COLLECTION_SIZE, offset: 0 });
+      const rows = yield* Ref.modify(budget, (left) => {
+        const taken = Arr.take(page.rows, left);
+        return [taken, left - taken.length] as const;
+      });
+      const locales = localeFallbacks(locale, defaultLocale);
+      const read = Arr.getSomes(
+        yield* Effect.forEach(rows, (row) => readEntry(row.memberId, locales), {
+          concurrency: 1,
+        }),
+      );
+      const targeted = Arr.getSomes(
+        Arr.map(read, (found) => Option.map(target(found.resource), (to) => ({ found, to }))),
+      );
+      // One gated read for every node target.
+      const nodeIds = Arr.dedupe(
+        Arr.getSomes(
+          Arr.map(targeted, ({ to }) => (to.kind === "node" ? Option.some(to.id) : Option.none())),
         ),
-      { concurrency: 1 },
-    );
-    return Arr.map(Arr.getSomes(followed), ({ found, resolved }, index): Link<Entry> => ({
-      entryId: found.entryId,
-      index,
-      locale: found.locale,
-      entry: found.resource,
-      target: resolved,
-    }));
+      );
+      const readable = Arr.isReadonlyArrayNonEmpty(nodeIds)
+        ? yield* nodes.getMany(nodeIds)
+        : HashMap.empty<string, unknown>();
+      const follow = (to: LinkTarget): Effect.Effect<Option.Option<FollowedTarget<Entry>>, E, R> =>
+        Match.value(to).pipe(
+          Match.discriminatorsExhaustive("kind")({
+            path: (path) => followPath(path.path, locale),
+            node: (node) =>
+              Effect.succeed(
+                HashMap.has(readable, node.id)
+                  ? Option.some<FollowedTarget<Entry>>({ kind: "node", id: node.id })
+                  : Option.none(),
+              ),
+            list: (nested) => followList(nested.id, locale, open, budget),
+          }),
+        );
+      const followed = yield* Effect.forEach(
+        targeted,
+        ({ found, to }) =>
+          Effect.map(
+            follow(to),
+            Option.map((resolved) => ({ found, resolved })),
+          ),
+        { concurrency: 1 },
+      );
+      return Arr.map(Arr.getSomes(followed), ({ found, resolved }, index): Link<Entry> => ({
+        entryId: found.entryId,
+        index,
+        locale: found.locale,
+        entry: found.resource,
+        target: resolved,
+      }));
+    });
+
+  /**
+   * A nested list, as a target: none for a cycle (a list already open above
+   * it), past the depth cap, for a parent the viewer can't read, and for a
+   * list left empty, the budget's end included (`SEC-AUTH-ENUM-001`).
+   */
+  const followList = (
+    id: string,
+    locale: string,
+    open: Arr.NonEmptyReadonlyArray<string>,
+    budget: Ref.Ref<number>,
+  ): Effect.Effect<Option.Option<FollowedTarget<Entry>>, E, R> =>
+    open.length >= maxDepth || Arr.contains(open, id)
+      ? Effect.succeedNone
+      : readList(id, locale, Arr.append(open, id), budget).pipe(
+          Effect.map((links) =>
+            Arr.isReadonlyArrayNonEmpty(links)
+              ? Option.some<FollowedTarget<Entry>>({ kind: "list", id, links })
+              : Option.none(),
+          ),
+          Effect.catchTag("NodeNotFound", () => Effect.succeedNone),
+        );
+
+  const list = Effect.fn(`${type}.list`)(function* (parentId: string, locale: string) {
+    const budget = yield* Ref.make(MAX_COLLECTION_SIZE);
+    return yield* readList(parentId, locale, Arr.of(parentId), budget);
   });
 
   return { list };

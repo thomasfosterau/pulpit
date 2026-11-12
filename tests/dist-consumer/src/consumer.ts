@@ -6,6 +6,7 @@
  * application. Never executed; type-checked only.
  */
 
+import type * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
@@ -276,7 +277,15 @@ import {
   type CollectionMember,
   type CollectionOps,
 } from "@thomasfosterau/pulpit/collections";
-import { defineLinkList, type Link, type LinkListOps } from "@thomasfosterau/pulpit/links";
+import {
+  DEFAULT_LINK_DEPTH,
+  defineLinkList,
+  type FollowedTarget,
+  type Link,
+  type LinkListDefinition,
+  type LinkListOps,
+  type LinkTarget,
+} from "@thomasfosterau/pulpit/links";
 import {
   defineSocial,
   socialFollowers,
@@ -1630,6 +1639,26 @@ export type _LinkList = Assert<
     Effect.Effect<ReadonlyArray<Link<string>>, NodeNotFound | StoreFailure, Transaction>
   >
 >;
+// Nested lists (pulpit#313): a list target, resolved to its never-empty links.
+export type _LinkTargetList = Assert<
+  Equals<
+    Extract<LinkTarget, { readonly kind: "list" }>,
+    { readonly kind: "list"; readonly id: string }
+  >
+>;
+export type _FollowedList = Assert<
+  Equals<
+    Extract<FollowedTarget<string>, { readonly kind: "list" }>["links"],
+    Arr.NonEmptyReadonlyArray<Link<string>>
+  >
+>;
+export type _LinkDepth = Assert<
+  Equals<
+    Pick<LinkListDefinition<string, StoreFailure, Transaction>, "maxDepth">,
+    { readonly maxDepth?: number }
+  >
+>;
+export const linkDepth: number = DEFAULT_LINK_DEPTH;
 
 // ── discovery (pulpit#203) ───────────────────────────────────────────────
 
