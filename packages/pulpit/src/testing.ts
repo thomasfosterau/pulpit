@@ -97,6 +97,16 @@ import type {
   Membership,
   MembershipStore,
 } from "./audience.ts";
+import type {
+  DeliverySeam,
+  InboxEntry,
+  InboxStore,
+  NotificationEvent,
+  NotificationPreferences,
+  OutboxStore,
+  PreferenceStore,
+} from "./notifications.ts";
+
 import type { MediaReferences, NodeRef } from "./media.ts";
 import type { ExternalIdLink, ExternalIdStore } from "./reference-import.ts";
 import type { Relationship, SocialStore } from "./social.ts";
@@ -3133,6 +3143,181 @@ export const makeInMemoryGroupOwners = (
         groups = HashMap.remove(groups, groupId);
         return existed;
       }),
+  };
+};
+
+// ── Notifications ─────────────────────────────────────────────────────
+
+/**
+ * An in-memory {@link OutboxStore}, plus the reads a test checks it by and a
+ * `transact` that rolls the outbox back when the wrapped effect fails, as
+ * the caller's transaction does in SQL. In memory only; not for production.
+ *
+ * @since 0.2.0
+ */
+export interface InMemoryOutbox<Kind extends string> extends OutboxStore<Kind, never, never> {
+  /** Every stored event, oldest first, processed or not. */
+  readonly events: () => ReadonlyArray<NotificationEvent<Kind>>;
+  /** The ids marked processed. */
+  readonly processed: () => HashSet.HashSet<string>;
+  /** Run `effect`; when it fails, every event it enqueued is gone (a rolled-back transaction). */
+  readonly transact: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+}
+
+/**
+ * An in-memory {@link OutboxStore}: the seam's contract (README → Seams →
+ * `OutboxStore`). Ids are sequential (`n-000001`, …), so `pending`'s order
+ * is insertion order on equal instants. In memory only; not for production.
+ *
+ * @since 0.2.0
+ */
+export const makeInMemoryOutbox = <Kind extends string>(): InMemoryOutbox<Kind> => {
+  const events: Array<NotificationEvent<Kind>> = [];
+  let processed = HashSet.empty<string>();
+  const oldestFirst = Order.combine(
+    Order.mapInput(Order.Date, (event: NotificationEvent<Kind>) => event.at),
+    Order.mapInput(Order.String, (event: NotificationEvent<Kind>) => event.id),
+  );
+  return {
+    enqueue: (drafts, at) =>
+      Effect.sync(() => {
+        events.push(
+          ...Arr.map(drafts, (draft, index) => ({
+            ...draft,
+            id: `n-${String(events.length + index + 1).padStart(6, "0")}`,
+            at,
+          })),
+        );
+      }),
+    pending: (limit) =>
+      Effect.sync(() =>
+        Arr.take(
+          Arr.sort(
+            Arr.filter(events, (event) => !HashSet.has(processed, event.id)),
+            oldestFirst,
+          ),
+          limit,
+        ),
+      ),
+    markProcessed: (ids) =>
+      Effect.sync(() => {
+        processed = HashSet.union(processed, HashSet.fromIterable(ids));
+      }),
+    events: () => events,
+    processed: () => processed,
+    transact: (effect) =>
+      Effect.suspend(() => {
+        const before = events.length;
+        return Effect.tapError(effect, () =>
+          Effect.sync(() => {
+            events.splice(before);
+          }),
+        );
+      }),
+  };
+};
+
+/**
+ * An in-memory {@link InboxStore}: the seam's contract (README → Seams →
+ * `InboxStore`), newest first with `id` descending on a tie. In memory
+ * only; not for production.
+ *
+ * @since 0.2.0
+ */
+export const makeInMemoryInbox = <Kind extends string>(): InboxStore<Kind, never, never> & {
+  /** Every entry, in the order it was added. */
+  readonly entries: () => ReadonlyArray<InboxEntry<Kind>>;
+} => {
+  const entries: Array<InboxEntry<Kind>> = [];
+  const newestFirst = Order.flip(
+    Order.combine(
+      Order.mapInput(Order.Date, (entry: InboxEntry<Kind>) => entry.event.at),
+      Order.mapInput(Order.String, (entry: InboxEntry<Kind>) => entry.event.id),
+    ),
+  );
+  const mine = (recipientId: string, unreadOnly: boolean) =>
+    Arr.filter(
+      entries,
+      (entry) =>
+        entry.event.recipientId === recipientId && (!unreadOnly || Option.isNone(entry.readAt)),
+    );
+  return {
+    add: (event) =>
+      Effect.sync(() => {
+        if (entries.some((entry) => entry.event.id === event.id)) return false;
+        entries.push({ event, readAt: Option.none() });
+        return true;
+      }),
+    list: ({ recipientId, unreadOnly, limit, offset }) =>
+      Effect.sync(() => {
+        const rows = Arr.sort(mine(recipientId, unreadOnly), newestFirst);
+        return { rows: rows.slice(offset, offset + limit), total: rows.length };
+      }),
+    markRead: (recipientId, ids, at) =>
+      Effect.sync(() => {
+        const wanted = HashSet.fromIterable(ids);
+        const unread = Arr.filter(mine(recipientId, true), (entry) =>
+          HashSet.has(wanted, entry.event.id),
+        );
+        Arr.forEach(unread, (entry) => {
+          entries[entries.indexOf(entry)] = { ...entry, readAt: Option.some(at) };
+        });
+        return unread.length;
+      }),
+    unreadCount: (recipientId) => Effect.sync(() => mine(recipientId, true).length),
+    entries: () => entries,
+  };
+};
+
+/**
+ * An in-memory {@link PreferenceStore}. In memory only; not for production.
+ *
+ * @since 0.2.0
+ */
+export const makeInMemoryPreferenceStore = (): PreferenceStore<never, never> => {
+  let stored = HashMap.empty<string, NotificationPreferences>();
+  return {
+    get: (accountId) => Effect.sync(() => HashMap.get(stored, accountId)),
+    set: (accountId, preferences) =>
+      Effect.sync(() => {
+        stored = HashMap.set(stored, accountId, preferences);
+      }),
+  };
+};
+
+/**
+ * One delivery an {@link InMemoryDelivery} recorded.
+ *
+ * @since 0.2.0
+ */
+export interface RecordedDelivery<Kind extends string> {
+  readonly channel: string;
+  readonly event: NotificationEvent<Kind>;
+}
+
+/**
+ * A {@link DeliverySeam} that records each delivery instead of sending it.
+ *
+ * @since 0.2.0
+ */
+export interface InMemoryDelivery<Kind extends string> extends DeliverySeam<Kind, never, never> {
+  readonly deliveries: () => ReadonlyArray<RecordedDelivery<Kind>>;
+}
+
+/**
+ * An in-memory {@link DeliverySeam}: records `(channel, event)` in order.
+ * In memory only; not for production.
+ *
+ * @since 0.2.0
+ */
+export const makeInMemoryDelivery = <Kind extends string>(): InMemoryDelivery<Kind> => {
+  const deliveries: Array<RecordedDelivery<Kind>> = [];
+  return {
+    deliver: (channel, event) =>
+      Effect.sync(() => {
+        deliveries.push({ channel, event });
+      }),
+    deliveries: () => deliveries,
   };
 };
 
