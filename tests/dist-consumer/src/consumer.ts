@@ -356,7 +356,13 @@ export type _DefaultId = Assert<Equals<typeof ContentResource.type, "content">>;
 const REGISTRY = [
   { key: "node", parent: root },
   { key: "content", parent: parent("node") },
-  { key: "posts", parent: parent("content"), resource: Post, id: Post.Id, owned: true },
+  {
+    key: "posts",
+    parent: parent("content"),
+    resource: Option.some(Post),
+    id: Option.some(Post.Id),
+    owned: true,
+  },
 ] as const satisfies readonly RegistryEntry[];
 
 validateRegistry(REGISTRY);
