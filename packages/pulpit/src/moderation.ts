@@ -361,7 +361,7 @@ export const defineModeration = <Resource, E, R>(definition: {
     return yield* definition.target.update({
       id,
       patch: { [definition.declaration.column]: decision },
-      expectedVersion: precondition.expectedVersion,
+      ...precondition,
     });
   }),
 });

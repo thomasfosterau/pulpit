@@ -37,7 +37,12 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as P from "effect/Predicate";
 import { describe, expect, it } from "vite-plus/test";
-import { defineAccountErasure, ErasurePresets, type ErasureSummary } from "../src/erasure.ts";
+import {
+  type AccountErasureDefinition,
+  defineAccountErasure,
+  ErasurePresets,
+  type ErasureSummary,
+} from "../src/erasure.ts";
 import { audienceSeam } from "../src/audience.ts";
 import type { ProposalRow } from "../src/proposals.ts";
 import type { ReportRow } from "../src/moderation.ts";
@@ -114,17 +119,15 @@ const makeWorld = () => {
       options: {
         readonly viewer?: Viewer | undefined;
         readonly batchSize?: number | undefined;
-        readonly disposeGroups?: Option.Option<
-          (query: {
-            readonly accountId: string;
-            readonly replacement: string;
-            readonly limit: number;
-          }) => Effect.Effect<number>
-        >;
+        readonly disposeGroups?: (query: {
+          readonly accountId: string;
+          readonly replacement: string;
+          readonly limit: number;
+        }) => Effect.Effect<number>;
       } = {},
       /* oxlint-enable effect/prefer-option-over-null */
-    ) =>
-      defineAccountErasure({
+    ) => {
+      const definition = {
         viewer: Effect.succeed(options.viewer ?? ADMIN),
         canErase: (actor, accountId) => actor.role === "admin" || actor.id === accountId,
         tombstoneAccountId: TOMBSTONE,
@@ -161,11 +164,17 @@ const makeWorld = () => {
         social,
         workingCopies,
         memberships,
-        groups: Option.some(groups),
-        disposeGroups: options.disposeGroups ?? Option.none(),
+        groups,
         relations: [{ name: "app.notifications", erase: () => Effect.succeed(0) }],
         batchSize: options.batchSize,
-      }),
+      } satisfies AccountErasureDefinition<never, never, never>;
+      // The override, only when the test names one: the key is omitted otherwise.
+      return defineAccountErasure(
+        options.disposeGroups === undefined
+          ? definition
+          : { ...definition, disposeGroups: options.disposeGroups },
+      );
+    },
   };
 };
 
@@ -752,7 +761,7 @@ describe("defineAccountErasure", () => {
           return owned.length;
         });
       const summary = await run(
-        world.erasure({ batchSize: BATCH, disposeGroups: Option.some(deleteOwned) }).erase(GONE),
+        world.erasure({ batchSize: BATCH, disposeGroups: deleteOwned }).erase(GONE),
       );
       expect(summary.complete).toBe(true);
       expect(summary.changed).toEqual({ groups: OWNED.length });

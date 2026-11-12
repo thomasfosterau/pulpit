@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Pages`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`, `Cache`, `Collections`, `Social`, `Discovery`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Pages`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`, `Cache`, `Collections`, `Links`, `Social`, `Discovery`). |
 | **Content model** |  |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`, `localised`) and `validateRegistry`. |
@@ -38,6 +38,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./paths` | Routable content: `routable`, a leaf's path claims tied to its chain over a `PathStore` seam, the aliases a path change leaves behind, and the gated `resolve`. |
 | `./pages` | The page recipe: `resolveLocalised`, a routable, localised leaf's one resolution read (a path and a locale to the node in the best locale it carries, a redirect from an alias, or not-found), and its `localeFallbacks` order. |
 | `./collections` | Ordered collections (`defineCollection` over a `CollectionStore` seam): positioned members of a parent node, with the order kept beside the chain (the default) or versioned with the parent. |
+| `./links` | Ordered link lists (`defineLinkList`): a flat, localised list of links under a parent node (a navigation menu, say) over a `./collections` collection, read for one viewer with every entry whose target they can't follow omitted. |
 | **Participation and user-generated content** |  |
 | `./budgets` | Write budgets: a declared ceiling on an account's writes of one kind in a rolling window, spent inside the write (`budgetHook` on a chain write; `bindBudget`'s `spend` on a proposal's `submit` or a report's `file`) over a `BudgetCounter` seam, refused as a rate-limited `WriteRejected` (the wire's 429). |
 | `./comments` | The comments family: threaded comments on any node as versioned owned leaves (`defineComments`), behind the target's read gate and the moderation gate, with a configurable reply depth. |
@@ -170,6 +171,8 @@ const program = <E, R>(port: VersionChain<E, R>) =>
 
 These are the port's invariants, which every implementation holds and `./testing`'s `versionChainConformance` checks. Every write lands at `N_max + 1`; nothing is rewritten. A plain `update` never resurrects a tombstone (`restore` and `restoreVersion` do). A create is never an upsert (`NodeAlreadyExists`). `restoreVersion` refuses a version that cannot be fully reconstructed before writing anything. `history` is bounded (`MAX_HISTORY_LIMIT`).
 
+**Optional members** (pulpit#238). The chain's optional input, snapshot and hook members (`expectedVersion`, `locales`, `beforeAppend`, `beforeAppendLocales`) are bare `?: T`: a caller that has no value omits the key, and an explicit `undefined` does not type-check under `exactOptionalPropertyTypes`. `proposedBy` is `?: Option.Option<string>`, since none is a value a caller passes on. The tri-state patches (`ChainPatch`, `LocalePatch`) are the exception, a wire contract: there an `undefined` key is the carry-forward, as a decoded update input says it.
+
 **Optimistic concurrency.** `update`, `restore`, `delete` and `restoreVersion` take an optional `expectedVersion` (a `Precondition`): the head version the caller last read. If the head has moved, the write fails `StaleVersion`, which carries the head it found (`current`), and nothing is written. Without one, a write extends whatever the head is, so a column that two patches both set is last-writer-wins. The check runs against the same head read the append extends, and the append lands at that head + 1. A writer that slips in between therefore takes the `(id, version)` key first, and the later append fails `VersionConflict`. The `(id, version)` key is what makes the check atomic. **With hooks** (`defineVersionChain(type, port, hooks)`, which `./subtype`'s lifecycle hooks use) the kernel reads the head and its state, runs the hooks, and appends their patch with `expectedVersion` pinned to that head (the caller's own, when given), so the hooks always see the head the append extends; a writer that lands in between makes the write `StaleVersion` (both it and `VersionConflict` are the wire's 409), where an unhooked write without a precondition would report `VersionConflict`. A delete over a tombstone stays idempotent whatever the precondition (the delete it asked for has happened). A missing node is still `NodeNotFound`, and a plain `update` over a tombstone is still `NodeNotFound`, whatever version it expects.
 
 **Comparing versions.** `diffStates(from, to)` is the field-level change set between two states: one entry per column that is `added`, `removed` or `changed`, each with its `before` and `after` values. Unchanged columns are omitted, so equal states diff to `{}`. A `null` is a value, so a column cleared to `null` is `changed`, and only a column with no key is absent (`added` / `removed`). Values compare structurally with Effect's `Equal.equals`: JSON objects and arrays by content (ignoring key order), a `Date` by its instant, and a `bigint` by value. A content-addressed document is held as its hash (`documentRef`), so it compares by hash, and a textual diff of the document is the UI's job. `compare(id, from, to)` makes two `getVersion` reads and returns both snapshots with `changes: diffStates(from.state, to.state)`. It fails `VersionNotFound` for either version, checking `from` first. A tombstone is the version's `action`, never an attribute: a version compared with the tombstone after it has no changes, and `to.action === "delete"` says the node was deleted there. The chain's `compare`, like its `getVersion`, applies no gate; `./subtype`'s `compare` is the gated one (see [`./subtype`](#subtype)).
@@ -233,6 +236,8 @@ Some inputs are outside the contract: SQL and `evaluate` can't be made to agree 
 ## `./subtype`
 
 `defineSubtype` binds a leaf's CRUD, version history and list over its `VersionChain`, a current-version `LeafStore`, and the viewer seam (`viewer`, `AccessPolicy`, `FollowerSeam`), gated by `LeafAccess`:
+
+The optional members of the declarations, requests and seams here (`followersOfColumn`, `groupColumn`, the follower seam's `isMember` / `groups`, `SubtypeDefinition`'s `sortable`, `hooks`, `search`, `locales` and `publication`, `orderBy`, `among`, a before hook's `locales`, `afterFailure`, `ownedAccess`'s options and the rest) are bare `?: T` (pulpit#238): a caller that has no value omits the key rather than passing `undefined`. `UpdateRequest.proposedBy` is `?: Option.Option<string>`.
 
 - `reference` — writes at the corpus-write rung; when the view has a `visibility` column, reads only `public` rows below the view-private rung, apart from soft-delete. A leaf whose rows may be `followers`-visible declares the view column that plays the owner's part, `{ kind: "reference", followersOfColumn: "curatorId" }` (see [Seams](#the-viewer-the-role-axes-and-the-follower-seam)): a `followers` row is then also read by the account that column names and by its followers, and by nobody else below the view-private rung (that account's `private` rows stay the rung's alone). Without the declaration a `followers` row is the rung's alone. A write or history read to an existing row also needs the caller to be able to `get` it: a row `get` hides from them (or a missing one) fails `NodeNotFound` before the chain is reached, so only the view-deleted rung can `restore` a tombstone.
 - `owned` — creates at any account (stamping the owner); other writes at owner-or-moderator; reads through `canViewOwned` (four-state visibility plus `draft` and, on a moderated leaf, the moderation state), lists through `ownedListFilter`, the same facts as a `ListFilter`. A leaf declaring `moderationColumn` (`ownedAccess({ moderation: true })` names `moderationState`) shows a row whose state isn't exactly `approved` only to its owner and the view-private rung, as it does a draft (pulpit#154). A row whose owner column holds no string (a `NULL`) has no owner: no viewer owns it and the follower seam is never asked about it, so it reads only when `public` and not a draft, or at the view-private rung. A leaf declaring `groupColumn` (`ownedAccess({ group: true })` names `groupId`) opens a `group` row, when published, to the members of the group that column names, as the audience seam answers (pulpit#194); a value that isn't a string (a deleted group's cleared column) names no group, so the row reads as `private`.
@@ -726,7 +731,7 @@ resolve("about", "pt-BR");
 - **An alias redirects without reading a locale.** The canonical path is the node's and is shared by every locale.
 - **Tags are compared exactly.** BCP 47 is case-insensitive, but the locale rows are not, so normalise a tag's case before it reaches the read.
 
-Navigation menus come later, as an ordered collection over `./collections` (pulpit#266), and there is no page builder.
+Navigation menus are an [ordered link list](#links) over `./collections` (pulpit#266), and there is no page builder.
 
 | Export | What it is |
 | --- | --- |
@@ -770,6 +775,43 @@ items.list(listId, { limit: 50, offset: 0 }); // { rows: [{ memberId, index, res
 | `hideRecordedOrder(column, toResource)` | A parent leaf's `toResource` without a versioned family's order column (`EDGE-001`). |
 | `CollectionStore`, `CollectionEntry`, `MAX_COLLECTION_SIZE` | The membership table seam (see [Seams](#seams)), one member's place and the size bound. |
 | `AlreadyMember`, `NotMember`, `CollectionFull` | The failures: 409, 404, 409. |
+
+## `./links`
+
+Ordered link lists (pulpit#266): a flat, ordered, localised list of links under a parent node, read for one viewer. A navigation menu is the usual example; the kernel names no menu type (a `menu` is a leaf the application binds, like a `page`), so the module is the generic shape and this section shows a menu. Nesting is a later, additive slice (pulpit#313): a sub-menu will be an entry whose target is another list.
+
+- **The list** is a `./collections` collection of entry nodes under the parent (the menu), in either order model.
+- **The entry leaf** is a `defineSubtype` leaf with a locale level. Its columns hold the target (a path, or a node id) and, translated, the label.
+- **The target** is a path, resolved through `./pages`' `resolveLocalised`, or a node, read through its leaf's gated `getMany`.
+
+```ts
+import { defineLinkList } from "@thomasfosterau/pulpit/links";
+import { resolveLocalised } from "@thomasfosterau/pulpit/pages";
+
+const nav = defineLinkList({
+  type: "menu-links",
+  defaultLocale: "en",
+  entries: menuItems, // defineCollection({ parent: menuOps, members: itemOps, store })
+  entryLeaf: itemOps, // a localised leaf: `label` is translated
+  target: (item) =>
+    typeof item.path === "string" ? Option.some({ kind: "path", path: item.path }) : Option.none(),
+  resolve: resolveLocalised(pages, { defaultLocale: "en" }),
+  nodes: pages, // for entries that name a node: `{ kind: "node", id }`
+});
+
+nav.list(menuId, "pt-BR");
+// [{ entryId, index, locale: "pt", entry, target: { kind: "path", id, path } }, …]
+```
+
+- **One gated read**, `list(parentId, locale)`: the links the viewer may follow, in the collection's order, with each entry read in the first of `localeFallbacks(locale, defaultLocale)` it carries. A path target that goes through an alias is returned as the node's canonical path.
+- **Omitted, never forbidden** (`SEC-AUTH-ENUM-001`). An entry is dropped when the viewer can't read the entry, when it carries none of the fallback locales, when `target` returns none, and when its target isn't followable: a hidden, unpublished, scheduled or tombstoned page, an unclaimed path, an alias to a hidden node, or a node `getMany` omits. The rest are renumbered from 0, so the result leaves no gap and carries neither an omitted entry's id nor its target. A parent the viewer can't read is `NodeNotFound`.
+- **Every rule is the leaves'.** The owner and the view-private rung read the head, so they see the entries others can't.
+- **Bounded** (`SEC-INPUT-003`): at most `MAX_COLLECTION_SIZE` entries, each read through its own gate.
+
+| Export | What it is |
+| --- | --- |
+| `defineLinkList(definition)`, `LinkListDefinition`, `LinkListOps` | The factory, its declaration and its one read, `list`. |
+| `Link`, `LinkTarget`, `FollowedTarget` | A returned link, what an entry points at, and what that resolved to. |
 
 ## `./moderation`
 
@@ -923,7 +965,6 @@ const posts = definePurge({
 Account erasure (pulpit#207). `./purge` erases one node; this erases one account: when a member deletes their account, everything they own or wrote is purged, reassigned or anonymised, and every row that names them goes.
 
 ```ts
-import * as Option from "effect/Option";
 import { defineAccountErasure, ErasurePresets } from "@thomasfosterau/pulpit/erasure";
 
 const erasure = defineAccountErasure({
@@ -950,7 +991,7 @@ const erasure = defineAccountErasure({
   social,
   workingCopies,
   memberships, // `./audience`
-  groups: Option.some(groupOwnerStore), // `./audience`: the groups the account owns go to the tombstone account
+  groups: groupOwnerStore, // `./audience`: the groups the account owns go to the tombstone account
   relations: [{ name: "notifications", erase: eraseNotifications }], // the application's own
 });
 // erasure.erase(accountId, { maxBatches }) → { complete, batches, changed, purged }
@@ -966,7 +1007,7 @@ const erasure = defineAccountErasure({
   - **The marker** that keeps it to one: a node needs a redacting version when a version names the account (actor or `proposedBy`) and no later version is attributed the way the redacting one would be (the disposition's actor, no `proposedBy`); `AccountErasureStore.unredactedNodes` reads that off the version rows. A later write by another account keeps the node redacted; only a later version by the account itself makes it match again.
   - The node is evicted from its family's `cache` at the redacting version (`CACHE-AUTH-005`), and a node whose owner record changes, past its head. A redacting append that loses a race fails `StaleVersion` or `VersionConflict`; its batch rolls back and a re-run resumes.
 - **The kernel's stores:** pending, rejected and withdrawn proposals are deleted, and accepted ones keep their row under the tombstone account; reports filed are deleted, and a resolution names the tombstone; reactions, follows, mutes, blocks, group memberships (`./audience`) and working copies are deleted. Add the application's own (memberships, notifications, …) as `relations`.
-- **Groups the account owns** (owner decision on pulpit#274, 2026-11-12): every one is reassigned to the tombstone account through `groups` (a `GroupOwnerStore`, see [Seams](#seams)), so its members keep their access: their membership rows stay, and `isMember` still answers them. The step runs just before the memberships step, so the account owns none of the groups whose membership rows then go; those rows are deleted through the store, so `GroupOwnerMembership` (an operation's refusal, not the store's) never blocks erasure. The tombstone account owns the group with no membership row, so it reads none of its rows. **The override** is `disposeGroups: Option.some(erase)`, a bounded erase shaped like a relation's (`{ accountId, replacement, limit } → Effect<number>`) that runs in the reassignment's place: delete the groups (each with `MembershipStore.removeGroup`, so their `group` rows read as `private`), or hand them to an admin. Like every step it changes at most `limit` groups per call, each of which then no longer names the account as its owner. Without `groups` or `disposeGroups`, erasure touches no group. If a group is a node of an erasure family, its owner record is handled there instead.
+- **Groups the account owns** (owner decision on pulpit#274, 2026-11-12): every one is reassigned to the tombstone account through `groups` (a `GroupOwnerStore`, see [Seams](#seams)), so its members keep their access: their membership rows stay, and `isMember` still answers them. The step runs just before the memberships step, so the account owns none of the groups whose membership rows then go; those rows are deleted through the store, so `GroupOwnerMembership` (an operation's refusal, not the store's) never blocks erasure. The tombstone account owns the group with no membership row, so it reads none of its rows. **The override** is `disposeGroups: erase`, a bounded erase shaped like a relation's (`{ accountId, replacement, limit } → Effect<number>`) that runs in the reassignment's place: delete the groups (each with `MembershipStore.removeGroup`, so their `group` rows read as `private`), or hand them to an admin. Like every step it changes at most `limit` groups per call, each of which then no longer names the account as its owner. Without `groups` or `disposeGroups`, erasure touches no group. If a group is a node of an erasure family, its owner record is handled there instead.
 - **Bounded, resumable, idempotent.** Each step reads or writes at most `batchSize` rows or nodes (default 100, capped at `MAX_PAGE_LIMIT`, `PERF-DB-001`) in its own `transact`, and repeats until a batch changes fewer. Written rows stop matching, so a run cut short by `maxBatches` (it counts the batches that change rows) or a crash resumes on the next run, and a run over an erased account changes nothing and appends no version (`changed: {}`).
 - **The gate:** `canErase(actor, accountId)` is checked before anything is read (`Unauthorized` / `Forbidden`), and erasing the tombstone account itself fails `TombstoneErasure`.
 - **The application deletes the account row itself** once a run answers `complete: true`; nothing the kernel stores names it then, save the earlier versions' attribution, kept by design (so a version table's actor column must not hold a foreign key that blocks the delete, or must point at an account row kept for it).

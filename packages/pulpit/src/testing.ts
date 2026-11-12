@@ -565,11 +565,9 @@ export interface ConformanceRunner {
 export interface ConformanceChain<E, R> {
   readonly chain: VersionChain<E, R>;
   /** Make the state at `(id, version)` unreconstructable (a level with no row there). */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional member is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "this harness cannot simulate it"
-  readonly dropState?: ((id: string, version: bigint) => void | Promise<void>) | undefined;
+  readonly dropState?: (id: string, version: bigint) => void | Promise<void>;
   /** Make the next append for `id` find its version taken by a concurrent writer. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional member is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "this harness cannot simulate it"
-  readonly raceNextAppend?: ((id: string) => void | Promise<void>) | undefined;
+  readonly raceNextAppend?: (id: string) => void | Promise<void>;
 }
 
 /**
@@ -934,11 +932,10 @@ export const versionChainConformance = <E, R>(
           expect(await outcome(write(chain, { expectedVersion: 9n }))).toBe("StaleVersion");
           expect((await value(chain.history(ID))).length).toBe(2);
         });
-        it(`${name}: without one (absent or undefined) it extends whatever the head is`, async () => {
+        it(`${name}: without one it extends whatever the head is`, async () => {
           const { chain } = await created();
           await value(chain.update({ id: ID, patch: {}, actorId: ACTOR }));
           expect(await outcome(write(chain, {}))).toBe("success");
-          expect(await outcome(write(chain, { expectedVersion: undefined }))).toBe("success");
         });
       });
       it("restore over a tombstone checks the tombstone's version; update still refuses it", async () => {
@@ -1104,11 +1101,9 @@ export interface InMemoryLeafStoreOptions {
    * {@link LOCALE_COLUMN}, and `list` reads one row per `(id, locale)`.
    * `get` / `getMany` read the shared row either way.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is an unlocalised view
-  readonly localised?: boolean | undefined;
+  readonly localised?: boolean;
   /** The instant `published` / `notPublished` compare against; the Effect `Clock`'s at each `list` when absent. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option`
-  readonly now?: Date | undefined;
+  readonly now?: Date;
 }
 
 /**

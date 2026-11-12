@@ -62,7 +62,7 @@ const seeded = (gated: boolean) => {
   const heads = makeInMemoryLeafStore(chain, { columns: ["title", "visibility", "draft"] });
   const publication = makeInMemoryPublication({ chain, leaves: heads, now: NOW });
   let viewer: Viewer = anonymous;
-  const ops = defineSubtype({
+  const leaf = {
     type: "posts",
     access: ownedAccess({ draft: true }),
     chain,
@@ -71,8 +71,10 @@ const seeded = (gated: boolean) => {
     policy: gardeneriaPolicy,
     followers: follows,
     toResource: (row: LeafRow) => row,
-    publication: gated ? { live: publication.live, facts: publication.facts } : undefined,
-  });
+  };
+  const ops = defineSubtype(
+    gated ? { ...leaf, publication: { live: publication.live, facts: publication.facts } } : leaf,
+  );
   const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
     Effect.suspend(() => {
       viewer = who;
