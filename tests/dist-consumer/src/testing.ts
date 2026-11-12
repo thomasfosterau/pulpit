@@ -111,9 +111,9 @@ export type _LeafDropOwner = Assert<Equals<InMemoryLeafStore["dropOwner"], (id: 
 export type _LeafOwners = Assert<
   Equals<ReturnType<InMemoryLeafStore["owners"]>, HashMap.HashMap<string, string>>
 >;
-/* oxlint-disable effect/prefer-option-over-null -- the assertion must spell the emitted option exactly, and the workspace's optional fields are `?: T | undefined` */
-export type _LeafNow = Assert<Equals<InMemoryLeafStoreOptions["now"], Date | undefined>>;
-/* oxlint-enable effect/prefer-option-over-null */
+export type _LeafNow = Assert<
+  Equals<Pick<InMemoryLeafStoreOptions, "now">, { readonly now?: Date }>
+>;
 
 // The fakes compose into the kernel's factory with no services left over.
 const chain = makeInMemoryVersionChain("notes");

@@ -249,7 +249,7 @@ const pages = (
   const heads = options.leaves === undefined ? store : options.leaves(store);
   const publication = makeInMemoryPublication({ chain, leaves: store, now: NOW });
   let viewer: Viewer = as(member);
-  const ops = defineSubtype({
+  const base = {
     type: "pages",
     access: ownedAccess({ draft: options.gated === true }),
     chain,
@@ -259,10 +259,14 @@ const pages = (
     followers: follows,
     toResource: toPage,
     locales: level,
-    hooks: options.hooks === undefined ? undefined : Effect.succeed(options.hooks),
-    publication:
-      options.gated === true ? { live: publication.live, facts: publication.facts } : undefined,
-  });
+  };
+  const hooked =
+    options.hooks === undefined ? base : { ...base, hooks: Effect.succeed(options.hooks) };
+  const ops = defineSubtype(
+    options.gated === true
+      ? { ...hooked, publication: { live: publication.live, facts: publication.facts } }
+      : hooked,
+  );
   const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
     Effect.suspend(() => {
       viewer = who;
@@ -492,7 +496,7 @@ describe("a localised leaf's read gate (pulpit#56)", () => {
         localised: true,
       });
       const publication = makeInMemoryPublication({ chain, leaves });
-      return defineSubtype({
+      const leaf = {
         type: "pages",
         access: ownedAccess({ draft: true, moderation: true }),
         chain,
@@ -502,8 +506,12 @@ describe("a localised leaf's read gate (pulpit#56)", () => {
         followers: follows,
         toResource: toPage,
         locales: defineLocaleLevel({ columns }),
-        publication: gated ? { live: publication.live, facts: publication.facts } : undefined,
-      });
+      };
+      return defineSubtype(
+        gated
+          ? { ...leaf, publication: { live: publication.live, facts: publication.facts } }
+          : leaf,
+      );
     };
     expect(declare(["title", "visibility"], false)).toThrow(SubtypeDeclarationError);
     expect(declare(["title", "ownerId"], false)).toThrow(SubtypeDeclarationError);

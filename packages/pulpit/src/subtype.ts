@@ -294,16 +294,13 @@ export interface FollowerSeam<Following, R> {
    * subquery in SQL, never a materialised array).
    */
   readonly following: (followerId: string) => Following;
-  /* oxlint-disable effect/prefer-option-over-null -- optional members are `?: T | undefined` (AGENTS.md → Conventions), so every existing follower seam (effect-auth's `IsFollower` included) still fits; the omitted key is "no group audience", read as such by every reader */
   /**
    * Whether `accountId` is a member of `groupId`: the single-row question a
    * `group` row asks. Absent, no account is.
    *
    * @since 0.2.0
    */
-  readonly isMember?:
-    | ((accountId: string, groupId: string) => Effect.Effect<boolean, never, R>)
-    | undefined;
+  readonly isMember?: (accountId: string, groupId: string) => Effect.Effect<boolean, never, R>;
   /**
    * The groups `accountId` is a member of, as the list filter's `in` set (a
    * subquery in SQL: `select group_id from memberships where account_id =
@@ -311,8 +308,7 @@ export interface FollowerSeam<Following, R> {
    *
    * @since 0.2.0
    */
-  readonly groups?: ((accountId: string) => Following) | undefined;
-  /* oxlint-enable effect/prefer-option-over-null */
+  readonly groups?: (accountId: string) => Following;
 }
 
 /**
@@ -417,8 +413,7 @@ export type ReadScope<Following> =
        *
        * @since 0.2.0
        */
-      // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no group audience"
-      readonly groups?: Following | undefined;
+      readonly groups?: Following;
     };
 
 /** A signed-in account's member scope; `groups` only when the seam answers it, so its absence is the key's. */
@@ -467,8 +462,7 @@ export interface OwnedFacts {
    *
    * @since 0.2.0
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no group"
-  readonly groupId?: string | undefined;
+  readonly groupId?: string;
 }
 
 /**
@@ -538,8 +532,7 @@ export type LeafAccess =
        *
        * @since 0.1.0
        */
-      // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so the existing `{ kind: "reference" }` declarations keep compiling and a caller can forward its own `undefined`; the omitted key is the absence, read as such by every reader
-      readonly followersOfColumn?: string | undefined;
+      readonly followersOfColumn?: string;
       /**
        * The view column naming the group a `group` row is shared with
        * (pulpit#194): the members of that group, as the audience seam's
@@ -549,8 +542,7 @@ export type LeafAccess =
        *
        * @since 0.2.0
        */
-      // oxlint-disable-next-line effect/prefer-option-over-null -- as `followersOfColumn`
-      readonly groupColumn?: string | undefined;
+      readonly groupColumn?: string;
     }
   | {
       readonly kind: "owned";
@@ -578,8 +570,7 @@ export type LeafAccess =
        *
        * @since 0.2.0
        */
-      // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so the existing owned declarations keep compiling; the omitted key is "no group column"
-      readonly groupColumn?: string | undefined;
+      readonly groupColumn?: string;
     };
 
 /**
@@ -589,13 +580,10 @@ export type LeafAccess =
  */
 export const ownedAccess = (
   options: {
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option`
-    readonly draft?: boolean | undefined;
-    // oxlint-disable-next-line effect/prefer-option-over-null -- as `draft`: the omitted key is "no moderation column"
-    readonly moderation?: boolean | undefined;
+    readonly draft?: boolean;
+    readonly moderation?: boolean;
     /** Declare the `groupId` group column (pulpit#194). */
-    // oxlint-disable-next-line effect/prefer-option-over-null -- as `draft`: the omitted key is "no group column"
-    readonly group?: boolean | undefined;
+    readonly group?: boolean;
   } = {},
 ): Extract<LeafAccess, { kind: "owned" }> => {
   const access: Extract<LeafAccess, { kind: "owned" }> = {
@@ -839,7 +827,7 @@ export interface VersionMeta {
  * @since 0.1.0
  */
 export interface VersionedResource {
-  // oxlint-disable-next-line effect/prefer-option-over-null -- a JSON:API resource object's optional member, `?: T | undefined` (AGENTS.md → Conventions)
+  // oxlint-disable-next-line effect/prefer-option-over-null -- a wire contract: a JSON:API resource object's optional `meta`, read structurally off effect-jsonapi's resource objects, which spell it `?: T | undefined`, so a bare `?: object` would refuse them
   readonly meta?: object | undefined;
 }
 
@@ -1086,8 +1074,7 @@ export interface PublicationDeclaration<Row extends LeafRow, Following, E, R> {
    * and verifying the token is the application's. Absent, no request
    * previews.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no preview grants"
-  readonly preview?: Effect.Effect<Option.Option<string>, never, R> | undefined;
+  readonly preview?: Effect.Effect<Option.Option<string>, never, R>;
 }
 
 /**
@@ -1122,11 +1109,9 @@ export class NotPublished extends Schema.TaggedError<
  */
 export interface PublishOptions {
   /** The version to make live; the head when omitted. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); omitted is the head
-  readonly version?: bigint | undefined;
+  readonly version?: bigint;
   /** When it takes effect; now when omitted, and a future instant schedules it. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); omitted is now
-  readonly at?: Date | undefined;
+  readonly at?: Date;
 }
 
 /**
@@ -1244,11 +1229,7 @@ export interface BeforeWriteHook<E, R> {
    * writing it per locale. A hook with nothing to do per locale passes the
    * event's patch through (`(event) => Effect.succeed(event.locales ?? {})`).
    */
-  /* oxlint-disable effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "refuses every locale patch" */
-  readonly locales?:
-    | ((event: BeforeWriteEvent) => Effect.Effect<LocalePatch, WriteRejected | E, R>)
-    | undefined;
-  /* oxlint-enable effect/prefer-option-over-null */
+  readonly locales?: (event: BeforeWriteEvent) => Effect.Effect<LocalePatch, WriteRejected | E, R>;
 }
 
 /**
@@ -1315,8 +1296,7 @@ export interface LifecycleHooks<Resource, E, R> {
    * cause at error level and goes on; `"defect"` dies with it, so the
    * handler fails with a defect although the write committed.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is the `"log"` default
-  readonly afterFailure?: "log" | "defect" | undefined;
+  readonly afterFailure?: "log" | "defect";
 }
 
 /**
@@ -1353,14 +1333,17 @@ export const noHooks = <Resource = never, E = never, R = never>(): LifecycleHook
 export const composeHooks = <Resource, E, R>(
   ...sets: ReadonlyArray<LifecycleHooks<Resource, E, R>>
 ): LifecycleHooks<Resource, E, R> => {
-  const afterFailure = Arr.findFirst(sets, (set) => set.afterFailure !== undefined);
-  return {
+  const composed: LifecycleHooks<Resource, E, R> = {
     before: Arr.flatMap(sets, (set) => set.before),
     after: Arr.flatMap(sets, (set) => set.after),
-    afterFailure: Option.getOrUndefined(
-      Option.flatMapNullishOr(afterFailure, (set) => set.afterFailure),
-    ),
   };
+  return Option.match(
+    Arr.findFirst(sets, (set) => Option.fromUndefinedOr(set.afterFailure)),
+    {
+      onNone: () => composed,
+      onSome: (afterFailure) => ({ ...composed, afterFailure }),
+    },
+  );
 };
 
 /** Run the before hooks in order, each shown the patch the previous one returned. */
@@ -1481,8 +1464,7 @@ const checkedOrder = (
 const sortableColumns = (
   type: string,
   columns: ReadonlySet<string>,
-  // oxlint-disable-next-line effect/prefer-option-over-null -- `SubtypeDefinition.sortable` as declared, an optional `?: T | undefined` field (AGENTS.md → Conventions)
-  sortable: ReadonlyArray<string> | undefined,
+  sortable?: ReadonlyArray<string>,
 ): ((column: string) => boolean) => {
   if (sortable === undefined) return (column) => columns.has(column);
   const undeclared = Arr.findFirst(sortable, (column) => !columns.has(column));
@@ -1534,8 +1516,7 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
    * reveals a hidden row nor changes a total (`SEC-AUTH-ENUM-001`). Declare
    * the list to sort only by what the resource exposes (pulpit#112).
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the every-declared-column default
-  readonly sortable?: ReadonlyArray<string> | undefined;
+  readonly sortable?: ReadonlyArray<string>;
   /**
    * The leaf's lifecycle hooks, read per write: an Effect, so the
    * application can hold them in a `Context` service and provide it with a
@@ -1543,8 +1524,7 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
    * {@link subtypeHandlers} once its transaction has committed. Omitted, the
    * leaf has none ({@link noHooks}), and a write reads nothing extra.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no hooks"
-  readonly hooks?: Effect.Effect<LifecycleHooks<Resource, E, R>, never, R> | undefined;
+  readonly hooks?: Effect.Effect<LifecycleHooks<Resource, E, R>, never, R>;
   /**
    * The leaf's searchable projection ({@link defineSearchProjection}), the
    * same declaration the application's search-view generator reads. Each
@@ -1552,8 +1532,7 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
    * {@link defineSubtype} throws {@link SubtypeDeclarationError}. Omitted,
    * the leaf is not searched.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "not searchable"
-  readonly search?: SearchProjection | undefined;
+  readonly search?: SearchProjection;
   /**
    * The leaf's locale level ({@link defineLocaleLevel}, pulpit#56): which of
    * its columns are translated, written and read per locale, while the rest
@@ -1562,8 +1541,7 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
    * {@link defineSubtype} throws {@link SubtypeDeclarationError}. Omitted,
    * the leaf is not localised and a write carrying a locale is refused.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "not localised"
-  readonly locales?: LocaleLevel | undefined;
+  readonly locales?: LocaleLevel;
   /**
    * The live pointer, opt-in (pulpit#46). With it, the view-private rung,
    * the corpus-write rung on a reference leaf and a row's own owner read
@@ -1571,8 +1549,7 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
    * hidden from them, which is what `draft` means on such a leaf).
    * Without it, head and live are one.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no live pointer"
-  readonly publication?: PublicationDeclaration<Row, Following, E, R> | undefined;
+  readonly publication?: PublicationDeclaration<Row, Following, E, R>;
 }
 
 /**
@@ -1604,8 +1581,7 @@ export interface ListRequest<Following = never> {
    * ranking by any sortable column, and the 400 which names are sortable;
    * never a hidden row or a total (see {@link SubtypeDefinition.sortable}).
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the default order
-  readonly orderBy?: ReadonlyArray<ListOrder> | undefined;
+  readonly orderBy?: ReadonlyArray<ListOrder>;
 }
 
 type Gate = Unauthorized | Forbidden;
@@ -1621,8 +1597,7 @@ export interface OwnersRequest {
   readonly limit: number;
   readonly offset: number;
   readonly includeDeleted: boolean;
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is every owner
-  readonly among?: ReadonlyArray<string> | undefined;
+  readonly among?: ReadonlyArray<string>;
 }
 
 /**
@@ -1633,8 +1608,7 @@ export interface OwnersRequest {
  * @since 0.1.0
  */
 export interface UpdateRequest extends RestoreRequest {
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no proposal", and a given value is itself an `Option`
-  readonly proposedBy?: Option.Option<string> | undefined;
+  readonly proposedBy?: Option.Option<string>;
 }
 
 /**
@@ -1647,8 +1621,7 @@ export interface RestoreRequest extends Precondition {
   readonly id: string;
   readonly patch: ChainPatch;
   /** A localised leaf's per-locale patch (pulpit#56); absent, every locale carries forward. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key carries every locale forward
-  readonly locales?: LocalePatch | undefined;
+  readonly locales?: LocalePatch;
 }
 
 /**
@@ -1661,8 +1634,7 @@ export interface CreateRequest {
   readonly id: Option.Option<string>;
   readonly state: ChainState;
   /** A localised leaf's locale level at version 0 (pulpit#56); absent, none. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no locale"
-  readonly locales?: LocaleStates | undefined;
+  readonly locales?: LocaleStates;
 }
 
 /**
@@ -2426,8 +2398,7 @@ const checkSearchProjection = (projection: SearchProjection, columns: ReadonlySe
  */
 export const defineSearchProjection = (declaration: {
   readonly fields: ReadonlyArray<SearchField>;
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is one fixed configuration
-  readonly languageColumn?: string | undefined;
+  readonly languageColumn?: string;
 }): SearchProjection => {
   if (!Arr.isReadonlyArrayNonEmpty(declaration.fields)) {
     throw new SubtypeDeclarationError({ message: "search declares no field" });
@@ -2561,7 +2532,7 @@ export interface ResourceCacheSeam<Resource, R> {
     id: string,
     resource: Resource,
     version: bigint,
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter is `?: T | undefined` (AGENTS.md → Conventions), so every existing three-argument cache still fits the seam; the omitted argument is "no locale"
+    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter, #302's half of the convention (pulpit#238 converts properties only), so every existing three-argument cache still fits the seam; the omitted argument is "no locale"
     locale?: string | undefined,
   ) => Effect.Effect<void, never, R>;
   /**
@@ -2733,8 +2704,7 @@ export interface SubtypeHandlersConfig<Resource, R> {
    *
    * @since 0.2.0
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so the existing configs keep compiling; the omitted key is an unlocalised leaf
-  readonly localised?: boolean | undefined;
+  readonly localised?: boolean;
 }
 
 /**
@@ -2930,11 +2900,8 @@ export const subtypeHandlers = <Resource, E, R>(
               }),
         ),
       ),
-    restoreVersion: (input) =>
-      write(
-        "restoreVersion",
-        ops.restoreVersion(input.id, input.version, { expectedVersion: input.expectedVersion }),
-      ),
+    restoreVersion: ({ id, version, ...precondition }) =>
+      write("restoreVersion", ops.restoreVersion(id, version, precondition)),
     publication: Option.map(ops.publication, (publication): PublicationOps<E, R> => ({
       publish: (id, options) => published("publish", publication.publish(id, options)),
       unpublish: (id) => published("unpublish", publication.unpublish(id)),
@@ -3234,7 +3201,7 @@ export const subtypeResourceHandlers = <
     Targets,
     Resource["type"]
   >,
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter is `?: T | undefined` (AGENTS.md → Conventions), so the existing two-argument calls keep compiling; the omitted argument is an unlocalised leaf
+  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter, #302's half of the convention (pulpit#238 converts properties only), so the existing two-argument calls keep compiling; the omitted argument is an unlocalised leaf
   locale?: LocaleWire<R> | undefined,
 ) => {
   const { type, listRequest, createInput, updateInput, ...rest } = config;

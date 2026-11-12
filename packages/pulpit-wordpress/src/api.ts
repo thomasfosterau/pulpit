@@ -2529,13 +2529,15 @@ export const defineWordPress = <R, Following = never>(
           Option.map(bound(type), (binding) => ({ type, owners: binding.owners })),
         ),
       );
+      const request = { limit: MAX_PAGE_LIMIT, offset: 0, includeDeleted: false };
       const page = yield* internal(
-        readableOwners(leaves, {
-          limit: MAX_PAGE_LIMIT,
-          offset: 0,
-          includeDeleted: false,
-          among: Option.getOrUndefined(among),
-        }),
+        readableOwners(
+          leaves,
+          Option.match(among, {
+            onNone: () => request,
+            onSome: (accounts) => ({ ...request, among: accounts }),
+          }),
+        ),
       );
       // The union of several leaves can pass one page; answering a short list would hide authors.
       if (page.total > page.rows.length) return yield* internalError();

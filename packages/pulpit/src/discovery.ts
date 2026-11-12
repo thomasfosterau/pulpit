@@ -366,11 +366,11 @@ export const defineDiscovery = <Row extends LeafRow, Resource, Following, E, R>(
       publishGated: leaf.publication !== undefined,
     });
   // The leaf's own reads, as the anonymous get them, each with the row it maps.
+  const { hooks: _hooks, ...unhooked } = leaf;
   const anonymous = defineSubtype<Row, Read<Row, Resource>, Following, E, R>({
-    ...leaf,
+    ...unhooked,
     viewer: Effect.succeedNone,
     toResource: (row) => ({ row, resource: leaf.toResource(row) }),
-    hooks: undefined,
   });
 
   /** One node's listed reads as items: its path read once, every locale's alternates the others'. */
