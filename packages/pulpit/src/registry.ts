@@ -92,13 +92,14 @@ export const RESOURCE_FLAGS = [
  */
 export type RegistryFlag = (typeof RESOURCE_FLAGS)[number];
 
-/* oxlint-disable effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option` */
 /**
  * One node in an application's registry tree. Marker levels carry no
- * `resource`; concrete leaves carry the `Resource.make` definition. The
- * capability flags are the membership predicates the families / unions
- * filter on; they must be literal `true` so the type-level derivation
- * ({@link PickResources}) can select them.
+ * `resource`; concrete leaves carry the `Resource.make` definition as
+ * `Option.some(resource)`. An absent `resource` or `id` reads as
+ * `Option.none()` (AGENTS.md → Conventions). The capability flags are the
+ * membership predicates the families / unions filter on; they must be literal
+ * `true` (or absent) so the type-level derivation ({@link PickResources}) can
+ * select them.
  *
  * @since 0.1.0
  */
@@ -107,26 +108,59 @@ export interface RegistryEntry {
   readonly key: string;
   /** Parent key in the settled tree — `Option.none()` only for the root. */
   readonly parent: Option.Option<string>;
-  /** The `Resource.make` definition; omitted for marker levels. */
-  readonly resource?: Resource.Any | undefined;
+  /** The `Resource.make` definition; absent (or `Option.none()`) for marker levels. */
+  readonly resource?: Option.Option<Resource.Any>;
   /** The application's id brand for this level. For resource leaves it must equal `resource.Id`. */
-  readonly id?: BrandedId | undefined;
+  readonly id?: Option.Option<BrandedId>;
   /** Page-able: has a `/type/<id>` route and is a page-family member. */
-  readonly pageable?: true | undefined;
+  readonly pageable?: true;
   /** Agent: an agent-family member. */
-  readonly agent?: true | undefined;
+  readonly agent?: true;
   /** Owned: `owner_id` + `visibility`, gated per viewer (never `referenceData`). */
-  readonly owned?: true | undefined;
+  readonly owned?: true;
   /** Reference data: corpus-written, proposable, publicly readable (never `owned`). */
-  readonly referenceData?: true | undefined;
+  readonly referenceData?: true;
   /** Searchable: a search plane emits it. */
-  readonly searchable?: true | undefined;
+  readonly searchable?: true;
   /** Routable: addressed by a path claim on its root node (`./paths`). */
-  readonly routable?: true | undefined;
+  readonly routable?: true;
   /** Localised: a locale level in its chain, its translated columns per locale (pulpit#56). */
-  readonly localised?: true | undefined;
+  readonly localised?: true;
 }
-/* oxlint-enable effect/prefer-option-over-null */
+
+/**
+ * An entry's resource: `Option.none()` for a marker level, whose `resource`
+ * is absent or `Option.none()`. Every reader in this module goes through it,
+ * and an application's {@link RegistryCheck} can too.
+ *
+ * @example
+ * ```ts
+ * import { strictEqual } from "node:assert";
+ * import { Resource } from "@thomasfosterau/effect-jsonapi";
+ * import { Registry } from "@thomasfosterau/pulpit";
+ * import * as Option from "effect/Option";
+ * import * as Schema from "effect/Schema";
+ *
+ * const PostResource = Resource.make("posts", { attributes: { title: Schema.String } });
+ *
+ * const marker = { key: "content", parent: Registry.root };
+ * const leaf = {
+ *   key: "posts",
+ *   parent: Registry.parent("content"),
+ *   resource: Option.some(PostResource),
+ * };
+ *
+ * strictEqual(Option.isNone(Registry.resourceOf(marker)), true);
+ * strictEqual(Option.contains(Registry.resourceOf(leaf), PostResource), true);
+ * ```
+ *
+ * @since 0.2.0
+ */
+export const resourceOf = (entry: RegistryEntry): Option.Option<Resource.Any> =>
+  entry.resource ?? Option.none();
+
+/** An entry's id brand: `Option.none()` when `id` is absent or `Option.none()`. */
+const idOf = (entry: RegistryEntry): Option.Option<BrandedId> => entry.id ?? Option.none();
 
 /**
  * Declare an entry's `parent` with its key literal preserved —
@@ -193,7 +227,7 @@ export const indexByKey = (
 
 /** A capability flag implies a resource: a marker level cannot be pageable / owned / …. */
 const checkFlagsHaveResource = (entry: RegistryEntry): void => {
-  if (entry.resource !== undefined) return;
+  if (Option.isSome(resourceOf(entry))) return;
   Option.map(
     Arr.findFirst(RESOURCE_FLAGS, (flag) => entry[flag] === true),
     (flag) => fail(`'${entry.key}' is flagged '${flag}' but declares no resource`),
@@ -209,13 +243,15 @@ const checkTrustAxis = (entry: RegistryEntry): void => {
 
 /** Id lockstep: a leaf's declared brand IS the resource's id, and its key IS the wire type. */
 const checkIdLockstep = (entry: RegistryEntry): void => {
-  if (entry.resource === undefined) return;
-  if (entry.id === undefined) {
+  const resource = resourceOf(entry);
+  if (Option.isNone(resource)) return;
+  const id = idOf(entry);
+  if (Option.isNone(id)) {
     fail(`leaf '${entry.key}' declares a resource but no ids.ts brand`);
-  } else if (!Object.is(entry.id, entry.resource.Id)) {
+  } else if (!Object.is(id.value, resource.value.Id)) {
     fail(`'${entry.key}' declares an id brand that is not the resource's own id (ids.ts drift)`);
-  } else if (entry.resource.type !== entry.key) {
-    fail(`'${entry.key}' key does not match its resource wire type '${entry.resource.type}'`);
+  } else if (resource.value.type !== entry.key) {
+    fail(`'${entry.key}' key does not match its resource wire type '${resource.value.type}'`);
   }
 };
 
@@ -258,8 +294,8 @@ const checkEntry = (
  *   {
  *     key: "posts",
  *     parent: Registry.parent("content"),
- *     resource: PostResource,
- *     id: PostResource.Id,
+ *     resource: Option.some(PostResource),
+ *     id: Option.some(PostResource.Id),
  *     owned: true,
  *   },
  * ] as const satisfies readonly Registry.RegistryEntry[];
@@ -279,7 +315,7 @@ const checkEntry = (
  *   () =>
  *     Registry.validateRegistry(REGISTRY, [
  *       (entry) =>
- *         entry.resource !== undefined && entry.pageable !== true
+ *         Option.isSome(Registry.resourceOf(entry)) && entry.pageable !== true
  *           ? Option.some(`leaf '${entry.key}' is not pageable`)
  *           : Option.none(),
  *     ]),
@@ -331,6 +367,21 @@ export const branchOf = <Root extends string>(
 // (registry-declaration) order, which `validateRegistry` guarantees.
 
 /**
+ * The resource an entry declares, at the type level: the `R` of its
+ * `resource: Option.Option<R>`, or `never` for a marker level. A marker's
+ * `resource` is absent or `Option.none()`, whose `R` is `never`, or, under a
+ * `satisfies readonly RegistryEntry[]`, the contextual `Resource.Any`; neither
+ * names a member, so both read as `never`.
+ */
+type DeclaredResource<Entry> = Entry extends {
+  readonly resource: Option.Option<infer R extends Resource.Any>;
+}
+  ? [Resource.Any] extends [R]
+    ? never
+    : R
+  : never;
+
+/**
  * The resources of every entry whose `Flag` capability is literally `true`, as a tuple.
  *
  * @since 0.1.0
@@ -344,9 +395,9 @@ export type PickResources<
   ...infer Rest extends readonly RegistryEntry[],
 ]
   ? Head extends Record<Flag, true>
-    ? Head extends { readonly resource: infer R extends Resource.Any }
-      ? PickResources<Rest, Flag, readonly [...Acc, R]>
-      : PickResources<Rest, Flag, Acc>
+    ? [DeclaredResource<Head>] extends [never]
+      ? PickResources<Rest, Flag, Acc>
+      : PickResources<Rest, Flag, readonly [...Acc, DeclaredResource<Head>]>
     : PickResources<Rest, Flag, Acc>
   : Acc;
 
@@ -368,9 +419,9 @@ export type PickChildren<
   ...infer Rest extends readonly RegistryEntry[],
 ]
   ? Head extends { readonly parent: Option.Option<Parent> }
-    ? Head extends { readonly resource: infer R extends Resource.Any }
-      ? PickChildren<Rest, Parent, readonly [...Acc, R]>
-      : PickChildren<Rest, Parent, Acc>
+    ? [DeclaredResource<Head>] extends [never]
+      ? PickChildren<Rest, Parent, Acc>
+      : PickChildren<Rest, Parent, readonly [...Acc, DeclaredResource<Head>]>
     : PickChildren<Rest, Parent, Acc>
   : Acc;
 
@@ -412,8 +463,8 @@ export const flaggedMembers = <const T extends readonly RegistryEntry[], Flag ex
 ): PickResources<T, Flag> =>
   asMemberTuple<PickResources<T, Flag>>(
     Arr.filterMap(entries, (entry): Result.Result<Resource.Any, void> =>
-      entry[flag] === true && entry.resource !== undefined
-        ? Result.succeed(entry.resource)
+      entry[flag] === true
+        ? Result.fromOption(resourceOf(entry), () => undefined)
         : Result.failVoid,
     ),
   );
@@ -444,8 +495,8 @@ export const branchMembers = <
   const byKey = indexByKey(entries);
   return asMemberTuple<PickChildren<T, Parents>>(
     Arr.filterMap(entries, (entry): Result.Result<Resource.Any, void> =>
-      entry.resource !== undefined && Option.contains(branchOf(entry, byKey, roots), root)
-        ? Result.succeed(entry.resource)
+      Option.contains(branchOf(entry, byKey, roots), root)
+        ? Result.fromOption(resourceOf(entry), () => undefined)
         : Result.failVoid,
     ),
   );
@@ -494,17 +545,16 @@ export const registryWireTypes = <Root extends string>(
   roots: ReadonlyArray<Root>,
 ): RegistryWireTypes<Root> => {
   const byKey = indexByKey(entries);
-  const flagged = (flag: RegistryFlag): ReadonlyArray<string> =>
-    Arr.filterMap(entries, (entry): Result.Result<string, void> =>
-      entry[flag] === true && entry.resource !== undefined
-        ? Result.succeed(entry.resource.type)
-        : Result.failVoid,
+  const typeOf = (entry: RegistryEntry): Result.Result<string, void> =>
+    Result.fromOption(
+      Option.map(resourceOf(entry), (resource) => resource.type),
+      () => undefined,
     );
+  const flagged = (flag: RegistryFlag): ReadonlyArray<string> =>
+    Arr.filterMap(entries, (entry) => (entry[flag] === true ? typeOf(entry) : Result.failVoid));
   const branch = (root: Root): ReadonlyArray<string> =>
-    Arr.filterMap(entries, (entry): Result.Result<string, void> =>
-      entry.resource !== undefined && Option.contains(branchOf(entry, byKey, roots), root)
-        ? Result.succeed(entry.resource.type)
-        : Result.failVoid,
+    Arr.filterMap(entries, (entry) =>
+      Option.contains(branchOf(entry, byKey, roots), root) ? typeOf(entry) : Result.failVoid,
     );
   // SAFETY: `R.fromEntries` erases the key union to `string`; the entries
   // are built from exactly `roots`, so every `Root` key is present.
