@@ -40,6 +40,7 @@ import {
   renditionFormat,
   renditionWidth,
   type MediaMetadata,
+  type RenditionPolicy,
 } from "../src/media.ts";
 import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/subtype.ts";
 import {
@@ -493,8 +494,17 @@ describe("defineRenditions", () => {
     expect(rendered).toEqual([]);
   });
 
-  it.each([
-    { label: "an empty width list", policy: { widths: [], formats: ["image/jpeg"] } },
+  /**
+   * A width list emptied at runtime, as a declaration built from data can be:
+   * typed non-empty, empty by the time the check reads it.
+   */
+  const emptiedWidths = (): RenditionPolicy => {
+    const widths: [number, ...Array<number>] = [320];
+    widths.pop();
+    return { widths, formats: ["image/jpeg"] };
+  };
+  const invalid: ReadonlyArray<{ readonly label: string; readonly policy: RenditionPolicy }> = [
+    { label: "an empty width list", policy: emptiedWidths() },
     { label: "descending widths", policy: { widths: [640, 320], formats: ["image/jpeg"] } },
     { label: "a repeated width", policy: { widths: [320, 320], formats: ["image/jpeg"] } },
     { label: "a fractional width", policy: { widths: [320.5], formats: ["image/jpeg"] } },
@@ -504,11 +514,11 @@ describe("defineRenditions", () => {
       policy: { widths: [320], formats: ["image/jpeg", "image/jpeg"] },
     },
     { label: "an empty format", policy: { widths: [320], formats: [""] } },
-  ])("throws MediaDeclarationError for $label", ({ policy }) => {
+  ];
+  it.each(invalid)("throws MediaDeclarationError for $label", ({ policy }) => {
     expect(() =>
       defineRenditions({
-        // SAFETY: the empty width list is the case under test; the declaration check must refuse it at runtime.
-        policy: policy as never,
+        policy,
         references: makeInMemoryMediaReferences(),
         leaves: [],
         transform: { render: () => Effect.void },
