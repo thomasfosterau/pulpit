@@ -873,7 +873,7 @@ export type _LocalePreferences = Assert<
 export type _LocaleWireKeys = Assert<
   Equals<
     keyof LocaleWire<never>,
-    "level" | "defaultLocale" | "acceptLanguage" | "contentLanguage" | "served"
+    "level" | "defaultLocale" | "acceptLanguage" | "contentLanguage" | "served" | "varied"
   >
 >;
 export type _LocaleWireLevel = Assert<Equals<LocaleWire<never>["level"], LocaleLevel>>;

@@ -945,6 +945,35 @@ export interface DistinctQuery<Following> {
 }
 
 /**
+ * What a localised list reads (pulpit#272): a `LeafStore.list` query plus
+ * the negotiated locale preferences, most preferred first. Over a
+ * localised view's `(id, locale)` rows it is **one row per node**: of the
+ * node's rows matching `where` whose locale is one of `locales`, the one
+ * whose locale comes first in `locales`. A node carrying none of them is
+ * absent. The chosen rows are then ordered and paged as `LeafStore.list`
+ * orders them, and `total` counts nodes, not locale rows. In SQL:
+ *
+ * ```sql
+ * SELECT * FROM (
+ *   SELECT DISTINCT ON (id) * FROM view
+ *   WHERE <where> AND locale = ANY($locales)
+ *   ORDER BY id, array_position($locales, locale)
+ * ) chosen
+ * ORDER BY <orderBy>, id LIMIT $limit OFFSET $offset
+ * ```
+ *
+ * @since 0.2.0
+ */
+export interface LocalisedListQuery<Following> {
+  readonly where: ListFilter<Following>;
+  readonly orderBy: ReadonlyArray<ListOrder>;
+  readonly limit: number;
+  readonly offset: number;
+  /** The locale tags to choose among, most preferred first; empty chooses none. */
+  readonly locales: ReadonlyArray<string>;
+}
+
+/**
  * The read seam over a leaf's fail-closed current-version view, plus the
  * owner stamp. `columns` is the view's column set — what the owned filter
  * checks its declaration against.
@@ -972,6 +1001,15 @@ export interface LeafStore<Row extends LeafRow, Following, E, R> {
     readonly limit: number;
     readonly offset: number;
   }) => Effect.Effect<Page<Row>, E, R>;
+  /**
+   * The localised list read (pulpit#272): one row per node, in the node's
+   * most preferred locale it carries (see {@link LocalisedListQuery} for
+   * the contract and its SQL shape). Applies no visibility policy. A view
+   * without a locale level has no locale rows, so it reads none.
+   *
+   * @since 0.2.0
+   */
+  readonly listLocalised: (query: LocalisedListQuery<Following>) => Effect.Effect<Page<Row>, E, R>;
   /**
    * The distinct values of `column` among the view rows matching `where`
    * (pulpit#186): `SELECT DISTINCT <column> … WHERE <where> AND <column> IS
@@ -1066,6 +1104,16 @@ export interface LiveView<Row extends LeafRow, Following, E, R> extends Pick<
     query: Parameters<LeafStore<Row, Following, E, R>["list"]>[0] & {
       readonly headFor: ListFilter<Following>;
     },
+  ) => Effect.Effect<Page<Row>, E, R>;
+  /**
+   * `LeafStore.listLocalised` over the rows {@link LiveView.list} chooses
+   * for the same `headFor` (pulpit#272): per node its head (for `headFor`)
+   * or its live version, then that version's most preferred locale row.
+   *
+   * @since 0.2.0
+   */
+  readonly listLocalised: (
+    query: LocalisedListQuery<Following> & { readonly headFor: ListFilter<Following> },
   ) => Effect.Effect<Page<Row>, E, R>;
 }
 
@@ -1811,6 +1859,24 @@ export interface SubtypeOps<Resource, E, R, Following = never> {
     request: ListRequest<Following>,
   ) => Effect.Effect<Page<Resource>, InvalidListOrder | E, R>;
   /**
+   * {@link SubtypeOps.list} for a localised leaf, falling back per node
+   * (pulpit#272): one item per node the viewer may list, in the first of
+   * `locales` the node carries, each with the locale it was served in. A
+   * node carrying none of them is omitted, and `total` counts nodes. It
+   * reads under exactly `list`'s scope (the same filter, the same
+   * `includeDeleted` rung and, on a publish-gated leaf, the same
+   * head-or-live choice), so a hidden row is never served in any locale
+   * (`SEC-AUTH-ENUM-001`). Pass the negotiated preferences
+   * ({@link localePreferences}). A leaf without a locale level lists
+   * nothing, as {@link SubtypeOps.getLocalised} finds nothing. Fails as
+   * `list` does.
+   *
+   * @since 0.2.0
+   */
+  readonly listLocalised: (
+    request: ListRequest<Following> & { readonly locales: ReadonlyArray<string> },
+  ) => Effect.Effect<Page<LocalisedResource<Resource>>, InvalidListOrder | E, R>;
+  /**
    * Gated like a write (`READ-009`): the history exposes every state,
    * private and deleted included. Fails as `update` does at the gate (on a
    * reference leaf, `NodeNotFound` for a row `get` hides from the caller,
@@ -2203,6 +2269,43 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     return { rows: page.rows.map(toResource), total: page.total };
   });
 
+  const listLocalised = Effect.fn(`${type}.listLocalised`)(function* (
+    request: ListRequest<Following> & { readonly locales: ReadonlyArray<string> },
+  ) {
+    const orderBy = yield* checkedOrder(type, isSortable, request.orderBy ?? []);
+    if (Option.isNone(localeLevel)) return { rows: [], total: 0 };
+    const viewer = yield* definition.viewer;
+    const locales = Arr.dedupe(request.locales);
+    const query = {
+      // `list`'s own scope, narrowed to the requested locales' rows.
+      where: and<Following>(
+        searchScopeFilter({ access, columns: leaves.columns, policy, followers }, viewer, request),
+        localeIn(locales),
+      ),
+      orderBy,
+      limit: Math.max(1, Math.min(Math.trunc(request.limit), MAX_PAGE_LIMIT)),
+      offset: Math.max(0, Math.trunc(request.offset)),
+      locales,
+    };
+    // The same head-or-live choice `list` makes.
+    const page = yield* Option.match(publication, {
+      onNone: () => leaves.listLocalised(query),
+      onSome: ({ live }) =>
+        readsHeadByRung(viewer)
+          ? leaves.listLocalised(query)
+          : live.listLocalised({ ...query, headFor: ownHeads(viewer) }),
+    });
+    // A row without one of the requested tags is a store that broke the
+    // contract: serve nothing for it rather than a locale nobody asked for.
+    const rows = Arr.filterMap(page.rows, (row) => {
+      const tag = row[LOCALE_COLUMN];
+      return P.isString(tag) && locales.includes(tag)
+        ? Result.succeed<LocalisedResource<Resource>>({ locale: tag, resource: toResource(row) })
+        : Result.failVoid;
+    });
+    return { rows, total: page.total };
+  });
+
   /**
    * A history read (`READ-009`): the viewer's {@link writer} gate on `id`,
    * then `read`. `getVersion` and `compare` both run through it, so their
@@ -2342,6 +2445,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     delete: softDelete,
     get,
     getLocalised,
+    listLocalised,
     owners,
     getMany,
     list,
@@ -2657,6 +2761,14 @@ export interface SubtypeHandlers<Resource, E, R> {
    * @since 0.2.0
    */
   readonly getLocalised: SubtypeOps<Resource, E, R>["getLocalised"];
+  /**
+   * The operations' per-node locale fallback list, unchanged: what
+   * {@link subtypeResourceHandlers} serves `list` through on a localised
+   * leaf (pulpit#272).
+   *
+   * @since 0.2.0
+   */
+  readonly listLocalised: SubtypeOps<Resource, E, R>["listLocalised"];
   readonly create: (
     input: CreateRequest,
   ) => Effect.Effect<
@@ -2911,6 +3023,7 @@ export const subtypeHandlers = <Resource, E, R>(
     list: ops.list,
     get: ops.get,
     getLocalised: ops.getLocalised,
+    listLocalised: ops.listLocalised,
     create: (input) => write("create", ops.create(input)),
     update: (input) => write("update", ops.update(input)),
     restore: (input) => write("restore", ops.restore(input)),
@@ -3085,6 +3198,15 @@ export interface LocaleWire<R> {
    * Accept-Language` on the response (and keys any cache it fills by it).
    */
   readonly served: (locale: string) => Effect.Effect<void, never, R>;
+  /**
+   * Called instead of `served` when a response carries no single locale (a
+   * localised list whose items fell back to different locales, or an empty
+   * one, pulpit#272): the application sets `Vary: Accept-Language` alone,
+   * so no cache answers another preference with this body.
+   *
+   * @since 0.2.0
+   */
+  readonly varied: Effect.Effect<void, never, R>;
 }
 
 /** The first tag of a `Content-Language` header; the default without one. */
@@ -3130,6 +3252,28 @@ const localisedGet =
       );
       yield* wire.served(found.locale);
       return found.resource;
+    });
+
+/**
+ * `list` over the per-node locale fallback (pulpit#272): the request's
+ * `Accept-Language` preferences, then the default. A page whose items all
+ * share a locale reports it through {@link LocaleWire.served}; any other
+ * reports {@link LocaleWire.varied}.
+ */
+const localisedList =
+  <Resource, E, R>(handlers: SubtypeHandlers<Resource, E, R>, wire: LocaleWire<R>) =>
+  (request: ListRequest): Effect.Effect<Page<Resource>, InvalidListOrder | E, R> =>
+    Effect.gen(function* () {
+      const asked = acceptLanguage(Option.getOrUndefined(yield* wire.acceptLanguage));
+      const page = yield* handlers.listLocalised({
+        ...request,
+        locales: localePreferences(asked, wire.defaultLocale),
+      });
+      const served = Arr.dedupe(Arr.map(page.rows, (row) => row.locale));
+      yield* served.length === 1 && Arr.isReadonlyArrayNonEmpty(served)
+        ? wire.served(served[0])
+        : wire.varied;
+      return { rows: Arr.map(page.rows, (row) => row.resource), total: page.total };
     });
 
 // ── effect-jsonapi's ResourceHandlers ─────────────────────────────────
@@ -3243,6 +3387,10 @@ export const subtypeResourceHandlers = <
     onNone: () => handlers.get,
     onSome: (negotiated) => localisedGet(handlers, negotiated),
   });
+  const list = Option.match(wire, {
+    onNone: () => handlers.list,
+    onSome: (negotiated) => localisedList(handlers, negotiated),
+  });
   // On a localised leaf, the payload's translated columns land in the
   // `Content-Language` locale (the default without one) and the rest stay
   // shared; one version of the whole node either way.
@@ -3302,7 +3450,7 @@ export const subtypeResourceHandlers = <
     hiddenWrite: { type, when: (error) => P.isTagged(error, "NodeNotFound") },
     ops: {
       list: (query) =>
-        Effect.map(handlers.list(listRequest(query)), (page) => ({
+        Effect.map(list(listRequest(query)), (page) => ({
           items: page.rows,
           totalCount: page.total,
         })),

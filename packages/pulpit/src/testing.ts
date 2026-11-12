@@ -108,6 +108,7 @@ import type {
   LeafStore,
   DistinctQuery,
   ListOrder,
+  LocalisedListQuery,
   Page,
   LiveView,
   PublicationFact,
@@ -229,6 +230,33 @@ const viewPage = (
     rows: matching.slice(query.offset, query.offset + query.limit),
     total: matching.length,
   };
+};
+
+/**
+ * A localised list page (pulpit#272): of the rows matching `where` whose
+ * locale is one of `locales`, per node the one whose locale comes first in
+ * `locales`, then ordered and paged as {@link viewPage} does, `total`
+ * counting nodes. `LeafStore.listLocalised`'s contract.
+ */
+const fallbackPage = (
+  rows: ReadonlyArray<LeafRow>,
+  query: LocalisedListQuery<InMemoryFollowing>,
+  now: Date,
+): Page<LeafRow> => {
+  const rank = (row: LeafRow): number => {
+    const tag = row[LOCALE_COLUMN];
+    return P.isString(tag) ? query.locales.indexOf(tag) : -1;
+  };
+  const chosen = Arr.reduce(
+    rows.filter((row) => rank(row) >= 0 && evaluate(query.where, row, contextAt(now))),
+    HashMap.empty<string, LeafRow>(),
+    (best, row) =>
+      Option.match(HashMap.get(best, row.id), {
+        onNone: () => HashMap.set(best, row.id, row),
+        onSome: (held) => (rank(row) < rank(held) ? HashMap.set(best, row.id, row) : best),
+      }),
+  );
+  return viewPage(HashMap.toValues(chosen), query, now);
 };
 
 /**
@@ -1138,6 +1166,8 @@ export const makeInMemoryLeafStore = (
     get: (id) => Effect.sync(() => Arr.findFirst(view(), (row) => row.id === id)),
     getMany: (ids) => Effect.sync(() => view().filter((row) => ids.includes(row.id))),
     list: (query) => Effect.map(instantOf(fixedNow), (now) => viewPage(listed(), query, now)),
+    listLocalised: (query) =>
+      Effect.map(instantOf(fixedNow), (now) => fallbackPage(listed(), query, now)),
     distinct: (query) =>
       Effect.map(instantOf(fixedNow), (now) => distinctPage(listed(), query, now)),
     ownerOf: (id) => Effect.sync(() => HashMap.get(owners, id)),
@@ -2007,6 +2037,10 @@ export const makeInMemoryPublication = (options: {
       ),
     list: (query) =>
       atNow((now) => Effect.map(chosen(query.headFor, now), (rows) => viewPage(rows, query, now))),
+    listLocalised: (query) =>
+      atNow((now) =>
+        Effect.map(chosen(query.headFor, now), (rows) => fallbackPage(rows, query, now)),
+      ),
     distinct: (query) =>
       atNow((now) =>
         Effect.map(chosen(query.headFor, now), (rows) => distinctPage(rows, query, now)),
@@ -2026,6 +2060,16 @@ export const makeInMemoryPublication = (options: {
       atNow((now) =>
         Effect.map(heads(), (rows) =>
           viewPage(
+            Arr.flatMap(rows, (row) => listed(headOf(row, now))),
+            query,
+            now,
+          ),
+        ),
+      ),
+    listLocalised: (query) =>
+      atNow((now) =>
+        Effect.map(heads(), (rows) =>
+          fallbackPage(
             Arr.flatMap(rows, (row) => listed(headOf(row, now))),
             query,
             now,
