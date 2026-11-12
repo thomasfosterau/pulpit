@@ -59,6 +59,12 @@ import {
 } from "@thomasfosterau/pulpit-drizzle-pg/documents";
 import type { DocumentStore } from "@thomasfosterau/pulpit/documents";
 import type { SearchBranch } from "@thomasfosterau/pulpit/search";
+import type { CloseValidity, EdgeRow, EdgeStore } from "@thomasfosterau/pulpit/edges";
+import {
+  makeEdgeStore,
+  makeEdgeTable,
+  type EdgeStoreEnd,
+} from "@thomasfosterau/pulpit-drizzle-pg/edges";
 import type { ProposalStore } from "@thomasfosterau/pulpit/proposals";
 import type { ExternalIdStore } from "@thomasfosterau/pulpit/reference-import";
 import {
@@ -104,6 +110,7 @@ export type _Root = Assert<
     | "Documents"
     | "Paths"
     | "Search"
+    | "Edges"
     | "Proposals"
     | "ExternalIds"
   >
@@ -302,6 +309,40 @@ export type _SearchBranchOptions = Assert<
     SearchBranchOptions,
     { readonly name: string; readonly weight?: number; readonly rank: SearchRank }
   >
+>;
+
+// ── ./edges ──────────────────────────────────────────────────────────────
+
+const related = makeEdgeTable({
+  schema,
+  name: "related",
+  identity: tables.root.identity,
+  ends: { fromId: "from_id", toId: "to_id" },
+  columns: { role: text("role") },
+  uniqueKey: ["fromId", "toId", "role"],
+});
+const edgeStore = makeEdgeStore({
+  table: related,
+  ends: {
+    from: { column: "fromId", view: treeViews.leaves.post },
+    to: { column: "toId", view: treeViews.leaves.post },
+  },
+  uniqueKey: ["fromId", "toId", "role"],
+  identity: tables.root.identity,
+  owners,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _EdgeStore = Assert<
+  Equals<
+    typeof edgeStore,
+    EdgeStore<EdgeRow, SQLWrapper, EffectDrizzleQueryError, Key> & {
+      readonly closeValidity: CloseValidity<EffectDrizzleQueryError, Key>;
+    }
+  >
+>;
+export type _EdgeStoreEnd = Assert<
+  Equals<EdgeStoreEnd, { readonly column: string; readonly view: PgView }>
 >;
 
 // ── ./proposals ──────────────────────────────────────────────────────────
