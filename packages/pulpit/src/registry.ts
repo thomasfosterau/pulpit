@@ -412,21 +412,6 @@ export type PickChildren<
   : Acc;
 
 /**
- * Bridge a runtime member array onto the precise member tuple recovered at the
- * type level. Declared with an `unknown` parameter so the widening happens
- * once, here, rather than as a cast at every projection — the array and the
- * tuple follow the same (registry-declaration) order, which
- * {@link validateRegistry} guarantees.
- */
-const asMemberTuple = <T extends ReadonlyArray<Schema.Top>>(
-  members: ReadonlyArray<Schema.Top>,
-): T =>
-  // SAFETY: every caller builds `members` by filtering the same entries the
-  // tuple type `T` was derived from, in the same order; the runtime array and
-  // the static tuple cannot disagree once `validateRegistry` has run.
-  members as T;
-
-/**
  * The `identifier` (linkage-ref) schema of each resource in a member tuple.
  *
  * @since 0.1.0
@@ -446,14 +431,19 @@ export type Identifiers<Members extends readonly Resource.Any[]> = {
 export const flaggedMembers = <const T extends readonly RegistryEntry[], Flag extends RegistryFlag>(
   entries: T,
   flag: Flag,
-): PickResources<T, Flag> =>
-  asMemberTuple<PickResources<T, Flag>>(
-    Arr.filterMap(entries, (entry): Result.Result<Resource.Any, void> =>
+): PickResources<T, Flag> => {
+  const members: ReadonlyArray<Schema.Top> = Arr.filterMap(
+    entries,
+    (entry): Result.Result<Resource.Any, void> =>
       entry[flag] === true
         ? Result.fromOption(resourceOf(entry), () => undefined)
         : Result.failVoid,
-    ),
   );
+  // SAFETY: `members` filters the same entries the tuple type was derived
+  // from, in the same (registry-declaration) order, so the runtime array and
+  // the static tuple cannot disagree once `validateRegistry` has run.
+  return members as PickResources<T, Flag>;
+};
 
 /**
  * Runtime counterpart of {@link PickChildren} over a whole branch: every
@@ -479,13 +469,17 @@ export const branchMembers = <
   _parents?: ReadonlyArray<Parents>,
 ): PickChildren<T, Parents> => {
   const byKey = indexByKey(entries);
-  return asMemberTuple<PickChildren<T, Parents>>(
-    Arr.filterMap(entries, (entry): Result.Result<Resource.Any, void> =>
+  const members: ReadonlyArray<Schema.Top> = Arr.filterMap(
+    entries,
+    (entry): Result.Result<Resource.Any, void> =>
       Option.contains(branchOf(entry, byKey, roots), root)
         ? Result.fromOption(resourceOf(entry), () => undefined)
         : Result.failVoid,
-    ),
   );
+  // SAFETY: `members` filters the same entries the tuple type was derived
+  // from, in the same (registry-declaration) order, so the runtime array and
+  // the static tuple cannot disagree once `validateRegistry` has run.
+  return members as PickChildren<T, Parents>;
 };
 
 /**
@@ -495,8 +489,12 @@ export const branchMembers = <
  */
 export const identifiersOf = <const Members extends readonly Resource.Any[]>(
   members: Members,
-): Identifiers<Members> =>
-  asMemberTuple<Identifiers<Members>>(Arr.map(members, (member) => member.identifier));
+): Identifiers<Members> => {
+  const identifiers = Arr.map(members, (member) => member.identifier);
+  // SAFETY: `Arr.map` keeps the tuple's length and order, member for member,
+  // which its `Array` return type cannot say.
+  return identifiers as Identifiers<Members>;
+};
 
 // ── Derived wire identity ─────────────────────────────────────────────
 

@@ -24,7 +24,9 @@ import {
 
 /** Whether two types are identical (not merely mutually assignable). */
 type Equals<A, B> =
-  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+  (<T>(value: T) => T extends A ? 1 : 2) extends <T>(value: T) => T extends B ? 1 : 2
+    ? true
+    : false;
 
 const CommentId = Schema.String.pipe(Schema.brand("CommentId"));
 const GardenId = Schema.String.pipe(Schema.brand("GardenId"));

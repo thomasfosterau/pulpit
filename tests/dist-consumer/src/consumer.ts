@@ -302,7 +302,9 @@ import {
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
-  (<X>() => X extends A ? 1 : 2) extends <X>() => X extends B ? 1 : 2 ? true : false;
+  (<X>(value: X) => X extends A ? 1 : 2) extends <X>(value: X) => X extends B ? 1 : 2
+    ? true
+    : false;
 
 // ── content ──────────────────────────────────────────────────────────────
 
