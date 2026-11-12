@@ -1817,7 +1817,7 @@ Filled by the application for each family it throttles (pulpit#199); no library 
 
 ### `PublicationStore<E, R>` and `LiveView<Row, Following, E, R>`: the live pointer
 
-Filled by the application for a publish-gated leaf (pulpit#46).
+Filled by `@thomasfosterau/pulpit-drizzle-pg`'s `makePublications` over effect-drizzle-ext's pointer level for a publish-gated leaf (pulpit#46, pulpit#247).
 
 The publication log is an append-only table: `node_id`, `version` (`bigint`, `NULL` for an unpublish, with `(node_id, version)` a foreign key to the root version table), `at`, `actor_id`, `recorded_at`, plus a serial `seq` for record order. Its methods:
 
