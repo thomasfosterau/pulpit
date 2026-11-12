@@ -28,6 +28,7 @@ import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
 import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import type { PointerTable } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
 import type { ListFilter } from "@thomasfosterau/pulpit/filter";
+import type { SearchBranch } from "@thomasfosterau/pulpit/search";
 import type {
   LeafRow,
   LeafStore,
@@ -56,11 +57,13 @@ import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import type { FilterColumns } from "./filter.ts";
 import { renderListFilter } from "./filter.ts";
+import type { SearchBranchOptions } from "./search.ts";
 import { isNodeId } from "./internal/node-id.ts";
 import type { NodeOwnerTable, StoreQueryError } from "./internal/owners.ts";
 import {
   readsOver,
   ownedSelection,
+  searchOver,
   sourceOf,
   storeOver,
   viewId,
@@ -78,6 +81,16 @@ export interface PublishGated<E, I> {
   readonly facts: PublicationStore<E, I>;
   readonly live: LiveView<LeafRow, SQLWrapper, E, I>;
   readonly leaves: LeafStore<LeafRow, SQLWrapper, E, I>;
+  /**
+   * The leaf's `SearchBranch`, one value for every viewer: each request
+   * ranks the rows `live.list` reads for its `headFor` (pulpit#346: per
+   * node, its head when it matches `headFor`, else its live row), in the
+   * same statement as its scope (`./search`'s `makeSearchBranch`
+   * contract). The caller passes the kernel's `searchHeadFor(leaf,
+   * viewer)` as `headFor`, so a reader's search never scores a head's
+   * unpublished text and an owner's finds their own.
+   */
+  readonly searchBranch: (options: SearchBranchOptions) => SearchBranch<SQLWrapper, E, I>;
 }
 
 /**
@@ -224,6 +237,8 @@ export const makePublications = <Leaf extends string, I, Relations extends AnyRe
       facts: factsStore(log, CurrentTransaction),
       live,
       leaves: storeOver(leaf, heads(`${leaf}_rows`), owners, CurrentTransaction),
+      searchBranch: (options) =>
+        searchOver((request) => chosen(request.headFor), options, CurrentTransaction),
     };
   };
 
