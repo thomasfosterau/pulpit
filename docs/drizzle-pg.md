@@ -15,6 +15,7 @@ The module guide for [`@thomasfosterau/pulpit-drizzle-pg`](../packages/pulpit-dr
 - **Landed:** the localised live view and gated store of a publish-gated keyed leaf ([`./publication`](#publication), pulpit#343), checked against the kernel's in-memory publication over a localised store on PostgreSQL.
 - **Landed:** the `ProposalStore` ([`./proposals`](#proposals), pulpit#355), checked against the kernel's in-memory store on PostgreSQL, its lock against a second transaction.
 - **Landed:** the `EdgeStore` ([`./edges`](#edges), pulpit#356), checked against the kernel's in-memory store on PostgreSQL, `members` through a leaf store's list and `countAt`'s lock against a second transaction.
+- **Landed:** the `ExternalIdStore` ([`./external-ids`](#external-ids), pulpit#359), checked against the kernel's in-memory store on PostgreSQL.
 - **Next:** the other stores that aren't tree-bound (reports, budgets, working copies, erasure, embeddings, social and notification tables), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
 
 ## End to end
@@ -304,6 +305,18 @@ The kernel's `EdgeStore` ([seams.md → `EdgeStore`](seams.md), pulpit#356), one
   - An id that is no canonical UUID names no edge and no node.
 
 The integration suite checks every method against the kernel's `makeInMemoryEdgeStore` over the same writes, under filters over the edge and each end. It also renders `members` through a leaf store's list, checks the unique key with a `NULL` in it, and runs `countAt`'s lock against a second transaction (a second lock fails `NOWAIT`; an insert keyed to the node goes through).
+
+## `./external-ids`
+
+The kernel's `ExternalIdStore` ([seams.md → `ExternalIdStore`](seams.md), pulpit#359): `./reference-import`'s links between an authority's identifiers (a Wikidata QID, a DOI, an ISBN) and a tree's nodes.
+
+- **`makeExternalIdTable({ schema, identity, name? })`** (`external_id` by default) has the columns `authority`, `external_id`, `node_id` (referencing the identity row, cascading) and `baseline` (`jsonb`, nullable). Its primary key is `(authority, external_id)`, and `(authority, node_id)` is unique.
+- **`makeExternalIdStore({ table, CurrentTransaction })`** binds the store:
+  - **`lookup`** is one `WHERE authority = $1 AND external_id IN (…)` read: none for no id, at most `MAX_SET_VALUES` ids.
+  - **`link`** is `INSERT … ON CONFLICT DO NOTHING` (either key). It answers `"linked"` when written, otherwise `"present"` when the stored link names this node and `"taken"` when not.
+  - **`recordBaseline`** replaces the baseline, bound as its JSON text. A baseline holding a `Date` or a `bigint` (no JSON) is a defect.
+
+The integration suite checks every answer against the kernel's `makeInMemoryExternalIdStore` and checks that a node's purge cascades to its links.
 
 ## `./search`
 
