@@ -432,9 +432,7 @@ describe("human edits (humanLineageHook)", () => {
     ).toEqual({
       fr: { title: "Y" },
     });
-    expect(stampHumanLineage(declaration, { prior: Option.none() })).toEqual(
-      {},
-    );
+    expect(stampHumanLineage(declaration, { prior: Option.none() })).toEqual({});
   });
 
   it("is a subtype before hook that passes the shared patch through", async () => {
