@@ -123,6 +123,7 @@ import {
 } from "./filter.ts";
 import { byCodePoint } from "./internal/list-order.ts";
 import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
+import { qOf } from "./internal/qvalue.ts";
 import {
   canViewReferenceRow,
   groupArm,
@@ -610,7 +611,7 @@ export const ownedAccess = (
  */
 export const ownedListFilter = <Following>(
   access: Extract<LeafAccess, { kind: "owned" }>,
-  viewColumns: ReadonlySet<string>,
+  viewColumns: HashSet.HashSet<string>,
   scope: ReadScope<Following>,
 ): ListFilter<Following> => {
   if (!declaresColumns(access, viewColumns)) return never;
@@ -682,7 +683,7 @@ export const softDeleteFilter = <Following>(
 export const referencePrivacyFilter = <Following>(
   viewer: Viewer,
   policy: AccessPolicy,
-  viewColumns: ReadonlySet<string>,
+  viewColumns: HashSet.HashSet<string>,
   followersArm: Option.Option<{
     readonly access: Extract<LeafAccess, { kind: "reference" }>;
     readonly followers: FollowerSeam<Following, unknown>;
@@ -970,7 +971,7 @@ export interface LocalisedListQuery<Following> {
  */
 export interface LeafStore<Row extends LeafRow, Following, E, R> {
   /** The view's column names; an owned declaration naming a column outside this set reads nothing (`get`, `getMany` or `list`). */
-  readonly columns: ReadonlySet<string>;
+  readonly columns: HashSet.HashSet<string>;
   /** One row of the current-version view by id, or none. Applies no visibility policy. */
   readonly get: (id: string) => Effect.Effect<Option.Option<Row>, E, R>;
   /** One `id = ANY($ids)` read, never `ids.length` sequential gets. */
@@ -1540,11 +1541,11 @@ const checkedOrder = (
  */
 const sortableColumns = (
   type: string,
-  columns: ReadonlySet<string>,
+  columns: HashSet.HashSet<string>,
   sortable?: ReadonlyArray<string>,
 ): ((column: string) => boolean) => {
-  if (sortable === undefined) return (column) => columns.has(column);
-  const undeclared = Arr.findFirst(sortable, (column) => !columns.has(column));
+  if (sortable === undefined) return (column) => HashSet.has(columns, column);
+  const undeclared = Arr.findFirst(sortable, (column) => !HashSet.has(columns, column));
   if (Option.isSome(undeclared)) {
     throw new SubtypeDeclarationError({
       message: `${type}: sortable names '${undeclared.value}', which is not a column of the view`,
@@ -2035,14 +2036,8 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
 
   const publication = Option.fromUndefinedOr(definition.publication);
 
-  /** Whether the viewer's rung reads every head: the view-private rung, or a reference leaf's corpus writers. */
-  const readsHeadByRung = (viewer: Viewer): boolean =>
-    Option.exists(
-      viewer,
-      (account) =>
-        policy.canViewPrivate(account) ||
-        (access.kind === "reference" && policy.canWriteCorpus(account)),
-    );
+  /** Whether the viewer's rung reads every head (see {@link readsEveryHead}). */
+  const readsHeadByRung = (viewer: Viewer): boolean => readsEveryHead(access, policy, viewer);
 
   /** Whether the viewer reads this node's head: by rung, or as its owner. */
   const readsHeadOf = (viewer: Viewer, head: Row): boolean =>
@@ -2235,14 +2230,8 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     return HashMap.fromIterable(Arr.map(shown, (row) => [row.id, toResource(row)] as const));
   });
 
-  /** The heads a viewer below the head-reading rungs reads: their own, on an owned leaf. */
-  const ownHeads = (viewer: Viewer): ListFilter<Following> =>
-    access.kind === "owned"
-      ? Option.match(viewer, {
-          onNone: (): ListFilter<Following> => never,
-          onSome: (account) => eq(access.ownerColumn, account.id),
-        })
-      : never;
+  /** The heads a viewer below the head-reading rungs reads (see {@link ownHeadsOf}). */
+  const ownHeads = (viewer: Viewer): ListFilter<Following> => ownHeadsOf(access, viewer);
 
   const list = Effect.fn(`${type}.list`)(function* (request: ListRequest<Following>) {
     const orderBy = yield* checkedOrder(type, isSortable, request.orderBy ?? []);
@@ -2506,12 +2495,12 @@ export interface SearchProjection {
   readonly languageColumn: Option.Option<string>;
 }
 
-const checkSearchProjection = (projection: SearchProjection, columns: ReadonlySet<string>) => {
+const checkSearchProjection = (projection: SearchProjection, columns: HashSet.HashSet<string>) => {
   const named = [
     ...Arr.map(projection.fields, (field) => field.column),
     ...Option.toArray(projection.languageColumn),
   ];
-  const undeclared = Arr.findFirst(named, (column) => !columns.has(column));
+  const undeclared = Arr.findFirst(named, (column) => !HashSet.has(columns, column));
   if (Option.isSome(undeclared)) {
     throw new SubtypeDeclarationError({
       message: `search names '${undeclared.value}', which is not a column of the view`,
@@ -2590,7 +2579,7 @@ export const defineSearchProjection = (declaration: {
 export const searchScopeFilter = <Following>(
   leaf: {
     readonly access: LeafAccess;
-    readonly columns: ReadonlySet<string>;
+    readonly columns: HashSet.HashSet<string>;
     readonly policy: AccessPolicy;
     readonly followers: FollowerSeam<Following, unknown>;
   },
@@ -2608,6 +2597,65 @@ export const searchScopeFilter = <Following>(
     request.where,
   );
 };
+
+/** Whether the viewer's rung reads every head: the view-private rung, or a reference leaf's corpus writers. */
+const readsEveryHead = (access: LeafAccess, policy: AccessPolicy, viewer: Viewer): boolean =>
+  Option.exists(
+    viewer,
+    (account) =>
+      policy.canViewPrivate(account) ||
+      (access.kind === "reference" && policy.canWriteCorpus(account)),
+  );
+
+/** The heads a viewer below the head-reading rungs reads: their own, on an owned leaf. */
+const ownHeadsOf = <Following>(access: LeafAccess, viewer: Viewer): ListFilter<Following> =>
+  access.kind === "owned"
+    ? Option.match(viewer, {
+        onNone: (): ListFilter<Following> => never,
+        onSome: (account) => eq(access.ownerColumn, account.id),
+      })
+    : never;
+
+/**
+ * The heads a search over one publish-gated leaf ranks for the viewer
+ * (pulpit#346): the `headFor` {@link defineSubtype}'s `list` hands
+ * {@link LiveView}'s `list`, for a search's `BranchRequest.headFor`
+ * (`./search`). Every head (`always`) for a viewer on a head-reading rung
+ * (the view-private rung, or a reference leaf's corpus writers), the
+ * viewer's own (`eq(ownerColumn, id)`) on an owned leaf, and none
+ * (`never`) otherwise, the anonymous reader included. A branch then ranks,
+ * per node, the head when it matches and the live row otherwise, so it
+ * scores exactly the rows `list` would show. Meaningless on an ungated
+ * leaf, whose branches ignore it.
+ *
+ * @example
+ * ```ts
+ * import { deepStrictEqual } from "node:assert";
+ * import * as Option from "effect/Option";
+ * import { never } from "@thomasfosterau/pulpit/filter";
+ * import { ownedAccess, searchHeadFor, type AccessPolicy } from "@thomasfosterau/pulpit/subtype";
+ *
+ * const policy: AccessPolicy = {
+ *   canViewPrivate: (account) => account.role === "admin",
+ *   canViewDeleted: () => false,
+ *   canModerate: () => false,
+ *   canWriteCorpus: () => false,
+ * };
+ * const leaf = { access: ownedAccess({ draft: true }), policy };
+ * deepStrictEqual(searchHeadFor(leaf, Option.none()), never);
+ * deepStrictEqual(
+ *   searchHeadFor(leaf, Option.some({ id: "u-1", role: "member" })),
+ *   { kind: "eq", column: "ownerId", value: "u-1" },
+ * );
+ * ```
+ *
+ * @since 0.2.0
+ */
+export const searchHeadFor = <Following>(
+  leaf: { readonly access: LeafAccess; readonly policy: AccessPolicy },
+  viewer: Viewer,
+): ListFilter<Following> =>
+  readsEveryHead(leaf.access, leaf.policy, viewer) ? always : ownHeadsOf(leaf.access, viewer);
 
 /**
  * Hydrate ranked search hits through the leaf's gated `getMany`: one read
@@ -2678,8 +2726,7 @@ export interface ResourceCacheSeam<Resource, R> {
     id: string,
     resource: Resource,
     version: bigint,
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter, #302's half of the convention (pulpit#238 converts properties only), so every existing three-argument cache still fits the seam; the omitted argument is "no locale"
-    locale?: string | undefined,
+    locale?: string,
   ) => Effect.Effect<void, never, R>;
   /**
    * Evict the resource as of `version`, which a later `set` must reach to
@@ -3125,19 +3172,9 @@ interface WeightedRange {
   readonly index: number;
 }
 
-/** An RFC 9110 qvalue: `0`, `1` or `0.` / `1.` with up to three decimals (`1.` only zeros). */
-const QVALUE = /^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/;
-
 const weightedRange = (range: string, index: number) => {
   const [tag = "", ...parameters] = Arr.map(range.split(";"), Str.trim);
-  const weight = Arr.findFirst(parameters, (parameter) => /^q=/i.test(parameter));
-  const q = Option.match(weight, {
-    onNone: () => 1,
-    onSome: (parameter) => {
-      const value = parameter.slice(2).trim();
-      return QVALUE.test(value) ? Number(value) : Number.NaN;
-    },
-  });
+  const q = qOf(parameters);
   return tag === "" || tag === "*" || !(q > 0)
     ? Result.failVoid
     : Result.succeed<WeightedRange>({ tag, q, index });
@@ -3388,8 +3425,7 @@ export const subtypeResourceHandlers = <
     Targets,
     Resource["type"]
   >,
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter, #302's half of the convention (pulpit#238 converts properties only), so the existing two-argument calls keep compiling; the omitted argument is an unlocalised leaf
-  locale?: LocaleWire<R> | undefined,
+  locale?: LocaleWire<R>,
 ) => {
   const { type, listRequest, createInput, updateInput, ...rest } = config;
   const wire = Option.fromUndefinedOr(locale);
@@ -3534,7 +3570,7 @@ const PUBLICATION_COLUMNS: ReadonlyArray<string> = ["draft", "publishedAt"];
 
 const checkLocaleLevel = (
   level: LocaleLevel,
-  columns: ReadonlySet<string>,
+  columns: HashSet.HashSet<string>,
   gated: ReadonlyArray<string>,
 ) => {
   const gate = Arr.findFirst(level.columns, (column) => gated.includes(column));
@@ -3545,7 +3581,7 @@ const checkLocaleLevel = (
   }
   const undeclared = Arr.findFirst(
     [...level.columns, LOCALE_COLUMN],
-    (column) => !columns.has(column),
+    (column) => !HashSet.has(columns, column),
   );
   if (Option.isSome(undeclared)) {
     throw new SubtypeDeclarationError({

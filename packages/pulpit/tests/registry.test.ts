@@ -104,8 +104,8 @@ describe("registry — derived wire identity", () => {
   it("projects each branch from the tree walk, a marker level included", () => {
     // A leaf hanging off the `place` marker is an entity exactly as one
     // hanging off `entity` is.
-    expect(wire.branches.entity).toEqual(["gardens", "taxa"]);
-    expect(wire.branches.content).toEqual(["comments"]);
+    expect(HashMap.get(wire.branches, "entity")).toEqual(Option.some(["gardens", "taxa"]));
+    expect(HashMap.get(wire.branches, "content")).toEqual(Option.some(["comments"]));
   });
 
   it("projects the capability subsets in registry order", () => {
@@ -182,7 +182,7 @@ describe("registry — construction-time validation", () => {
     expect(wire.referenceData).toEqual([]);
     expect(wire.pageable).toEqual([]);
     expect(wire.agent).toEqual([]);
-    expect(wire.branches.node).toEqual(["comments"]);
+    expect(HashMap.get(wire.branches, "node")).toEqual(Option.some(["comments"]));
     expect(flaggedMembers(entries, "pageable")).toEqual([]);
     expect(flaggedMembers(entries, "owned")).toEqual([CommentResource]);
     expect(branchMembers(entries, "node", ["node"])).toEqual([CommentResource]);

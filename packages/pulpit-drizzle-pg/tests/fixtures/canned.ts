@@ -40,6 +40,11 @@ export const cannedTransaction = (rows: ReadonlyArray<object>) => {
           "insert",
           "values",
           "onConflictDoNothing",
+          "onConflictDoUpdate",
+          "for",
+          "update",
+          "set",
+          "delete",
           "returning",
         ],
         (method) =>

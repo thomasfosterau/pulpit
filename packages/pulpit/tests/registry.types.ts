@@ -22,6 +22,9 @@ import {
   type RegistryEntry,
 } from "../src/registry.ts";
 
+/** Whether `A` is assignable to `B`. */
+type Assignable<A, B> = [A] extends [B] ? true : false;
+
 /** Whether two types are identical (not merely mutually assignable). */
 type Equals<A, B> =
   (<T>(value: T) => T extends A ? 1 : 2) extends <T>(value: T) => T extends B ? 1 : 2
@@ -63,8 +66,8 @@ export const ownedIsTuple: Equals<
   typeof owned,
   readonly [typeof GardenResource, typeof CommentResource]
 > = true;
-// @ts-expect-error -- the tuple is exact: no widened `Resource.Any[]`
-export const ownedNotWidened: Equals<typeof owned, readonly Resource.Any[]> = true;
+// The tuple is exact: no widened `Resource.Any[]`.
+export const ownedNotWidened: Equals<typeof owned, readonly Resource.Any[]> = false;
 
 export const referenceData = flaggedMembers(REGISTRY, "referenceData");
 export const nothingFlagged: Equals<typeof referenceData, readonly []> = true;
@@ -82,8 +85,8 @@ export const entityIsTuple: Equals<typeof entity, readonly [typeof GardenResourc
 export const ContentBranch = Schema.Union(content);
 export type ContentBranch = typeof ContentBranch.Type;
 export const discriminated: "comments" = ContentBranch.Type.type;
-// @ts-expect-error -- a garden is not in the content branch
-export const notInBranch: "gardens" = ContentBranch.Type.type;
+// A garden is not in the content branch.
+export const notInBranch: Assignable<ContentBranch["type"], "gardens"> = false;
 
 // ── An absent member is omitted ──
 //
@@ -93,12 +96,17 @@ export const notInBranch: "gardens" = ContentBranch.Type.type;
 // (AGENTS.md → Conventions).
 
 export const marker: RegistryEntry = { key: "node", parent: root };
-// @ts-expect-error -- a flag is literally `true` or absent, never `false`
-export const falseFlag: RegistryEntry = { key: "node", parent: root, pageable: false };
-// @ts-expect-error -- an absent resource is omitted, never `undefined`
-export const undefinedResource: RegistryEntry = { key: "node", parent: root, resource: undefined };
-// @ts-expect-error -- an absent id is omitted, never `undefined`
-export const undefinedId: RegistryEntry = { key: "node", parent: root, id: undefined };
+/** A registry entry whose `Key` member holds exactly `Value`. */
+type With<Key extends keyof RegistryEntry, Value> = Omit<RegistryEntry, Key> & {
+  readonly [K in Key]: Value;
+};
+// A flag is literally `true` or absent, never `false`.
+export const trueFlag: Assignable<With<"pageable", true>, RegistryEntry> = true;
+export const falseFlag: Assignable<With<"pageable", false>, RegistryEntry> = false;
+// An absent resource is omitted, never `undefined`.
+export const undefinedResource: Assignable<With<"resource", undefined>, RegistryEntry> = false;
+// An absent id is omitted, never `undefined`.
+export const undefinedId: Assignable<With<"id", undefined>, RegistryEntry> = false;
 
 const EXPLICIT = [
   { key: "node", parent: root },

@@ -373,8 +373,7 @@ export interface AudienceOps<E, R> {
   readonly addMember: (
     groupId: string,
     accountId: string,
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter is `?: T | undefined` (AGENTS.md → Conventions); the omitted value is `member`
-    role?: MembershipRole | undefined,
+    role?: MembershipRole,
   ) => Effect.Effect<
     { readonly changed: boolean },
     Unauthorized | Forbidden | GroupNotFound | E,
@@ -433,8 +432,7 @@ export interface AudienceOps<E, R> {
   readonly invite: (
     groupId: string,
     accountId: string,
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter is `?: T | undefined` (AGENTS.md → Conventions); the omitted value is `member`
-    role?: MembershipRole | undefined,
+    role?: MembershipRole,
   ) => Effect.Effect<
     { readonly changed: boolean },
     Unauthorized | Forbidden | GroupNotFound | SelfInvitation | AlreadyMember | E,

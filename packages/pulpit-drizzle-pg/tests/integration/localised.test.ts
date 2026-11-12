@@ -16,6 +16,7 @@ import { getTableName, sql } from "drizzle-orm";
 import * as Arr from "effect/Array";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as HashSet from "effect/HashSet";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
@@ -193,6 +194,6 @@ describe("the localised LeafStore agrees with the in-memory one", () => {
     expect(Option.map(await run(store.get(id(4))), (row) => row["title"])).toEqual(
       Option.some("four"),
     );
-    expect(store.columns.has("locale")).toBe(true);
+    expect(HashSet.has(store.columns, "locale")).toBe(true);
   });
 });

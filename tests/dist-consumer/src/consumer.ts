@@ -20,6 +20,7 @@ import {
   Documents,
   Edges,
   Pages,
+  Media,
   Paths,
   Purge,
   Erasure,
@@ -34,6 +35,7 @@ import {
   Discovery,
   Relations,
   Translation,
+  ReferenceImport,
   Proposals,
   Registry,
   WorkingCopy,
@@ -130,6 +132,7 @@ import {
   type LocaleWire,
   defineSearchProjection,
   hydrateSearchHits,
+  searchHeadFor,
   searchScopeFilter,
   type SearchField,
   type SearchProjection,
@@ -218,6 +221,16 @@ import {
   resolveLocalised,
   type LocalisedResolution,
 } from "@thomasfosterau/pulpit/pages";
+import {
+  defineAlbum,
+  defineRenditions,
+  mediaResourceFields,
+  renditionFormat,
+  renditionWidth,
+  type MediaItem,
+  type RenditionNotFound,
+  type RenditionOps,
+} from "@thomasfosterau/pulpit/media";
 
 import type { PublicationFact, PublicationOps, SubtypeOps } from "@thomasfosterau/pulpit/subtype";
 import { defineWorkingCopy } from "@thomasfosterau/pulpit/working-copy";
@@ -236,6 +249,7 @@ import {
   hybridSearch,
   type EmbeddingBatch,
   type EmbeddingMismatch,
+  type BranchRequest,
   type FusedHit,
   type SearchBranch,
 } from "@thomasfosterau/pulpit/search";
@@ -301,6 +315,14 @@ import {
   type SweepSummary,
   type TranslationOps,
 } from "@thomasfosterau/pulpit/translation";
+import {
+  defineReferenceImport,
+  type ExternalIdStore,
+  type ImportSummary,
+  type ImportBatchTooLarge,
+  type ReferenceImportOps,
+  type UnknownAuthority,
+} from "@thomasfosterau/pulpit/reference-import";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -388,7 +410,7 @@ export type _OwnedBarrel = Assert<
 
 export const wire = registryWireTypes(REGISTRY, ["content"] as const);
 export type _Wire = Assert<
-  Equals<typeof wire.branches, { readonly content: ReadonlyArray<string> }>
+  Equals<typeof wire.branches, HashMap.HashMap<"content", ReadonlyArray<string>>>
 >;
 export type _WireRoutable = Assert<Equals<typeof wire.routable, ReadonlyArray<string>>>;
 
@@ -919,6 +941,9 @@ export type _SearchScopeRequest = Assert<
     Pick<ListRequest<Subquery>, "includeDeleted" | "where">
   >
 >;
+export type _SearchHeadFor = Assert<
+  Equals<ReturnType<typeof searchHeadFor<Subquery>>, ListFilter<Subquery>>
+>;
 export type _HydrateSearchHits = Assert<
   Equals<
     ReturnType<
@@ -1417,6 +1442,18 @@ export type _Disposition = Assert<Equals<Disposition, "purge" | "reassign" | "an
 export type _SearchBarrel = Assert<Equals<typeof Search.fuseRankings, typeof fuseRankings>>;
 export type _Fused = Assert<Equals<ReturnType<typeof fuseRankings>, ReadonlyArray<FusedHit>>>;
 export type _FusedRanks = Assert<Equals<FusedHit["ranks"], { readonly [branch: string]: number }>>;
+// The gated branch's heads ride on the request (pulpit#346).
+export type _BranchRequest = Assert<
+  Equals<
+    BranchRequest<Subquery>,
+    {
+      readonly query: string;
+      readonly scope: ListFilter<Subquery>;
+      readonly headFor: ListFilter<Subquery>;
+      readonly limit: number;
+    }
+  >
+>;
 declare const branches: ReadonlyArray<SearchBranch<Subquery, StoreFailure, Transaction>>;
 export const searchOver = hybridSearch({ branches });
 export type _HybridSearch = Assert<
@@ -1651,3 +1688,76 @@ export type _TranslationSweep = Assert<
 >;
 export type _LineageOf = Assert<Equals<ReturnType<typeof lineageOf>, Option.Option<LocaleLineage>>>;
 export type _HumanLineageHook = Assert<Equals<ReturnType<typeof humanLineageHook>["name"], string>>;
+
+// ── media (pulpit#206) ───────────────────────────────────────────────────
+
+export type _MediaBarrel = Assert<Equals<typeof Media.defineRenditions, typeof defineRenditions>>;
+export type _RenditionWidth = Assert<
+  Equals<
+    typeof renditionWidth,
+    (widths: readonly [number, ...Array<number>], requested: number) => number
+  >
+>;
+export type _RenditionFormat = Assert<
+  Equals<
+    typeof renditionFormat,
+    // oxlint-disable-next-line effect/prefer-option-over-null -- pins the emitted parameter type exactly: an HTTP header arrives as `string | undefined`
+    (formats: readonly [string, ...Array<string>], accept: string | undefined) => string
+  >
+>;
+export type _RenditionServe = Assert<
+  Equals<
+    ReturnType<RenditionOps<string, StoreFailure, Transaction>["serve"]>,
+    Effect.Effect<
+      { readonly width: number; readonly format: string; readonly rendition: string },
+      RenditionNotFound | StoreFailure,
+      Transaction
+    >
+  >
+>;
+export type _AlbumMember = Assert<
+  Equals<
+    Parameters<
+      ReturnType<typeof defineAlbum<PostDoc, PostDoc, StoreFailure, Transaction>>["append"]
+    >,
+    [parentId: string, memberId: string]
+  >
+>;
+export type _MediaItem = Assert<
+  Equals<MediaItem<PostDoc>, { readonly type: string; readonly resource: PostDoc }>
+>;
+export type _MediaFields = Assert<
+  Equals<
+    keyof typeof mediaResourceFields,
+    | "mediaKind"
+    | "altText"
+    | "caption"
+    | "license"
+    | "width"
+    | "height"
+    | "durationSeconds"
+    | "exif"
+  >
+>;
+
+// ── reference import (pulpit#209) ────────────────────────────────────────
+
+export type _ReferenceImportBarrel = Assert<
+  Equals<typeof ReferenceImport.defineReferenceImport, typeof defineReferenceImport>
+>;
+export type _ReferenceImportRun = Assert<
+  Equals<
+    ReturnType<ReferenceImportOps<StoreFailure, Transaction>["run"]>,
+    Effect.Effect<
+      ImportSummary,
+      UnknownAuthority | ImportBatchTooLarge | Unauthorized | Forbidden | StoreFailure,
+      Transaction
+    >
+  >
+>;
+export type _ExternalIdLink = Assert<
+  Equals<
+    ReturnType<ExternalIdStore<StoreFailure, Transaction>["link"]>,
+    Effect.Effect<"linked" | "present" | "taken", StoreFailure, Transaction>
+  >
+>;
