@@ -152,6 +152,26 @@ describe("the localised LeafStore agrees with the in-memory one", () => {
     });
   });
 
+  it("pins the fixture's shape, so agreement is never two empty pages", async () => {
+    const all = await run(store.list({ where: always, orderBy: [], limit: 100, offset: 0 }));
+    // Note 1's French was dropped; note 3 has no locale (one NULL row); note 4 has two.
+    expect(all.total).toBe(6);
+    const chosen = await run(
+      store.listLocalised({
+        where: always,
+        orderBy: [],
+        limit: 100,
+        offset: 0,
+        locales: ["fr", "en"],
+      }),
+    );
+    expect(Arr.map(chosen.rows, (row) => [row.id, row["locale"]])).toEqual([
+      [id(1), "en"],
+      [id(2), "fr"],
+      [id(4), "en"],
+    ]);
+  });
+
   it("distinct reads over the locale rows", async () => {
     const query = { column: "heading", where: always, limit: 100, offset: 0 };
     expect(await run(store.distinct(query))).toEqual(

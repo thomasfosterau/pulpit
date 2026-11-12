@@ -296,7 +296,9 @@ export const localeChoice = (
   where: ListFilter<SQLWrapper>,
 ): RowSource => {
   const locale = Option.getOrElse(R.get(source.columns, LOCALE_COLUMN), () => {
-    throw new DerivationError({ message: `pulpit-drizzle-pg: leaf "${leaf}"'s localised rows have no locale` });
+    throw new DerivationError({
+      message: `pulpit-drizzle-pg: leaf "${leaf}"'s localised rows have no locale`,
+    });
   });
   const preference = sql`ARRAY[${sql.join(
     Arr.map(locales, (tag) => sql`${tag}`),
