@@ -9,7 +9,8 @@ The tree-bound seams of [`@thomasfosterau/pulpit`](../pulpit/README.md) over the
 **Not published.** The package is `"private": true` until the owner sets up its publishing ([PUBLISHING.md](../../PUBLISHING.md)). The spec is [pulpit#247](https://github.com/thomasfosterau/pulpit/issues/247), and it lands in slices:
 
 - **Landed:** the `VersionChain` port over `-pg/chain` ([`./version-chain`](#version-chain)), passing the kernel's `versionChainConformance` against PostgreSQL; the `LeafStore` over the tree's leaf views and the owner table ([`./leaf-store`](#leaf-store)), with the `ListFilter` → SQL renderer and the list order ([`./filter`](#filter)), checked row by row against the kernel's in-memory store on PostgreSQL.
-- **Next:** `PublicationStore` / `LiveView`, the content-addressed `DocumentStore`, the `PathStore`, the localised `LeafStore` and `SearchBranch`.
+- **Landed:** the `PathStore` over a path table per routable namespace ([`./paths`](#paths)), checked step by step against the kernel's in-memory store on PostgreSQL.
+- **Next:** `PublicationStore` / `LiveView` (#338), the `DocumentStore` (#339), the localised `LeafStore` (#335) and `SearchBranch` (#336).
 
 ## Install
 
@@ -31,6 +32,7 @@ Every module is a namespace on the root export (`import { VersionChain } from "@
 | --- | --- |
 | `./version-chain` | `makeVersionChains`: the kernel's `VersionChain` port for every leaf of a tree. |
 | `./leaf-store` | `makeLeafStores`: the kernel's `LeafStore` for every leaf view of a tree; `makeNodeOwnerTable`, the owner table. |
+| `./paths` | `makePathTable` / `makePathStore`: the kernel's `PathStore`, one table per routable namespace. |
 | `./filter` | `renderListFilter` / `renderListOrder`: the kernel's `ListFilter` and list order as Drizzle SQL. |
 
 ## `./version-chain`
@@ -157,6 +159,21 @@ What each store does, over the leaf's view:
 | `makeNodeOwnerTable({ schema, identity, name? })`, `NodeOwnerTable` | The owner table (`node_owner` by default): `node_id` primary key, cascading from the identity row, and `owner_id`, indexed. |
 | `OWNER_COLUMN` | `"ownerId"`, the key the owner joins in under. |
 | `StoreQueryError<Relations>` | The driver's query error. |
+
+## `./paths`
+
+The kernel's `PathStore` (README → Seams → `PathStore`, pulpit#57) for `routable`: one path table per routable namespace, `makePathTable({ schema, name, identity })`, `(path PRIMARY KEY, node_id → node.id ON DELETE CASCADE, canonical)` with a partial unique index (`node_id WHERE canonical`) holding at most one canonical row per node. `makePathStore({ table, CurrentTransaction })` binds it:
+
+- `lookup(path)` is the row by key, `canonicalOf(id)` the node's canonical row, `release(id)` deletes it and keeps the aliases.
+- `claim(id, path)` is the uniqueness pre-check, then the claim. It reads the row at `path` `FOR UPDATE` and fails `PathTaken` when another node holds it canonically, **before writing anything**; it then turns the node's previous canonical row into an alias and upserts `path` as its canonical row, over an alias at `path` (the node's own, which a revert promotes, or another node's, which the claim takes over). The upsert is guarded by the key: `ON CONFLICT (path) DO UPDATE … WHERE NOT canonical OR node_id = $id`, so a concurrent claim that took the path after the check makes this one `PathTaken` instead of overwriting it (the integration suite races two). The caller's transaction then rolls back the alias it made, as `routable` rolls back the append.
+- `PathTaken` names the path, never the holder. An id that is no canonical UUID holds no path. Every call runs in the caller's `CurrentTransaction`.
+
+A node-level slug on the identity table (`identityColumns: { slug }`) is a different thing: `makeLeafStores` refuses one that shares a key with a level column (the view-merge trap).
+
+| Export                                                   | What it is                  |
+| -------------------------------------------------------- | --------------------------- |
+| `makePathTable({ schema, name, identity })`, `PathTable` | One namespace's path table. |
+| `makePathStore(config)`                                  | The `PathStore` over it.    |
 
 ## `./filter`
 

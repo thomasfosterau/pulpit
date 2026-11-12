@@ -35,6 +35,12 @@ import {
   type FilterColumns,
 } from "@thomasfosterau/pulpit-drizzle-pg/filter";
 import type { SQL, SQLWrapper } from "drizzle-orm";
+import {
+  makePathStore,
+  makePathTable,
+  type PathTable,
+} from "@thomasfosterau/pulpit-drizzle-pg/paths";
+import type { PathStore } from "@thomasfosterau/pulpit/paths";
 import type * as Option from "effect/Option";
 import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
 import { pgSchema, text } from "drizzle-orm/pg-core";
@@ -52,7 +58,9 @@ type Satisfies<A, B> = [A] extends [B] ? true : false;
 
 // ── the root barrel ──────────────────────────────────────────────────────
 
-export type _Root = Assert<Equals<keyof typeof DrizzlePg, "VersionChain" | "LeafStore" | "Filter">>;
+export type _Root = Assert<
+  Equals<keyof typeof DrizzlePg, "VersionChain" | "LeafStore" | "Filter" | "Paths">
+>;
 export type _RootChains = Assert<
   Equals<typeof DrizzlePg.VersionChain.makeVersionChains, typeof makeVersionChains>
 >;
@@ -145,3 +153,14 @@ export type _RenderOrder = Assert<
 export type _DistinctKey = Assert<
   Equals<typeof distinctKey, (column: FilterColumn) => Option.Option<SQL>>
 >;
+
+// ── ./paths ──────────────────────────────────────────────────────────────
+
+const pagePaths = makePathTable({ schema, name: "page_paths", identity: tables.root.identity });
+const pathStore = makePathStore({
+  table: pagePaths,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _PathTable = Assert<Equals<typeof pagePaths, PathTable>>;
+export type _PathStore = Assert<Equals<typeof pathStore, PathStore<EffectDrizzleQueryError, Key>>>;
