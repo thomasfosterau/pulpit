@@ -15,7 +15,8 @@ The tree-bound seams of [`@thomasfosterau/pulpit`](../pulpit/README.md) over the
 - **Landed:** the `PathStore` over a path table per routable namespace ([`./paths`](#paths)), checked step by step against the kernel's in-memory store on PostgreSQL.
 - **Landed:** `SearchBranch` over a tree's leaf and branch views and over a gated leaf's live rows ([`./search`](#search)), checked against the kernel's in-memory branch under every viewer's read scope on PostgreSQL.
 - **Landed:** the localised live view and gated store of a publish-gated keyed leaf ([`./publication`](#publication), pulpit#343), checked against the kernel's in-memory publication over a localised store on PostgreSQL.
-- **Next:** the stores that aren't tree-bound (edges, proposals, reports, budgets, working copies, erasure, embeddings, social and notification tables), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
+- **Landed:** the `ProposalStore` ([`./proposals`](#proposals), pulpit#355), checked against the kernel's in-memory store on PostgreSQL.
+- **Next:** the other stores that aren't tree-bound (edges, proposals, reports, budgets, working copies, erasure, embeddings, social and notification tables), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
 
 ## Install
 
@@ -40,6 +41,7 @@ Every module is a namespace on the root export (`import { VersionChain } from "@
 | `./publication` | `makePublications`: the live pointer (`PublicationStore`, `LiveView`, the gated store) for every leaf of a pointer. |
 | `./documents` | `makeDocumentTable` / `makeDocumentStore`: the kernel's content-addressed `DocumentStore`, one table per family. |
 | `./paths` | `makePathTable` / `makePathStore`: the kernel's `PathStore`, one table per routable namespace. |
+| `./proposals` | `makeProposalTable` / `makeProposalStore`: the kernel's `ProposalStore` (suggested edits) over one proposal table. |
 | `./search` | `makeSearchBranch` / `fullTextRank`: the kernel's `SearchBranch`, one ranked and scoped statement over a view. |
 | `./filter` | `renderListFilter` / `renderListOrder`: the kernel's `ListFilter` and list order as Drizzle SQL. |
 
@@ -332,6 +334,10 @@ The integration suite checks both branch kinds against the kernel's `makeInMemor
 | `makeSearchBranch(config)` | A `SearchBranch<SQLWrapper, EffectDrizzleQueryError, CurrentTransaction>` over one view. |
 | `SearchBranchOptions`, `SearchRank` | Its name, weight and rank; the rank's shape. |
 | `fullTextRank({ vector, config? })` | The full-text `SearchRank` (`ts_rank_cd` over a `tsvector`). |
+
+## `./proposals`
+
+The kernel's `ProposalStore` (README → Seams → `ProposalStore`, pulpit#355). `makeProposalTable({ schema, root: tables.root, name? })` is the README's schema: `target_node_id` and `(target_node_id, applied_version)` reference the identity and root version tables, both cascading (so `purge` takes a node's proposals), `state` is CHECKed, and `author_id`, `target_node_id` and the pending rows are indexed. `makeProposalStore({ table, root, owners, CurrentTransaction })` binds the store: reads join the identity table for `targetType` and the owner table for `targetOwnerId`, with the head version as a correlated `MAX(version)` subquery; `lock` is `FOR UPDATE OF` the proposal row; `close` updates only a pending row; `eraseAuthor` is one CTE over at most `limit` rows. The integration suite checks every method against the kernel's `makeInMemoryProposalStore`, and the lock against a second transaction.
 
 ## `./filter`
 
