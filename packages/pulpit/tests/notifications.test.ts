@@ -635,7 +635,7 @@ const mentioning = () => {
   const create = async (state: ChainState) =>
     (await write(posts.create({ id: Option.none(), state: { visibility: "public", ...state } })))
       .id;
-  const recipients = () => Arr.map(outbox.events(), (event) => event.recipientId);
+  const recipients = () => Arr.map(outbox.events(), (queued) => queued.recipientId);
   return {
     outbox,
     inbox,
@@ -719,26 +719,28 @@ describe("mention.created: only the mentions a write adds (pulpit#198)", () => {
       extract: jsonMentionExtractor,
     });
     const put = (...ids: ReadonlyArray<string>) =>
-      run(Effect.map(documents.put({ content: Arr.map(ids, mentionNode) }), (it) => it.hash));
-    const head: VersionSnapshot = {
+      run(
+        Effect.map(documents.put({ content: Arr.map(ids, mentionNode) }), (stored) => stored.hash),
+      );
+    const prior: VersionSnapshot = {
       version: 0n,
       action: "create",
       timestamp: NOW,
       state: { visibility: "public" },
       locales: { en: { body: await put(otherMember.id) } },
     };
-    const event: BeforeWriteEvent = {
+    const write: BeforeWriteEvent = {
       action: "update",
       type: "posts",
       id: "p-1",
-      prior: Option.some(head),
+      prior: Option.some(prior),
       patch: {},
       locales: { en: null, fr: { body: await put(otherMember.id, moderator.id) }, de: undefined },
       actorId: Option.some(member.id),
       viewer: Option.some(member),
     };
-    expect(await run(hook.run(event))).toEqual({});
-    expect(await run(hook.locales?.(event) ?? Effect.succeed({}))).toEqual(event.locales);
+    expect(await run(hook.run(write))).toEqual({});
+    expect(await run(hook.locales?.(write) ?? Effect.succeed({}))).toEqual(write.locales);
     expect(Arr.map(outbox.events(), (stored) => stored.recipientId)).toEqual([moderator.id]);
   });
 
