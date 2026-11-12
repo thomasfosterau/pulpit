@@ -13,6 +13,7 @@ import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
 import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
 import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
 import { makeDocumentTable } from "@thomasfosterau/pulpit-drizzle-pg/documents";
+import { makeEdgeTable } from "@thomasfosterau/pulpit-drizzle-pg/edges";
 import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
 import { makePathTable } from "@thomasfosterau/pulpit-drizzle-pg/paths";
 import { sql } from "drizzle-orm";
@@ -85,6 +86,23 @@ export const paths = makePathTable({ schema, name: "post_paths", identity: table
 /** A document family's table, keyed by the generated hash. */
 export const documents = makeDocumentTable({ schema, name: "block_documents" });
 
+/**
+ * An edge family between posts: a role (nullable, part of the unique key,
+ * `NULLS NOT DISTINCT`) and a validity interval.
+ */
+export const relations = makeEdgeTable({
+  schema,
+  name: "relation",
+  identity: tables.root.identity,
+  ends: { subjectId: "subject_id", objectId: "object_id" },
+  columns: {
+    role: text("role"),
+    validFrom: timestamp("valid_from", { withTimezone: true }),
+    validTo: timestamp("valid_to", { withTimezone: true }),
+  },
+  uniqueKey: ["subjectId", "objectId", "role"],
+});
+
 /** The owner table the leaf stores read and stamp. */
 export const owners = makeNodeOwnerTable({ schema, identity: tables.root.identity });
 
@@ -120,6 +138,7 @@ export const fixtureSchema = {
   owners,
   paths,
   documents,
+  relations,
   notesView: views.leaves.notes,
   linksView: views.leaves.links,
   postsView: views.leaves.posts,

@@ -50,6 +50,7 @@
     "packages/pulpit-drizzle-pg/src/paths.ts",
     "packages/pulpit-drizzle-pg/src/documents.ts",
     "packages/pulpit-drizzle-pg/src/search.ts",
+    "packages/pulpit-drizzle-pg/src/edges.ts",
     "packages/pulpit-drizzle-pg/tests/**/*.test.ts",
     "packages/pulpit-drizzle-pg/tests/**/*.types.ts",
     "packages/pulpit-drizzle-pg/tests/integration/global-setup.ts",
