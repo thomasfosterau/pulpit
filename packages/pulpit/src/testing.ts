@@ -2018,6 +2018,25 @@ export const makeInMemoryPublication = (options: {
       }),
     effective: (id) => Effect.map(instantOf(fixedNow), (now) => effectiveAt(id, now)),
     facts: (id, limit) => Effect.sync(() => log.filter((fact) => fact.id === id).slice(0, limit)),
+    scheduled: (ids) =>
+      Effect.map(instantOf(fixedNow), (now) =>
+        Arr.flatMap(Arr.dedupe(ids), (id) => {
+          const own = Arr.filter(log, (fact) => fact.id === id);
+          // The latest record naming a version, still ahead, that no later record overtakes.
+          return Option.toArray(
+            Arr.findLast(
+              own,
+              (fact, index) =>
+                Option.isSome(fact.version) &&
+                fact.at.getTime() > now.getTime() &&
+                !Arr.some(
+                  Arr.drop(own, index + 1),
+                  (later) => later.at.getTime() <= fact.at.getTime(),
+                ),
+            ),
+          );
+        }),
+      ),
   };
   const live: LiveView<LeafRow, InMemoryFollowing, never, never> = {
     get: (id) =>
