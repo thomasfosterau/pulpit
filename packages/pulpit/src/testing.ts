@@ -985,13 +985,15 @@ export const versionChainConformance = <E, R>(
     });
 
     describe("locales — the keyed level (pulpit#56)", () => {
+      // A translated column is never a shared one (a tree rejects a key both
+      // levels of one path declare), so the locale level writes `heading`.
       it("a version carries its locale level: set, drop (null) and carry forward, restored together", async () => {
         const { chain } = await harness.make();
         await value(
           chain.create({
             id: Option.some(ID),
-            state: { slug: "a" },
-            locales: { en: { title: "Hello" }, fr: { title: "Salut" } },
+            state: { title: "a" },
+            locales: { en: { heading: "Hello" }, fr: { heading: "Salut" } },
             actorId: ACTOR,
           }),
         );
@@ -999,15 +1001,15 @@ export const versionChainConformance = <E, R>(
           chain.update({
             id: ID,
             patch: {},
-            locales: { en: { title: "Hi" }, fr: null },
+            locales: { en: { heading: "Hi" }, fr: null },
             actorId: ACTOR,
           }),
         );
-        expect(localesOf(await value(chain.getVersion(ID, 1n)))).toEqual({ en: { title: "Hi" } });
+        expect(localesOf(await value(chain.getVersion(ID, 1n)))).toEqual({ en: { heading: "Hi" } });
         await value(chain.restoreVersion(ID, 0n, ACTOR));
         expect(localesOf(await value(chain.getVersion(ID, 2n)))).toEqual({
-          en: { title: "Hello" },
-          fr: { title: "Salut" },
+          en: { heading: "Hello" },
+          fr: { heading: "Salut" },
         });
       });
     });

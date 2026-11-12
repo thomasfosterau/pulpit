@@ -11,7 +11,9 @@
       "@thomasfosterau/pulpit": ["../../packages/pulpit/src/index.ts"],
       "@thomasfosterau/pulpit/*": ["../../packages/pulpit/src/*.ts"],
       "@thomasfosterau/pulpit-wordpress": ["../../packages/pulpit-wordpress/src/index.ts"],
-      "@thomasfosterau/pulpit-wordpress/*": ["../../packages/pulpit-wordpress/src/*.ts"]
+      "@thomasfosterau/pulpit-wordpress/*": ["../../packages/pulpit-wordpress/src/*.ts"],
+      "@thomasfosterau/pulpit-drizzle-pg": ["../../packages/pulpit-drizzle-pg/src/index.ts"],
+      "@thomasfosterau/pulpit-drizzle-pg/*": ["../../packages/pulpit-drizzle-pg/src/*.ts"]
     }
   }
 }

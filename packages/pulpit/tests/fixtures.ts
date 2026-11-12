@@ -23,10 +23,8 @@ export type Fixture =
   | { readonly [key: string]: Fixture | undefined };
 
 /** Whether `value` decodes under `schema`. */
-export const decodes = (schema: Schema.Top, value: Fixture): boolean =>
-  // SAFETY: the fixture schemas are all service-free, which `Schema.Top` cannot
-  // say; the widening is the only way to hand one to the decoder generically.
-  Schema.decodeUnknownExit(schema as never)(value)._tag === "Success";
+export const decodes = (schema: Schema.ConstraintDecoder<unknown>, value: Fixture): boolean =>
+  Schema.decodeExit(schema)(value)._tag === "Success";
 
 /**
  * A column a seeded row omits, so the row carries no such key (`ColumnValue`

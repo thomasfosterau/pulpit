@@ -3,12 +3,16 @@ import { defineConfig } from "vite-plus";
 export default defineConfig({
   run: {
     tasks: {
-      // Type-checks the emitted declarations of both workspace packages;
+      // Type-checks the emitted declarations of every workspace package;
       // depends on each package's build so `vp run check` at the root always
       // exercises fresh `dist/` output.
       check: {
         command: "tsc -p tsconfig.check.json",
-        dependsOn: ["@thomasfosterau/pulpit#build", "@thomasfosterau/pulpit-wordpress#build"],
+        dependsOn: [
+          "@thomasfosterau/pulpit#build",
+          "@thomasfosterau/pulpit-wordpress#build",
+          "@thomasfosterau/pulpit-drizzle-pg#build",
+        ],
         cache: {
           input: [
             { auto: true },
@@ -23,6 +27,7 @@ export default defineConfig({
             // dependency change.
             { pattern: "!packages/pulpit/node_modules", base: "workspace" as const },
             { pattern: "!packages/pulpit-wordpress/node_modules", base: "workspace" as const },
+            { pattern: "!packages/pulpit-drizzle-pg/node_modules", base: "workspace" as const },
             { pattern: "packages/*/dist/**", base: "workspace" as const },
             { pattern: "pnpm-lock.yaml", base: "workspace" as const },
           ],
