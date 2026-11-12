@@ -13,6 +13,7 @@ import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
 import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
 import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
 import { makeDocumentTable } from "@thomasfosterau/pulpit-drizzle-pg/documents";
+import { makeExternalIdTable } from "@thomasfosterau/pulpit-drizzle-pg/external-ids";
 import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
 import { makeProposalTable } from "@thomasfosterau/pulpit-drizzle-pg/proposals";
 import { makePathTable } from "@thomasfosterau/pulpit-drizzle-pg/paths";
@@ -89,6 +90,9 @@ export const documents = makeDocumentTable({ schema, name: "block_documents" });
 /** The proposal table, over the root tables. */
 export const proposals = makeProposalTable({ schema, root: tables.root });
 
+/** The external-identifier table, over the identity table. */
+export const externalIds = makeExternalIdTable({ schema, identity: tables.root.identity });
+
 /** The owner table the leaf stores read and stamp. */
 export const owners = makeNodeOwnerTable({ schema, identity: tables.root.identity });
 
@@ -124,6 +128,7 @@ export const fixtureSchema = {
   owners,
   paths,
   documents,
+  externalIds,
   proposals,
   notesView: views.leaves.notes,
   linksView: views.leaves.links,

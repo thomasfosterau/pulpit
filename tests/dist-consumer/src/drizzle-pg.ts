@@ -60,6 +60,12 @@ import {
 import type { DocumentStore } from "@thomasfosterau/pulpit/documents";
 import type { SearchBranch } from "@thomasfosterau/pulpit/search";
 import type { ProposalStore } from "@thomasfosterau/pulpit/proposals";
+import type { ExternalIdStore } from "@thomasfosterau/pulpit/reference-import";
+import {
+  makeExternalIdStore,
+  makeExternalIdTable,
+  type ExternalIdTable,
+} from "@thomasfosterau/pulpit-drizzle-pg/external-ids";
 import {
   makeProposalStore,
   makeProposalTable,
@@ -99,6 +105,7 @@ export type _Root = Assert<
     | "Paths"
     | "Search"
     | "Proposals"
+    | "ExternalIds"
   >
 >;
 export type _RootChains = Assert<
@@ -310,4 +317,17 @@ const proposalStore = makeProposalStore({
 export type _ProposalTable = Assert<Equals<typeof proposalTable, ProposalTable>>;
 export type _ProposalStore = Assert<
   Equals<typeof proposalStore, ProposalStore<EffectDrizzleQueryError, Key>>
+>;
+
+// ── ./external-ids ───────────────────────────────────────────────────────
+
+const externalIdTable = makeExternalIdTable({ schema, identity: tables.root.identity });
+const externalIdStore = makeExternalIdStore({
+  table: externalIdTable,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _ExternalIdTable = Assert<Equals<typeof externalIdTable, ExternalIdTable>>;
+export type _ExternalIdStore = Assert<
+  Equals<typeof externalIdStore, ExternalIdStore<EffectDrizzleQueryError, Key>>
 >;

@@ -38,6 +38,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./documents": "./src/documents.ts",
+    "./external-ids": "./src/external-ids.ts",
     "./filter": "./src/filter.ts",
     "./leaf-store": "./src/leaf-store.ts",
     "./proposals": "./src/proposals.ts",
@@ -55,6 +56,10 @@
       "./documents": {
         "types": "./dist/documents.d.ts",
         "default": "./dist/documents.js"
+      },
+      "./external-ids": {
+        "types": "./dist/external-ids.d.ts",
+        "default": "./dist/external-ids.js"
       },
       "./filter": {
         "types": "./dist/filter.d.ts",
