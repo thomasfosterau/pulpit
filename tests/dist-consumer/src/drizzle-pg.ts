@@ -90,6 +90,17 @@ import {
   makeReactionTable,
   type ReactionTable,
 } from "@thomasfosterau/pulpit-drizzle-pg/reactions";
+import type {
+  GroupOwnerStore,
+  GroupOwnership,
+  MembershipStore,
+} from "@thomasfosterau/pulpit/audience";
+import {
+  makeGroupOwners,
+  makeMembershipStore,
+  makeMembershipTable,
+  type MembershipTable,
+} from "@thomasfosterau/pulpit-drizzle-pg/memberships";
 import {
   makeEmbeddingStore,
   makeEmbeddingTables,
@@ -141,6 +152,7 @@ export type _Root = Assert<
     | "Social"
     | "Collections"
     | "Reactions"
+    | "Memberships"
   >
 >;
 export type _RootChains = Assert<
@@ -467,4 +479,30 @@ const socialStore = makeSocialStore({
 export type _RelationshipTable = Assert<Equals<typeof relationshipTable, RelationshipTable>>;
 export type _SocialStore = Assert<
   Equals<typeof socialStore, SocialStore<SQL, EffectDrizzleQueryError, Key>>
+>;
+
+// ── ./memberships ────────────────────────────────────────────────────────
+
+const membershipTable = makeMembershipTable({ schema });
+const membershipStore = makeMembershipStore({
+  table: membershipTable,
+  CurrentTransaction: database.CurrentTransaction,
+});
+const groupTable = schema.table("groups", { id: text("id").primaryKey(), owner: text("owner") });
+const groupOwners = makeGroupOwners({
+  table: groupTable,
+  id: groupTable.id,
+  owner: groupTable.owner,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _MembershipTable = Assert<Equals<typeof membershipTable, MembershipTable>>;
+export type _MembershipStore = Assert<
+  Equals<typeof membershipStore, MembershipStore<SQL, EffectDrizzleQueryError, Key>>
+>;
+export type _GroupOwners = Assert<
+  Equals<
+    typeof groupOwners,
+    GroupOwnership<EffectDrizzleQueryError, Key> & GroupOwnerStore<EffectDrizzleQueryError, Key>
+  >
 >;

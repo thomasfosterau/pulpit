@@ -20,6 +20,7 @@ The module guide for [`@thomasfosterau/pulpit-drizzle-pg`](../packages/pulpit-dr
 - **Landed:** the `CollectionStore` ([`./collections`](#collections), pulpit#358), checked against the kernel's in-memory store on PostgreSQL.
 - **Landed:** the `ReactionStore` ([`./reactions`](#reactions), pulpit#363), checked against the kernel's in-memory store on PostgreSQL.
 - **Landed:** the `SocialStore` ([`./social`](#social), pulpit#364), checked against the kernel's in-memory store on PostgreSQL, a block racing a follow in two transactions.
+- **Landed:** the `MembershipStore` and `GroupOwnerStore` ([`./memberships`](#memberships), pulpit#364), checked against the kernel's in-memory stores on PostgreSQL.
 - **Next:** the other stores that aren't tree-bound (reports, budgets, working copies, erasure, social and notification tables), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
 
 ## End to end
@@ -378,7 +379,7 @@ The kernel's `SocialStore` ([seams.md → `SocialStore`](seams.md#socialstorefol
 
 - **`makeRelationshipTable({ schema, accounts?, name? })`** (`relationship` by default) has the columns `kind` (`follow | mute | block`, CHECKed), `from_id`, `to_id` and `at` (`DEFAULT now()`). Its primary key is `(kind, from_id, to_id)`, and it is indexed on `(kind, to_id, at DESC)` and `(kind, from_id, at DESC)`. `accounts` is the application's `text` account key: given, both account columns reference it `ON DELETE CASCADE`; without it they have no foreign key and `eraseAccount` clears them (as [`./reactions`](#reactions) does).
 - **`makeSocialStore({ table, CurrentTransaction })`** binds the store, every call in the caller's transaction:
-  - **`addFollow` and `addBlock`** first take `pg_advisory_xact_lock` on the unordered account pair: its two keys hash the table's name with the lesser and the greater account id. So the two are atomic against each other, and a block racing a follow never leaves the follow standing.
+  - **`addFollow` and `addBlock`** first take `pg_advisory_xact_lock` on the unordered account pair: its two keys hash the table's schema-qualified name with the lesser and the greater account id, so same-named tables in two schemas never share a lock. So the two are atomic against each other, and a block racing a follow never leaves the follow standing.
     - `addFollow` is then one statement, `INSERT … SELECT … WHERE NOT EXISTS (a block either way) ON CONFLICT DO NOTHING`. It answers `blocked` when a block stands, `added` when it wrote, and `present` otherwise.
     - `addBlock` deletes both follows and inserts the block in one statement, answering whether the block went in.
   - **`add`** (a mute) is `INSERT … ON CONFLICT DO NOTHING RETURNING`. **`remove`** is `DELETE … RETURNING`. **`has`** and **`isFollowing`** are an `EXISTS`, and a failing `isFollowing` reads as `false` (failing closed).
@@ -387,6 +388,27 @@ The kernel's `SocialStore` ([seams.md → `SocialStore`](seams.md#socialstorefol
   - **`eraseAccount(accountId, limit)`** deletes at most `limit` of the rows from or to the account and counts them (`PERF-DB-001`).
 
 The integration suite runs the same calls through this store and the kernel's `makeInMemorySocialStore` and checks every answer, every page and both subqueries' sets agree. It also races a block against a follow in two real transactions, and checks that deleting an account cascades.
+
+## `./memberships`
+
+The kernel's `MembershipStore` and `GroupOwnerStore` ([seams.md → `MembershipStore`](seams.md#membershipstorefollowing-e-r-the-membership-table) and [`GroupOwnerStore`](seams.md#groupownerstoree-r-the-groups-owners), pulpit#364): a group's members and pending invitations in one table, and the bounded owner reassignment over the application's own group table. A pending row is an invitation, not a membership. Every membership read (`roleOf`, `list`, `isMember`, `groupsOf`) and write (`remove`, `setRole`) takes the `active` rows alone, and only the invitation methods read or write a pending row.
+
+- **`makeMembershipTable({ schema, groups?, accounts?, name? })`** (`membership` by default) has the columns `group_id`, `account_id`, `role` (`member | admin`), `status` (`active | pending`), `invited_by` and `at` (`DEFAULT now()`).
+  - Its primary key is `(group_id, account_id)`, and it is indexed on `account_id`.
+  - A CHECK holds `invited_by` `NULL` exactly on an active row, so `add` over an invitation and `accept` both clear it.
+  - The keys are `text`. `groups` (the application's group id) and `accounts` (its account key), when given, make `group_id`, and `account_id` and `invited_by`, reference them `ON DELETE CASCADE`. Without them there is no foreign key, as in [`./reactions`](#reactions).
+- **`makeMembershipStore({ table, CurrentTransaction })`** binds the store, every call in the caller's transaction. Its `Following` is a SQL subquery.
+  - **`add`** is `INSERT … ON CONFLICT (group_id, account_id) DO UPDATE SET status = 'active', role, at, invited_by = NULL WHERE status = 'pending' RETURNING`: a direct add activates a pending invitation, and an active row is untouched.
+  - **`setRole`** is `UPDATE … WHERE … AND role <> $role RETURNING`, **`remove`** `DELETE … RETURNING`, **`roleOf`** one row's role, and **`isMember`** an `EXISTS`; a failing `isMember` reads as `false` (failing closed).
+  - **`list`** and **`invitations`** are one page `ORDER BY at`, then the other key, with the window total; a page past the end counts the rows instead.
+  - **`groupsOf(account)`** is the subquery `SELECT group_id … WHERE account_id = $account AND status = 'active'`, never materialised.
+  - **`removeGroup`** deletes both statuses. **`eraseAccount(accountId, limit)`** deletes at most `limit` rows: the account's own rows of both statuses and the pending rows it invited, counted together (`PERF-DB-001`).
+  - **`invite`** is `INSERT … 'pending' … ON CONFLICT DO NOTHING`. **`accept`** is `UPDATE … SET status = 'active', at, invited_by = NULL WHERE … AND status = 'pending'`. **`removeInvitation`** deletes the pending row alone.
+- **`makeGroupOwners({ table, id, owner, CurrentTransaction })`** binds `GroupOwnership` and `GroupOwnerStore` to the application's group table, by its `id` and `owner` columns. Both compare as text, so a `uuid` id column takes any string.
+  - **`ownerOf`** reads the owner, or none.
+  - **`reassignOwner(accountId, to, limit)`** is `UPDATE … SET owner = $to WHERE id IN (SELECT id … WHERE owner = $accountId ORDER BY id LIMIT $limit)`, counted (`PERF-DB-001`). It leaves memberships and invitations alone.
+
+The integration suite runs the same calls through these stores and the kernel's `makeInMemoryMembershipStore` and `makeInMemoryGroupOwners`. It checks every answer, every page and the `groupsOf` set agree, and that the stored active and pending rows match the fakes'. It also checks that deleting a group or an account cascades.
 
 ## `./search`
 

@@ -13,9 +13,10 @@
 import { executeRows } from "@thomasfosterau/effect-drizzle-ext/query";
 import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import type { Relationship, RelationshipKind, SocialStore } from "@thomasfosterau/pulpit/social";
-import { and, asc, desc, eq, getTableName, sql, type AnyRelations, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, sql, type AnyRelations, type SQL } from "drizzle-orm";
 import {
   check,
+  getTableConfig,
   index,
   primaryKey,
   text,
@@ -28,6 +29,7 @@ import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { countOf } from "./internal/count.ts";
 import { eraseBatch } from "./internal/erase.ts";
 import type { StoreQueryError } from "./internal/owners.ts";
 
@@ -92,22 +94,17 @@ export type RelationshipTable = ReturnType<typeof makeRelationshipTable>;
 const decodeRelated = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ accountId: Schema.String, at: Schema.Date, total: Schema.Int })),
 );
-const decodeCount = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ n: Schema.Int })));
 const decodeFollow = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ wasBlocked: Schema.Boolean, wasInserted: Schema.Boolean })),
 );
-
-/** The first row's count, or zero. */
-const countOf = (rows: ReadonlyArray<{ readonly n: number }>): number =>
-  Option.match(Arr.head(rows), { onNone: () => 0, onSome: ({ n }) => n });
 
 /**
  * Bind the kernel's `SocialStore` to the relationship table, in the
  * caller's `CurrentTransaction`; its `Following` is a SQL subquery.
  *
  * - `addFollow` and `addBlock` first take `pg_advisory_xact_lock` on the
- *   unordered account pair (its two keys hash the table's name with the
- *   lesser and the greater account id), so the two are
+ *   unordered account pair (its two keys hash the table's schema-qualified
+ *   name with the lesser and the greater account id), so the two are
  *   atomic against each other. `addFollow` is then one statement, `INSERT …
  *   SELECT … WHERE NOT EXISTS (a block either way) ON CONFLICT DO NOTHING`,
  *   answering `blocked` when a block stands; `addBlock` deletes both follows
@@ -131,7 +128,10 @@ export const makeSocialStore = <I, Relations extends AnyRelations>(config: {
   readonly CurrentTransaction: Context.Service<I, PgTransaction<Relations>>;
 }): SocialStore<SQL, StoreQueryError<Relations>, I> => {
   const { table, CurrentTransaction } = config;
-  const lockKey = getTableName(table);
+  // The lock's namespace: the table's schema-qualified name, so same-named
+  // relationship tables in two schemas never share a pair's lock.
+  const { schema, name } = getTableConfig(table);
+  const lockKey = `${schema ?? "public"}.${name}:`;
   const key = (kind: RelationshipKind, from: string, to: string) =>
     and(eq(table.kind, kind), eq(table.fromId, from), eq(table.toId, to));
   const eitherWay = (kind: RelationshipKind, from: string, to: string): SQL =>
@@ -231,7 +231,7 @@ export const makeSocialStore = <I, Relations extends AnyRelations>(config: {
           )
           SELECT count(*)::int AS n FROM blocked`,
         );
-        return countOf(yield* Effect.orDie(decodeCount(rows))) > 0;
+        return (yield* countOf(rows)) > 0;
       });
     },
     remove: (kind, from, to) =>
@@ -266,7 +266,7 @@ export const makeSocialStore = <I, Relations extends AnyRelations>(config: {
                 .select({ n: sql<number>`count(*)::int` })
                 .from(table)
                 .where(where),
-              (counted) => Effect.map(Effect.orDie(decodeCount(counted)), countOf),
+              countOf,
             ),
         });
         return {

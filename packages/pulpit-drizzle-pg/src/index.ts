@@ -20,8 +20,10 @@
  * `ExternalIdStore` over an external-identifier table (`ExternalIds`,
  * `./external-ids`), the `CollectionStore` over one membership table per
  * ordered family (`Collections`, `./collections`), the `ReactionStore`
- * over a reaction table (`Reactions`, `./reactions`), and the
- * `SocialStore` over a relationship table (`Social`, `./social`).
+ * over a reaction table (`Reactions`, `./reactions`), the
+ * `SocialStore` over a relationship table (`Social`, `./social`), and the
+ * `MembershipStore` and `GroupOwnerStore` over a group membership table and
+ * the application's group table (`Memberships`, `./memberships`).
  *
  * @copyright Thomas Foster
  * @module pulpit-drizzle-pg
@@ -55,6 +57,9 @@ export * as Reactions from "./reactions.ts";
 
 /** The kernel's `SocialStore`: follows, mutes and blocks between accounts. */
 export * as Social from "./social.ts";
+
+/** The kernel's `MembershipStore` and `GroupOwnerStore`: a group's members, invitations and owner. */
+export * as Memberships from "./memberships.ts";
 
 /** The kernel's `EdgeStore`: one table per edge family, its ends joined to the tree's views. */
 export * as Edges from "./edges.ts";

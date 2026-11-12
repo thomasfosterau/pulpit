@@ -54,6 +54,7 @@
     "packages/pulpit-drizzle-pg/src/edges.ts",
     "packages/pulpit-drizzle-pg/src/embeddings.ts",
     "packages/pulpit-drizzle-pg/src/external-ids.ts",
+    "packages/pulpit-drizzle-pg/src/memberships.ts",
     "packages/pulpit-drizzle-pg/src/proposals.ts",
     "packages/pulpit-drizzle-pg/src/reactions.ts",
     "packages/pulpit-drizzle-pg/src/social.ts",
