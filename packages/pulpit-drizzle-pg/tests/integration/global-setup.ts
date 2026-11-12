@@ -65,6 +65,8 @@ export default async function setup() {
       applyMigrations: (url) =>
         Effect.flatMap(treeStatements, (statements) =>
           applyMigrationList([
+            // `digest`, which the document tables' generated hash reads.
+            { name: "extensions", statements: ["CREATE EXTENSION IF NOT EXISTS pgcrypto"] },
             { name: "fixture-tree", statements },
             { name: "race-switch", statements: raceStatements },
             { name: "seams", statements: seamStatements },

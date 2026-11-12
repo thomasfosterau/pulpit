@@ -71,17 +71,15 @@ export interface RowSource {
  *
  * @since 0.0.0
  */
-export const sourceOf = (
-  relation: Subquery,
+export const sourceOf = <Field>(
+  relation: Subquery & { readonly [key: string]: Field },
   keys: ReadonlyArray<string>,
   leaf: string,
 ): RowSource => {
-  // SAFETY: a subquery built from a `FilterColumns` selection exposes each
-  // selected key as a field re-aliased to it; every field read below is
-  // checked by `isFilterColumn` before it is kept.
-  const fields = relation as FilterColumns & Subquery;
+  // A subquery built from a `FilterColumns` selection exposes each selected
+  // key as a field re-aliased to it; each is checked before it is kept.
   const columns = Arr.reduce(keys, R.empty<string, FilterColumn>(), (acc, key) =>
-    Option.match(Option.liftPredicate(fields[key], isFilterColumn), {
+    Option.match(Option.liftPredicate(relation[key], isFilterColumn), {
       onNone: () => acc,
       onSome: (field) => ({ ...acc, [key]: field }),
     }),

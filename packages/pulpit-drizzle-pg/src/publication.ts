@@ -68,21 +68,6 @@ import {
 } from "./internal/rows.ts";
 
 /**
- * The kernel's `PublicationStore` plus `scheduled(ids)` (#325, pulpit#220):
- * per node, its most recently recorded fact that names a version, whose
- * `at` is still ahead, and that no later-recorded fact overtakes (a later
- * record whose `at` is no later than its own). Once #325 lands this is the
- * kernel's own `PublicationStore`.
- *
- * @since 0.0.0
- */
-export interface ScheduledPublicationStore<E, R> extends PublicationStore<E, R> {
-  readonly scheduled: (
-    ids: ReadonlyArray<string>,
-  ) => Effect.Effect<ReadonlyArray<PublicationFact>, E, R>;
-}
-
-/**
  * One publish-gated leaf's seams: the publication log, the live view and
  * the gated current-version store (`defineSubtype`'s `store`, beside
  * `publication: { live, facts }`).
@@ -90,7 +75,7 @@ export interface ScheduledPublicationStore<E, R> extends PublicationStore<E, R> 
  * @since 0.0.0
  */
 export interface PublishGated<E, I> {
-  readonly facts: ScheduledPublicationStore<E, I>;
+  readonly facts: PublicationStore<E, I>;
   readonly live: LiveView<LeafRow, SQLWrapper, E, I>;
   readonly leaves: LeafStore<LeafRow, SQLWrapper, E, I>;
 }
@@ -131,18 +116,14 @@ const PUBLISHED_AT = "publishedAt";
  *
  * @since 0.0.0
  */
-export const makePublications = <
-  Live extends { readonly [leaf: string]: PgView },
-  I,
-  Relations extends AnyRelations,
->(config: {
+export const makePublications = <Leaf extends string, I, Relations extends AnyRelations>(config: {
   readonly views: { readonly leaves: { readonly [leaf: string]: PgView } };
   readonly pointer: string;
   readonly log: PointerTable;
-  readonly live: Live;
+  readonly live: { readonly [K in Leaf]: PgView };
   readonly owners: NodeOwnerTable;
   readonly CurrentTransaction: Context.Service<I, PgTransaction<Relations>>;
-}): Publications<keyof Live & string, StoreQueryError<Relations>, I> => {
+}): Publications<Leaf, StoreQueryError<Relations>, I> => {
   const { log, owners, CurrentTransaction } = config;
   const qb = new QueryBuilder();
 
@@ -255,12 +236,7 @@ export const makePublications = <
     };
   };
 
-  // SAFETY: one entry per key of `live`, the pointer's leaves.
-  return R.map(config.live, (view, leaf) => gatedOf(leaf, view)) as Publications<
-    keyof Live & string,
-    StoreQueryError<Relations>,
-    I
-  >;
+  return R.map(config.live, (view, leaf) => gatedOf(leaf, view));
 };
 
 /** A log row as the kernel's `PublicationFact`. */
@@ -278,7 +254,7 @@ const toFact = (
 const factsStore = <I, Relations extends AnyRelations>(
   log: PointerTable,
   CurrentTransaction: Context.Service<I, PgTransaction<Relations>>,
-): ScheduledPublicationStore<StoreQueryError<Relations>, I> => {
+): PublicationStore<StoreQueryError<Relations>, I> => {
   const selection = {
     id: log.id,
     version: log.version,

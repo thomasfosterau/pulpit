@@ -24,14 +24,12 @@ import type {
   LeafStore,
   ListOrder,
   LiveView,
-  PublicationFact,
   PublicationStore,
 } from "@thomasfosterau/pulpit/subtype";
 import {
   makePublications,
   type Publications,
   type PublishGated,
-  type ScheduledPublicationStore,
 } from "@thomasfosterau/pulpit-drizzle-pg/publication";
 import {
   makeLeafStores,
@@ -48,6 +46,12 @@ import {
   type FilterColumns,
 } from "@thomasfosterau/pulpit-drizzle-pg/filter";
 import type { SQL, SQLWrapper } from "drizzle-orm";
+import {
+  makeDocumentStore,
+  makeDocumentTable,
+  type DocumentTable,
+} from "@thomasfosterau/pulpit-drizzle-pg/documents";
+import type { DocumentStore } from "@thomasfosterau/pulpit/documents";
 import type * as Option from "effect/Option";
 import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
 import { pgSchema, text } from "drizzle-orm/pg-core";
@@ -66,7 +70,10 @@ type Satisfies<A, B> = [A] extends [B] ? true : false;
 // ── the root barrel ──────────────────────────────────────────────────────
 
 export type _Root = Assert<
-  Equals<keyof typeof DrizzlePg, "VersionChain" | "LeafStore" | "Filter" | "Publication">
+  Equals<
+    keyof typeof DrizzlePg,
+    "VersionChain" | "LeafStore" | "Filter" | "Publication" | "Documents"
+  >
 >;
 export type _RootChains = Assert<
   Equals<typeof DrizzlePg.VersionChain.makeVersionChains, typeof makeVersionChains>
@@ -181,23 +188,23 @@ export type _PublishGated = Assert<
   Equals<
     PublishGated<EffectDrizzleQueryError, Key>,
     {
-      readonly facts: ScheduledPublicationStore<EffectDrizzleQueryError, Key>;
+      readonly facts: PublicationStore<EffectDrizzleQueryError, Key>;
       readonly live: LiveView<LeafRow, SQLWrapper, EffectDrizzleQueryError, Key>;
       readonly leaves: LeafStore<LeafRow, SQLWrapper, EffectDrizzleQueryError, Key>;
     }
   >
 >;
-export type _Scheduled = Assert<
-  Equals<
-    ScheduledPublicationStore<EffectDrizzleQueryError, Key>["scheduled"],
-    (
-      ids: ReadonlyArray<string>,
-    ) => Effect.Effect<ReadonlyArray<PublicationFact>, EffectDrizzleQueryError, Key>
-  >
->;
-export type _ScheduledStore = Assert<
-  Satisfies<
-    ScheduledPublicationStore<EffectDrizzleQueryError, Key>,
-    PublicationStore<EffectDrizzleQueryError, Key>
-  >
+// ── ./documents ──────────────────────────────────────────────────────────
+
+const blocks = makeDocumentTable({ schema, name: "block_documents" });
+const Block = Schema.Struct({ type: Schema.String });
+const blockStore = makeDocumentStore({
+  table: blocks,
+  document: Block,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _DocumentTable = Assert<Equals<typeof blocks, DocumentTable>>;
+export type _DocumentStore = Assert<
+  Equals<typeof blockStore, DocumentStore<typeof Block.Type, EffectDrizzleQueryError, Key>>
 >;
