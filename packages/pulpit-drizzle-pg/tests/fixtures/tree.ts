@@ -19,6 +19,7 @@ import { makeEmbeddingTables } from "@thomasfosterau/pulpit-drizzle-pg/embedding
 import { makeExternalIdTable } from "@thomasfosterau/pulpit-drizzle-pg/external-ids";
 import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
 import { makeReactionTable } from "@thomasfosterau/pulpit-drizzle-pg/reactions";
+import { makeMembershipTable } from "@thomasfosterau/pulpit-drizzle-pg/memberships";
 import { makeProposalTable } from "@thomasfosterau/pulpit-drizzle-pg/proposals";
 import { makePathTable } from "@thomasfosterau/pulpit-drizzle-pg/paths";
 import { sql } from "drizzle-orm";
@@ -123,6 +124,19 @@ export const collection = makeCollectionTable({
 /** An account table, for the reaction table's cascading account key. */
 export const accounts = schema.table("account", { id: text("id").primaryKey() });
 
+/** The application's groups: an id and an owner. */
+export const groups = schema.table("group", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull(),
+});
+
+/** The group membership table, its groups and accounts cascading. */
+export const memberships = makeMembershipTable({
+  schema,
+  groups: groups.id,
+  accounts: accounts.id,
+});
+
 /** The reaction table, its accounts cascading. */
 export const reactions = makeReactionTable({
   schema,
@@ -179,6 +193,8 @@ export const fixtureSchema = {
   externalIds,
   collection,
   accounts,
+  groups,
+  memberships,
   reactions,
   proposals,
   notesView: views.leaves.notes,
