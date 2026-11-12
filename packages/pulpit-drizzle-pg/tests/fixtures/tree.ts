@@ -12,6 +12,7 @@
 import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
 import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
 import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makeDocumentTable } from "@thomasfosterau/pulpit-drizzle-pg/documents";
 import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
 import { boolean, doublePrecision, integer, pgSchema, text, timestamp } from "drizzle-orm/pg-core";
 import * as Schema from "effect/Schema";
@@ -65,6 +66,9 @@ export const tables = makeTreeTables(tree, {
 
 export const views = makeTreeViews(tree, tables, { schema });
 
+/** A document family's table, keyed by the generated hash. */
+export const documents = makeDocumentTable({ schema, name: "block_documents" });
+
 /** The owner table the leaf stores read and stamp. */
 export const owners = makeNodeOwnerTable({ schema, identity: tables.root.identity });
 
@@ -94,6 +98,7 @@ export const fixtureSchema = {
   postsStable: tables.levels.posts.stable,
   postsVersion: tables.levels.posts.version,
   owners,
+  documents,
   notesView: views.leaves.notes,
   linksView: views.leaves.links,
   postsView: views.leaves.posts,

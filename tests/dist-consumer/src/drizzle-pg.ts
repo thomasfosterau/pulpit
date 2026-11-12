@@ -35,6 +35,12 @@ import {
   type FilterColumns,
 } from "@thomasfosterau/pulpit-drizzle-pg/filter";
 import type { SQL, SQLWrapper } from "drizzle-orm";
+import {
+  makeDocumentStore,
+  makeDocumentTable,
+  type DocumentTable,
+} from "@thomasfosterau/pulpit-drizzle-pg/documents";
+import type { DocumentStore } from "@thomasfosterau/pulpit/documents";
 import type * as Option from "effect/Option";
 import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
 import { pgSchema, text } from "drizzle-orm/pg-core";
@@ -52,7 +58,9 @@ type Satisfies<A, B> = [A] extends [B] ? true : false;
 
 // ── the root barrel ──────────────────────────────────────────────────────
 
-export type _Root = Assert<Equals<keyof typeof DrizzlePg, "VersionChain" | "LeafStore" | "Filter">>;
+export type _Root = Assert<
+  Equals<keyof typeof DrizzlePg, "VersionChain" | "LeafStore" | "Filter" | "Documents">
+>;
 export type _RootChains = Assert<
   Equals<typeof DrizzlePg.VersionChain.makeVersionChains, typeof makeVersionChains>
 >;
@@ -144,4 +152,19 @@ export type _RenderOrder = Assert<
 >;
 export type _DistinctKey = Assert<
   Equals<typeof distinctKey, (column: FilterColumn) => Option.Option<SQL>>
+>;
+
+// ── ./documents ──────────────────────────────────────────────────────────
+
+const blocks = makeDocumentTable({ schema, name: "block_documents" });
+const Block = Schema.Struct({ type: Schema.String });
+const blockStore = makeDocumentStore({
+  table: blocks,
+  document: Block,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _DocumentTable = Assert<Equals<typeof blocks, DocumentTable>>;
+export type _DocumentStore = Assert<
+  Equals<typeof blockStore, DocumentStore<typeof Block.Type, EffectDrizzleQueryError, Key>>
 >;

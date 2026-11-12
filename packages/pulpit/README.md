@@ -1522,7 +1522,7 @@ The record a JSON:API server's resource handlers are expected to accept. effect-
 
 ### `DocumentStore<Document, E, R>`: the content-addressed document store
 
-Filled by the application, over its own document tables (the apps' `inline_documents` / `block_documents`; pulpit#53). No library is expected to provide one. Expected schema: a table per document family holding the document as `jsonb`, keyed by its hash, which the database generates:
+Filled by `@thomasfosterau/pulpit-drizzle-pg`'s `makeDocumentStore` over a `makeDocumentTable` (pulpit#247), or by the application over its own document tables (the apps' `inline_documents` / `block_documents`; pulpit#53). Expected schema: a table per document family holding the document as `jsonb`, keyed by its hash, which the database generates:
 
 ```sql
 hash_id bytea PRIMARY KEY GENERATED ALWAYS AS (digest(document_jsonb::text, 'sha256')) STORED,
