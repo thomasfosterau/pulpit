@@ -59,7 +59,13 @@
  * redacting version is not an edit, and runs no lifecycle hook. A node
  * whose head is a tombstone gets none, since no port operation appends
  * over a tombstone without resurrecting it (`VERSION-CHAIN-006`): its
- * versions keep their attribution, as every earlier version does.
+ * versions keep their attribution, as every earlier version does, and the
+ * tombstone stays hidden below the view-deleted rung (owner decision on
+ * pulpit#303). It is redacted on restore: once an application restores
+ * such a node its head is live again and still matches the marker, so the
+ * application re-runs erasure for the account after the restore, and that
+ * run appends the redacting version. A family whose history must go is a
+ * `purge` family.
  *
  * **The marker.** A node needs a redacting version when some version names
  * the account (as actor or `proposedBy`) and no later version is attributed

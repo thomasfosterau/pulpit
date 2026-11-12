@@ -15,7 +15,7 @@
  *   stays under the tombstone account.
  * - A re-run changes nothing and appends nothing; a run cut short at a
  *   batch boundary resumes to the same end state. A tombstoned node gets no
- *   redacting version.
+ *   redacting version until it is restored and erasure runs again (pulpit#303).
  * - Memberships (pulpit#274): more membership rows and invitations than a
  *   batch go in bounded batches, and an interrupted run resumes to one
  *   uninterrupted run's end state.
@@ -425,6 +425,26 @@ describe("defineAccountErasure", () => {
     expect(summary.complete).toBe(true);
     expect(world.commentChain.rows()).toEqual(before);
     expect(summary.changed["comments.redact"]).toBeUndefined();
+  });
+
+  it("redacts a tombstoned node on restore, when erasure is run again (pulpit#303)", async () => {
+    const world = makeWorld();
+    const ids = await run(seed(world));
+    await run(world.ops.comments.delete(ids.comment, Option.some(GONE)));
+    await run(world.erasure().erase(GONE));
+    await run(
+      world.commentChain.restore({ id: ids.comment, patch: {}, actorId: Option.some(OTHER) }),
+    );
+    const before = world.commentChain.rows().length;
+    const again = await run(world.erasure().erase(GONE));
+    expect(again.complete).toBe(true);
+    const appended = Arr.filter(
+      world.commentChain.rows().slice(before),
+      (row) => row.id === ids.comment,
+    );
+    expect(Arr.map(appended, (row) => [row.action, row.actorId, row.proposedBy])).toEqual([
+      ["update", Option.none(), Option.none()],
+    ]);
   });
 
   it("deletes pending, rejected and filed rows, and keeps an accepted proposal and a resolution under the tombstone", async () => {
