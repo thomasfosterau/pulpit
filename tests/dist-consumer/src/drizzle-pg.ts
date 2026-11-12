@@ -8,7 +8,7 @@
  */
 
 import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
-import { makeTreeTables } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
+import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
 import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
 import * as DrizzlePg from "@thomasfosterau/pulpit-drizzle-pg";
 import {
@@ -18,6 +18,30 @@ import {
   type VersionChainTables,
 } from "@thomasfosterau/pulpit-drizzle-pg/version-chain";
 import type { VersionChain } from "@thomasfosterau/pulpit/version-chain";
+import type { ListFilter } from "@thomasfosterau/pulpit/filter";
+import type { LeafRow, LeafStore, ListOrder } from "@thomasfosterau/pulpit/subtype";
+import {
+  makeLeafStores,
+  makeNodeOwnerTable,
+  OWNER_COLUMN,
+  type LeafStores,
+  type NodeOwnerTable,
+} from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
+import {
+  distinctKey,
+  renderListFilter,
+  renderListOrder,
+  type FilterColumn,
+  type FilterColumns,
+} from "@thomasfosterau/pulpit-drizzle-pg/filter";
+import type { SQL, SQLWrapper } from "drizzle-orm";
+import {
+  makeDocumentStore,
+  makeDocumentTable,
+  type DocumentTable,
+} from "@thomasfosterau/pulpit-drizzle-pg/documents";
+import type { DocumentStore } from "@thomasfosterau/pulpit/documents";
+import type * as Option from "effect/Option";
 import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
 import { pgSchema, text } from "drizzle-orm/pg-core";
 import type * as Effect from "effect/Effect";
@@ -34,7 +58,9 @@ type Satisfies<A, B> = [A] extends [B] ? true : false;
 
 // ── the root barrel ──────────────────────────────────────────────────────
 
-export type _Root = Assert<Equals<keyof typeof DrizzlePg, "VersionChain">>;
+export type _Root = Assert<
+  Equals<keyof typeof DrizzlePg, "VersionChain" | "LeafStore" | "Filter" | "Documents">
+>;
 export type _RootChains = Assert<
   Equals<typeof DrizzlePg.VersionChain.makeVersionChains, typeof makeVersionChains>
 >;
@@ -83,4 +109,62 @@ export type _QueryError = Assert<
 >;
 export type _VersionChains = Assert<
   Equals<VersionChains<"a", never, never>, { readonly a: VersionChain<never, never> }>
+>;
+
+// ── ./leaf-store ─────────────────────────────────────────────────────────
+
+const schema = pgSchema("content");
+const owners = makeNodeOwnerTable({ schema, identity: tables.root.identity });
+const stores = makeLeafStores({
+  tree,
+  tables,
+  views: makeTreeViews(tree, tables, { schema }),
+  owners,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _Owners = Assert<Equals<typeof owners, NodeOwnerTable>>;
+export type _OwnerColumn = Assert<Equals<typeof OWNER_COLUMN, "ownerId">>;
+export type _Stores = Assert<
+  Equals<typeof stores, LeafStores<"post" | "page", EffectDrizzleQueryError, Key>>
+>;
+export type _Store = Assert<
+  Equals<(typeof stores)["post"], LeafStore<LeafRow, SQLWrapper, EffectDrizzleQueryError, Key>>
+>;
+
+// ── ./filter ─────────────────────────────────────────────────────────────
+
+export type _Render = Assert<
+  Equals<
+    typeof renderListFilter,
+    (filter: ListFilter<SQLWrapper>, columns: FilterColumns) => Option.Option<SQL>
+  >
+>;
+export type _RenderOrder = Assert<
+  Equals<
+    typeof renderListOrder,
+    (
+      orderBy: ReadonlyArray<ListOrder>,
+      columns: FilterColumns,
+      id: FilterColumn,
+    ) => ReadonlyArray<SQL>
+  >
+>;
+export type _DistinctKey = Assert<
+  Equals<typeof distinctKey, (column: FilterColumn) => Option.Option<SQL>>
+>;
+
+// ── ./documents ──────────────────────────────────────────────────────────
+
+const blocks = makeDocumentTable({ schema, name: "block_documents" });
+const Block = Schema.Struct({ type: Schema.String });
+const blockStore = makeDocumentStore({
+  table: blocks,
+  document: Block,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _DocumentTable = Assert<Equals<typeof blocks, DocumentTable>>;
+export type _DocumentStore = Assert<
+  Equals<typeof blockStore, DocumentStore<typeof Block.Type, EffectDrizzleQueryError, Key>>
 >;

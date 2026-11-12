@@ -2,7 +2,7 @@
 
 Agent guidance for the Drizzle / PostgreSQL package (`CLAUDE.md` here imports this file). The repository-wide guidance is the root [AGENTS.md](../../AGENTS.md).
 
-The kernel's tree-bound seams over the tables and views `@thomasfosterau/effect-drizzle-ext` derives from an application's `defineTree`, on PostgreSQL through `@thomasfosterau/effect-drizzle-ext-pg`: the third package in this repo (owner decision, design session 2026-11-04, effect-drizzle-ext#112). It exports the `VersionChain` port over `-pg/chain` (`./version-chain`, pulpit#247); `src/internal/` holds the per-leaf mapping, off docgen. The remaining seams of pulpit#247 (`LeafStore`, `PublicationStore` / `LiveView`, the localised `LeafStore`, `SearchBranch`) land as their own slices. It is `"private": true` until the owner sets up its publishing ([PUBLISHING.md](../../PUBLISHING.md)). The spec, and the owner's decisions on it, are on pulpit#247; read them before adding code.
+The kernel's tree-bound seams over the tables and views `@thomasfosterau/effect-drizzle-ext` derives from an application's `defineTree`, on PostgreSQL through `@thomasfosterau/effect-drizzle-ext-pg`: the third package in this repo (owner decision, design session 2026-11-04, effect-drizzle-ext#112). It exports the `VersionChain` port over `-pg/chain` (`./version-chain`, pulpit#247), the `LeafStore` over the tree's leaf views with the owner table (`./leaf-store`), the `ListFilter` → SQL renderer (`./filter`) and the content-addressed `DocumentStore` (`./documents`); `src/internal/` holds the per-leaf chain mapping and the node-id check, off docgen. The remaining seams (`PublicationStore` / `LiveView`, `DocumentStore`, `PathStore`, the localised `LeafStore`, `SearchBranch`) land as their own slices. It is `"private": true` until the owner sets up its publishing ([PUBLISHING.md](../../PUBLISHING.md)). The spec, and the owner's decisions on it, are on pulpit#247; read them before adding code.
 
 ## Boundary
 
@@ -16,6 +16,11 @@ The kernel's tree-bound seams over the tables and views `@thomasfosterau/effect-
 
 - **The errors map one to one.** `-pg/chain`'s `NodeAlreadyExists`, `NodeNotFound`, `VersionNotFound`, `StaleVersion` and `VersionConflict` become the kernel's classes of the same name with the same fields; `BrokenChain` stays a defect. A mapping that merges, drops or renames one changes the wire's 404 / 409 / 412.
 - **`purge` is the only delete** (`VERSION-CHAIN-001/002`'s documented exception, pulpit#58): one identity-row delete scoped to the leaf's `type`, cascading through every level (effect-drizzle-ext#145). Never add a second path that deletes a version row.
+- **The SQL filter and the kernel's `evaluate` never disagree.** `./filter` renders the kernel's contract table node for node; a node over a column the view lacks is `false`. Change one, change both: the integration suite checks every node, and every row × viewer through `searchScopeFilter`, against `makeInMemoryLeafStore`.
+- **A wire id never fails a query.** The identity `id` is a `uuid`; an id that is no canonical UUID names no node in every seam (`src/internal/node-id.ts`), and a `uuid` column compares with a filter value as text.
+- **No view key has two sources.** `makeLeafStores` refuses at module load a tree whose leaf view would take one key from an identity extra, a level and the view's own projection (`id`, `version`, `action`, `timestamp`, `createdAt`, `ownerId`); the view's merge would otherwise keep the later silently.
+- **A stored document is never rewritten** (`DOC-001`): `put` is `INSERT … ON CONFLICT DO NOTHING`, the hash is the database's generated `digest(document::text, 'sha256')`, and the integration suite pins it to the kernel's `canonicalText`. Change neither without the other.
+- **Stores never open a transaction or a connection**: every read and write yields the caller's `CurrentTransaction`.
 - **A contributor is never dropped.** An update carrying `proposedBy` over a tree whose root version table has no `proposedBy` column dies (`ProposedByUnrecorded`).
 
 ## Tests

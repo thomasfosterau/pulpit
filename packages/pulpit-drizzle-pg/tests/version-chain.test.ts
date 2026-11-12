@@ -265,6 +265,26 @@ describe("fromLeafChain — the driver's own failure", () => {
   });
 });
 
+describe("fromLeafChain — an id that is no UUID names no node", () => {
+  const { chain } = harness(true);
+  const actorId = Option.none<string>();
+  const tag = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
+    Effect.runPromise(Effect.map(Effect.flip(effect), (error) => error._tag));
+
+  it("answers as an unknown id does, without reaching the chain", async () => {
+    expect(await tag(chain.update({ id: "not-a-uuid", patch: {}, actorId }))).toBe("NodeNotFound");
+    expect(await tag(chain.restore({ id: "1", patch: {}, actorId }))).toBe("NodeNotFound");
+    expect(await tag(chain.delete("X", actorId))).toBe("NodeNotFound");
+    expect(await tag(chain.history("x"))).toBe("NodeNotFound");
+    expect(await tag(chain.getVersion("x", 0n))).toBe("VersionNotFound");
+    expect(await tag(chain.restoreVersion("x", 0n, actorId))).toBe("VersionNotFound");
+    expect(await Effect.runPromise(chain.head("00000000-0000-4000-8000-00000000ABCD"))).toEqual(
+      Option.none(),
+    );
+    await Effect.runPromise(chain.purge("x"));
+  });
+});
+
 describe("makeVersionChains", () => {
   it("binds one port per leaf of the tree", () => {
     const chains = makeVersionChains({
@@ -272,7 +292,7 @@ describe("makeVersionChains", () => {
       tables,
       CurrentTransaction: database.CurrentTransaction,
     });
-    expect(Arr.sort(R.keys(chains), Str.Order)).toEqual(["links", "notes"]);
+    expect(Arr.sort(R.keys(chains), Str.Order)).toEqual(["links", "notes", "posts"]);
     expect(Arr.sort(R.keys(chains.notes), Str.Order)).toEqual([
       "create",
       "delete",
@@ -292,6 +312,6 @@ describe("makeVersionChains", () => {
       tables: plainTables,
       CurrentTransaction: database.CurrentTransaction,
     });
-    expect(Arr.sort(R.keys(chains), Str.Order)).toEqual(["links", "notes"]);
+    expect(Arr.sort(R.keys(chains), Str.Order)).toEqual(["links", "notes", "posts"]);
   });
 });
