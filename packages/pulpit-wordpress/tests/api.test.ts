@@ -626,7 +626,7 @@ describe("the wp/v2 read API — the read rule (SEC-AUTH-ENUM-001)", () => {
       // A list never shows a row the item route hides, nor counts it.
       const list = await wp.get("/wp/v2/posts", [["status", "publish"]], who);
       const shown = listed(list);
-      const readableIds = Arr.filter(rows, (_, index) => reads[index] === 200).map(
+      const readableIds = Arr.filter(rows, (_row, index) => reads[index] === 200).map(
         ({ wireId }) => wireId,
       );
       expect(Arr.every(shown, (id) => Arr.contains(readableIds, id))).toBe(true);

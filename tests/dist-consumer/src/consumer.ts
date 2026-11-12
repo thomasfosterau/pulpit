@@ -35,6 +35,7 @@ import {
   Discovery,
   Relations,
   Translation,
+  Notifications,
   ReferenceImport,
   Proposals,
   Registry,
@@ -315,6 +316,16 @@ import {
   type SweepSummary,
   type TranslationOps,
 } from "@thomasfosterau/pulpit/translation";
+import {
+  defineNotifications,
+  emitting,
+  notificationHook,
+  type NotificationDraft,
+  type NotificationOps,
+  type OutboxStore,
+  // ./translation exports a `SweepSummary` too; each module keeps its own.
+  type SweepSummary as NotificationSweepSummary,
+} from "@thomasfosterau/pulpit/notifications";
 import {
   defineReferenceImport,
   type ExternalIdStore,
@@ -1688,6 +1699,32 @@ export type _TranslationSweep = Assert<
 >;
 export type _LineageOf = Assert<Equals<ReturnType<typeof lineageOf>, Option.Option<LocaleLineage>>>;
 export type _HumanLineageHook = Assert<Equals<ReturnType<typeof humanLineageHook>["name"], string>>;
+
+// ── notifications (pulpit#197) ───────────────────────────────────────────
+
+export type _NotificationsBarrel = Assert<
+  Equals<typeof Notifications.defineNotifications, typeof defineNotifications>
+>;
+export type _NotificationSweep = Assert<
+  Equals<
+    ReturnType<NotificationOps<"comment.replied", StoreFailure, Transaction>["sweep"]>,
+    Effect.Effect<NotificationSweepSummary, StoreFailure, Transaction>
+  >
+>;
+export type _NotificationHookRun = Assert<
+  Equals<
+    ReturnType<typeof notificationHook<"comment.replied", StoreFailure, Transaction>>["name"],
+    string
+  >
+>;
+declare const outboxStore: OutboxStore<"comment.replied", StoreFailure, Transaction>;
+// `emitting` keeps the write's own result and widens its channels by the outbox's.
+export const emitted: Effect.Effect<number, "write" | StoreFailure, Transaction> = emitting(
+  outboxStore,
+  Effect.fail("write" as const).pipe(Effect.as(1)),
+  (_count: number): Effect.Effect<ReadonlyArray<NotificationDraft<"comment.replied">>> =>
+    Effect.succeed([]),
+);
 
 // ── media (pulpit#206) ───────────────────────────────────────────────────
 
