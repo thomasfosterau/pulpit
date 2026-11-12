@@ -213,19 +213,10 @@ export const makePublications = <Leaf extends string, I, Relations extends AnyRe
     const liveRows = lives(`${leaf}_live`);
 
     const live: LiveView<LeafRow, SQLWrapper, StoreQueryError<Relations>, I> = {
-      get: (id) =>
-        isNodeId(id)
-          ? Effect.map(reads.where(liveRows, sql`${liveRows.id} = ${id}`, 1), Arr.head)
-          : Effect.succeedNone,
-      getMany: (ids) => {
-        const valid = Arr.dedupe(Arr.filter(ids, isNodeId));
-        return Arr.isReadonlyArrayNonEmpty(valid)
-          ? reads.byIds(liveRows, valid)
-          : Effect.succeed([]);
-      },
+      ...reads.byId(liveRows),
       list: (query) => reads.page(chosen(query.headFor), query),
       distinct: (query) => reads.distinct(chosen(query.headFor), query),
-      // The localised live view reads the pointer's keyed view (pulpit#335).
+      // The localised live view reads the pointer's keyed view (pulpit#343).
       listLocalised: () => Effect.succeed({ rows: [], total: 0 }),
     };
 
