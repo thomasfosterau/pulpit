@@ -48,6 +48,7 @@
     "packages/pulpit-drizzle-pg/src/filter.ts",
     "packages/pulpit-drizzle-pg/src/publication.ts",
     "packages/pulpit-drizzle-pg/src/paths.ts",
+    "packages/pulpit-drizzle-pg/src/collections.ts",
     "packages/pulpit-drizzle-pg/src/documents.ts",
     "packages/pulpit-drizzle-pg/src/search.ts",
     "packages/pulpit-drizzle-pg/src/edges.ts",

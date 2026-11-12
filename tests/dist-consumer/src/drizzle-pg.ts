@@ -72,6 +72,12 @@ import {
   makeExternalIdTable,
   type ExternalIdTable,
 } from "@thomasfosterau/pulpit-drizzle-pg/external-ids";
+import type { CollectionStore } from "@thomasfosterau/pulpit/collections";
+import {
+  makeCollectionStore,
+  makeCollectionTable,
+  type CollectionTable,
+} from "@thomasfosterau/pulpit-drizzle-pg/collections";
 import type { ReactionStore } from "@thomasfosterau/pulpit/reactions";
 import {
   makeReactionStore,
@@ -126,6 +132,7 @@ export type _Root = Assert<
     | "Proposals"
     | "Embeddings"
     | "ExternalIds"
+    | "Collections"
     | "Reactions"
   >
 >;
@@ -410,6 +417,23 @@ const externalIdStore = makeExternalIdStore({
 export type _ExternalIdTable = Assert<Equals<typeof externalIdTable, ExternalIdTable>>;
 export type _ExternalIdStore = Assert<
   Equals<typeof externalIdStore, ExternalIdStore<EffectDrizzleQueryError, Key>>
+>;
+
+// ── ./collections ────────────────────────────────────────────────────────
+
+const collectionTable = makeCollectionTable({
+  schema,
+  name: "list_item",
+  identity: tables.root.identity,
+});
+const collectionStore = makeCollectionStore({
+  table: collectionTable,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _CollectionTable = Assert<Equals<typeof collectionTable, CollectionTable>>;
+export type _CollectionStore = Assert<
+  Equals<typeof collectionStore, CollectionStore<EffectDrizzleQueryError, Key>>
 >;
 
 // ── ./reactions ──────────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ The module guide for [`@thomasfosterau/pulpit-drizzle-pg`](../packages/pulpit-dr
 - **Landed:** the `EdgeStore` ([`./edges`](#edges), pulpit#356), checked against the kernel's in-memory store on PostgreSQL, `members` through a leaf store's list and `countAt`'s lock against a second transaction.
 - **Landed:** the `EmbeddingStore` ([`./embeddings`](#embeddings), pulpit#357), checked against the kernel's in-memory store on PostgreSQL with `double precision[]` vectors; pgvector's form is pinned by unit tests.
 - **Landed:** the `ExternalIdStore` ([`./external-ids`](#external-ids), pulpit#359), checked against the kernel's in-memory store on PostgreSQL.
+- **Landed:** the `CollectionStore` ([`./collections`](#collections), pulpit#358), checked against the kernel's in-memory store on PostgreSQL.
 - **Landed:** the `ReactionStore` ([`./reactions`](#reactions), pulpit#363), checked against the kernel's in-memory store on PostgreSQL.
 - **Next:** the other stores that aren't tree-bound (reports, budgets, working copies, erasure, social and notification tables), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
 
@@ -330,6 +331,19 @@ The integration suite runs the same calls through this store and the kernel's `m
 | `makeEmbeddingTables(options)`, `EmbeddingTables`, `VectorKind` | One family's queue and vector tables. |
 | `makeEmbeddingStore(config)` | The `EmbeddingStore` over them. |
 | `vectorLiteral(kind, values)` | A vector as its SQL literal. |
+
+## `./collections`
+
+The kernel's `CollectionStore` ([seams.md → `CollectionStore`](seams.md#collectionstoree-r-the-membership-table), pulpit#358): the positioned members of an ordered family (a list's items, a bibliography's entries, a timeline's events, a website's pages), one membership table per family.
+
+- **`makeCollectionTable({ schema, name, identity })`** has the columns `parent_id` and `member_id` (both referencing the identity row, cascading) and `position` (`integer`). Its primary key is `(parent_id, member_id)`, and it is indexed on `(parent_id, position)`.
+- **`makeCollectionStore({ table, CurrentTransaction })`** binds the store, every call in the caller's transaction:
+  - **`entries(parentId, limit)`** is `ORDER BY position, member_id LIMIT $limit`, and nothing for a limit below one.
+  - **`replace(parentId, entries)`** rewrites the parent's order in one statement. A CTE deletes the parent's rows whose member is not in `entries`, and the `INSERT` upserts the rest (`ON CONFLICT (parent_id, member_id) DO UPDATE SET position = EXCLUDED.position`). A `DELETE` of every row and an `INSERT` of the same keys can't share one statement, because its sub-statements see one snapshot and the insert would meet the rows the delete removes. With no entries it is the `DELETE` alone. A member named twice keeps its first entry.
+  - An id that is no canonical UUID names no node: such a parent reads nothing and takes no write, and such a member is left out.
+- A `versioned` family also records the order on the parent's version table, in the `jsonb` column it declares (the kernel's `CollectionMode`). That column belongs to the tree's tables; this store holds the positions alone.
+
+The integration suite runs the same replaces through this store and the kernel's `makeInMemoryCollectionStore` (reorders, appends, removals, an emptying, a tie on position, one member in two parents) and checks the entries agree. It also checks the duplicate and malformed-id handling, and that purging a member or a parent cascades.
 
 ## `./external-ids`
 
