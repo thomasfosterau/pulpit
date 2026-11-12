@@ -569,8 +569,9 @@ export const defineTranslation = <E, R, LE>(
 
   /** The pairs to land and the ones a pending bot proposal already covers. */
   const pendingOf = (pairs: ReadonlyArray<TranslationPair>) => {
-    const hasPending = landing.kind === "proposal" ? landing.hasPending : undefined;
-    if (hasPending === undefined) return Effect.succeed([pairs, []] as const);
+    if (landing.kind !== "proposal" || landing.hasPending === undefined)
+      return Effect.succeed([pairs, []] as const);
+    const { hasPending } = landing;
     return Effect.map(
       Effect.forEach(
         pairs,
