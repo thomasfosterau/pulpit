@@ -32,9 +32,14 @@
  * axis means the resource does not ride it — except where the family's
  * options say absence is itself a refusal:
  *
- * - `owned` — an owned family whose `visibility` attribute is absent refuses:
- *   the projection dropped the one attribute that decides who may see the
- *   row, and reading that as public is a fail-open (#1096, #1092);
+ * - `owned` — an owned family's axes are effect-auth's
+ *   (`Cacheability.publiclyServeable` over `OwnedAccess.serveableAxes`,
+ *   pulpit#5): a `visibility` that is absent refuses, since the projection
+ *   dropped the one attribute that decides who may see the row and reading
+ *   that as public is a fail-open (#1096, #1092); `draft` and `unapproved`,
+ *   when present, must be exactly `false`, a `moderationState` exactly
+ *   `approved`, and a `deletedAt` key must be absent, even holding
+ *   `undefined`;
  * - `publishGated` — a family gated by its stamp refuses a missing,
  *   unparseable or future `publishedAt`. A leaf that declares `./subtype`'s
  *   live pointer is one: its live view supplies the stamp, and its
@@ -53,6 +58,7 @@
  * @since 0.1.0
  */
 
+import { Cacheability, OwnedAccess } from "@thomasfosterau/effect-auth";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
@@ -170,6 +176,13 @@ const hasArrivedStamp = (publishedAt: Date | string, options: ServeabilityOption
   return Number.isFinite(instant) && instant <= now.getTime();
 };
 
+/**
+ * An owned family's axes, as effect-auth decides them (pulpit#5):
+ * `Cacheability.publiclyServeable` over `OwnedAccess.serveableAxes`, the
+ * owned-read policy's one anonymous arm restated over the wire attributes.
+ */
+const ownedServeable = Cacheability.publiclyServeable(OwnedAccess.serveableAxes);
+
 /** A serialised stamp's two forms: a string on a KV hit, a `Date` on populate. */
 const isStamp = P.or(P.isDate, P.isString);
 
@@ -202,8 +215,6 @@ export const isPubliclyServeable = (
   const attributes = resource["attributes"];
   // No attributes block to inspect: refuse rather than guess.
   if (!P.isObject(attributes)) return false;
-  const visibility = attributes["visibility"];
-  if (options.owned === true && visibility === undefined) return false;
   // A `publishedAt` that is neither a `Date` nor a string (absent included)
   // names no instant, so the publish gate refuses it.
   const stamp = Option.liftPredicate(attributes["publishedAt"], isStamp);
@@ -213,6 +224,8 @@ export const isPubliclyServeable = (
   ) {
     return false;
   }
+  if (options.owned === true) return ownedServeable(attributes);
+  const visibility = attributes["visibility"];
   if (visibility !== undefined && visibility !== "public") return false;
   const moderationState = attributes["moderationState"];
   if (moderationState !== undefined && moderationState !== "approved") return false;

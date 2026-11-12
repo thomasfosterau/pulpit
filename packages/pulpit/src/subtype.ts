@@ -72,9 +72,10 @@
  *
  * - the **viewer** and the **role axes** ({@link Viewer}, {@link AccessPolicy})
  *   and the **follower** answer — effect-auth's session context, role ladder
- *   and `IsFollower`. Its read scope (`OwnedAccess` / `Guard` / `Ladder` /
- *   `Cacheability`) is on effect-auth's `trunk` but unpublished (release PR
- *   effect-auth#177);
+ *   and `IsFollower` / `IsMember`. The row predicates and the read scope's
+ *   kind are decided by effect-auth's `OwnedAccess` / `ReferenceAccess`
+ *   (pulpit#5), through an internal bridge that keeps these seams as the
+ *   kernel's signatures;
  * - the **current-version view** ({@link LeafStore}) — a Drizzle store over
  *   effect-drizzle-ext's `makeCurrentVersionView`;
  * - the **handlers config** the factory's operations plug into
@@ -124,6 +125,7 @@ import {
   type ListFilter,
 } from "./filter.ts";
 import { byCodePoint } from "./internal/list-order.ts";
+import { knownViewer, readScopeDelegated } from "./internal/delegated-access.ts";
 import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
 import { qOf } from "./internal/qvalue.ts";
 import {
@@ -430,7 +432,11 @@ const memberScope = <Following>(
 };
 
 /**
- * Resolve a viewer's {@link ReadScope}.
+ * Resolve a viewer's {@link ReadScope}. The scope's kind is effect-auth's
+ * `OwnedAccess.readScope` (pulpit#5): `public` for an anonymous viewer, and
+ * for one whose id is empty (effect-auth#661); `all` for the view-private
+ * rung; `member` otherwise, carrying the follower seam's own `following` and
+ * (when it answers them) `groups` sets.
  *
  * @since 0.1.0
  */
@@ -438,12 +444,10 @@ export const readScopeFor = <Following>(
   viewer: Viewer,
   policy: AccessPolicy,
   followers: FollowerSeam<Following, unknown>,
-): ReadScope<Following> =>
-  Option.match(viewer, {
-    onNone: (): ReadScope<Following> => ({ kind: "public" }),
-    onSome: (account): ReadScope<Following> =>
-      policy.canViewPrivate(account) ? { kind: "all" } : memberScope(account.id, followers),
-  });
+): ReadScope<Following> => {
+  const scope = readScopeDelegated(viewer, policy);
+  return scope.kind === "member" ? memberScope(scope.userId, followers) : { kind: scope.kind };
+};
 
 /**
  * The facts {@link canViewOwned} reads off an owned row. `draft: false` for a leaf without the axis.
@@ -492,6 +496,10 @@ export interface OwnedFacts {
  * when `public`, not a draft and not unapproved, or to the rung, as {@link ownedListFilter}
  * lists it (`SEC-AUTH-ENUM-001`).
  *
+ * The decision is effect-auth's `OwnedAccess.canView` (pulpit#5). As there
+ * (effect-auth#661), an empty `ownerId` names nobody, and a viewer whose id
+ * is empty reads as anonymous.
+ *
  * @since 0.1.0
  */
 export const canViewOwned = <R>(
@@ -502,7 +510,7 @@ export const canViewOwned = <R>(
 ): Effect.Effect<boolean, never, R> =>
   canViewOwnedRow(viewer, policy, followers, {
     ...row,
-    ownerId: Option.some(row.ownerId),
+    ownerId: Option.liftPredicate(row.ownerId, Str.isNonEmpty),
     groupId: Option.fromUndefinedOr(row.groupId),
   });
 
@@ -662,7 +670,9 @@ export const softDeleteFilter = <Following>(
   policy: AccessPolicy,
   includeDeleted: boolean,
 ): ListFilter<Following> =>
-  includeDeleted && Option.exists(viewer, policy.canViewDeleted) ? always : ne("action", "delete");
+  includeDeleted && Option.exists(knownViewer(viewer), policy.canViewDeleted)
+    ? always
+    : ne("action", "delete");
 
 /**
  * The reference-leaf privacy arm (`PUB-009`): `visibility = 'public'` unless
@@ -699,7 +709,7 @@ export const referencePrivacyFilter = <Following>(
 
 /** A read scope without the follower set: a member reads as the anonymous do. */
 const publicOrAll = <Following>(viewer: Viewer, policy: AccessPolicy): ReadScope<Following> =>
-  Option.exists(viewer, policy.canViewPrivate) ? { kind: "all" } : { kind: "public" };
+  readScopeDelegated(viewer, policy).kind === "all" ? { kind: "all" } : { kind: "public" };
 
 // ── The write gates ───────────────────────────────────────────────────
 
@@ -2032,7 +2042,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   };
 
   const visible = (viewer: Viewer, row: Row): Effect.Effect<boolean, never, R> =>
-    row.action === "delete" && !Option.exists(viewer, policy.canViewDeleted)
+    row.action === "delete" && !Option.exists(knownViewer(viewer), policy.canViewDeleted)
       ? Effect.succeed(false)
       : rowVisible(viewer, row);
 
@@ -2045,7 +2055,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   const readsHeadOf = (viewer: Viewer, head: Row): boolean =>
     readsHeadByRung(viewer) ||
     (access.kind === "owned" &&
-      Option.exists(viewer, (account) =>
+      Option.exists(knownViewer(viewer), (account) =>
         Option.contains(ownedFacts(access, head).ownerId, account.id),
       ));
 
@@ -2603,7 +2613,7 @@ export const searchScopeFilter = <Following>(
 /** Whether the viewer's rung reads every head: the view-private rung, or a reference leaf's corpus writers. */
 const readsEveryHead = (access: LeafAccess, policy: AccessPolicy, viewer: Viewer): boolean =>
   Option.exists(
-    viewer,
+    knownViewer(viewer),
     (account) =>
       policy.canViewPrivate(account) ||
       (access.kind === "reference" && policy.canWriteCorpus(account)),
@@ -2612,7 +2622,7 @@ const readsEveryHead = (access: LeafAccess, policy: AccessPolicy, viewer: Viewer
 /** The heads a viewer below the head-reading rungs reads: their own, on an owned leaf. */
 const ownHeadsOf = <Following>(access: LeafAccess, viewer: Viewer): ListFilter<Following> =>
   access.kind === "owned"
-    ? Option.match(viewer, {
+    ? Option.match(knownViewer(viewer), {
         onNone: (): ListFilter<Following> => never,
         onSome: (account) => eq(access.ownerColumn, account.id),
       })
