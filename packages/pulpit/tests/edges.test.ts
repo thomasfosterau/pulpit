@@ -104,6 +104,8 @@ import {
   moderator,
   NOW,
   otherMember,
+  showValue,
+  textOf,
 } from "./fixtures.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
@@ -466,7 +468,7 @@ describe("ported: an owned-child edge whose gate is its owned end's (gardeneria'
     disorders.put(node("chlorosis", {}));
     /** The observation's owner, or moderator+ (gardeneria's `requireObservationWriterE`). */
     const observationWriter: EdgeWriteGate<never, never> = ({ viewer, policy, edge }) => {
-      const id = String(edge["observationId"]);
+      const id = textOf(edge["observationId"]);
       return requireWriter(
         ownedAccess(),
         viewer,
@@ -633,7 +635,7 @@ const drafts: ReadonlyArray<ColumnValue | typeof ABSENT> = [false, true, null, "
 
 /** A draft for a row id: a string quoted, so `"false"` never collides with `false`. */
 const showDraft = (draft: ColumnValue | typeof ABSENT): string =>
-  draft === ABSENT ? "absent" : P.isString(draft) ? `"${draft}"` : String(draft);
+  draft === ABSENT ? "absent" : P.isString(draft) ? `"${draft}"` : showValue(draft);
 
 describe("EDGE-001: the endpoint filter never disagrees with the endpoint predicate", () => {
   const ownedRows = Arr.flatMap(actions, (action) =>
@@ -747,7 +749,7 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
       Arr.flatMap(["public", "followers", "private", "unknown", null], (visibility) =>
         Arr.map(curators, (curatorId) =>
           node(
-            `${action}-${String(visibility)}-${curatorId === ABSENT ? "absent" : P.isString(curatorId) ? `"${curatorId}"` : String(curatorId)}`,
+            `${action}-${String(visibility)}-${curatorId === ABSENT ? "absent" : P.isString(curatorId) ? `"${curatorId}"` : showValue(curatorId)}`,
             curatorId === ABSENT ? { visibility } : { visibility, curatorId },
             action,
           ),
@@ -1158,7 +1160,7 @@ describe("EDGE-001: an edge is readable only if every end is", () => {
     /** The pair an edge joins, as `subject/entry`. */
     const pairOf = (id: string) => {
       const row = links.edges.rows().find((candidate) => candidate.id === id);
-      return `${String(row?.["subjectId"])}/${String(row?.["entryId"])}`;
+      return row === undefined ? "none" : `${textOf(row["subjectId"])}/${textOf(row["entryId"])}`;
     };
     return { ends, subjects, entries, pairOf, ...links };
   };
@@ -1174,10 +1176,10 @@ describe("EDGE-001: an edge is readable only if every end is", () => {
             Effect.map(
               Effect.all(
                 [
-                  Effect.flatMap(subjects.get(String(row["subjectId"])), (found) =>
+                  Effect.flatMap(subjects.get(textOf(row["subjectId"])), (found) =>
                     canViewEndpoint(ends.subject, viewer, gardeneriaPolicy, follows, found),
                   ),
-                  Effect.flatMap(entries.get(String(row["entryId"])), (found) =>
+                  Effect.flatMap(entries.get(textOf(row["entryId"])), (found) =>
                     canViewEndpoint(ends.entry, viewer, gardeneriaPolicy, follows, found),
                   ),
                 ],
@@ -2503,7 +2505,7 @@ describe("EDGE-001: a `group` end reads to its group's members, filter and predi
   };
   const groupIds: ReadonlyArray<ColumnValue | typeof ABSENT> = ["g-1", "g-2", null, 7, ABSENT];
   const showGroup = (groupId: ColumnValue | typeof ABSENT) =>
-    groupId === ABSENT ? "absent" : String(groupId);
+    groupId === ABSENT ? "absent" : showValue(groupId);
   const withGroup = (
     columns: { readonly [column: string]: ColumnValue },
     groupId: ColumnValue | typeof ABSENT,

@@ -26,6 +26,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
+import * as P from "effect/Predicate";
 import * as R from "effect/Record";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
@@ -81,7 +82,8 @@ const toResource = (row: LeafRow): Resource => {
 };
 
 const project = (resource: Resource) => ({
-  title: String(resource.attributes["title"]),
+  // A localised leaf's shared row carries no title: its titles are the locales'.
+  title: Option.getOrElse(Option.liftPredicate(resource.attributes["title"], P.isString), () => ""),
   summary: Option.none<string>(),
   image: Option.none<{ readonly url: string; readonly alt: Option.Option<string> }>(),
   schemaType: "Article",

@@ -44,6 +44,7 @@ import {
   type ChainState,
   type UpdateInput,
 } from "../src/version-chain.ts";
+import { showValue } from "./fixtures.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 
@@ -59,7 +60,7 @@ const declaration = {
 /** A translator that prefixes each string value with its target locale. */
 const prefixing: Translator<never, never> = {
   translate: ({ to, values }) =>
-    Effect.succeed(R.map(values, (value): ChainState[string] => `${to}:${String(value)}`)),
+    Effect.succeed(R.map(values, (value): ChainState[string] => `${to}:${showValue(value)}`)),
 };
 
 /** Candidate nodes in ascending id order, keyset-paged. */
@@ -293,7 +294,7 @@ describe("the proposal sweep", () => {
       translation({
         kind: "proposal",
         submit: (input) => Effect.sync(() => submitted.push(input)),
-        hasPending: Option.some((_, locale) => Effect.succeed(locale === "fr")),
+        hasPending: (_, locale) => Effect.succeed(locale === "fr"),
       }).sweep(first),
     );
     expect(Arr.map(summary.landed, ({ locale }) => locale)).toEqual(["de"]);
@@ -325,7 +326,7 @@ describe("the proposal sweep", () => {
     const skipping = translation({
       kind: "proposal",
       submit: () => Effect.void,
-      hasPending: Option.some(() => Effect.succeed(true)),
+      hasPending: () => Effect.succeed(true),
     });
     const all = await run(skipping.sweep(first));
     expect(all.landed).toEqual([]);

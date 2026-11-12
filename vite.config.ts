@@ -160,17 +160,14 @@ export default defineConfig({
       },
       // The same boundary, seen by `@effect/tsgo`'s rules (raised from the
       // preset's level by the `suspicious` category): a test is the entry
-      // point where its layer is provided, a fault-injection helper takes
+      // point where its layer is provided, and a fault-injection helper takes
       // whatever effect the case hands it (its error is the case's, not the
-      // helper's), and a fixture row is `Record<string, unknown>` whose
-      // columns the test itself wrote as strings, so `String(row[…])` is a
-      // read, not a stringification of an object.
+      // helper's).
       {
         files: ["**/tests/**/*.ts"],
         rules: {
           "effecttsgo/strict-effect-provide": "off",
           "effecttsgo/any-unknown-in-error-context": "off",
-          "typescript/no-base-to-string": "off",
         },
       },
       // The adapter's HTTP surface is `effect/http`, which the pinned Effect
