@@ -131,6 +131,7 @@ import {
   type LocaleWire,
   defineSearchProjection,
   hydrateSearchHits,
+  searchHeadFor,
   searchScopeFilter,
   type SearchField,
   type SearchProjection,
@@ -237,6 +238,7 @@ import {
   hybridSearch,
   type EmbeddingBatch,
   type EmbeddingMismatch,
+  type BranchRequest,
   type FusedHit,
   type SearchBranch,
 } from "@thomasfosterau/pulpit/search";
@@ -928,6 +930,9 @@ export type _SearchScopeRequest = Assert<
     Pick<ListRequest<Subquery>, "includeDeleted" | "where">
   >
 >;
+export type _SearchHeadFor = Assert<
+  Equals<ReturnType<typeof searchHeadFor<Subquery>>, ListFilter<Subquery>>
+>;
 export type _HydrateSearchHits = Assert<
   Equals<
     ReturnType<
@@ -1426,6 +1431,18 @@ export type _Disposition = Assert<Equals<Disposition, "purge" | "reassign" | "an
 export type _SearchBarrel = Assert<Equals<typeof Search.fuseRankings, typeof fuseRankings>>;
 export type _Fused = Assert<Equals<ReturnType<typeof fuseRankings>, ReadonlyArray<FusedHit>>>;
 export type _FusedRanks = Assert<Equals<FusedHit["ranks"], { readonly [branch: string]: number }>>;
+// The gated branch's heads ride on the request (pulpit#346).
+export type _BranchRequest = Assert<
+  Equals<
+    BranchRequest<Subquery>,
+    {
+      readonly query: string;
+      readonly scope: ListFilter<Subquery>;
+      readonly headFor: ListFilter<Subquery>;
+      readonly limit: number;
+    }
+  >
+>;
 declare const branches: ReadonlyArray<SearchBranch<Subquery, StoreFailure, Transaction>>;
 export const searchOver = hybridSearch({ branches });
 export type _HybridSearch = Assert<
