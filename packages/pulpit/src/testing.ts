@@ -502,6 +502,16 @@ export const makeInMemoryVersionChain = (type: string): InMemoryVersionChain => 
 // ── The version chain's conformance suite ─────────────────────────────
 
 /**
+ * How a {@link versionChainConformance} case fails when the chain answers
+ * other than the case expects: thrown at the test runner's Promise boundary,
+ * which reports it as the case's failure.
+ */
+class ConformanceFailure extends Schema.TaggedError<
+  ConformanceFailure,
+  { readonly brand: unique symbol }
+>()("ConformanceFailure", { message: Schema.String }) {}
+
+/**
  * The slice of a test runner {@link versionChainConformance} registers its
  * cases through, passed in rather than imported so `./testing` needs no
  * test-runner dependency (pulpit#246, owner decision (b)): vitest's (and
@@ -599,12 +609,15 @@ export const versionChainConformance = <E, R>(
   const OTHER = "00000000-0000-4000-8000-00000000beef";
   const initial: ChainState = { title: "First", body: "Hello", summary: "s" };
 
-  /* oxlint-disable effect/avoid-untagged-errors, effect/no-unknown-returns -- the suite's helpers live at the test runner's Promise boundary: a thrown Error is how a case fails, and a case's typed failure is any of the port's errors, matched by its `_tag` */
+  // The suite's helpers live at the test runner's Promise boundary: a thrown
+  // `ConformanceFailure` is how a case fails.
   /** Run to the value, or throw the failure (so a case fails on it). */
   const value = async <A, E2>(effect: Effect.Effect<A, E2, R>): Promise<A> => {
     const exit = await harness.run(effect);
     if (Exit.isSuccess(exit)) return exit.value;
-    throw new Error(`${type} conformance: unexpected failure ${String(exit.cause)}`);
+    throw new ConformanceFailure({
+      message: `${type} conformance: unexpected failure ${String(exit.cause)}`,
+    });
   };
   /** The failure's `_tag`, `"success"`, or `"defect"` for a die. */
   const outcome = async <A, E2>(effect: Effect.Effect<A, E2, R>): Promise<string> => {
@@ -616,10 +629,11 @@ export const versionChainConformance = <E, R>(
         P.hasProperty(error, "_tag") && P.isString(error._tag) ? error._tag : "error",
     });
   };
+  /* oxlint-disable effect/no-unknown-returns -- a case's typed failure is any of the port's errors, matched by its `_tag` */
   /** The typed failure itself. */
   const failure = async <A, E2>(effect: Effect.Effect<A, E2, R>): Promise<unknown> =>
     Option.getOrUndefined(Exit.findErrorOption(await harness.run(effect)));
-  /* oxlint-enable effect/avoid-untagged-errors, effect/no-unknown-returns */
+  /* oxlint-enable effect/no-unknown-returns */
 
   /** A fresh chain holding node `ID` at version 0 with `initial`. */
   const created = async () => {
