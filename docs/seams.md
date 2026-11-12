@@ -298,7 +298,7 @@ Filled by the application over its own membership table:
 
 - **Columns:** `parent_id` and `member_id` (foreign keys to `core.node`, `ON DELETE CASCADE`) and `position` (`integer`), with primary key `(parent_id, member_id)` and an index on `(parent_id, position)`.
 - **`entries(parentId, limit)`** is `ORDER BY position, member_id LIMIT $limit`.
-- **`replace(parentId, entries)`** rewrites the parent's order in one statement: a `DELETE` of the parent's rows and an `INSERT` of the new ones, in the caller's transaction.
+- **`replace(parentId, entries)`** rewrites the parent's order in one statement, in the caller's transaction: a CTE `DELETE`s the parent's rows whose member is not in `entries`, and an `INSERT … ON CONFLICT (parent_id, member_id) DO UPDATE SET position = EXCLUDED.position` writes the rest. A `DELETE` of every row and an `INSERT` of the same keys can't share one statement on PostgreSQL, since its sub-statements see one snapshot (`pulpit-drizzle-pg/collections` is this shape).
 
 It applies no policy and never opens a transaction. A versioned family's parent column is a `jsonb` array of member ids on the parent's version table.
 

@@ -12,6 +12,7 @@
 import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
 import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
 import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makeCollectionTable } from "@thomasfosterau/pulpit-drizzle-pg/collections";
 import { makeDocumentTable } from "@thomasfosterau/pulpit-drizzle-pg/documents";
 import { makeEdgeTable } from "@thomasfosterau/pulpit-drizzle-pg/edges";
 import { makeEmbeddingTables } from "@thomasfosterau/pulpit-drizzle-pg/embeddings";
@@ -111,6 +112,13 @@ export const relations = makeEdgeTable({
 /** The external-identifier table, over the identity table. */
 export const externalIds = makeExternalIdTable({ schema, identity: tables.root.identity });
 
+/** An ordered family: an entry's members, over the identity table. */
+export const collection = makeCollectionTable({
+  schema,
+  name: "entry_member",
+  identity: tables.root.identity,
+});
+
 /** The block documents' embedding queue and vectors: `double precision[]`, so no extension is needed. */
 export const embeddings = makeEmbeddingTables({
   schema,
@@ -158,6 +166,7 @@ export const fixtureSchema = {
   embeddingQueue: embeddings.queue,
   embeddingVectors: embeddings.vectors,
   externalIds,
+  collection,
   proposals,
   notesView: views.leaves.notes,
   linksView: views.leaves.links,
