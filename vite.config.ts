@@ -85,10 +85,6 @@ export default defineConfig({
       // an optional parameter is spelled `x?: T | undefined`, like an
       // optional field, so a caller can forward its own optional value.
       "typescript/no-duplicate-type-constituents": "off",
-      // Every type assertion here carries a `// SAFETY:` comment stating its
-      // invariant, which `effect/require-safety-comment-for-type-assertion`
-      // enforces; this rule would report each audited one again.
-      "typescript/no-unsafe-type-assertion": "off",
       // Reports the exact-type-identity idiom (`<X>() => X extends A ? 1 : 2`)
       // the type-level tests and the dist-consumer check are built on, and
       // `asMemberTuple`'s deliberate generic return target in registry.ts.
@@ -127,6 +123,18 @@ export default defineConfig({
       "vite-plus/prefer-vite-plus-imports": "error",
     },
     overrides: [
+      // The registry recovers, at the type level, what it builds at run time
+      // from the same entries: a member tuple (`asMemberTuple`) and a record
+      // keyed by the `Root` union, which `Record.fromEntries` erases to
+      // `string` (`NonLiteralKey`). Neither type exists at run time to be
+      // decoded into, so each narrowing is a `// SAFETY:`-commented `as`
+      // (audited by `effect/require-safety-comment-for-type-assertion`).
+      {
+        files: ["packages/pulpit/src/registry.ts"],
+        rules: {
+          "typescript/no-unsafe-type-assertion": "off",
+        },
+      },
       // The type-level test slot: an expected-error directive IS the assertion
       // there (each paired with its positive control), so the rule that bans
       // suppressions has nothing to protect in these files.

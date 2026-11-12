@@ -80,6 +80,7 @@ import {
   type LeafRow,
   type ListOrder,
   type ListRequest,
+  type SearchField,
   type SubtypeDefinition,
   type Viewer,
   type ViewerAccount,
@@ -3961,6 +3962,13 @@ describe("search: the projection and gated hydration (pulpit#54)", () => {
     });
   });
 
+  /** A field weighed `E`, as an unchecked JavaScript caller passes it; the type admits only A–D. */
+  const weighedOutside = () => {
+    const field: SearchField = { column: "title", weight: "A" };
+    Reflect.set(field, "weight", "E");
+    return field;
+  };
+
   it.each([
     ["no field", { fields: [] }, "search declares no field"],
     [
@@ -3973,12 +3981,7 @@ describe("search: the projection and gated hydration (pulpit#54)", () => {
       },
       "search names 'title' twice",
     ],
-    [
-      "a weight outside A–D",
-      // SAFETY: deliberately ill-typed, as an unchecked JavaScript caller passes it; the type admits only A–D.
-      { fields: [{ column: "title", weight: "E" as "A" }] },
-      "search weighs 'title' outside A–D",
-    ],
+    ["a weight outside A–D", { fields: [weighedOutside()] }, "search weighs 'title' outside A–D"],
   ] as const)("throws SubtypeDeclarationError for %s", (_, declaration, message) => {
     expect(() => defineSearchProjection(declaration)).toThrow(
       new SubtypeDeclarationError({ message }),
