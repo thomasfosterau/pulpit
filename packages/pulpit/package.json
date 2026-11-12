@@ -64,6 +64,7 @@
     "./discovery": "./src/discovery.ts",
     "./relations": "./src/relations.ts",
     "./translation": "./src/translation.ts",
+    "./notifications": "./src/notifications.ts",
     "./reference-import": "./src/reference-import.ts",
     "./testing": "./src/testing.ts"
   },
@@ -188,6 +189,10 @@
       "./translation": {
         "types": "./dist/translation.d.ts",
         "default": "./dist/translation.js"
+      },
+      "./notifications": {
+        "types": "./dist/notifications.d.ts",
+        "default": "./dist/notifications.js"
       },
       "./reference-import": {
         "types": "./dist/reference-import.d.ts",
