@@ -130,6 +130,7 @@ import {
   moderator,
   NOW,
   otherMember,
+  showValue,
   websitePolicy,
 } from "./fixtures.ts";
 
@@ -289,7 +290,7 @@ describe("ownedListFilter ≡ canViewOwned", () => {
     Arr.flatMap([false, true], (draft) =>
       Arr.flatMap(states, (moderationState) =>
         Arr.map([member.id, otherMember.id], (ownerId) => ({
-          id: `${visibility}-${draft}-${String(moderationState)}-${ownerId}`,
+          id: `${visibility}-${draft}-${showValue(moderationState)}-${ownerId}`,
           version: 0n,
           action: "create" as const,
           visibility,
@@ -1642,7 +1643,7 @@ const showColumn = (seed: Seed, column: string): string =>
   Option.match(R.get(seed.state, column), {
     onNone: () => "absent",
     onSome: (value) =>
-      value === ABSENT ? "absent" : P.isString(value) ? `"${value}"` : String(value),
+      value === ABSENT ? "absent" : P.isString(value) ? `"${value}"` : showValue(value),
   });
 
 const labelOf = (seed: Seed): string =>
@@ -4441,6 +4442,63 @@ describe("defineSubtype — the live pointer (pulpit#46)", () => {
       }),
     );
     expect(seen).toEqual({ early: Option.some("v0"), due: Option.some("v1"), wrote: 0 });
+  });
+
+  it("scheduled reads the pending schedule per node, in one batch, for the head readers alone (pulpit#220)", async () => {
+    const { ops, actAs, publicationOps, handlers } = gatedPosts();
+    const hour = (count: number) =>
+      DateTime.toDate(DateTime.makeUnsafe(NOW.getTime() + count * 3_600_000));
+    const seen = await atClock(
+      Effect.gen(function* () {
+        const create = (visibility: string) =>
+          actAs(
+            as(member),
+            ops.create({ id: Option.none(), state: { title: "t", visibility, draft: false } }),
+          ).pipe(Effect.map(({ id }) => id));
+        const [soon, later, never, unscheduled, tombstoned] = [
+          yield* create("public"),
+          yield* create("public"),
+          yield* create("public"),
+          yield* create("public"),
+          yield* create("public"),
+        ];
+        const schedule = (id: string, at: Date) =>
+          actAs(as(member), publicationOps.publish(id, { at }));
+        yield* schedule(soon, hour(1));
+        // Rescheduled: the latest record is the pending one.
+        yield* schedule(later, hour(2));
+        yield* schedule(later, hour(3));
+        // Cancelled: an unpublish recorded after the schedule overtakes it.
+        yield* schedule(never, hour(1));
+        yield* actAs(as(member), publicationOps.unpublish(never));
+        yield* schedule(tombstoned, hour(1));
+        yield* actAs(as(member), ops.delete(tombstoned));
+        const everyone = [soon, later, never, unscheduled, tombstoned, "unknown"];
+        const atOf = (who: Viewer) =>
+          Effect.map(actAs(who, publicationOps.scheduled(everyone)), (found) =>
+            Arr.map(everyone, (id) =>
+              Option.getOrNull(Option.map(HashMap.get(found, id), (fact) => fact.at.getTime())),
+            ),
+          );
+        const owner = yield* atOf(as(member));
+        const rung = yield* atOf(as(moderator));
+        const stranger = yield* atOf(as(otherMember));
+        const reader = yield* atOf(anonymous);
+        const wrapped = yield* actAs(as(member), present(handlers.publication).scheduled([soon]));
+        yield* TestClock.adjust("90 minutes");
+        const arrived = yield* atOf(as(member));
+        return { owner, rung, stranger, reader, wrapped: HashMap.size(wrapped), arrived };
+      }),
+    );
+    const [one, , , , ,] = [hour(1).getTime()];
+    expect(seen.owner).toEqual([one, hour(3).getTime(), null, null, null, null]);
+    expect(seen.rung).toEqual(seen.owner);
+    // Below the head-reading rungs a schedule is not disclosed.
+    expect(seen.stranger).toEqual([null, null, null, null, null, null]);
+    expect(seen.reader).toEqual([null, null, null, null, null, null]);
+    expect(seen.wrapped).toBe(1);
+    // The first schedule has arrived and is live, not pending; the other is still ahead.
+    expect(seen.arrived).toEqual([null, hour(3).getTime(), null, null, null, null]);
   });
 
   it("discardDraft appends the live version's state and never rewrites", async () => {
