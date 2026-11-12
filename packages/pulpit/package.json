@@ -63,6 +63,7 @@
     "./discovery": "./src/discovery.ts",
     "./relations": "./src/relations.ts",
     "./translation": "./src/translation.ts",
+    "./reference-import": "./src/reference-import.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -182,6 +183,10 @@
       "./translation": {
         "types": "./dist/translation.d.ts",
         "default": "./dist/translation.js"
+      },
+      "./reference-import": {
+        "types": "./dist/reference-import.d.ts",
+        "default": "./dist/reference-import.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",
