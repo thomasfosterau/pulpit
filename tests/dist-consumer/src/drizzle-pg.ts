@@ -24,14 +24,12 @@ import type {
   LeafStore,
   ListOrder,
   LiveView,
-  PublicationFact,
   PublicationStore,
 } from "@thomasfosterau/pulpit/subtype";
 import {
   makePublications,
   type Publications,
   type PublishGated,
-  type ScheduledPublicationStore,
 } from "@thomasfosterau/pulpit-drizzle-pg/publication";
 import {
   makeLeafStores,
@@ -56,7 +54,7 @@ import {
 import type { DocumentStore } from "@thomasfosterau/pulpit/documents";
 import type * as Option from "effect/Option";
 import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
-import { pgSchema, text } from "drizzle-orm/pg-core";
+import { pgSchema, text, type PgView } from "drizzle-orm/pg-core";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -150,6 +148,14 @@ export type _Store = Assert<
   Equals<(typeof stores)["post"], LeafStore<LeafRow, SQLWrapper, EffectDrizzleQueryError, Key>>
 >;
 
+// A localised leaf's store reads its keyed view (`makeTreeViews`' `keyed`).
+export type _KeyedViews = Assert<
+  Equals<
+    Required<Parameters<typeof makeLeafStores>[0]["views"]>["keyed"],
+    { readonly [leaf: string]: PgView }
+  >
+>;
+
 // ── ./filter ─────────────────────────────────────────────────────────────
 
 export type _Render = Assert<
@@ -190,27 +196,12 @@ export type _PublishGated = Assert<
   Equals<
     PublishGated<EffectDrizzleQueryError, Key>,
     {
-      readonly facts: ScheduledPublicationStore<EffectDrizzleQueryError, Key>;
+      readonly facts: PublicationStore<EffectDrizzleQueryError, Key>;
       readonly live: LiveView<LeafRow, SQLWrapper, EffectDrizzleQueryError, Key>;
       readonly leaves: LeafStore<LeafRow, SQLWrapper, EffectDrizzleQueryError, Key>;
     }
   >
 >;
-export type _Scheduled = Assert<
-  Equals<
-    ScheduledPublicationStore<EffectDrizzleQueryError, Key>["scheduled"],
-    (
-      ids: ReadonlyArray<string>,
-    ) => Effect.Effect<ReadonlyArray<PublicationFact>, EffectDrizzleQueryError, Key>
-  >
->;
-export type _ScheduledStore = Assert<
-  Satisfies<
-    ScheduledPublicationStore<EffectDrizzleQueryError, Key>,
-    PublicationStore<EffectDrizzleQueryError, Key>
-  >
->;
-
 // ── ./documents ──────────────────────────────────────────────────────────
 
 const blocks = makeDocumentTable({ schema, name: "block_documents" });

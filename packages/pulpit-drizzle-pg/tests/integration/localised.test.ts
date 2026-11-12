@@ -19,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Order from "effect/Order";
 import * as Str from "effect/String";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
@@ -97,18 +98,20 @@ beforeAll(async () => {
   );
 });
 
+const decodeLocale = Schema.decodeUnknownSync(Schema.NullOr(Schema.String));
+
 /** The fields both stores carry for a locale row, absent and `NULL` alike. */
 const agreed = (row: LeafRow) => ({
   id: row.id,
   version: row.version,
   title: row["title"],
-  locale: row["locale"] ?? null,
+  locale: decodeLocale(row["locale"] ?? null),
   heading: row["heading"] ?? null,
 });
 
 const byIdThenLocale = Order.combine(
   Order.mapInput(Str.Order, (row: ReturnType<typeof agreed>) => row.id),
-  Order.mapInput(Str.Order, (row: ReturnType<typeof agreed>) => String(row.locale)),
+  Order.mapInput(Str.Order, (row: ReturnType<typeof agreed>) => row.locale ?? ""),
 );
 
 describe("the localised LeafStore agrees with the in-memory one", () => {

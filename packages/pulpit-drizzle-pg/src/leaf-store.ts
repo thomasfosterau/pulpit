@@ -131,7 +131,8 @@ const checkMerge = (
 
 /**
  * Bind the kernel's `LeafStore` to every leaf view of a tree:
- * `views.leaves` from `makeTreeViews(tree, tables, …)`, the owner table from
+ * `views` from `makeTreeViews(tree, tables, …)` (its `leaves`, and its
+ * `keyed` for a localised leaf), the owner table from
  * {@link makeNodeOwnerTable}, and the application's `CurrentTransaction`.
  *
  * - `columns` is the view's field keys plus `ownerId`.
@@ -147,6 +148,17 @@ const checkMerge = (
  *   `list` reads, by code point, with the distinct count; a column that
  *   decodes to no string has none.
  * - `ownerOf` / `stampOwner` read and insert the owner row.
+ * - `listLocalised` reads none for a leaf with no keyed view (`views.keyed`).
+ *
+ * A keyed leaf (one in `views.keyed`, which `makeTreeViews` derives for a
+ * leaf with a keyed level) reads its keyed view instead (README → Seams →
+ * `LeafStore` → "A localised leaf's view", pulpit#56): `columns`, `list`
+ * and `distinct` read its `(id, locale)` rows, one `NULL`-locale row for a
+ * node with none, so the `locale` arm and the translated columns filter;
+ * `get` / `getMany` read the shared row, one per node; and `listLocalised`
+ * picks each node's most preferred carried locale of `query.locales`
+ * (`DISTINCT ON (id) … ORDER BY id, array_position(…)`) before the filter,
+ * order and page. A node carrying none of them is absent.
  *
  * Throws effect-drizzle-ext's `DerivationError` at module load when a leaf
  * view would take one key from two sources (an identity extra and a level

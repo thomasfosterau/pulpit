@@ -149,9 +149,19 @@ What each store does, over the leaf's view:
 - **`get` / `getMany`** are `id = $id` / `id IN (…)` reads with a `LIMIT`. An id that is no canonical UUID (the identity table's type) names no node: none, or omitted, never a query error. The `VersionChain` ports answer one the same way (`NodeNotFound` / `VersionNotFound`).
 - **`list`** renders its `ListFilter` with [`renderListFilter`](#filter), orders by [`renderListOrder`](#filter), pages by `LIMIT` / `OFFSET` and reads the unpaged total off `count(*) OVER ()`, so a page past the end reports `total: 0`.
 - **`distinct`** reads one column's distinct non-`NULL` values, by code point, over the same rows, with the distinct count. A column that decodes to no string has none.
-- **`listLocalised`** reads none over a leaf view, which has no locale level; the localised store over the keyed view is a later slice.
+- **`listLocalised`** reads none over a leaf with no keyed view; a keyed leaf's is [below](#localised-leaves).
 - **`ownerOf` / `stampOwner`** read and insert the owner row.
 - **Every read and write runs in the caller's `CurrentTransaction`**: no store opens a connection or a transaction, so a handler's `transact` covers the chain write, the owner stamp and the read back.
+
+### Localised leaves
+
+A leaf with a keyed level (`defineTree`'s `keyed: { … }`, the kernel's locale level, pulpit#56) gets a keyed view from `makeTreeViews` (`views.keyed[leaf]`), and `makeLeafStores` reads it with nothing more to pass: `views` carries it. Its store is the kernel's localised `LeafStore` (README → Seams → `LeafStore` → "A localised leaf's view"):
+
+- **`columns`, `list` and `distinct`** read the keyed rows, one per `(id, locale)` and one `NULL`-locale row for a node with no locale, so the filter's `locale([…])` arm renders over the `locale` column and a translated column (an aliased expression in the view) filters, orders and reads distinct values like any other. A node with two locales is two rows, and counts twice in `total`.
+- **`get` / `getMany`** read the shared row, one per node, as for an unkeyed leaf.
+- **`listLocalised({ locales, … })`** (pulpit#272) reads, per node, the row of its most preferred carried locale (`DISTINCT ON (id) … WHERE locale = ANY($locales) ORDER BY id, array_position($locales, locale)`), then the filter, order and page over those rows. Tags match exactly (`en` is not `en-AU`; the kernel's `localeChain` widens a request before it reaches here); a node carrying none of them is absent, and an empty `locales` reads none.
+
+The integration suite runs every read here against the kernel's `makeInMemoryLeafStore(chain, { localised: true })` over the same writes, a dropped locale included.
 
 **The view-merge trap is refused at module load.** A tree view merges its sources by key (`{ ...identityExtras, ...levels, timestamp, createdAt }`), so a key two sources share keeps the later silently: an identity `slug` shadowed by a level's `slug`, or a level column named `createdAt` shadowed by the birth timestamp. `makeLeafStores` throws a `DerivationError` naming both sources instead, for any key an identity extra, a level on the leaf's path and the view's own projection (`id`, `version`, `action`, `timestamp`, `createdAt`, `ownerId`) share.
 
@@ -187,12 +197,11 @@ const gated = makePublications({
 - **`live`**, the `LiveView`: `get` / `getMany` read the row at the effective fact's version, with that version as its `version`, the head's `action` (a tombstone hides it too), `draft = false` and the fact's `at` as `publishedAt`; `list` / `distinct` read the `UNION ALL` of the head rows matching `headFor` (the viewer's own) and the live rows of every other node, under the same filter, order and page as `./leaf-store`. `publishedAt <= now()` is the gate the kernel's `isPubliclyServeable` reads (`CACHE-AUTH-005`).
 - **`leaves`**, the gated current-version store: the head rows with `draft` computed as `NOT EXISTS (a live row)`, a stored draft column ignored, as README → Seams asks.
 
-`listLocalised` reads none on both for now; the localised store over the keyed pointer view is #335. An id that is no canonical UUID names no node and has no facts.
+`listLocalised` reads none on both for now; the localised live view over the pointer's keyed view is #343. An id that is no canonical UUID names no node and has no facts.
 
 | Export | What it is |
 | --- | --- |
 | `makePublications(config)`, `Publications<Leaf, E, I>`, `PublishGated<E, I>` | One `{ facts, live, leaves }` per leaf of the pointer. |
-| `ScheduledPublicationStore<E, R>` | The kernel's `PublicationStore` plus `scheduled` (#325); the kernel's own once #325 lands. |
 
 ## `./documents`
 

@@ -76,17 +76,15 @@ export interface RowSource {
  *
  * @since 0.0.0
  */
-export const sourceOf = (
-  relation: Subquery,
+export const sourceOf = <Field>(
+  relation: Subquery & { readonly [key: string]: Field },
   keys: ReadonlyArray<string>,
   leaf: string,
 ): RowSource => {
-  // SAFETY: a subquery built from a `FilterColumns` selection exposes each
-  // selected key as a field re-aliased to it; every field read below is
-  // checked by `isFilterColumn` before it is kept.
-  const fields = relation as FilterColumns & Subquery;
+  // A subquery built from a `FilterColumns` selection exposes each selected
+  // key as a field re-aliased to it; each is checked before it is kept.
   const columns = Arr.reduce(keys, R.empty<string, FilterColumn>(), (acc, key) =>
-    Option.match(Option.liftPredicate(fields[key], isFilterColumn), {
+    Option.match(Option.liftPredicate(relation[key], isFilterColumn), {
       onNone: () => acc,
       onSome: (field) => ({ ...acc, [key]: field }),
     }),
@@ -216,7 +214,19 @@ export const readsOver = <I, Relations extends AnyRelations>(
       },
     );
 
-  return { where, byIds, page, distinct };
+  /** `get` / `getMany` over a source: an id that is no canonical UUID names no row. */
+  const byId = (source: RowSource) => ({
+    get: (nodeId: string) =>
+      isNodeId(nodeId)
+        ? Effect.map(where(source, sql`${source.id} = ${nodeId}`, 1), Arr.head)
+        : Effect.succeedNone,
+    getMany: (ids: ReadonlyArray<string>) => {
+      const valid = Arr.dedupe(Arr.filter(ids, isNodeId));
+      return Arr.isReadonlyArrayNonEmpty(valid) ? byIds(source, valid) : Effect.succeed([]);
+    },
+  });
+
+  return { where, byIds, byId, page, distinct };
 };
 
 /** A view's own columns, by field key, referenced through the view. */
@@ -280,16 +290,19 @@ export const leafRows = (
   return sourceOf(relation, R.keys(selection), leaf);
 };
 
+/** A source's key set, as `LeafStore.columns`. */
+const columnSet = (columns: FilterColumns): ReadonlySet<string> =>
+  // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is the native `ReadonlySet` `LeafStore.columns` names (a `HashSet` once #309 lands)
+  new Set(R.keys(columns));
+
 /**
  * One row per node of a localised source (pulpit#272): of the node's rows
  * matching `where` whose locale is one of `locales`, the one whose locale
  * comes first, as `LocalisedListQuery` spells it (`DISTINCT ON (id) …
  * ORDER BY id, array_position($locales, locale)`). `locales` is non-empty
  * and within `MAX_SET_VALUES`; the caller answers none otherwise.
- *
- * @since 0.0.0
  */
-export const localeChoice = (
+const localeChoice = (
   leaf: string,
   source: RowSource,
   locales: Arr.NonEmptyReadonlyArray<string>,
@@ -337,8 +350,7 @@ export const localisedStoreOver = <I, Relations extends AnyRelations>(
   const reads = readsOver(leaf, CurrentTransaction);
   return {
     ...storeOver(leaf, shared, owners, CurrentTransaction),
-    // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is the native `ReadonlySet` `LeafStore.columns` names
-    columns: new Set(R.keys(keyed.columns)),
+    columns: columnSet(keyed.columns),
     list: (query) => reads.page(keyed, query),
     distinct: (query) => reads.distinct(keyed, query),
     listLocalised: (query) =>
@@ -365,16 +377,8 @@ export const storeOver = <I, Relations extends AnyRelations>(
 ): LeafStore<LeafRow, SQLWrapper, StoreQueryError<Relations>, I> => {
   const reads = readsOver(leaf, CurrentTransaction);
   return {
-    // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is the native `ReadonlySet` `LeafStore.columns` names
-    columns: new Set(R.keys(source.columns)),
-    get: (nodeId) =>
-      isNodeId(nodeId)
-        ? Effect.map(reads.where(source, sql`${source.id} = ${nodeId}`, 1), Arr.head)
-        : Effect.succeedNone,
-    getMany: (ids) => {
-      const valid = Arr.dedupe(Arr.filter(ids, isNodeId));
-      return Arr.isReadonlyArrayNonEmpty(valid) ? reads.byIds(source, valid) : Effect.succeed([]);
-    },
+    columns: columnSet(source.columns),
+    ...reads.byId(source),
     list: (query) => reads.page(source, query),
     distinct: (query) => reads.distinct(source, query),
     // A leaf view has no locale level (the localised store reads the keyed
