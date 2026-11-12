@@ -71,11 +71,6 @@ export default defineConfig({
       // and the generic `R` / `A` / `E` parameters mean names deliberately
       // recur in nested scopes.
       "eslint/no-shadow": "off",
-      // Its "explicit `undefined` is unnecessary on an optional parameter"
-      // check contradicts the workspace convention (AGENTS.md → Conventions):
-      // an optional parameter is spelled `x?: T | undefined`, like an
-      // optional field, so a caller can forward its own optional value.
-      "typescript/no-duplicate-type-constituents": "off",
       // The suites assert through helpers named `expect…` (`expectAgreement`
       // in tests/subtype.test.ts) as well as `expect` itself.
       "vitest/expect-expect": ["error", { assertFunctionNames: ["expect", "expect*"] }],

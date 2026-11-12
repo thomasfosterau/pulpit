@@ -1268,11 +1268,7 @@ export interface InMemoryResourceCache<Resource> extends ResourceCacheSeam<Resou
    * The resource the cache would serve for `id` (in `locale`, on a
    * localised leaf): none when evicted, refused or never set.
    */
-  readonly get: (
-    id: string,
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter is `?: T | undefined` (AGENTS.md → Conventions), as `ResourceCacheSeam.set` takes the locale; the omitted argument is the id's unlocalised entry
-    locale?: string | undefined,
-  ) => Option.Option<Resource>;
+  readonly get: (id: string, locale?: string) => Option.Option<Resource>;
   /** The highest version the cache holds for `id`, set or evicted, or none. */
   readonly versionOf: (id: string) => Option.Option<bigint>;
 }
