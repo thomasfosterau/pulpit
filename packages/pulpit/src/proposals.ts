@@ -1021,7 +1021,7 @@ export const defineProposals = <Resource, E, R>(
     if (row.value.status !== "pending") {
       return yield* new ProposalClosed({ id, status: row.value.status });
     }
-    yield* close(id, "withdrawn", account.id, Option.none());
+    return yield* close(id, "withdrawn", account.id, Option.none());
   });
 
   return { submit, get, list, review, accept, reject, withdraw };

@@ -375,7 +375,7 @@ export const defineCollection = <Parent, Member, E, R>(
     if (ids.length >= MAX_COLLECTION_SIZE) {
       return yield* new CollectionFull({ parentId, max: MAX_COLLECTION_SIZE });
     }
-    yield* commit(parentId, [...ids, memberId]);
+    return yield* commit(parentId, [...ids, memberId]);
   });
 
   const move = Effect.fn(`${type}.move`)(function* (
@@ -388,14 +388,14 @@ export const defineCollection = <Parent, Member, E, R>(
     if (!ids.includes(memberId)) return yield* new NotMember({ parentId, memberId });
     const rest = Arr.filter(ids, (id) => id !== memberId);
     const at = Math.max(0, Math.min(Number.isFinite(index) ? Math.trunc(index) : 0, rest.length));
-    yield* commit(parentId, [...rest.slice(0, at), memberId, ...rest.slice(at)]);
+    return yield* commit(parentId, [...rest.slice(0, at), memberId, ...rest.slice(at)]);
   });
 
   const remove = Effect.fn(`${type}.remove`)(function* (parentId: string, memberId: string) {
     yield* parent.authorize(parentId);
     const ids = yield* orderOf(parentId);
     if (!ids.includes(memberId)) return yield* new NotMember({ parentId, memberId });
-    yield* commit(
+    return yield* commit(
       parentId,
       Arr.filter(ids, (id) => id !== memberId),
     );
