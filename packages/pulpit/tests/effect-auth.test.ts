@@ -40,6 +40,7 @@ import {
   accessPolicyFromGuards,
   canViewOwned,
   type FollowerSeam,
+  type ReadScope,
   readScopeFor,
   type Viewer,
   type ViewerAccount,
@@ -133,6 +134,20 @@ describe("canViewOwned ≡ OwnedAccess.canView", () => {
   });
 });
 
+/**
+ * The kernel's read scope as effect-auth spells it. A member scope's `groups`
+ * is absent when the follower seam has no audience pair (the kernel's
+ * contract, `ReadScope`), where `OwnedAccess.readScope` (0.3.0+) always
+ * carries one, `OwnedAccess.nobody` without an `IsMember` service: the same
+ * set of rows, so the parity compares them as equal.
+ */
+const asAuthScope = <Following>(
+  scope: ReadScope<Following>,
+): ReadScope<Following | typeof OwnedAccess.nobody> =>
+  scope.kind === "member" && scope.groups === undefined
+    ? { ...scope, groups: OwnedAccess.nobody }
+    : scope;
+
 describe("readScopeFor ≡ OwnedAccess.readScope", () => {
   it.each(Arr.map(accounts, ([label, viewer]) => ({ label, viewer })))("$label", ({ viewer }) => {
     const seam = seamFor(true);
@@ -141,17 +156,19 @@ describe("readScopeFor ≡ OwnedAccess.readScope", () => {
       viewer,
       seam,
     );
-    expect(kernel).toEqual(run(owned.readScope, viewer, seam));
+    expect(asAuthScope(kernel)).toEqual(run(owned.readScope, viewer, seam));
   });
 
   it("fails closed to nobody when no follower seam is provided", () => {
     const viewer: Viewer = Option.some({ id: "u-stranger", role: "user" });
     const auth = Effect.runSync(owned.readScope.pipe(Effect.provideService(CurrentViewer, viewer)));
     expect(auth).toEqual(
-      readScopeFor(viewer, policy, {
-        isFollower: () => Effect.succeed(false),
-        following: () => OwnedAccess.nobody,
-      }),
+      asAuthScope(
+        readScopeFor(viewer, policy, {
+          isFollower: () => Effect.succeed(false),
+          following: () => OwnedAccess.nobody,
+        }),
+      ),
     );
   });
 });
