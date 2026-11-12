@@ -195,8 +195,8 @@ const site = (options: SiteOptions = {}) => {
     pages: store(COLUMNS),
     media: store(COLUMNS),
   };
-  const leaf = (type: Target) =>
-    defineSubtype({
+  const leaf = (type: Target) => {
+    const declaration = {
       type,
       access: ownedAccess({ draft: true }),
       chain: leafStores[type].chain,
@@ -205,11 +205,14 @@ const site = (options: SiteOptions = {}) => {
       policy,
       followers,
       toResource: (row: LeafRow) => row,
-      locales:
-        type === "posts" && options.localised === true
-          ? defineLocaleLevel({ columns: ["title", "content"] })
-          : undefined,
-    });
+    };
+    return type === "posts" && options.localised === true
+      ? defineSubtype({
+          ...declaration,
+          locales: defineLocaleLevel({ columns: ["title", "content"] }),
+        })
+      : defineSubtype(declaration);
+  };
   const ops = { posts: leaf("posts"), pages: leaf("pages"), media: leaf("media") };
   const termStores = {
     category: store(TERM_COLUMNS),
