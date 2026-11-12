@@ -629,11 +629,12 @@ export const versionChainConformance = <E, R>(
         P.hasProperty(error, "_tag") && P.isString(error._tag) ? error._tag : "error",
     });
   };
-  /* oxlint-disable effect/no-unknown-returns -- a case's typed failure is any of the port's errors, matched by its `_tag` */
-  /** The typed failure itself. */
-  const failure = async <A, E2>(effect: Effect.Effect<A, E2, R>): Promise<unknown> =>
-    Option.getOrUndefined(Exit.findErrorOption(await harness.run(effect)));
-  /* oxlint-enable effect/no-unknown-returns */
+  /** The typed failure itself, or throw (so a case fails) when there is none. */
+  const failure = async <A, E2>(effect: Effect.Effect<A, E2, R>): Promise<E2> => {
+    const error = Exit.findErrorOption(await harness.run(effect));
+    if (Option.isSome(error)) return error.value;
+    throw new ConformanceFailure({ message: `${type} conformance: expected a typed failure` });
+  };
 
   /** A fresh chain holding node `ID` at version 0 with `initial`. */
   const created = async () => {
