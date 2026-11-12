@@ -71,11 +71,6 @@ export default defineConfig({
       // and the generic `R` / `A` / `E` parameters mean names deliberately
       // recur in nested scopes.
       "eslint/no-shadow": "off",
-      // Matches every `.map` call, `Effect.map` / `Option.map` over a single
-      // value included, and spreading into a fresh object is how this library
-      // builds its immutable records; mutating in place would break the
-      // readonly types the rule's fix needs.
-      "oxc/no-map-spread": "off",
       // Its "explicit `undefined` is unnecessary on an optional parameter"
       // check contradicts the workspace convention (AGENTS.md → Conventions):
       // an optional parameter is spelled `x?: T | undefined`, like an

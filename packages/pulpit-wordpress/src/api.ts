@@ -2776,8 +2776,11 @@ export const defineWordPress = <R, Following = never>(
         Effect.catchTag("WpRestError", (error) =>
           Effect.succeed(respond(error.status, errorBody(error))),
         ),
-        Effect.map((response) =>
-          request.method === "HEAD" ? { ...response, body: Option.none() } : response,
+        // A HEAD answer is the GET answer's status and headers with no body.
+        Effect.map((response): WordPressResponse =>
+          request.method === "HEAD"
+            ? { status: response.status, headers: response.headers, body: Option.none() }
+            : response,
         ),
       ),
   };
