@@ -155,21 +155,16 @@ const checkMerge = (
  *
  * @since 0.0.0
  */
-export const makeLeafStores = <
-  S,
-  Views extends { readonly [leaf: string]: PgView },
-  I,
-  Relations extends AnyRelations,
->(config: {
+export const makeLeafStores = <S, Leaf extends string, I, Relations extends AnyRelations>(config: {
   readonly tree: ChainTree<S>;
   readonly tables: VersionChainTables;
   readonly views: {
-    readonly leaves: Views;
+    readonly leaves: { readonly [K in Leaf]: PgView };
     readonly keyed?: { readonly [leaf: string]: PgView };
   };
   readonly owners: NodeOwnerTable;
   readonly CurrentTransaction: Context.Service<I, PgTransaction<Relations>>;
-}): LeafStores<keyof Views & string, StoreQueryError<Relations>, I> => {
+}): LeafStores<Leaf, StoreQueryError<Relations>, I> => {
   const { tree, tables, owners, CurrentTransaction } = config;
   const identityExtras = Arr.filter(
     R.keys(getTableColumns(tables.root.identity)),
@@ -213,10 +208,5 @@ export const makeLeafStores = <
     });
   };
 
-  // SAFETY: one store per entry of `views.leaves`, under its own key.
-  return R.map(config.views.leaves, (view, leaf) => storeOf(leaf, view)) as LeafStores<
-    keyof Views & string,
-    StoreQueryError<Relations>,
-    I
-  >;
+  return R.map(config.views.leaves, (view, leaf) => storeOf(leaf, view));
 };

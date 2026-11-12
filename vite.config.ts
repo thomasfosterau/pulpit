@@ -71,24 +71,11 @@ export default defineConfig({
       // and the generic `R` / `A` / `E` parameters mean names deliberately
       // recur in nested scopes.
       "eslint/no-shadow": "off",
-      // Matches every `.map` call, `Effect.map` / `Option.map` over a single
-      // value included, and spreading into a fresh object is how this library
-      // builds its immutable records; mutating in place would break the
-      // readonly types the rule's fix needs.
-      "oxc/no-map-spread": "off",
-      // Reports every spread of `Schema.JsonObject` (a plain-object index
-      // signature, never a class instance) in the WordPress body builders as
-      // a class spread: a false positive with no code-level fix.
-      "typescript/no-misused-spread": "off",
       // Its "explicit `undefined` is unnecessary on an optional parameter"
       // check contradicts the workspace convention (AGENTS.md → Conventions):
       // an optional parameter is spelled `x?: T | undefined`, like an
       // optional field, so a caller can forward its own optional value.
       "typescript/no-duplicate-type-constituents": "off",
-      // Every type assertion here carries a `// SAFETY:` comment stating its
-      // invariant, which `effect/require-safety-comment-for-type-assertion`
-      // enforces; this rule would report each audited one again.
-      "typescript/no-unsafe-type-assertion": "off",
       // The suites assert through helpers named `expect…` (`expectAgreement`
       // in tests/subtype.test.ts) as well as `expect` itself.
       "vitest/expect-expect": ["error", { assertFunctionNames: ["expect", "expect*"] }],
@@ -123,6 +110,59 @@ export default defineConfig({
       "vite-plus/prefer-vite-plus-imports": "error",
     },
     overrides: [
+      // The registry's member projections return a tuple computed by a
+      // conditional type over the caller's entries (`PickResources<T, Flag>`,
+      // `PickChildren<T, Parents>`, `Identifiers<Members>`). TypeScript cannot
+      // relate any value to a conditional type over an unresolved type
+      // parameter, and the tuple exists only at the type level, so there is
+      // nothing to decode into: the array built from the same entries, in
+      // the same order, is narrowed with a `// SAFETY:`-commented `as`
+      // (audited by `effect/require-safety-comment-for-type-assertion`).
+      // The file's other assertion, the `Root`-keyed `branches` record, goes
+      // in #309 (a `HashMap`).
+      {
+        files: ["packages/pulpit/src/registry.ts"],
+        rules: {
+          "typescript/no-unsafe-type-assertion": "off",
+        },
+      },
+      // pulpit-drizzle-pg's `makeVersionChains` is the type-erasure seam
+      // between effect-drizzle-ext `-pg/chain`'s per-leaf typed chains and
+      // the kernel's untyped `VersionChain` port. Each leaf's chain is typed
+      // by conditional types over the application's unresolved tree (`S`,
+      // `T`: `ChainState<S, T, K>`, `LeafOf<S>`), and its inputs are
+      // contravariant in them, so TypeScript can relate it to the kernel's
+      // `ChainState` neither way, and the result record's keys exist only at
+      // the type level. The two `// SAFETY:`-commented assertions (the
+      // erased chains, and the ports under the tree's leaf names) are the
+      // whole crossing; `-pg/chain` crosses the same seam the other way.
+      // pulpit-drizzle-pg's unit suites drive each store over a stand-in for
+      // Drizzle's transaction (`tests/fixtures/canned.ts`): an Effect of
+      // canned rows whose builder methods return itself. A real
+      // `PgTransaction` needs a driver session, and the stand-in shares no
+      // type with it, so the one `// SAFETY:`-commented assertion is the
+      // fixture's whole reason to exist; the SQL it stands in for runs on
+      // PostgreSQL in `tests/integration/`.
+      // Both name `casting-awareness` beside `no-unsafe-type-assertion`: the
+      // same assertions, for the same reason, prompt both.
+      {
+        files: ["packages/pulpit-drizzle-pg/tests/fixtures/canned.ts"],
+        rules: {
+          "typescript/no-unsafe-type-assertion": "off",
+          "effect/casting-awareness": "off",
+          "effect/no-chained-type-assertions": "off",
+          "effect/avoid-any": "off",
+        },
+      },
+      {
+        files: ["packages/pulpit-drizzle-pg/src/version-chain.ts"],
+        rules: {
+          "typescript/no-unsafe-type-assertion": "off",
+          "effect/casting-awareness": "off",
+          "effect/no-chained-type-assertions": "off",
+          "effect/avoid-any": "off",
+        },
+      },
       // The type-level test slot: an expected-error directive IS the assertion
       // there (each paired with its positive control), so the rule that bans
       // suppressions has nothing to protect in these files.

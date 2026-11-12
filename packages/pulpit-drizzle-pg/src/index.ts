@@ -9,8 +9,9 @@
  * `-pg/chain` (`VersionChain`, `./version-chain`, pulpit#247), the
  * `LeafStore` over the tree's leaf views (`LeafStore`, `./leaf-store`) and
  * the `ListFilter` → SQL renderer it reads through (`Filter`, `./filter`),
- * and the live pointer, `PublicationStore` / `LiveView` over the tree's
- * pointer level (`Publication`, `./publication`).
+ * the live pointer, `PublicationStore` / `LiveView` over the tree's
+ * pointer level (`Publication`, `./publication`), and the content-addressed
+ * `DocumentStore` (`Documents`, `./documents`).
  *
  * @copyright Thomas Foster
  * @module pulpit-drizzle-pg
@@ -27,3 +28,5 @@ export * as Filter from "./filter.ts";
 
 /** The kernel's live pointer: `PublicationStore`, `LiveView` and the gated store, over a tree's pointer level. */
 export * as Publication from "./publication.ts";
+/** The kernel's content-addressed `DocumentStore`, one table per document family. */
+export * as Documents from "./documents.ts";

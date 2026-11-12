@@ -540,7 +540,7 @@ export const defineTranslation = <E, R, LE>(
     head: VersionSnapshot,
     patch: LocalePatch,
   ): Effect.Effect<Option.Option<string>, never, R> => {
-    const attempt: Effect.Effect<unknown, LE, R> =
+    const attempt: Effect.Effect<unknown, LE | Schema.SchemaError, R> =
       landing.kind === "direct"
         ? landing.update({
             id,
@@ -549,18 +549,21 @@ export const defineTranslation = <E, R, LE>(
             actorId: landing.actorId,
             expectedVersion: head.version,
           })
-        : landing.submit({
-            targetId: id,
-            patch: {},
-            // SAFETY: a translation's locale patch is JSON — the translator's
-            // values (ColumnValue, JSON on a proposal's path) and string
-            // lineage columns; a bigint value would fail the proposal's own decode.
-            locales: patch as Schema.Json,
-            rationale: Option.some("machine translation"),
-          });
+        : // A proposal carries its locale patch as JSON: the translator's values
+          // and the string lineage columns decode as such, and anything else
+          // (a bigint, a `Date`) is refused here, as the proposal's own decode
+          // would refuse it.
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json)(patch), (locales) =>
+            landing.submit({
+              targetId: id,
+              patch: {},
+              locales,
+              rationale: Option.some("machine translation"),
+            }),
+          );
     return Effect.match(attempt, {
       onFailure: (error) => {
-        const tag =
+        const tag: string =
           P.hasProperty(error, "_tag") && P.isString(error._tag) ? error._tag : "REJECTED";
         return Option.some(
           tag === "StaleVersion" || tag === "VersionConflict" || tag === "NodeNotFound"
