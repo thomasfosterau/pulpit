@@ -8,7 +8,9 @@
  * following the kernel's convention: the `VersionChain` port over
  * `-pg/chain` (`VersionChain`, `./version-chain`, pulpit#247), the
  * `LeafStore` over the tree's leaf views (`LeafStore`, `./leaf-store`) and
- * the `ListFilter` → SQL renderer it reads through (`Filter`, `./filter`).
+ * the `ListFilter` → SQL renderer it reads through (`Filter`, `./filter`),
+ * and the live pointer, `PublicationStore` / `LiveView` over the tree's
+ * pointer level (`Publication`, `./publication`).
  *
  * @copyright Thomas Foster
  * @module pulpit-drizzle-pg
@@ -22,3 +24,6 @@ export * as LeafStore from "./leaf-store.ts";
 
 /** The kernel's `ListFilter` and list order, rendered to Drizzle SQL. */
 export * as Filter from "./filter.ts";
+
+/** The kernel's live pointer: `PublicationStore`, `LiveView` and the gated store, over a tree's pointer level. */
+export * as Publication from "./publication.ts";

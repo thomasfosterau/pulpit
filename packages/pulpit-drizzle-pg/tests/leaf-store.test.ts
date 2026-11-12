@@ -12,7 +12,6 @@ import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ex
 import { getTableName } from "drizzle-orm";
 import { pgSchema, text, timestamp } from "drizzle-orm/pg-core";
 import { always, eq } from "@thomasfosterau/pulpit/filter";
-import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -22,6 +21,7 @@ import * as Schema from "effect/Schema";
 import * as Str from "effect/String";
 import { describe, expect, it } from "vite-plus/test";
 import { makeLeafStores, makeNodeOwnerTable, OWNER_COLUMN } from "../src/leaf-store.ts";
+import { cannedTransaction } from "./fixtures/canned.ts";
 import { database, owners, tables, tree, views } from "./fixtures/tree.ts";
 
 const nullableText = (column: string) =>
@@ -143,55 +143,6 @@ describe("makeLeafStores — the view-merge trap is refused at module load", () 
   });
 });
 
-/**
- * A stand-in transaction whose every query builder resolves to `rows`,
- * recording the builder calls: what the store does with the rows a query
- * returns (the window total, the owner, the decode check) needs no
- * database. The SQL each builds runs against PostgreSQL in the
- * integration suite.
- */
-/** The application's transaction service, as the stores yield it. */
-type Transaction = PgTransaction<typeof relations>;
-const relations = {};
-
-const cannedTransaction = (rows: ReadonlyArray<object>) => {
-  const calls: Array<string> = [];
-  const query = Effect.succeed(rows);
-  const builder = Object.assign(
-    query,
-    R.fromEntries(
-      Arr.map(
-        [
-          "select",
-          "selectDistinct",
-          "from",
-          "leftJoin",
-          "where",
-          "orderBy",
-          "limit",
-          "offset",
-          "as",
-          "insert",
-          "values",
-        ],
-        (method) =>
-          [
-            method,
-            () => {
-              calls.push(method);
-              return builder;
-            },
-          ] as const,
-      ),
-    ),
-  );
-  // SAFETY: the store only chains these builder methods and yields the
-  // result, which is the canned rows; nothing else of the transaction is read.
-  // oxlint-disable-next-line effect/no-chained-type-assertions, effect/avoid-any -- a stand-in for Drizzle's transaction: the canned builder shares no type with it, so no single assertion reaches it
-  const tx = builder as unknown as Transaction;
-  return { tx, calls };
-};
-
 describe("makeLeafStores — what a store makes of a query's rows", () => {
   const stores = makeLeafStores({
     tree,
@@ -233,7 +184,7 @@ describe("makeLeafStores — what a store makes of a query's rows", () => {
       }),
     );
     expect(value).toEqual({ rows: [row], total: 7 });
-    expect(calls).toEqual(["select", "from", "leftJoin", "where", "orderBy", "limit", "offset"]);
+    expect(calls).toEqual(["select", "from", "where", "orderBy", "limit", "offset"]);
     expect(
       (await runWith([], stores.posts.list({ where: always, orderBy: [], limit: 1, offset: 9 })))
         .value,

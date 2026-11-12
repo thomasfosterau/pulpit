@@ -9,7 +9,8 @@ The tree-bound seams of [`@thomasfosterau/pulpit`](../pulpit/README.md) over the
 **Not published.** The package is `"private": true` until the owner sets up its publishing ([PUBLISHING.md](../../PUBLISHING.md)). The spec is [pulpit#247](https://github.com/thomasfosterau/pulpit/issues/247), and it lands in slices:
 
 - **Landed:** the `VersionChain` port over `-pg/chain` ([`./version-chain`](#version-chain)), passing the kernel's `versionChainConformance` against PostgreSQL; the `LeafStore` over the tree's leaf views and the owner table ([`./leaf-store`](#leaf-store)), with the `ListFilter` → SQL renderer and the list order ([`./filter`](#filter)), checked row by row against the kernel's in-memory store on PostgreSQL.
-- **Next:** `PublicationStore` / `LiveView`, the content-addressed `DocumentStore`, the `PathStore`, the localised `LeafStore` and `SearchBranch`.
+- **Landed:** the live pointer, `PublicationStore` (with `scheduled`, #325) / `LiveView` and the gated store, over the tree's pointer level ([`./publication`](#publication)), checked against the kernel's in-memory publication on PostgreSQL.
+- **Next:** the content-addressed `DocumentStore` (#333), the `PathStore` (#334), the localised `LeafStore` (#335) and `SearchBranch` (#336).
 
 ## Install
 
@@ -31,6 +32,7 @@ Every module is a namespace on the root export (`import { VersionChain } from "@
 | --- | --- |
 | `./version-chain` | `makeVersionChains`: the kernel's `VersionChain` port for every leaf of a tree. |
 | `./leaf-store` | `makeLeafStores`: the kernel's `LeafStore` for every leaf view of a tree; `makeNodeOwnerTable`, the owner table. |
+| `./publication` | `makePublications`: the live pointer (`PublicationStore`, `LiveView`, the gated store) for every leaf of a pointer. |
 | `./filter` | `renderListFilter` / `renderListOrder`: the kernel's `ListFilter` and list order as Drizzle SQL. |
 
 ## `./version-chain`
@@ -157,6 +159,37 @@ What each store does, over the leaf's view:
 | `makeNodeOwnerTable({ schema, identity, name? })`, `NodeOwnerTable` | The owner table (`node_owner` by default): `node_id` primary key, cascading from the identity row, and `owner_id`, indexed. |
 | `OWNER_COLUMN` | `"ownerId"`, the key the owner joins in under. |
 | `StoreQueryError<Relations>` | The driver's query error. |
+
+## `./publication`
+
+A publish-gated leaf (the kernel's `publication: { live, facts }`, pulpit#46) over effect-drizzle-ext's pointer level: declare the pointer in `makeTreeTables` (`root: { pointers: ["live"] }`) and its leaves in `makeTreeViews` (`pointers: { live: ["post"] }`), then
+
+```ts
+import { makePublications } from "@thomasfosterau/pulpit-drizzle-pg/publication";
+
+const gated = makePublications({
+  views,
+  pointer: "live",
+  log: tables.pointers.live,
+  live: views.pointers.live.leaves,
+  owners: nodeOwner,
+  CurrentTransaction,
+});
+
+// defineSubtype({ type: "post", chain: chains.post, store: gated.post.leaves,
+//   publication: { live: gated.post.live, facts: gated.post.facts }, … })
+```
+
+- **`facts`**, the `PublicationStore` over the append-only `live_pointer` log: `record` appends a fact (`version` `NULL` for an unpublish; `at` in the future schedules it); `effective(id)` is the latest by `seq` whose `at <= now()`; `facts(id, limit)` is the node's facts in record order; `scheduled(ids)` (#325, pulpit#220) is, per node and in one read, the latest-recorded fact naming a version whose `at` is still ahead and that no later record overtakes (`DISTINCT ON (id) … NOT EXISTS (a later fact with at <= this at)`), the kernel's own SQL sketch.
+- **`live`**, the `LiveView`: `get` / `getMany` read the row at the effective fact's version, with that version as its `version`, the head's `action` (a tombstone hides it too), `draft = false` and the fact's `at` as `publishedAt`; `list` / `distinct` read the `UNION ALL` of the head rows matching `headFor` (the viewer's own) and the live rows of every other node, under the same filter, order and page as `./leaf-store`. `publishedAt <= now()` is the gate the kernel's `isPubliclyServeable` reads (`CACHE-AUTH-005`).
+- **`leaves`**, the gated current-version store: the head rows with `draft` computed as `NOT EXISTS (a live row)`, a stored draft column ignored, as README → Seams asks.
+
+`listLocalised` reads none on both for now; the localised store over the keyed pointer view is #335. An id that is no canonical UUID names no node and has no facts.
+
+| Export | What it is |
+| --- | --- |
+| `makePublications(config)`, `Publications<Leaf, E, I>`, `PublishGated<E, I>` | One `{ facts, live, leaves }` per leaf of the pointer. |
+| `ScheduledPublicationStore<E, R>` | The kernel's `PublicationStore` plus `scheduled` (#325); the kernel's own once #325 lands. |
 
 ## `./filter`
 

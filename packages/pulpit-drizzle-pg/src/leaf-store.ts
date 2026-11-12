@@ -23,43 +23,14 @@ import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
 import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import type { ChainTree } from "@thomasfosterau/effect-drizzle-ext-pg/chain";
 import type { LeafRow, LeafStore } from "@thomasfosterau/pulpit/subtype";
-import { VersionAction } from "@thomasfosterau/pulpit/version-chain";
-import {
-  and,
-  eq,
-  getTableColumns,
-  getViewSelectedFields,
-  is,
-  isNotNull,
-  SQL,
-  sql,
-  type AnyRelations,
-  type SQLWrapper,
-} from "drizzle-orm";
-import {
-  index,
-  text,
-  uuid,
-  type AnyPgColumn,
-  type PgSchema,
-  PgColumn,
-  type PgTable,
-  type PgView,
-} from "drizzle-orm/pg-core";
+import { getTableColumns, type AnyRelations, type SQLWrapper } from "drizzle-orm";
+import type { PgTable, PgView } from "drizzle-orm/pg-core";
 import * as Arr from "effect/Array";
 import type * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as R from "effect/Record";
-import * as Schema from "effect/Schema";
-import {
-  distinctKey,
-  renderListFilter,
-  renderListOrder,
-  type FilterColumn,
-  type FilterColumns,
-} from "./filter.ts";
-import { isNodeId } from "./internal/node-id.ts";
+import * as Owners from "./internal/owners.ts";
+import { leafRows, storeOver } from "./internal/rows.ts";
 import type { VersionChainTables } from "./version-chain.ts";
 
 /**
@@ -68,7 +39,7 @@ import type { VersionChainTables } from "./version-chain.ts";
  *
  * @since 0.0.0
  */
-export const OWNER_COLUMN = "ownerId";
+export const OWNER_COLUMN = Owners.OWNER_COLUMN;
 
 /**
  * Build the owner table (`node_owner` unless `name` says otherwise): one row
@@ -95,30 +66,14 @@ export const OWNER_COLUMN = "ownerId";
  *
  * @since 0.0.0
  */
-export const makeNodeOwnerTable = (options: {
-  readonly schema: PgSchema;
-  readonly identity: VersionChainTables["root"]["identity"];
-  readonly name?: string;
-}) => {
-  const name = options.name ?? "node_owner";
-  return options.schema.table(
-    name,
-    {
-      nodeId: uuid("node_id")
-        .primaryKey()
-        .references((): AnyPgColumn => options.identity.id, { onDelete: "cascade" }),
-      ownerId: text("owner_id").notNull(),
-    },
-    (table) => [index(`${name}_owner_id_idx`).on(table.ownerId)],
-  );
-};
+export const makeNodeOwnerTable = Owners.makeNodeOwnerTable;
 
 /**
  * The owner table a leaf store reads and stamps: {@link makeNodeOwnerTable}'s.
  *
  * @since 0.0.0
  */
-export type NodeOwnerTable = ReturnType<typeof makeNodeOwnerTable>;
+export type NodeOwnerTable = Owners.NodeOwnerTable;
 
 /**
  * The query failure a leaf store reports: the driver's own error, as the
@@ -126,14 +81,7 @@ export type NodeOwnerTable = ReturnType<typeof makeNodeOwnerTable>;
  *
  * @since 0.0.0
  */
-export type StoreQueryError<Relations extends AnyRelations> =
-  PgTransaction<Relations> extends {
-    readonly select: () => { readonly from: (table: never) => infer Q };
-  }
-    ? Q extends Effect.Effect<unknown, infer E, unknown>
-      ? E
-      : never
-    : never;
+export type StoreQueryError<Relations extends AnyRelations> = Owners.StoreQueryError<Relations>;
 
 /**
  * Every leaf's {@link LeafStore}, keyed by leaf name: rows are the kernel's
@@ -144,15 +92,6 @@ export type StoreQueryError<Relations extends AnyRelations> =
 export type LeafStores<Leaf extends string, E, I> = {
   readonly [K in Leaf]: LeafStore<LeafRow, SQLWrapper, E, I>;
 };
-
-/** The view's own columns, by field key, referenced through the view (so a query reads the view's). */
-const viewColumns = (view: PgView): FilterColumns =>
-  Arr.reduce(
-    R.toEntries(getViewSelectedFields(view)),
-    R.empty<string, FilterColumn>(),
-    (acc, [key, field]) =>
-      is(field, PgColumn) || is(field, SQL.Aliased) ? { ...acc, [key]: field } : acc,
-  );
 
 /** The keys one level of a path contributes to its view: its version columns past `(id, version)`. */
 const levelKeys = (table: PgTable): ReadonlyArray<string> =>
@@ -189,31 +128,6 @@ const checkMerge = (
     ),
   );
 };
-
-/**
- * A leaf view's row as the kernel reads it: `id` a uuid string, `version`
- * the head's `bigint`, `action` the root version table's CHECKed text, and
- * every other column a `ColumnValue` (text, numbers, booleans, timestamps as
- * `Date`, JSON, `bigint`). Drizzle decodes each column through its own
- * type, so a row that fails this is a view outside the contract (a `bytea`
- * column, say): a defect.
- */
-const isLeafRow = Schema.is(
-  Schema.StructWithRest(
-    Schema.Struct({ id: Schema.String, version: Schema.BigInt, action: VersionAction }),
-    [Schema.Record(Schema.String, Schema.Union([Schema.Json, Schema.Date, Schema.BigInt]))],
-  ),
-);
-
-/** The rows as the kernel's `LeafRow`s, or a defect naming the leaf. */
-const asLeafRows = (leaf: string, rows: ReadonlyArray<unknown>) =>
-  Arr.every(rows, isLeafRow)
-    ? Effect.succeed<ReadonlyArray<LeafRow>>(rows)
-    : Effect.die(
-        new DerivationError({
-          message: `makeLeafStores: leaf "${leaf}"'s view decoded a row outside the kernel's LeafRow (a column type ColumnValue cannot hold)`,
-        }),
-      );
 
 /**
  * Bind the kernel's `LeafStore` to every leaf view of a tree:
@@ -282,126 +196,7 @@ export const makeLeafStores = <
         ),
       ),
     ]);
-    const own = viewColumns(view);
-    const id = Option.getOrElse(
-      Option.filter(R.get(own, "id"), (field) => is(field, PgColumn)),
-      () => {
-        throw new DerivationError({
-          message: `makeLeafStores: leaf "${leaf}"'s view has no id column`,
-        });
-      },
-    );
-    const columns: FilterColumns = { ...own, [OWNER_COLUMN]: owners.ownerId };
-
-    /** The view's rows under `where`, the owner joined in, at most `limit`. */
-    const rowsWhere = (where: SQL, limit: number) =>
-      Effect.gen(function* () {
-        const tx = yield* CurrentTransaction;
-        const rows = yield* tx
-          .select(columns)
-          .from(view)
-          .leftJoin(owners, eq(owners.nodeId, sql`${id}`))
-          .where(where)
-          .limit(limit);
-        return yield* asLeafRows(leaf, rows);
-      });
-
-    return {
-      // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is the native `ReadonlySet` `LeafStore.columns` names
-      columns: new Set(R.keys(columns)),
-      get: (nodeId) =>
-        isNodeId(nodeId)
-          ? Effect.map(rowsWhere(sql`${id} = ${nodeId}`, 1), Arr.head)
-          : Effect.succeedNone,
-      getMany: (ids) => {
-        const valid = Arr.dedupe(Arr.filter(ids, isNodeId));
-        return Arr.isReadonlyArrayNonEmpty(valid)
-          ? rowsWhere(sql`${id} IN ${valid}`, valid.length)
-          : Effect.succeed([]);
-      },
-      list: (query) =>
-        Effect.gen(function* () {
-          const tx = yield* CurrentTransaction;
-          const rows = yield* tx
-            .select({ ...columns, pageTotal: sql<number>`(count(*) over ())::int` })
-            .from(view)
-            .leftJoin(owners, eq(owners.nodeId, sql`${id}`))
-            .where(Option.getOrUndefined(renderListFilter(query.where, columns)))
-            .orderBy(...renderListOrder(query.orderBy, columns, id))
-            .limit(query.limit)
-            .offset(query.offset);
-          return {
-            rows: yield* asLeafRows(
-              leaf,
-              Arr.map(rows, ({ pageTotal: _total, ...row }) => row),
-            ),
-            total: Option.getOrElse(
-              Option.map(Arr.head(rows), (row) => row.pageTotal),
-              () => 0,
-            ),
-          };
-        }),
-      distinct: (query) =>
-        Option.match(
-          Option.flatMap(R.get(columns, query.column), (column) =>
-            Option.map(distinctKey(column), (key) => ({ column, key })),
-          ),
-          {
-            onNone: () => Effect.succeed({ rows: [], total: 0 }),
-            onSome: ({ column, key }) =>
-              Effect.gen(function* () {
-                const tx = yield* CurrentTransaction;
-                const values = tx
-                  .selectDistinct({ value: sql<string>`${key}`.as("value") })
-                  .from(view)
-                  .leftJoin(owners, eq(owners.nodeId, sql`${id}`))
-                  .where(
-                    and(
-                      Option.getOrUndefined(renderListFilter(query.where, columns)),
-                      isNotNull(column),
-                    ),
-                  )
-                  .as("distinct_values");
-                const rows = yield* tx
-                  .select({
-                    value: values.value,
-                    total: sql<number>`(count(*) over ())::int`,
-                  })
-                  .from(values)
-                  .orderBy(values.value)
-                  .limit(query.limit)
-                  .offset(query.offset);
-                return {
-                  rows: Arr.map(rows, (row) => row.value),
-                  total: Option.getOrElse(
-                    Option.map(Arr.head(rows), (row) => row.total),
-                    () => 0,
-                  ),
-                };
-              }),
-          },
-        ),
-      // A leaf view has no locale level (the localised store reads the keyed
-      // view instead), so it carries no locale rows to choose among.
-      listLocalised: () => Effect.succeed({ rows: [], total: 0 }),
-      ownerOf: (nodeId) =>
-        isNodeId(nodeId)
-          ? Effect.gen(function* () {
-              const tx = yield* CurrentTransaction;
-              const rows = yield* tx
-                .select({ ownerId: owners.ownerId })
-                .from(owners)
-                .where(eq(owners.nodeId, nodeId))
-                .limit(1);
-              return Option.map(Arr.head(rows), (row) => row.ownerId);
-            })
-          : Effect.succeedNone,
-      stampOwner: (nodeId, ownerId) =>
-        Effect.gen(function* () {
-          const tx = yield* CurrentTransaction;
-          yield* tx.insert(owners).values({ nodeId, ownerId });
-        }),
-    };
+    return storeOver(leaf, leafRows(leaf, view, owners), owners, CurrentTransaction);
   };
 
   // SAFETY: one store per entry of `views.leaves`, under its own key.

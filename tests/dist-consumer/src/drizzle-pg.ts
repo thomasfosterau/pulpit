@@ -19,7 +19,20 @@ import {
 } from "@thomasfosterau/pulpit-drizzle-pg/version-chain";
 import type { VersionChain } from "@thomasfosterau/pulpit/version-chain";
 import type { ListFilter } from "@thomasfosterau/pulpit/filter";
-import type { LeafRow, LeafStore, ListOrder } from "@thomasfosterau/pulpit/subtype";
+import type {
+  LeafRow,
+  LeafStore,
+  ListOrder,
+  LiveView,
+  PublicationFact,
+  PublicationStore,
+} from "@thomasfosterau/pulpit/subtype";
+import {
+  makePublications,
+  type Publications,
+  type PublishGated,
+  type ScheduledPublicationStore,
+} from "@thomasfosterau/pulpit-drizzle-pg/publication";
 import {
   makeLeafStores,
   makeNodeOwnerTable,
@@ -52,7 +65,9 @@ type Satisfies<A, B> = [A] extends [B] ? true : false;
 
 // ── the root barrel ──────────────────────────────────────────────────────
 
-export type _Root = Assert<Equals<keyof typeof DrizzlePg, "VersionChain" | "LeafStore" | "Filter">>;
+export type _Root = Assert<
+  Equals<keyof typeof DrizzlePg, "VersionChain" | "LeafStore" | "Filter" | "Publication">
+>;
 export type _RootChains = Assert<
   Equals<typeof DrizzlePg.VersionChain.makeVersionChains, typeof makeVersionChains>
 >;
@@ -78,6 +93,7 @@ const tree = defineTree({
 const tables = makeTreeTables(tree, {
   schema: pgSchema("content"),
   builders: { text: (column: string) => text(column) },
+  root: { pointers: ["live"] },
 });
 const database = makePgDatabase({ relations: {}, key: "Database" });
 const chains = makeVersionChains({ tree, tables, CurrentTransaction: database.CurrentTransaction });
@@ -107,10 +123,11 @@ export type _VersionChains = Assert<
 
 const schema = pgSchema("content");
 const owners = makeNodeOwnerTable({ schema, identity: tables.root.identity });
+const treeViews = makeTreeViews(tree, tables, { schema, pointers: { live: ["post"] } });
 const stores = makeLeafStores({
   tree,
   tables,
-  views: makeTreeViews(tree, tables, { schema }),
+  views: treeViews,
   owners,
   CurrentTransaction: database.CurrentTransaction,
 });
@@ -144,4 +161,43 @@ export type _RenderOrder = Assert<
 >;
 export type _DistinctKey = Assert<
   Equals<typeof distinctKey, (column: FilterColumn) => Option.Option<SQL>>
+>;
+
+// ── ./publication ────────────────────────────────────────────────────────
+
+const publications = makePublications({
+  views: treeViews,
+  pointer: "live",
+  log: tables.pointers.live,
+  live: treeViews.pointers.live.leaves,
+  owners,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _Publications = Assert<
+  Equals<typeof publications, Publications<"post", EffectDrizzleQueryError, Key>>
+>;
+export type _PublishGated = Assert<
+  Equals<
+    PublishGated<EffectDrizzleQueryError, Key>,
+    {
+      readonly facts: ScheduledPublicationStore<EffectDrizzleQueryError, Key>;
+      readonly live: LiveView<LeafRow, SQLWrapper, EffectDrizzleQueryError, Key>;
+      readonly leaves: LeafStore<LeafRow, SQLWrapper, EffectDrizzleQueryError, Key>;
+    }
+  >
+>;
+export type _Scheduled = Assert<
+  Equals<
+    ScheduledPublicationStore<EffectDrizzleQueryError, Key>["scheduled"],
+    (
+      ids: ReadonlyArray<string>,
+    ) => Effect.Effect<ReadonlyArray<PublicationFact>, EffectDrizzleQueryError, Key>
+  >
+>;
+export type _ScheduledStore = Assert<
+  Satisfies<
+    ScheduledPublicationStore<EffectDrizzleQueryError, Key>,
+    PublicationStore<EffectDrizzleQueryError, Key>
+  >
 >;

@@ -60,10 +60,11 @@ export const tables = makeTreeTables(tree, {
   root: {
     identityColumns: { slug: text("slug") },
     versionColumns: { proposedBy: text("proposed_by") },
+    pointers: ["live"],
   },
 });
 
-export const views = makeTreeViews(tree, tables, { schema });
+export const views = makeTreeViews(tree, tables, { schema, pointers: { live: ["posts"] } });
 
 /** The owner table the leaf stores read and stamp. */
 export const owners = makeNodeOwnerTable({ schema, identity: tables.root.identity });
@@ -93,6 +94,8 @@ export const fixtureSchema = {
   linksVersion: tables.levels.links.version,
   postsStable: tables.levels.posts.stable,
   postsVersion: tables.levels.posts.version,
+  livePointer: tables.pointers.live,
+  postsLiveView: views.pointers.live.leaves.posts,
   owners,
   notesView: views.leaves.notes,
   linksView: views.leaves.links,
