@@ -618,7 +618,10 @@ export const defineAudience = <Following, E, R>(
     const role =
       account.id === owner ? Option.some("admin") : yield* store.roleOf(groupId, account.id);
     if (Option.isNone(role)) return yield* new GroupNotFound({ groupId });
-    if (role.value !== "admin") return yield* new Forbidden();
+    if (role.value !== "admin")
+      return yield* new Forbidden({
+        message: "Only the group's owner or an admin may list its invitations.",
+      });
     return yield* store.invitations({ by: "group", groupId, ...window(request) });
   });
 
