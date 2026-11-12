@@ -37,48 +37,47 @@ import {
 import { makeVersionChains } from "../src/version-chain.ts";
 import { database, plainTables, tables, tree } from "./fixtures/tree.ts";
 
-/** The kernel's chain errors. */
-type KernelError =
-  | NodeNotFound
-  | VersionNotFound
-  | NodeAlreadyExists
-  | StaleVersion
-  | VersionConflict;
+/** Each kernel error re-raised as the `-pg/chain` class of the same name. */
+const pg = {
+  NodeNotFound: (error: NodeNotFound) => new Pg.NodeNotFound({ type: error.type, id: error.id }),
+  VersionNotFound: (error: VersionNotFound) =>
+    new Pg.VersionNotFound({ type: error.type, id: error.id, version: error.version }),
+  NodeAlreadyExists: (error: NodeAlreadyExists) =>
+    new Pg.NodeAlreadyExists({ type: error.type, id: error.id }),
+  StaleVersion: (error: StaleVersion) =>
+    new Pg.StaleVersion({
+      type: error.type,
+      id: error.id,
+      expected: error.expected,
+      current: error.current,
+    }),
+  VersionConflict: (error: VersionConflict) =>
+    new Pg.VersionConflict({ id: error.id, version: error.version }),
+};
 
-/** Each kernel error's `-pg/chain` class of the same name. */
-type PgOf<E> = E extends NodeNotFound
-  ? Pg.NodeNotFound
-  : E extends VersionNotFound
-    ? Pg.VersionNotFound
-    : E extends NodeAlreadyExists
-      ? Pg.NodeAlreadyExists
-      : E extends StaleVersion
-        ? Pg.StaleVersion
-        : Pg.VersionConflict;
-
-/** A kernel error re-raised as the `-pg/chain` class of the same name. */
-const toPg = Match.type<KernelError>().pipe(
+/** A create's errors, as `-pg/chain` raises them. */
+const createErrors = Match.type<NodeAlreadyExists | VersionConflict>().pipe(
   Match.tagsExhaustive({
-    NodeNotFound: (error) => new Pg.NodeNotFound({ type: error.type, id: error.id }),
-    VersionNotFound: (error) =>
-      new Pg.VersionNotFound({ type: error.type, id: error.id, version: error.version }),
-    NodeAlreadyExists: (error) => new Pg.NodeAlreadyExists({ type: error.type, id: error.id }),
-    StaleVersion: (error) =>
-      new Pg.StaleVersion({
-        type: error.type,
-        id: error.id,
-        expected: error.expected,
-        current: error.current,
-      }),
-    VersionConflict: (error) => new Pg.VersionConflict({ id: error.id, version: error.version }),
+    NodeAlreadyExists: pg.NodeAlreadyExists,
+    VersionConflict: pg.VersionConflict,
   }),
 );
-
-/** Run a kernel chain operation with its errors re-spoken as `-pg/chain`'s. */
-const asPg = <A, E extends KernelError>(effect: Effect.Effect<A, E>): Effect.Effect<A, PgOf<E>> =>
-  // SAFETY: `toPg` maps each kernel error onto the class of the same name,
-  // which is what `PgOf` names for it.
-  Effect.mapError(effect, (error) => toPg(error) as PgOf<E>);
+/** An update's, restore's or delete's errors. */
+const writeErrors = Match.type<NodeNotFound | StaleVersion | VersionConflict>().pipe(
+  Match.tagsExhaustive({
+    NodeNotFound: pg.NodeNotFound,
+    StaleVersion: pg.StaleVersion,
+    VersionConflict: pg.VersionConflict,
+  }),
+);
+/** A restoreVersion's errors. */
+const restoreErrors = Match.type<VersionNotFound | StaleVersion | VersionConflict>().pipe(
+  Match.tagsExhaustive({
+    VersionNotFound: pg.VersionNotFound,
+    StaleVersion: pg.StaleVersion,
+    VersionConflict: pg.VersionConflict,
+  }),
+);
 
 /** Every root extra each write was handed, in order. */
 type RootLog = Array<Option.Option<string>>;
@@ -99,7 +98,7 @@ const fakeLeafChain = (
     (write: InMemoryVersionChain["update"]): ErasedLeafChain<never, never>["update"] =>
     (input) => {
       roots.push(Option.fromUndefinedOr(input.root?.proposedBy));
-      return asPg(
+      return Effect.mapError(
         write({
           id: input.id,
           patch: input.patch,
@@ -107,49 +106,54 @@ const fakeLeafChain = (
           actorId: Option.fromUndefinedOr(input.actor),
           ...present("expectedVersion", Option.fromUndefinedOr(input.expectedVersion)),
         }),
+        writeErrors,
       );
     };
   return {
     create: (input) =>
-      asPg(
+      Effect.mapError(
         memory.create({
           id: Option.fromUndefinedOr(input.id),
           state: input.state,
           ...present("locales", Option.fromUndefinedOr(input.keyed)),
           actorId: Option.fromUndefinedOr(input.actor),
         }),
+        createErrors,
       ),
     update: merge(memory.update),
     restore: merge(memory.restore),
     delete: (id, options) =>
-      asPg(
+      Effect.mapError(
         memory.delete(
           id,
           Option.fromUndefinedOr(options.actor),
           present("expectedVersion", Option.fromUndefinedOr(options.expectedVersion)),
         ),
+        writeErrors,
       ),
     restoreVersion: (id, version, options) =>
-      asPg(
+      Effect.mapError(
         memory.restoreVersion(
           id,
           version,
           Option.fromUndefinedOr(options.actor),
           present("expectedVersion", Option.fromUndefinedOr(options.expectedVersion)),
         ),
+        restoreErrors,
       ),
     getVersion: (id, version) =>
-      asPg(
-        Effect.map(memory.getVersion(id, version), (snapshot) => ({
+      Effect.mapBoth(memory.getVersion(id, version), {
+        onFailure: pg.VersionNotFound,
+        onSuccess: (snapshot) => ({
           version: snapshot.version,
           action: snapshot.action,
           timestamp: snapshot.timestamp,
           state: snapshot.state,
           keyed: snapshot.locales ?? {},
-        })),
-      ),
+        }),
+      }),
     head: memory.head,
-    history: (id, limit) => asPg(memory.history(id, limit)),
+    history: (id, limit) => Effect.mapError(memory.history(id, limit), pg.NodeNotFound),
   };
 };
 

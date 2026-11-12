@@ -18,7 +18,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 
 | Subpath | Contents |
 | --- | --- |
-| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Pages`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`, `Cache`, `Collections`, `Links`, `Social`, `Discovery`). |
+| `.` | Every module below as a namespace (`Content`, `Registry`, `VersionChain`, `Filter`, `Subtype`, `Publication`, `Documents`, `Edges`, `Proposals`, `Blobs`, `Paths`, `Pages`, `Moderation`, `WorkingCopy`, `Comments`, `Purge`, `Search`, `Budgets`, `Reactions`, `Cache`, `Collections`, `Links`, `Social`, `Discovery`, `ReferenceImport`). |
 | **Content model** |  |
 | `./content` | The Content-axis field spreads (`visibility`, `draft`, timestamps, the tombstone), `ownerRef`, the base `content` resource. |
 | `./registry` | The registry flag vocabulary (`owned` ⊕ `referenceData`, `pageable`, `agent`, `searchable`, `routable`, `localised`) and `validateRegistry`. |
@@ -45,6 +45,7 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./reactions` | Reactions (`defineReactions` over a `ReactionStore` seam): one per account per node, a kind from the family's own vocabulary, behind the target's read gate, with a grouped tally for a page of nodes. |
 | `./translation` | Translation lineage and staleness on a localised leaf (`lineageOf`, `defineTranslation`'s `pending`), the `Translator` and `TranslationCandidates` seams, the sweep that lands machine translations directly or as proposals, and `humanLineageHook`. |
 | `./discovery` | Discovery (`defineDiscovery`): the keyset-paged feed and sitemap enumeration of a leaf's anonymously readable, publicly serveable, live, routable nodes, the per-family metadata projection, and the purge-hint after hook (`purgeHintHook`). |
+| `./reference-import` | External reference import (`defineReferenceImport` over an `ExternalIdStore` seam): upserting a reference leaf's nodes from a feed by `(authority, externalId)` identifiers, as ordinary chain writes made as a declared bot, with per-field merge modes (`overwrite`, `coalesce`, `curated-wins`), no-op detection, a pre-attached id and a per-batch summary. |
 | `./social` | The social graph (`defineSocial` over a `SocialStore` seam): follow, mute and block between accounts, the follower seam filled from it (`socialFollowers`), and the opt-in read filter over the authors a viewer silenced. |
 | `./audience` | Audiences (`defineAudience` over a `MembershipStore` seam): named groups a row can be shared with (the `group` visibility), who manages and who may leave them, and the audience seam filled from them (`audienceSeam`). |
 | `./relations` | UGC relation patterns over `./edges` and `./collections`: reshares whose hidden target shows as a placeholder (`defineReshares`), accepted answers gated on the question (`acceptedAnswerGate`), an edge gate on one end's node (`nodeWriteGate`), and credit-only bylines. |
@@ -1356,6 +1357,48 @@ const nightly = Effect.gen(function* () {
 | `LineageColumns`, `defaultLineageColumns`, `LocaleLineage`, `TranslationMethod`, `lineageOf`, `lineagePatch` | The lineage columns, their default names, a read lineage, its method, and its read and write. |
 | `humanLineageHook(declaration)`, `stampHumanLineage` | The before hook that marks a person's edit, and its pure transform. |
 
+## `./reference-import`
+
+External reference import (pulpit#209), after preferenceflow's ingestion writer (`packages/jobs/src/apply/write.ts`: the upsert on an external id, the per-column `UpdateMode`, an admin's pre-attached id), gardeneria's reconcile jobs and website's Wikidata reconciliation: reference content that comes from outside, merged with curated edits.
+
+```ts
+import * as Effect from "effect/Effect";
+import { defineReferenceImport } from "@thomasfosterau/pulpit/reference-import";
+
+const parties = defineReferenceImport({
+  leaf: partiesDefinition, // the reference leaf's own `SubtypeDefinition`
+  ids: externalIds, // its `ExternalIdStore`
+  authorities: ["aec", "wikidata"],
+  actor: { id: ingestBotId, role: "contributor" }, // at the leaf's corpus-write rung
+  fields: { name: "overwrite", abbreviation: "coalesce", colour: "curated-wins" },
+});
+
+const nightly = Effect.gen(function* () {
+  // An admin links a curated node first, so the feed updates it instead of duplicating it.
+  yield* parties.attach({ authority: "aec", externalId: "36", id: curatedGreensId });
+  const summary = yield* parties.run({ authority: "aec", records: feedPage }); // ≤ MAX_IMPORT_BATCH
+  return summary; // { created, updated, unchanged, written, conflicts }
+});
+```
+
+- **Ordinary chain writes, made as the actor.** `run` rebinds the leaf's own `defineSubtype` operations to the declared actor (a bot account), so the leaf's gates and before hooks apply and every version records the actor: a `create` for an id that names no node (the id is minted and linked before the create), an `update` with the head it read as its expected version otherwise. No version is rewritten (`VERSION-CHAIN-001/002`), and a tombstoned node is never written over (`VERSION-CHAIN-006`). The declaration throws `ReferenceImportDeclarationError` for a leaf that isn't reference data, an actor below its corpus-write rung, no authority or a repeated one, and a field the view lacks.
+- **Merge modes**, per declared field; a key the record omits always carries the node's value forward:
+  - `overwrite`: the feed's value, `null` included;
+  - `coalesce`: the feed's value, except that `null` keeps the node's;
+  - `curated-wins`: the feed's value unless the field is **curated**, meaning its value on the node differs from what the last import of this id sent (the link's baseline, kept by the `ExternalIdStore`), so someone else changed it since. With no baseline for the field (a pre-attached id), any present, non-`null` value is curated. The baseline is the feed's own record: the chain's read seam reports no actor per version, and replaying the history per field would be unbounded.
+- **No-op detection.** A record whose merged state equals the head appends nothing (`unchanged`); a re-import of identical data writes no version.
+- **One external id, one node.** Within a family an `(authority, externalId)` pair names one node and a node has at most one id per authority. `attach` (the leaf's write gate for that node, as the request's viewer) links an existing node, and fails `ExternalIdTaken` when either side is already linked otherwise.
+- **A batch, and its conflicts.** At most `MAX_IMPORT_BATCH` records (`PERF-DB-001`; `ImportBatchTooLarge` otherwise, and `UnknownAuthority` for an undeclared authority, both before anything is read), their links read in one `lookup`, the records written in order. A record that loses a race (`StaleVersion`, `VersionConflict`), meets a tombstone, is refused by a before hook (`WriteRejected`), loses a link race or repeats an earlier id is a conflict entry with its reason (`stale`, `deleted`, `rejected`, `taken`, `duplicate`), never a failed batch. Run each batch in one transaction.
+- **No cache write-through.** The import writes through the operations, not `subtypeHandlers`: evict each `written` entry's `(id, version)` from the resource cache once the batch commits.
+
+| Export | What it is |
+| --- | --- |
+| `defineReferenceImport(definition)`, `ReferenceImportDefinition`, `ReferenceImportOps` | The factory, its declaration, and `run` / `attach`. |
+| `MergeMode`, `MAX_IMPORT_BATCH` | The three merge modes and the batch cap. |
+| `ImportBatch`, `ImportRecord`, `ImportSummary`, `ImportWrite`, `ImportConflict`, `ImportConflictReason` | A batch, a record, the summary, a write and a conflict. |
+| `ExternalIdStore`, `ExternalIdLink` | The external-identifier table seam (see [Seams](#seams)) and one link. |
+| `UnknownAuthority`, `ImportBatchTooLarge`, `ExternalIdTaken`, `ReferenceImportDeclarationError` | The failures: 422, 413 and 409, and the declaration error (thrown). |
+
 ## `./testing`
 
 In-memory fakes of the kernel's seams, for tests: an adapter's or an application's suite can run the real operations (`defineVersionChain`, `defineSubtype`, `defineEdgeOps`, …) over them without a database. Each fake implements its seam's contract as stated under [Seams](#seams), in memory and with no SQL, and enforces what the real table's schema enforces (a primary or unique key) and nothing the operations are responsible for. They are the fakes the kernel's own suites run against, so they are its reference semantics for each seam.
@@ -1425,6 +1468,7 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | `makeInMemorySocialStore()`, `InMemorySocialStore` | [`SocialStore`](#socialstorefollowing-e-r-the-relationship-table), keyed `(kind, from, to)`; `followingOf` and `silencedBy` are `HashSet`s. | `rows()`. |
 | `makeInMemoryMembershipStore()`, `InMemoryMembershipStore` | [`MembershipStore`](#membershipstorefollowing-e-r-the-membership-table), keyed `(groupId, accountId)` across active rows and pending invitations; `groupsOf` is a `HashSet`. | `rows()` (active), `pending()`. |
 | `makeInMemoryGroupOwners(owners)`, `InMemoryGroupOwners` | [`GroupOwnership`](#audience) and [`GroupOwnerStore`](#groupownerstoree-r-the-groups-owners) over one map of group id to owner, seeded with `[groupId, ownerId]` pairs; `reassignOwner` takes the account's groups in group-id order. | `owners()`, `put(groupId, ownerId)`, `remove(groupId)`. |
+| `makeInMemoryExternalIdStore()`, `InMemoryExternalIdStore` | [`ExternalIdStore`](#externalidstoree-r-the-external-identifier-table), unique on `(authority, externalId)` and `(authority, nodeId)`. | `links()`. |
 | `makeInMemoryFollowers(table)`, `InMemoryFollowing` | [`FollowerSeam`](#the-viewer-the-role-axes-and-the-follower-seam) over an explicit table of who follows whom; the `in` set is a `HashSet` of account ids, where SQL's is a subquery. |  |
 
 `now` is the instant the list filter's `published` / `notPublished` compare against (and, for the edge store, the base of the minted `createdAt`s). Pass a fixed `Date` for a deterministic suite; left out, each call reads the Effect `Clock`, so `TestClock` steers it. The role ladder and the `AccessPolicy` are the application's, so `./testing` ships none.
@@ -1736,6 +1780,10 @@ Filled by the application over its own membership table (in-the-dark's `group_me
 ### `GroupOwnerStore<E, R>`: the groups' owners
 
 Filled by the application over its own group table (in-the-dark's `groups.owner_id`), the same records `GroupOwnership.ownerOf` reads, for account erasure (pulpit#274). `reassignOwner(accountId, to, limit)` makes `to` the owner of at most `limit` of the groups `accountId` owns and returns how many changed (`UPDATE groups SET owner_id = $to WHERE id IN (SELECT id … WHERE owner_id = $accountId ORDER BY id LIMIT $limit)`, `PERF-DB-001`). A reassigned group no longer names the account, so a repeated call moves on and answers `0` once none is left. It leaves the group's memberships and invitations alone, applies no policy and never opens a transaction.
+
+### `ExternalIdStore<E, R>`: the external-identifier table
+
+`./reference-import`'s links (pulpit#209), one table per family or one with a family column: `(authority, external_id, node_id, baseline)`, unique on `(authority, external_id)` and on `(authority, node_id)`, the node foreign key `ON DELETE CASCADE`, `baseline` a nullable `jsonb` of the declared fields' values the last import sent. `lookup(authority, externalIds)` reads every given id's link in one `WHERE authority = $1 AND external_id = ANY($2)`. `link` inserts `ON CONFLICT DO NOTHING` and answers `"linked"`, `"present"` (exactly this link is stored) or `"taken"` (either unique key belongs to another link). `recordBaseline` replaces one link's baseline. Store semantics: no policy, no transaction of its own, fails only with its `E`.
 
 ### `ResourceCacheSeam` and the `serveable` hook: the resource cache
 
