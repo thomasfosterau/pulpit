@@ -58,13 +58,13 @@ import {
   type DocumentTable,
 } from "@thomasfosterau/pulpit-drizzle-pg/documents";
 import type { DocumentStore } from "@thomasfosterau/pulpit/documents";
-import type { SearchBranch } from "@thomasfosterau/pulpit/search";
 import type { CloseValidity, EdgeRow, EdgeStore } from "@thomasfosterau/pulpit/edges";
 import {
   makeEdgeStore,
   makeEdgeTable,
   type EdgeStoreEnd,
 } from "@thomasfosterau/pulpit-drizzle-pg/edges";
+import type { EmbeddingStore, SearchBranch } from "@thomasfosterau/pulpit/search";
 import type { ProposalStore } from "@thomasfosterau/pulpit/proposals";
 import type { ExternalIdStore } from "@thomasfosterau/pulpit/reference-import";
 import {
@@ -72,6 +72,12 @@ import {
   makeExternalIdTable,
   type ExternalIdTable,
 } from "@thomasfosterau/pulpit-drizzle-pg/external-ids";
+import {
+  makeEmbeddingStore,
+  makeEmbeddingTables,
+  type EmbeddingTables,
+  type VectorKind,
+} from "@thomasfosterau/pulpit-drizzle-pg/embeddings";
 import {
   makeProposalStore,
   makeProposalTable,
@@ -112,6 +118,7 @@ export type _Root = Assert<
     | "Search"
     | "Edges"
     | "Proposals"
+    | "Embeddings"
     | "ExternalIds"
   >
 >;
@@ -358,6 +365,31 @@ const proposalStore = makeProposalStore({
 export type _ProposalTable = Assert<Equals<typeof proposalTable, ProposalTable>>;
 export type _ProposalStore = Assert<
   Equals<typeof proposalStore, ProposalStore<EffectDrizzleQueryError, Key>>
+>;
+
+// ── ./embeddings ─────────────────────────────────────────────────────────
+
+const embeddingTables = makeEmbeddingTables({
+  schema,
+  name: "block_embedding",
+  documents: blocks,
+  vector: { kind: "pgvector", dimensions: 3 },
+});
+const embeddingStore = makeEmbeddingStore({
+  tables: embeddingTables,
+  documents: blocks,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _EmbeddingTables = Assert<Equals<typeof embeddingTables, EmbeddingTables>>;
+export type _EmbeddingStore = Assert<
+  Equals<typeof embeddingStore, EmbeddingStore<EffectDrizzleQueryError, Key>>
+>;
+export type _VectorKind = Assert<
+  Equals<
+    VectorKind,
+    { readonly kind: "pgvector"; readonly dimensions: number } | { readonly kind: "float8" }
+  >
 >;
 
 // ── ./external-ids ───────────────────────────────────────────────────────
