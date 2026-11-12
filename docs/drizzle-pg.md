@@ -14,8 +14,9 @@ The module guide for [`@thomasfosterau/pulpit-drizzle-pg`](../packages/pulpit-dr
 - **Landed:** `SearchBranch` over a tree's leaf and branch views and over a gated leaf's live rows ([`./search`](#search)), checked against the kernel's in-memory branch under every viewer's read scope on PostgreSQL.
 - **Landed:** the localised live view and gated store of a publish-gated keyed leaf ([`./publication`](#publication), pulpit#343), checked against the kernel's in-memory publication over a localised store on PostgreSQL.
 - **Landed:** the `ProposalStore` ([`./proposals`](#proposals), pulpit#355), checked against the kernel's in-memory store on PostgreSQL, its lock against a second transaction.
+- **Landed:** the `EdgeStore` ([`./edges`](#edges), pulpit#356), checked against the kernel's in-memory store on PostgreSQL, `members` through a leaf store's list and `countAt`'s lock against a second transaction.
 - **Landed:** the `EmbeddingStore` ([`./embeddings`](#embeddings), pulpit#357), checked against the kernel's in-memory store on PostgreSQL with `double precision[]` vectors; pgvector's form is pinned by unit tests.
-- **Next:** the other stores that aren't tree-bound (edges, reports, budgets, working copies, erasure, social and notification tables), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
+- **Next:** the other stores that aren't tree-bound (reports, budgets, working copies, erasure, social and notification tables), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
 
 ## End to end
 
@@ -283,6 +284,27 @@ The kernel's `ProposalStore` ([seams.md → `ProposalStore`](seams.md), pulpit#3
   - An id that is no canonical UUID names no proposal.
 
 The integration suite checks every method against the kernel's `makeInMemoryProposalStore` over the same writes, the composite foreign key, and the lock against a second transaction's `FOR UPDATE NOWAIT`.
+
+## `./edges`
+
+The kernel's `EdgeStore` ([seams.md → `EdgeStore`](seams.md), pulpit#356), one table per edge family.
+
+- **`makeEdgeTable({ schema, name, identity, ends, columns?, uniqueKey? })`** is the seam's schema:
+  - `id` (a random UUID) and `createdAt` (`created_at DEFAULT now()`);
+  - one indexed `uuid` column per end (`ends`: field key → column name), each referencing the identity row and cascading;
+  - the family's own `columns`;
+  - a unique key over `uniqueKey`, `NULLS NOT DISTINCT`.
+- **`makeEdgeStore({ table, ends, uniqueKey?, identity, owners, CurrentTransaction })`** binds the store. `ends` is the family's ends by alias, each the edge column and the endpoint leaf's view.
+  - **The join.** `list`, `countAt`, `members` and `countBy` read the edge table INNER JOINed with each end's rows (its view, the owner joined in) under the end's alias. An edge whose end has no view row is never read. The family's filter renders through [`./filter`](#filter) over the edge's columns (bare) and each end's (`alias.column`: `subject.ownerId`, `object.action`).
+  - **`list`** orders `created_at, id`, with the window total (`0` for an empty page).
+  - **`countAt`** first locks the node: `SELECT 1 FROM <identity> WHERE id = $node FOR NO KEY UPDATE`. That is not `FOR UPDATE`, which would block every insert keyed to the node; under the caller's READ COMMITTED transaction, two creates at one node serialise.
+  - **`members`** is that join as a subquery (`SELECT e.<column> … WHERE e.<other>::text IN ($ids) AND <where>`), reading nothing. It is the `Following` the kernel's `memberFilter` / `nonMemberFilter` hand a leaf store's `in` / `not in`.
+  - **`countBy`** is one `GROUP BY` read.
+  - **`existing`** matches the unique key `IS NOT DISTINCT FROM`. **`insert`** is `ON CONFLICT DO NOTHING RETURNING id`.
+  - **`closeValidity(id, column, to)`** sets that one column (`EDGE-002`).
+  - An id that is no canonical UUID names no edge and no node.
+
+The integration suite checks every method against the kernel's `makeInMemoryEdgeStore` over the same writes, under filters over the edge and each end. It also renders `members` through a leaf store's list, checks the unique key with a `NULL` in it, and runs `countAt`'s lock against a second transaction (a second lock fails `NOWAIT`; an insert keyed to the node goes through).
 
 ## `./embeddings`
 

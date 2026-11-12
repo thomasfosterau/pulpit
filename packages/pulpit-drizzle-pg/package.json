@@ -38,6 +38,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./documents": "./src/documents.ts",
+    "./edges": "./src/edges.ts",
     "./embeddings": "./src/embeddings.ts",
     "./filter": "./src/filter.ts",
     "./leaf-store": "./src/leaf-store.ts",
@@ -56,6 +57,10 @@
       "./documents": {
         "types": "./dist/documents.d.ts",
         "default": "./dist/documents.js"
+      },
+      "./edges": {
+        "types": "./dist/edges.d.ts",
+        "default": "./dist/edges.js"
       },
       "./embeddings": {
         "types": "./dist/embeddings.d.ts",

@@ -13,8 +13,9 @@
  * pointer level (`Publication`, `./publication`), the `PathStore` over a
  * path table (`Paths`, `./paths`), the content-addressed `DocumentStore`
  * (`Documents`, `./documents`), and the `SearchBranch` over a tree's views
- * (`Search`, `./search`), and the `ProposalStore` over a proposal table
- * (`Proposals`, `./proposals`), and the `EmbeddingStore` over a document
+ * (`Search`, `./search`), the `ProposalStore` over a proposal table
+ * (`Proposals`, `./proposals`), the `EdgeStore` over one table per edge
+ * family (`Edges`, `./edges`), and the `EmbeddingStore` over a document
  * family's queue and vectors (`Embeddings`, `./embeddings`).
  *
  * @copyright Thomas Foster
@@ -41,6 +42,8 @@ export * as Documents from "./documents.ts";
 /** The kernel's `ProposalStore`: suggested edits against a tree's nodes. */
 export * as Proposals from "./proposals.ts";
 
+/** The kernel's `EdgeStore`: one table per edge family, its ends joined to the tree's views. */
+export * as Edges from "./edges.ts";
 /** The kernel's `EmbeddingStore`: a document family's embedding queue and vectors. */
 export * as Embeddings from "./embeddings.ts";
 
