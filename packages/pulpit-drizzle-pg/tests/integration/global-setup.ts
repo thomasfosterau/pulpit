@@ -23,13 +23,24 @@ import { getTableName } from "drizzle-orm";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { fixtureSchema, tables } from "../fixtures/tree.ts";
 
+/** drizzle-kit could not diff the fixture schema. */
+class FixtureDdlFailed extends Schema.TaggedError<
+  FixtureDdlFailed,
+  { readonly brand: unique symbol }
+>()("FixtureDdlFailed", {
+  message: Schema.String,
+}) {}
+
 /** The fixture tree's DDL: drizzle-kit's diff from an empty database. */
-const treeStatements = Effect.tryPromise(async () =>
-  generateMigration(await generateDrizzleJson({}), await generateDrizzleJson(fixtureSchema)),
-);
+const treeStatements = Effect.tryPromise({
+  try: async () =>
+    generateMigration(await generateDrizzleJson({}), await generateDrizzleJson(fixtureSchema)),
+  catch: (cause) => new FixtureDdlFailed({ message: String(cause) }),
+});
 
 const identity = `pulpit_test.${getTableName(tables.root.identity)}`;
 const rootVersion = `pulpit_test.${getTableName(tables.root.version)}`;
