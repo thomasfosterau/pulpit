@@ -14,7 +14,12 @@
 
 import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
-import type { ListFilter } from "@thomasfosterau/pulpit/filter";
+import {
+  always,
+  LOCALE_COLUMN,
+  MAX_SET_VALUES,
+  type ListFilter,
+} from "@thomasfosterau/pulpit/filter";
 import type {
   DistinctQuery,
   LeafRow,
@@ -259,15 +264,89 @@ export const ownedSelection = (
  *
  * @since 0.0.0
  */
-export const leafRows = (leaf: string, view: PgView, owners: NodeOwnerTable): RowSource => {
+export const leafRows = (
+  leaf: string,
+  view: PgView,
+  owners: NodeOwnerTable,
+  name = `${leaf}_rows`,
+): RowSource => {
   const id = viewId(leaf, view);
   const selection = ownedSelection(view, owners);
   const relation = new QueryBuilder()
     .select(selection)
     .from(view)
     .leftJoin(owners, eq(owners.nodeId, sql`${id}`))
-    .as(`${leaf}_rows`);
+    .as(name);
   return sourceOf(relation, R.keys(selection), leaf);
+};
+
+/**
+ * One row per node of a localised source (pulpit#272): of the node's rows
+ * matching `where` whose locale is one of `locales`, the one whose locale
+ * comes first, as `LocalisedListQuery` spells it (`DISTINCT ON (id) …
+ * ORDER BY id, array_position($locales, locale)`). `locales` is non-empty
+ * and within `MAX_SET_VALUES`; the caller answers none otherwise.
+ *
+ * @since 0.0.0
+ */
+export const localeChoice = (
+  leaf: string,
+  source: RowSource,
+  locales: Arr.NonEmptyReadonlyArray<string>,
+  where: ListFilter<SQLWrapper>,
+): RowSource => {
+  const locale = Option.getOrElse(R.get(source.columns, LOCALE_COLUMN), () => {
+    throw new DerivationError({ message: `pulpit-drizzle-pg: leaf "${leaf}"'s localised rows have no locale` });
+  });
+  const preference = sql`ARRAY[${sql.join(
+    Arr.map(locales, (tag) => sql`${tag}`),
+    sql`, `,
+  )}]::text[]`;
+  const relation = new QueryBuilder()
+    .selectDistinctOn([source.id], source.columns)
+    .from(source.relation)
+    .where(
+      and(
+        Option.getOrUndefined(renderListFilter(where, source.columns)),
+        sql`${locale} = ANY(${preference})`,
+      ),
+    )
+    .orderBy(source.id, sql`array_position(${preference}, ${locale})`)
+    .as(`${leaf}_chosen_locale`);
+  return sourceOf(relation, R.keys(source.columns), leaf);
+};
+
+/**
+ * The kernel's localised `LeafStore` (README → Seams → `LeafStore` → "A
+ * localised leaf's view", pulpit#56, pulpit#272): `get` / `getMany` and the
+ * owner stamp over the shared rows, `list` / `distinct` over the
+ * `(id, locale)` rows (`columns` includes `locale`), and `listLocalised` one
+ * row per node in its most preferred locale.
+ *
+ * @since 0.0.0
+ */
+export const localisedStoreOver = <I, Relations extends AnyRelations>(
+  leaf: string,
+  shared: RowSource,
+  keyed: RowSource,
+  owners: NodeOwnerTable,
+  CurrentTransaction: Context.Service<I, PgTransaction<Relations>>,
+): LeafStore<LeafRow, SQLWrapper, StoreQueryError<Relations>, I> => {
+  const reads = readsOver(leaf, CurrentTransaction);
+  return {
+    ...storeOver(leaf, shared, owners, CurrentTransaction),
+    // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is the native `ReadonlySet` `LeafStore.columns` names
+    columns: new Set(R.keys(keyed.columns)),
+    list: (query) => reads.page(keyed, query),
+    distinct: (query) => reads.distinct(keyed, query),
+    listLocalised: (query) =>
+      Arr.isReadonlyArrayNonEmpty(query.locales) && query.locales.length <= MAX_SET_VALUES
+        ? reads.page(localeChoice(leaf, keyed, query.locales, query.where), {
+            ...query,
+            where: always,
+          })
+        : Effect.succeed({ rows: [], total: 0 }),
+  };
 };
 
 /**

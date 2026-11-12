@@ -30,7 +30,7 @@ import type * as Context from "effect/Context";
 import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import * as Owners from "./internal/owners.ts";
-import { leafRows, storeOver } from "./internal/rows.ts";
+import { leafRows, localisedStoreOver, storeOver } from "./internal/rows.ts";
 import type { VersionChainTables } from "./version-chain.ts";
 
 /**
@@ -163,7 +163,10 @@ export const makeLeafStores = <
 >(config: {
   readonly tree: ChainTree<S>;
   readonly tables: VersionChainTables;
-  readonly views: { readonly leaves: Views };
+  readonly views: {
+    readonly leaves: Views;
+    readonly keyed?: { readonly [leaf: string]: PgView };
+  };
   readonly owners: NodeOwnerTable;
   readonly CurrentTransaction: Context.Service<I, PgTransaction<Relations>>;
 }): LeafStores<keyof Views & string, StoreQueryError<Relations>, I> => {
@@ -196,7 +199,18 @@ export const makeLeafStores = <
         ),
       ),
     ]);
-    return storeOver(leaf, leafRows(leaf, view, owners), owners, CurrentTransaction);
+    const shared = leafRows(leaf, view, owners);
+    return Option.match(R.get(config.views.keyed ?? {}, leaf), {
+      onNone: () => storeOver(leaf, shared, owners, CurrentTransaction),
+      onSome: (keyedView) =>
+        localisedStoreOver(
+          leaf,
+          shared,
+          leafRows(leaf, keyedView, owners, `${leaf}_locale_rows`),
+          owners,
+          CurrentTransaction,
+        ),
+    });
   };
 
   // SAFETY: one store per entry of `views.leaves`, under its own key.
