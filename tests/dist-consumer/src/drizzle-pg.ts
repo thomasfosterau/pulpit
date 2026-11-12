@@ -45,13 +45,20 @@ import {
   type FilterColumn,
   type FilterColumns,
 } from "@thomasfosterau/pulpit-drizzle-pg/filter";
-import type { SQL, SQLWrapper } from "drizzle-orm";
+import { sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import {
   makeDocumentStore,
   makeDocumentTable,
   type DocumentTable,
 } from "@thomasfosterau/pulpit-drizzle-pg/documents";
 import type { DocumentStore } from "@thomasfosterau/pulpit/documents";
+import type { SearchBranch } from "@thomasfosterau/pulpit/search";
+import {
+  fullTextRank,
+  makeSearchBranch,
+  type SearchBranchOptions,
+  type SearchRank,
+} from "@thomasfosterau/pulpit-drizzle-pg/search";
 import type * as Option from "effect/Option";
 import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
 import { pgSchema, text, type PgView } from "drizzle-orm/pg-core";
@@ -72,7 +79,7 @@ type Satisfies<A, B> = [A] extends [B] ? true : false;
 export type _Root = Assert<
   Equals<
     keyof typeof DrizzlePg,
-    "VersionChain" | "LeafStore" | "Filter" | "Publication" | "Documents"
+    "VersionChain" | "LeafStore" | "Filter" | "Publication" | "Documents" | "Search"
   >
 >;
 export type _RootChains = Assert<
@@ -199,9 +206,15 @@ export type _PublishGated = Assert<
       readonly facts: PublicationStore<EffectDrizzleQueryError, Key>;
       readonly live: LiveView<LeafRow, SQLWrapper, EffectDrizzleQueryError, Key>;
       readonly leaves: LeafStore<LeafRow, SQLWrapper, EffectDrizzleQueryError, Key>;
+      readonly searchBranch: (
+        options: SearchBranchOptions,
+      ) => (
+        headFor: ListFilter<SQLWrapper>,
+      ) => SearchBranch<SQLWrapper, EffectDrizzleQueryError, Key>;
     }
   >
 >;
+
 // ── ./documents ──────────────────────────────────────────────────────────
 
 const blocks = makeDocumentTable({ schema, name: "block_documents" });
@@ -215,4 +228,33 @@ const blockStore = makeDocumentStore({
 export type _DocumentTable = Assert<Equals<typeof blocks, DocumentTable>>;
 export type _DocumentStore = Assert<
   Equals<typeof blockStore, DocumentStore<typeof Block.Type, EffectDrizzleQueryError, Key>>
+>;
+
+// ── ./search ─────────────────────────────────────────────────────────────
+
+const textBranch = makeSearchBranch({
+  view: treeViews.leaves.post,
+  owners,
+  name: "text",
+  rank: fullTextRank({ vector: () => sql`to_tsvector('simple', '')` }),
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _SearchBranch = Assert<
+  Equals<typeof textBranch, SearchBranch<SQLWrapper, EffectDrizzleQueryError, Key>>
+>;
+export type _SearchRank = Assert<
+  Equals<
+    SearchRank,
+    (
+      columns: FilterColumns,
+      query: string,
+    ) => Option.Option<{ readonly matches: SQL; readonly score: SQL }>
+  >
+>;
+export type _SearchBranchOptions = Assert<
+  Equals<
+    SearchBranchOptions,
+    { readonly name: string; readonly weight?: number; readonly rank: SearchRank }
+  >
 >;

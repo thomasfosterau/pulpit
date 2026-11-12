@@ -41,6 +41,7 @@
     "./filter": "./src/filter.ts",
     "./leaf-store": "./src/leaf-store.ts",
     "./publication": "./src/publication.ts",
+    "./search": "./src/search.ts",
     "./version-chain": "./src/version-chain.ts"
   },
   "publishConfig": {
@@ -64,6 +65,10 @@
       "./publication": {
         "types": "./dist/publication.d.ts",
         "default": "./dist/publication.js"
+      },
+      "./search": {
+        "types": "./dist/search.d.ts",
+        "default": "./dist/search.js"
       },
       "./version-chain": {
         "types": "./dist/version-chain.d.ts",

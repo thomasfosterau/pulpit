@@ -28,6 +28,7 @@ import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
 import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import type { PointerTable } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
 import type { ListFilter } from "@thomasfosterau/pulpit/filter";
+import type { SearchBranch } from "@thomasfosterau/pulpit/search";
 import type {
   LeafRow,
   LeafStore,
@@ -56,11 +57,13 @@ import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import type { FilterColumns } from "./filter.ts";
 import { renderListFilter } from "./filter.ts";
+import type { SearchBranchOptions } from "./search.ts";
 import { isNodeId } from "./internal/node-id.ts";
 import type { NodeOwnerTable, StoreQueryError } from "./internal/owners.ts";
 import {
   readsOver,
   ownedSelection,
+  searchOver,
   sourceOf,
   storeOver,
   viewId,
@@ -78,6 +81,18 @@ export interface PublishGated<E, I> {
   readonly facts: PublicationStore<E, I>;
   readonly live: LiveView<LeafRow, SQLWrapper, E, I>;
   readonly leaves: LeafStore<LeafRow, SQLWrapper, E, I>;
+  /**
+   * A `SearchBranch` over the rows `live.list` reads for `headFor` (per
+   * node, its head when it matches `headFor`, else its live row), ranked in
+   * the same statement as the scope (`./search`'s `makeSearchBranch`
+   * contract). Build it with the `headFor` the leaf's `list` would pass for
+   * the viewer (`never` for a reader, the viewer's own heads for an owner);
+   * a viewer on a head-reading rung searches the head store with
+   * `makeSearchBranch` over the leaf view.
+   */
+  readonly searchBranch: (
+    options: SearchBranchOptions,
+  ) => (headFor: ListFilter<SQLWrapper>) => SearchBranch<SQLWrapper, E, I>;
 }
 
 /**
@@ -224,6 +239,8 @@ export const makePublications = <Leaf extends string, I, Relations extends AnyRe
       facts: factsStore(log, CurrentTransaction),
       live,
       leaves: storeOver(leaf, heads(`${leaf}_rows`), owners, CurrentTransaction),
+      searchBranch: (options) => (headFor) =>
+        searchOver(chosen(headFor), options, CurrentTransaction),
     };
   };
 

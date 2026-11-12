@@ -12,7 +12,8 @@ The tree-bound seams of [`@thomasfosterau/pulpit`](../pulpit/README.md) over the
 - **Landed:** the live pointer, `PublicationStore` / `LiveView` and the gated store, over the tree's pointer level ([`./publication`](#publication)), checked against the kernel's in-memory publication on PostgreSQL.
 - **Landed:** the content-addressed `DocumentStore` ([`./documents`](#documents)), its hashes checked against the kernel's `canonicalText` on PostgreSQL.
 - **Landed:** the localised `LeafStore` over a tree's keyed views ([`./leaf-store`](#localised-leaves)), checked against the kernel's localised in-memory store on PostgreSQL.
-- **Next:** the `PathStore` (#334) and `SearchBranch` (#336).
+- **Landed:** `SearchBranch` over a tree's leaf and branch views and over a gated leaf's live rows ([`./search`](#search)), checked against the kernel's in-memory branch under every viewer's read scope on PostgreSQL.
+- **Next:** the `PathStore` (#334) and the localised live view (#343).
 
 ## Install
 
@@ -36,6 +37,7 @@ Every module is a namespace on the root export (`import { VersionChain } from "@
 | `./leaf-store` | `makeLeafStores`: the kernel's `LeafStore` for every leaf view of a tree; `makeNodeOwnerTable`, the owner table. |
 | `./publication` | `makePublications`: the live pointer (`PublicationStore`, `LiveView`, the gated store) for every leaf of a pointer. |
 | `./documents` | `makeDocumentTable` / `makeDocumentStore`: the kernel's content-addressed `DocumentStore`, one table per family. |
+| `./search` | `makeSearchBranch` / `fullTextRank`: the kernel's `SearchBranch`, one ranked and scoped statement over a view. |
 | `./filter` | `renderListFilter` / `renderListOrder`: the kernel's `ListFilter` and list order as Drizzle SQL. |
 
 ## `./version-chain`
@@ -196,6 +198,7 @@ const gated = makePublications({
 - **`facts`**, the `PublicationStore` over the append-only `live_pointer` log: `record` appends a fact (`version` `NULL` for an unpublish; `at` in the future schedules it); `effective(id)` is the latest by `seq` whose `at <= now()`; `facts(id, limit)` is the node's facts in record order; `scheduled(ids)` (#325, pulpit#220) is, per node and in one read, the latest-recorded fact naming a version whose `at` is still ahead and that no later record overtakes (`DISTINCT ON (id) … NOT EXISTS (a later fact with at <= this at)`), the kernel's own SQL sketch.
 - **`live`**, the `LiveView`: `get` / `getMany` read the row at the effective fact's version, with that version as its `version`, the head's `action` (a tombstone hides it too), `draft = false` and the fact's `at` as `publishedAt`; `list` / `distinct` read the `UNION ALL` of the head rows matching `headFor` (the viewer's own) and the live rows of every other node, under the same filter, order and page as `./leaf-store`. `publishedAt <= now()` is the gate the kernel's `isPubliclyServeable` reads (`CACHE-AUTH-005`).
 - **`leaves`**, the gated current-version store: the head rows with `draft` computed as `NOT EXISTS (a live row)`, a stored draft column ignored, as README → Seams asks.
+- **`searchBranch(options)(headFor)`**, the leaf's [`SearchBranch`](#search) over the rows `live.list` reads for `headFor`: per node, its head when it matches `headFor`, else its live row. Build it per request with the `headFor` the leaf's `list` passes for the viewer (`never` for a reader, `eq(ownerColumn, viewer.id)` for an owner), so a reader's search never scores a head's unpublished text. A viewer on a head-reading rung (the kernel's `list` reads `leaves` for them) searches with `makeSearchBranch` over the leaf view instead.
 
 `listLocalised` reads none on both for now; the localised live view over the pointer's keyed view is #343. An id that is no canonical UUID names no node and has no facts.
 
@@ -224,6 +227,47 @@ The integration suite puts the same documents through this store and the kernel'
 | ------------------------------------------------------ | ---------------------------- |
 | `makeDocumentTable({ schema, name })`, `DocumentTable` | One family's table.          |
 | `makeDocumentStore(config)`                            | The `DocumentStore` over it. |
+
+## `./search`
+
+The kernel's `SearchBranch` (README → Seams → `SearchBranch`, pulpit#204): one ranked query over a view, with the leaf's read scope rendered into the same statement, so a row outside the scope is never ranked and never shifts another hit's rank (`SEC-AUTH-ENUM-001`).
+
+```ts
+import { fullTextRank, makeSearchBranch } from "@thomasfosterau/pulpit-drizzle-pg/search";
+import { searchScopeFilter } from "@thomasfosterau/pulpit/subtype";
+import { hybridSearch } from "@thomasfosterau/pulpit/search";
+import { sql } from "drizzle-orm";
+
+// makeTreeViews(tree, tables, { schema, branches: { work: { project: (leaf, c) =>
+//   ({ search: sql`setweight(to_tsvector('english', coalesce(${c.title}, '')), 'A')`.as("search") }) } } })
+const text = makeSearchBranch({
+  view: views.leaves.book, // or views.branches.work, the search union over the marker's leaves
+  owners: nodeOwner,
+  name: "text",
+  rank: fullTextRank({
+    vector: (columns) => sql`to_tsvector('english', coalesce(${columns["title"]}, ''))`,
+    config: "english",
+  }),
+  CurrentTransaction,
+});
+
+const search = hybridSearch({ branches: [text /* , trigram, vector … */] });
+// search({ query, scope: searchScopeFilter(leaf, viewer, { includeDeleted, where }), limit })
+```
+
+- **`search({ query, scope, limit })`** is `SELECT id … WHERE rank.matches AND scope ORDER BY rank.score DESC NULLS LAST, id LIMIT limit`, over the view's rows with the owner joined in as `ownerId`. `scope` renders through [`renderListFilter`](#filter) over the same columns `./leaf-store`'s `list` renders it over. It is never rank, then filter. `limit` is clamped to `[0, MAX_PAGE_LIMIT]`, and a zero limit reads nothing.
+- **The rank is the application's** (`SearchRank`: the source's columns and the query to `{ matches, score }`, or none to read nothing): full text, trigram `similarity`, a vector's `embedding <=> $query`, or a literal-id match. `fullTextRank({ vector, config? })` is the full-text one: `vector @@ websearch_to_tsquery(config, query)`, scored by `ts_rank_cd`, `'simple'` by default; a blank query matches nothing.
+- **A branch view** (`views.branches[marker]`, a `UNION ALL` over the marker's leaves with the `type` column and its `project` columns) ranks every leaf of the union. `eq("type", leaf)` narrows it to one leaf. A scope node over a column the union lacks is `false`, so a leaf's owned scope over a branch view without that leaf's access columns ranks none of it: it fails closed. Give the projection the columns the scope reads, or search the leaf view.
+- **A publish-gated leaf** searches through [`./publication`](#publication)'s `searchBranch(options)(headFor)`, which ranks the rows `LiveView.list` reads. The kernel's `BranchRequest` carries no `headFor`, so the branch is built per request, beside the viewer.
+- **The hits are ids** for `hydrateSearchHits`, which re-reads each one through the leaf's gated `getMany`. The branch applies no other policy, never opens a transaction, and fails only with the driver's query error.
+
+The integration suite checks both branch kinds against the kernel's `makeInMemorySearchBranch` on PostgreSQL. A leaf view's branch runs under every viewer × `includeDeleted` through `searchScopeFilter`; a gated leaf's runs for each `headFor`. `fullTextRank` runs over a branch view, including the type narrowing and the fail-closed scope.
+
+| Export | What it is |
+| --- | --- |
+| `makeSearchBranch(config)` | A `SearchBranch<SQLWrapper, EffectDrizzleQueryError, CurrentTransaction>` over one view. |
+| `SearchBranchOptions`, `SearchRank` | Its name, weight and rank; the rank's shape. |
+| `fullTextRank({ vector, config? })` | The full-text `SearchRank` (`ts_rank_cd` over a `tsvector`). |
 
 ## `./filter`
 

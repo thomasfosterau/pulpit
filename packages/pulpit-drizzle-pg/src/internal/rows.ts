@@ -2,7 +2,7 @@
  * @copyright Thomas Foster
  *
  * The reads every leaf-shaped seam shares (`LeafStore`, a gated leaf's
- * head store, `LiveView`), over a **row source**: a subquery that yields one
+ * head store, `LiveView`, `SearchBranch`), over a **row source**: a subquery that yields one
  * kernel `LeafRow` per row (the leaf view's columns with the owner joined
  * in, a gated head's computed `draft`, a live row's pointed version), with
  * its columns by field key. Each read renders the kernel's filter and order
@@ -20,12 +20,14 @@ import {
   MAX_SET_VALUES,
   type ListFilter,
 } from "@thomasfosterau/pulpit/filter";
-import type {
-  DistinctQuery,
-  LeafRow,
-  LeafStore,
-  ListOrder,
-  Page,
+import type { RankedHit, SearchBranch } from "@thomasfosterau/pulpit/search";
+import {
+  MAX_PAGE_LIMIT,
+  type DistinctQuery,
+  type LeafRow,
+  type LeafStore,
+  type ListOrder,
+  type Page,
 } from "@thomasfosterau/pulpit/subtype";
 import { VersionAction } from "@thomasfosterau/pulpit/version-chain";
 import {
@@ -403,3 +405,60 @@ export const storeOver = <I, Relations extends AnyRelations>(
       }),
   };
 };
+
+/**
+ * How a search branch ranks a source's rows for a query (README → Seams →
+ * `SearchBranch`): `matches`, the predicate a hit satisfies, and `score`,
+ * higher first; none when the query can match nothing (a literal-id branch
+ * handed a query that is no identifier, say).
+ *
+ * @since 0.0.0
+ */
+export type SearchRank = (
+  columns: FilterColumns,
+  query: string,
+) => Option.Option<{ readonly matches: SQL; readonly score: SQL }>;
+
+/**
+ * The kernel's `SearchBranch` over one row source: one statement that ranks
+ * the rows matching the query and the scope together (never rank, then
+ * filter), best score first, ties by id, at most `request.limit` (clamped
+ * to `[0, MAX_PAGE_LIMIT]`).
+ *
+ * @since 0.0.0
+ */
+export const searchOver = <I, Relations extends AnyRelations>(
+  source: RowSource,
+  options: {
+    readonly name: string;
+    readonly weight?: number;
+    readonly rank: SearchRank;
+  },
+  CurrentTransaction: Context.Service<I, PgTransaction<Relations>>,
+): SearchBranch<SQLWrapper, StoreQueryError<Relations>, I> => ({
+  name: options.name,
+  weight: options.weight,
+  search: (request) => {
+    const limit = Math.max(0, Math.min(Math.trunc(request.limit), MAX_PAGE_LIMIT));
+    const ranked = limit > 0 ? options.rank(source.columns, request.query) : Option.none();
+    return Option.match(ranked, {
+      onNone: () => Effect.succeed([]),
+      onSome: ({ matches, score }) =>
+        Effect.gen(function* () {
+          const tx = yield* CurrentTransaction;
+          const rows = yield* tx
+            .select({ id: sql<string>`${source.id}::text` })
+            .from(source.relation)
+            .where(
+              and(matches, Option.getOrUndefined(renderListFilter(request.scope, source.columns))),
+            )
+            .orderBy(
+              sql`${score} DESC NULLS LAST`,
+              ...renderListOrder([], source.columns, source.id),
+            )
+            .limit(limit);
+          return Arr.map(rows, ({ id }): RankedHit => ({ id }));
+        }),
+    });
+  },
+});
