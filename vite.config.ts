@@ -50,13 +50,13 @@ export default defineConfig({
     },
     rules: {
       "eslint/no-unused-vars": [
-        "warn",
+        "error",
         {
           argsIgnorePattern: "^_",
           varsIgnorePattern: "^_",
         },
       ],
-      "eslint/prefer-const": "warn",
+      "eslint/prefer-const": "error",
       // `_tag` is the discriminant of every Effect tagged value and error;
       // `_links` and `_embedded` are the WordPress REST API's own (HAL) wire
       // members, which pulpit-wordpress must emit under exactly those names.
@@ -122,12 +122,13 @@ export default defineConfig({
       // `// SAFETY:` invariant this rule only prompts for.
       "effect/casting-awareness": "off",
       // Every former ported-code allowance (the preset rules this workspace
-      // once held at `warn` while ported modules were paid down) is at zero
-      // and back at the preset's `error`; a new site is a defect.
-      "typescript/no-explicit-any": "off",
-      "typescript/no-empty-object-type": "off",
-      "typescript/ban-ts-comment": "off",
-      "unicorn/no-empty-file": "off",
+      // once held at `warn` while ported modules were paid down) is at zero;
+      // a new site is a defect. `unicorn/no-empty-file` is in the
+      // `correctness` category, so it needs no line here; these three are
+      // in no enabled category, so they are raised by name.
+      "typescript/no-explicit-any": "error",
+      "typescript/no-empty-object-type": "error",
+      "typescript/ban-ts-comment": "error",
       "vite-plus/prefer-vite-plus-imports": "error",
     },
     overrides: [

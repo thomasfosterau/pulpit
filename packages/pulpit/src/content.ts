@@ -208,7 +208,7 @@ export const contentResourceAttributeFields = referenceLeafResourceFields;
  *
  * @since 0.1.0
  */
-export const makeContentResource = <IdSchema extends Schema.Codec<any, string>>(id: IdSchema) =>
+export const makeContentResource = <IdSchema extends Schema.Codec<unknown, string>>(id: IdSchema) =>
   Resource.make("content", { id, attributes: contentResourceAttributeFields });
 
 /**
