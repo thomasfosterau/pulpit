@@ -13,15 +13,22 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Struct from "effect/Struct";
 import {
   defineEdgeOps,
   EdgeDeclarationError,
   validAt,
   type EdgeRow,
+  type EdgeStore,
   type EdgeValues,
 } from "../src/edges.ts";
 import type { Viewer } from "../src/subtype.ts";
-import { makeInMemoryEdgeStore, makeInMemoryFollowers, makeInMemoryNodes } from "../src/testing.ts";
+import {
+  makeInMemoryEdgeStore,
+  makeInMemoryFollowers,
+  makeInMemoryNodes,
+  type InMemoryFollowing,
+} from "../src/testing.ts";
 import { gardeneriaPolicy, member, moderator, NOW } from "./fixtures.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
@@ -189,7 +196,7 @@ describe("edge validity intervals", () => {
   it("throws at declaration for one column named twice, or a store without closeValidity", () => {
     const { ends, store } = offices();
     const declare =
-      (edges: typeof store, columns = validity) =>
+      (edges: EdgeStore<EdgeRow, InMemoryFollowing, never, never>, columns = validity) =>
       () =>
         defineEdgeOps({
           type: "links",
@@ -203,6 +210,6 @@ describe("edge validity intervals", () => {
           validity: columns,
         });
     expect(declare(store, { from: "x", to: "x" })).toThrow(EdgeDeclarationError);
-    expect(declare({ ...store, closeValidity: undefined })).toThrow(/closeValidity/);
+    expect(declare(Struct.omit(store, ["closeValidity"]))).toThrow(/closeValidity/);
   });
 });

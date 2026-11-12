@@ -255,8 +255,7 @@ export interface EdgeEnd<E, R> {
    *   every edge at the node (the view-private rung, typically) is held to
    *   the limit over all of them.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such, so there is no value to model as an `Option`
-  readonly maxEdges?: number | undefined;
+  readonly maxEdges?: number;
 }
 
 /**
@@ -500,8 +499,7 @@ export interface EdgeStore<Row extends EdgeRow, Following, E, R> {
    * RETURNING id`; whether a row was updated. Required only by a family that
    * declares {@link EdgeDefinition.validity}.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); a family without validity never calls it
-  readonly closeValidity?: CloseValidity<E, R> | undefined;
+  readonly closeValidity?: CloseValidity<E, R>;
   /**
    * The node ids at `column` of the stored edges whose `otherColumn` is one
    * of `ids` and that satisfy `where`, over the same joins as
@@ -565,11 +563,9 @@ export interface EdgeDefinition<Create, Row extends EdgeRow, Resource, Following
    * no-op returning the stored edge's id, when the viewer may read it and
    * its every end is live; otherwise {@link EdgeConflict}).
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- the optional-field convention (AGENTS.md → Conventions); absent is the default `"fail"`
-  readonly onConflict?: "fail" | "ignore" | undefined;
+  readonly onConflict?: "fail" | "ignore";
   /** The write gate; {@link corpusWriteGate} when absent. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- the optional-field convention (AGENTS.md → Conventions); absent is the default `corpusWriteGate`
-  readonly writeGate?: EdgeWriteGate<E, R> | undefined;
+  readonly writeGate?: EdgeWriteGate<E, R>;
   /**
    * The family's validity interval (pulpit#210): the edge columns holding
    * when it starts and ends to hold (each a `Date`, or `NULL` for open).
@@ -577,8 +573,7 @@ export interface EdgeDefinition<Create, Row extends EdgeRow, Resource, Following
    * valid at the same time as the new one, and `closeValidity` may end an
    * open interval. Absent, edges have no interval.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- the optional-field convention (AGENTS.md → Conventions); absent is "no interval"
-  readonly validity?: EdgeValidity | undefined;
+  readonly validity?: EdgeValidity;
 }
 
 /**

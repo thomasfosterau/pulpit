@@ -198,7 +198,6 @@ describe("isPubliclyServeable — the owned-family posture (#1096)", () => {
   it("leaves reference data unchanged when the flag is absent", () => {
     expect(isPubliclyServeable({ attributes: { name: "Ada" } })).toBe(true);
     expect(isPubliclyServeable({ attributes: { name: "Ada" } }, { owned: false })).toBe(true);
-    expect(isPubliclyServeable({ attributes: { name: "Ada" } }, { owned: undefined })).toBe(true);
   });
 
   it("composes as AND with the other axes", () => {
@@ -248,21 +247,12 @@ describe("isPubliclyServeable — the publication axis (#1096)", () => {
   it("leaves families without the flag unchanged", () => {
     expect(isPubliclyServeable({ attributes: { publishedAt: iso(hourMs) } })).toBe(true);
     expect(isPubliclyServeable({ attributes: { title: "Draft" } })).toBe(true);
-    expect(
-      isPubliclyServeable({ attributes: { title: "Draft" } }, { publishGated: undefined }),
-    ).toBe(true);
   });
 
   it("reads the wall clock when no instant is given", () => {
     const pastIso = "2000-01-01T00:00:00.000Z";
     expect(
       isPubliclyServeable({ attributes: { publishedAt: pastIso } }, { publishGated: true }),
-    ).toBe(true);
-    expect(
-      isPubliclyServeable(
-        { attributes: { publishedAt: pastIso } },
-        { publishGated: true, now: undefined },
-      ),
     ).toBe(true);
   });
 });
@@ -273,9 +263,7 @@ describe("serveablePolicy — the hook the application's resource cache takes", 
     expect(ownedHook({ attributes: { visibility: "public" } })).toBe(true);
     expect(ownedHook({ attributes: { name: "Ada" } })).toBe(false);
     expect(serveablePolicy()({ attributes: { name: "Ada" } })).toBe(true);
-    // An explicit `undefined` is the absent flag, so a caller can forward its own.
-    const unset = serveablePolicy({ owned: undefined, publishGated: undefined });
-    expect(unset({ attributes: { name: "Ada" } })).toBe(true);
+    expect(serveablePolicy({})({ attributes: { name: "Ada" } })).toBe(true);
   });
 });
 

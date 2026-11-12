@@ -40,14 +40,18 @@ const setup = (
 ) => {
   const kv = makeInMemoryVersionedKv();
   let serveable = (resource: Post) => resource.visibility === "public";
-  const cache = makeResourceCache({
+  const base = {
     kv: options.kv ?? kv,
     schema: Post,
-    serveable: (resource) => serveable(resource),
+    serveable: (resource: Post) => serveable(resource),
     prefix: "posts:v1:",
     ttlSeconds: options.ttlSeconds ?? 60,
-    tombstoneTtlSeconds: options.tombstoneTtlSeconds,
-  });
+  };
+  const cache = makeResourceCache(
+    options.tombstoneTtlSeconds === undefined
+      ? base
+      : { ...base, tombstoneTtlSeconds: options.tombstoneTtlSeconds },
+  );
   return {
     kv,
     cache,

@@ -6,6 +6,8 @@ Hybrid search and the embedding pipeline (`./search`), and the discovery feed an
 
 Hybrid search (pulpit#204): the parts of the apps' search pipeline that are not SQL. The ranked queries stay the application's, as [`SearchBranch`](seams.md#searchbranchfollowing-e-r-and-embeddingstoree-r-search-and-embeddings) seams; pulpit fuses them, lets a reranker reorder the result, and runs the embedding pipeline over seams.
 
+The optional members (a branch's `weight`, `FusionOptions`' `k`, `limit` and `perBranch`, and `hybridSearch`'s `reranker`, `k` and `perBranch`) are bare `?: T` (pulpit#238): a caller that has no value omits the key rather than passing `undefined`.
+
 ```ts
 import { deepStrictEqual } from "node:assert";
 import * as Effect from "effect/Effect";

@@ -122,8 +122,7 @@ export interface ResourceCacheOptions<Resource, E, R> {
    * Defaults to a day ({@link DEFAULT_TOMBSTONE_TTL_SECONDS}), and is never
    * less than `ttlSeconds`.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is the default
-  readonly tombstoneTtlSeconds?: number | undefined;
+  readonly tombstoneTtlSeconds?: number;
 }
 
 /**
