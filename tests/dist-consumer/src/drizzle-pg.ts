@@ -66,6 +66,12 @@ import {
 } from "@thomasfosterau/pulpit-drizzle-pg/edges";
 import type { EmbeddingStore, SearchBranch } from "@thomasfosterau/pulpit/search";
 import type { ProposalStore } from "@thomasfosterau/pulpit/proposals";
+import type { ExternalIdStore } from "@thomasfosterau/pulpit/reference-import";
+import {
+  makeExternalIdStore,
+  makeExternalIdTable,
+  type ExternalIdTable,
+} from "@thomasfosterau/pulpit-drizzle-pg/external-ids";
 import {
   makeEmbeddingStore,
   makeEmbeddingTables,
@@ -113,6 +119,7 @@ export type _Root = Assert<
     | "Edges"
     | "Proposals"
     | "Embeddings"
+    | "ExternalIds"
   >
 >;
 export type _RootChains = Assert<
@@ -383,4 +390,17 @@ export type _VectorKind = Assert<
     VectorKind,
     { readonly kind: "pgvector"; readonly dimensions: number } | { readonly kind: "float8" }
   >
+>;
+
+// ── ./external-ids ───────────────────────────────────────────────────────
+
+const externalIdTable = makeExternalIdTable({ schema, identity: tables.root.identity });
+const externalIdStore = makeExternalIdStore({
+  table: externalIdTable,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _ExternalIdTable = Assert<Equals<typeof externalIdTable, ExternalIdTable>>;
+export type _ExternalIdStore = Assert<
+  Equals<typeof externalIdStore, ExternalIdStore<EffectDrizzleQueryError, Key>>
 >;

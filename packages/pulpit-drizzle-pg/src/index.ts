@@ -15,8 +15,10 @@
  * (`Documents`, `./documents`), and the `SearchBranch` over a tree's views
  * (`Search`, `./search`), the `ProposalStore` over a proposal table
  * (`Proposals`, `./proposals`), the `EdgeStore` over one table per edge
- * family (`Edges`, `./edges`), and the `EmbeddingStore` over a document
- * family's queue and vectors (`Embeddings`, `./embeddings`).
+ * family (`Edges`, `./edges`), the `EmbeddingStore` over a document
+ * family's queue and vectors (`Embeddings`, `./embeddings`), and the
+ * `ExternalIdStore` over an external-identifier table (`ExternalIds`,
+ * `./external-ids`).
  *
  * @copyright Thomas Foster
  * @module pulpit-drizzle-pg
@@ -46,6 +48,8 @@ export * as Proposals from "./proposals.ts";
 export * as Edges from "./edges.ts";
 /** The kernel's `EmbeddingStore`: a document family's embedding queue and vectors. */
 export * as Embeddings from "./embeddings.ts";
+/** The kernel's `ExternalIdStore`: an authority's identifiers linked to a tree's nodes. */
+export * as ExternalIds from "./external-ids.ts";
 
 /** The kernel's `SearchBranch`: one ranked, scoped statement over a tree's view. */
 export * as Search from "./search.ts";
