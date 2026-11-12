@@ -4,8 +4,8 @@ name: CI
 # the root task in vite.config.ts that chains every gate in AGENTS.md →
 # Verification's order and then pulpit-drizzle-pg's integration suite. The
 # pipeline lives in that task, not in GitHub Actions steps or `needs:`; this
-# file only provides Node.js, the dependencies and a PostgreSQL. The `ci` job
-# is the one check to require: it fails unless every matrix job passed.
+# file only provides Node.js, the dependencies and a PostgreSQL. Each matrix
+# leg is its own required check: `ci (node lts)` and `ci (node latest)`.
 
 on:
   pull_request:
@@ -24,7 +24,7 @@ concurrency:
 permissions: {}
 
 jobs:
-  test:
+  ci:
     name: ci (node ${{ matrix.node }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -89,21 +89,3 @@ jobs:
             vp-task-v2-${{ runner.os }}-node-${{ matrix.node }}-
       - name: vp run ci
         run: vp run ci
-
-  # The one required check: green only when every matrix job passed, so a
-  # skipped, cancelled or failed `test` job fails it.
-  ci:
-    name: ci
-    needs: [test]
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - name: Every matrix job passed
-        env:
-          TEST_RESULT: ${{ needs.test.result }}
-        run: |
-          echo "test: $TEST_RESULT"
-          test "$TEST_RESULT" = success
