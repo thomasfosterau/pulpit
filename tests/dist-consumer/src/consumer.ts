@@ -34,6 +34,7 @@ import {
   Discovery,
   Relations,
   Translation,
+  ReferenceImport,
   Proposals,
   Registry,
   WorkingCopy,
@@ -130,6 +131,7 @@ import {
   type LocaleWire,
   defineSearchProjection,
   hydrateSearchHits,
+  searchHeadFor,
   searchScopeFilter,
   type SearchField,
   type SearchProjection,
@@ -236,6 +238,7 @@ import {
   hybridSearch,
   type EmbeddingBatch,
   type EmbeddingMismatch,
+  type BranchRequest,
   type FusedHit,
   type SearchBranch,
 } from "@thomasfosterau/pulpit/search";
@@ -301,6 +304,14 @@ import {
   type SweepSummary,
   type TranslationOps,
 } from "@thomasfosterau/pulpit/translation";
+import {
+  defineReferenceImport,
+  type ExternalIdStore,
+  type ImportSummary,
+  type ImportBatchTooLarge,
+  type ReferenceImportOps,
+  type UnknownAuthority,
+} from "@thomasfosterau/pulpit/reference-import";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -919,6 +930,9 @@ export type _SearchScopeRequest = Assert<
     Pick<ListRequest<Subquery>, "includeDeleted" | "where">
   >
 >;
+export type _SearchHeadFor = Assert<
+  Equals<ReturnType<typeof searchHeadFor<Subquery>>, ListFilter<Subquery>>
+>;
 export type _HydrateSearchHits = Assert<
   Equals<
     ReturnType<
@@ -1417,6 +1431,18 @@ export type _Disposition = Assert<Equals<Disposition, "purge" | "reassign" | "an
 export type _SearchBarrel = Assert<Equals<typeof Search.fuseRankings, typeof fuseRankings>>;
 export type _Fused = Assert<Equals<ReturnType<typeof fuseRankings>, ReadonlyArray<FusedHit>>>;
 export type _FusedRanks = Assert<Equals<FusedHit["ranks"], { readonly [branch: string]: number }>>;
+// The gated branch's heads ride on the request (pulpit#346).
+export type _BranchRequest = Assert<
+  Equals<
+    BranchRequest<Subquery>,
+    {
+      readonly query: string;
+      readonly scope: ListFilter<Subquery>;
+      readonly headFor: ListFilter<Subquery>;
+      readonly limit: number;
+    }
+  >
+>;
 declare const branches: ReadonlyArray<SearchBranch<Subquery, StoreFailure, Transaction>>;
 export const searchOver = hybridSearch({ branches });
 export type _HybridSearch = Assert<
@@ -1651,3 +1677,25 @@ export type _TranslationSweep = Assert<
 >;
 export type _LineageOf = Assert<Equals<ReturnType<typeof lineageOf>, Option.Option<LocaleLineage>>>;
 export type _HumanLineageHook = Assert<Equals<ReturnType<typeof humanLineageHook>["name"], string>>;
+
+// ── reference import (pulpit#209) ────────────────────────────────────────
+
+export type _ReferenceImportBarrel = Assert<
+  Equals<typeof ReferenceImport.defineReferenceImport, typeof defineReferenceImport>
+>;
+export type _ReferenceImportRun = Assert<
+  Equals<
+    ReturnType<ReferenceImportOps<StoreFailure, Transaction>["run"]>,
+    Effect.Effect<
+      ImportSummary,
+      UnknownAuthority | ImportBatchTooLarge | Unauthorized | Forbidden | StoreFailure,
+      Transaction
+    >
+  >
+>;
+export type _ExternalIdLink = Assert<
+  Equals<
+    ReturnType<ExternalIdStore<StoreFailure, Transaction>["link"]>,
+    Effect.Effect<"linked" | "present" | "taken", StoreFailure, Transaction>
+  >
+>;
