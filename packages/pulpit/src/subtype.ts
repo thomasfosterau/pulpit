@@ -622,7 +622,7 @@ export const ownedAccess = (
  */
 export const ownedListFilter = <Following>(
   access: Extract<LeafAccess, { kind: "owned" }>,
-  viewColumns: ReadonlySet<string>,
+  viewColumns: HashSet.HashSet<string>,
   scope: ReadScope<Following>,
 ): ListFilter<Following> => {
   if (!declaresColumns(access, viewColumns)) return never;
@@ -694,7 +694,7 @@ export const softDeleteFilter = <Following>(
 export const referencePrivacyFilter = <Following>(
   viewer: Viewer,
   policy: AccessPolicy,
-  viewColumns: ReadonlySet<string>,
+  viewColumns: HashSet.HashSet<string>,
   followersArm: Option.Option<{
     readonly access: Extract<LeafAccess, { kind: "reference" }>;
     readonly followers: FollowerSeam<Following, unknown>;
@@ -953,7 +953,7 @@ export interface DistinctQuery<Following> {
  */
 export interface LeafStore<Row extends LeafRow, Following, E, R> {
   /** The view's column names; an owned declaration naming a column outside this set reads nothing (`get`, `getMany` or `list`). */
-  readonly columns: ReadonlySet<string>;
+  readonly columns: HashSet.HashSet<string>;
   /** One row of the current-version view by id, or none. Applies no visibility policy. */
   readonly get: (id: string) => Effect.Effect<Option.Option<Row>, E, R>;
   /** One `id = ANY($ids)` read, never `ids.length` sequential gets. */
@@ -1480,12 +1480,12 @@ const checkedOrder = (
  */
 const sortableColumns = (
   type: string,
-  columns: ReadonlySet<string>,
+  columns: HashSet.HashSet<string>,
   // oxlint-disable-next-line effect/prefer-option-over-null -- `SubtypeDefinition.sortable` as declared, an optional `?: T | undefined` field (AGENTS.md → Conventions)
   sortable: ReadonlyArray<string> | undefined,
 ): ((column: string) => boolean) => {
-  if (sortable === undefined) return (column) => columns.has(column);
-  const undeclared = Arr.findFirst(sortable, (column) => !columns.has(column));
+  if (sortable === undefined) return (column) => HashSet.has(columns, column);
+  const undeclared = Arr.findFirst(sortable, (column) => !HashSet.has(columns, column));
   if (Option.isSome(undeclared)) {
     throw new SubtypeDeclarationError({
       message: `${type}: sortable names '${undeclared.value}', which is not a column of the view`,
@@ -2388,12 +2388,12 @@ export interface SearchProjection {
   readonly languageColumn: Option.Option<string>;
 }
 
-const checkSearchProjection = (projection: SearchProjection, columns: ReadonlySet<string>) => {
+const checkSearchProjection = (projection: SearchProjection, columns: HashSet.HashSet<string>) => {
   const named = [
     ...Arr.map(projection.fields, (field) => field.column),
     ...Option.toArray(projection.languageColumn),
   ];
-  const undeclared = Arr.findFirst(named, (column) => !columns.has(column));
+  const undeclared = Arr.findFirst(named, (column) => !HashSet.has(columns, column));
   if (Option.isSome(undeclared)) {
     throw new SubtypeDeclarationError({
       message: `search names '${undeclared.value}', which is not a column of the view`,
@@ -2473,7 +2473,7 @@ export const defineSearchProjection = (declaration: {
 export const searchScopeFilter = <Following>(
   leaf: {
     readonly access: LeafAccess;
-    readonly columns: ReadonlySet<string>;
+    readonly columns: HashSet.HashSet<string>;
     readonly policy: AccessPolicy;
     readonly followers: FollowerSeam<Following, unknown>;
   },
@@ -3376,7 +3376,7 @@ const PUBLICATION_COLUMNS: ReadonlyArray<string> = ["draft", "publishedAt"];
 
 const checkLocaleLevel = (
   level: LocaleLevel,
-  columns: ReadonlySet<string>,
+  columns: HashSet.HashSet<string>,
   gated: ReadonlyArray<string>,
 ) => {
   const gate = Arr.findFirst(level.columns, (column) => gated.includes(column));
@@ -3387,7 +3387,7 @@ const checkLocaleLevel = (
   }
   const undeclared = Arr.findFirst(
     [...level.columns, LOCALE_COLUMN],
-    (column) => !columns.has(column),
+    (column) => !HashSet.has(columns, column),
   );
   if (Option.isSome(undeclared)) {
     throw new SubtypeDeclarationError({

@@ -16,6 +16,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
+import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import {
@@ -205,8 +206,7 @@ describe("defineFileWrites — the commit-ordered write", () => {
 describe("fileUsageEnds — the usage index as an edge family", () => {
   it("names the user and file ends' columns", () => {
     const { leaf } = images();
-    // oxlint-disable-next-line effect/avoid-native-object-helpers -- an endpoint view's column set is the native `ReadonlySet` `EndpointView.columns` names
-    const nodes = { columns: new Set(["id", "action"]), get: () => Effect.succeedNone };
+    const nodes = { columns: HashSet.make("id", "action"), get: () => Effect.succeedNone };
     const ends = fileUsageEnds({
       user: { type: "posts", access: ownedAccess(), nodes },
       file: { type: "images", access: leaf.access, nodes },

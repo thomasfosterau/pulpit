@@ -1137,15 +1137,14 @@ export const makeInMemoryLeafStore = (
       rowOrder([]),
     );
   return {
-    // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is the native `ReadonlySet` `LeafStore.columns` names
-    columns: new Set([
+    columns: HashSet.make(
       "id",
       "version",
       "action",
       "ownerId",
       ...options.columns,
       ...(options.localised === true ? [LOCALE_COLUMN] : []),
-    ]),
+    ),
     get: (id) => Effect.sync(() => Arr.findFirst(view(), (row) => row.id === id)),
     getMany: (ids) => Effect.sync(() => view().filter((row) => ids.includes(row.id))),
     list: (query) => Effect.map(instantOf(fixedNow), (now) => viewPage(listed(), query, now)),
@@ -1405,8 +1404,7 @@ export interface InMemoryNodes extends EndpointView<never, never> {
 export const makeInMemoryNodes = (columns: ReadonlyArray<string>): InMemoryNodes => {
   let nodes = HashMap.empty<string, LeafRow>();
   return {
-    // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is a `ReadonlySet`, the type `LeafStore.columns` already has, so a `LeafStore` satisfies `EndpointView`
-    columns: new Set(["id", "version", "action", ...columns]),
+    columns: HashSet.make("id", "version", "action", ...columns),
     get: (id) => Effect.sync(() => HashMap.get(nodes, id)),
     put: (row) => {
       nodes = HashMap.set(nodes, row.id, row);
@@ -1942,7 +1940,7 @@ export const makeInMemoryPublication = (options: {
   readonly now?: Date | undefined;
 }): InMemoryPublication => {
   const fixedNow = Option.fromNullishOr(options.now);
-  const localised = options.leaves.columns.has(LOCALE_COLUMN);
+  const localised = HashSet.has(options.leaves.columns, LOCALE_COLUMN);
   /** A row as a localised view lists it: one per locale its version carries. */
   const listed = (row: LeafRow): ReadonlyArray<LeafRow> =>
     localised ? localeRows(row, localesAt(options.chain, row.id, row.version)) : [row];

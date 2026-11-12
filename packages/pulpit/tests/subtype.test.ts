@@ -142,9 +142,8 @@ const readBack = <Resource>(write: CommittedWrite<Resource>): Resource =>
   });
 
 /** A view's column set, with the `id`, `version` and `action` every view carries. */
-const viewOf = (...columns: ReadonlyArray<string>): ReadonlySet<string> =>
-  // oxlint-disable-next-line effect/avoid-native-object-helpers -- a view's column set is the native `ReadonlySet` `LeafStore.columns` names
-  new Set(["id", "version", "action", ...columns]);
+const viewOf = (...columns: ReadonlyArray<string>): HashSet.HashSet<string> =>
+  HashSet.make("id", "version", "action", ...columns);
 
 const tagOf = async <A, E extends { readonly _tag: string }>(
   effect: Effect.Effect<A, E>,
@@ -422,7 +421,7 @@ describe("the reference list predicates", () => {
     };
     const privacy = (
       viewer: Viewer,
-      columns: ReadonlySet<string> = curated,
+      columns: HashSet.HashSet<string> = curated,
       access: Option.Option<Extract<LeafAccess, { kind: "reference" }>> = Option.some(declared),
     ) =>
       referencePrivacyFilter(

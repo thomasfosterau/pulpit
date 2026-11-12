@@ -11,6 +11,7 @@
  * @internal
  */
 import * as Effect from "effect/Effect";
+import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
 import * as Schema from "effect/Schema";
@@ -100,14 +101,17 @@ const isVisibility = Schema.is(Visibility);
  *
  * @internal
  */
-export const declaresColumns = (access: OwnedColumns, viewColumns: ReadonlySet<string>): boolean =>
+export const declaresColumns = (
+  access: OwnedColumns,
+  viewColumns: HashSet.HashSet<string>,
+): boolean =>
   [
     access.ownerColumn,
     access.visibilityColumn,
     ...Option.toArray(access.draftColumn),
     ...Option.toArray(access.moderationColumn),
     ...(access.groupColumn === undefined ? [] : [access.groupColumn]),
-  ].every((column) => viewColumns.has(column));
+  ].every((column) => HashSet.has(viewColumns, column));
 
 /**
  * Read an owned row's facts for `canViewOwned`, in `defineSubtype`'s

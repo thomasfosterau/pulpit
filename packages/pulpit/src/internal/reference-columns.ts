@@ -18,6 +18,7 @@
  * @internal
  */
 import * as Effect from "effect/Effect";
+import * as HashSet from "effect/HashSet";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
@@ -61,10 +62,10 @@ const VISIBILITY = "visibility";
  */
 const followersColumn = (
   access: ReferenceColumns,
-  viewColumns: ReadonlySet<string>,
+  viewColumns: HashSet.HashSet<string>,
 ): Option.Option<string> =>
   Option.filter(Option.fromUndefinedOr(access.followersOfColumn), (column) =>
-    viewColumns.has(column),
+    HashSet.has(viewColumns, column),
   );
 
 /**
@@ -74,9 +75,11 @@ const followersColumn = (
  */
 const groupColumnOf = (
   access: ReferenceColumns,
-  viewColumns: ReadonlySet<string>,
+  viewColumns: HashSet.HashSet<string>,
 ): Option.Option<string> =>
-  Option.filter(Option.fromUndefinedOr(access.groupColumn), (column) => viewColumns.has(column));
+  Option.filter(Option.fromUndefinedOr(access.groupColumn), (column) =>
+    HashSet.has(viewColumns, column),
+  );
 
 /**
  * The group arm of a member's list (pulpit#194): `<visibility> = 'group' AND
@@ -112,10 +115,10 @@ export const groupArm = <Following>(
  */
 export const referenceListFilter = <Following>(
   access: ReferenceColumns,
-  viewColumns: ReadonlySet<string>,
+  viewColumns: HashSet.HashSet<string>,
   scope: Scope<Following>,
 ): ListFilter<Following> => {
-  if (!viewColumns.has(VISIBILITY)) return always;
+  if (!HashSet.has(viewColumns, VISIBILITY)) return always;
   const column = followersColumn(access, viewColumns);
   return Match.value(scope).pipe(
     Match.discriminatorsExhaustive("kind")({
@@ -162,13 +165,13 @@ export const referenceListFilter = <Following>(
  */
 export const canViewReferenceRow = <A extends Account, R>(
   access: ReferenceColumns,
-  viewColumns: ReadonlySet<string>,
+  viewColumns: HashSet.HashSet<string>,
   viewer: Option.Option<A>,
   policy: PrivateRung<A>,
   followers: IsFollower<R>,
   row: { readonly [column: string]: ColumnValue },
 ): Effect.Effect<boolean, never, R> => {
-  if (!viewColumns.has(VISIBILITY)) return Effect.succeed(true);
+  if (!HashSet.has(viewColumns, VISIBILITY)) return Effect.succeed(true);
   const visibility = row[VISIBILITY];
   if (visibility === "public") return Effect.succeed(true);
   if (Option.isNone(viewer)) return Effect.succeed(false);
