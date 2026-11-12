@@ -23,6 +23,10 @@
  *   `comment.replied`, `comment.moderated`, `content.flagged`,
  *   `proposal.decided`, `follow.created`, `mention.created`) or the
  *   application's: every type here is generic in `Kind extends string`.
+ * - **Mentions** (pulpit#198): {@link mentionCreatedHook} emits
+ *   `mention.created` for the accounts a write's documents newly mention,
+ *   through the application's {@link MentionExtractor}; the kernel never
+ *   reads a document's grammar.
  * - **Fan-out** ({@link NotificationOps.sweep}) reads the outbox oldest
  *   first in bounded batches (`PERF-DB-001`) and, per event, writes the
  *   recipient's inbox entry and hands it to each channel the recipient
@@ -49,10 +53,14 @@
 
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
+import * as HashMap from "effect/HashMap";
+import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
+import * as R from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import type { DocumentHash, DocumentStore } from "./documents.ts";
 import { nowDate, signedIn } from "./internal/plain-rows.ts";
 import type { ProposalStore } from "./proposals.ts";
 import type { ReportStore } from "./moderation.ts";
@@ -65,7 +73,13 @@ import {
   type Unauthorized,
   type Viewer,
 } from "./subtype.ts";
-import type { ColumnValue, NodeNotFound } from "./version-chain.ts";
+import {
+  localesOf,
+  type ChainPatch,
+  type ChainState,
+  type ColumnValue,
+  type NodeNotFound,
+} from "./version-chain.ts";
 
 // ── Vocabulary ────────────────────────────────────────────────────────
 
@@ -352,7 +366,7 @@ const enqueueDrafts = <Kind extends string, E, R>(
  * A before hook that writes the drafts `derive` returns to the outbox,
  * inside the write's transaction, and passes the write's patch through
  * unchanged (its locale patch too). Every kernel derivation below is one;
- * so is an application's own (#198's `mention.created`).
+ * so is {@link mentionCreatedHook}, and an application's own.
  *
  * @since 0.2.0
  */
@@ -553,9 +567,9 @@ export const followCreated =
     );
 
 /**
- * `mention.created` drafts for the accounts a write newly mentions. The
- * extraction (which accounts, and only the new ones) is #198's; it emits
- * these through a {@link notificationHook}.
+ * `mention.created` drafts for the accounts a write newly mentions, one per
+ * account (duplicates dropped). {@link mentionCreatedHook} derives the new
+ * mentions from a write's documents and emits these.
  *
  * @since 0.2.0
  */
@@ -570,6 +584,165 @@ export const mentionDrafts = (options: {
     actorId: options.actorId,
     subject: options.subject,
   }));
+
+/**
+ * The mention seam (pulpit#198): the account ids a document mentions, in
+ * any order, duplicates allowed. The kernel never reads a document's
+ * grammar, so the application fills it (for ProseKit, prosekit-utilities'
+ * `extractMentions` over the editor's `mention` atom); it is pure and total,
+ * and a document that mentions nobody returns `[]`. `./testing`'s
+ * `jsonMentionExtractor` is its reference fake.
+ *
+ * @since 0.2.0
+ */
+export type MentionExtractor<Document> = (document: Document) => ReadonlyArray<string>;
+
+/**
+ * What {@link mentionCreatedHook} reads: the leaf's document reference
+ * columns, the store their documents are read back from, and the mention
+ * seam.
+ *
+ * @since 0.2.0
+ */
+export interface MentionDeclaration<Document, E, R> {
+  readonly outbox: OutboxStore<KernelNotificationKind, E, R>;
+  /** The columns that hold a document hash (`./documents`' `documentRef`); any other column is never read. */
+  readonly fields: ReadonlyArray<string>;
+  /** Where the hook reads the documents back (one `getMany` per write that sets a new one). */
+  readonly documents: Pick<DocumentStore<Document, E, R>, "getMany">;
+  readonly extract: MentionExtractor<Document>;
+}
+
+/** The document hashes the declared fields hold in a state or a patch: a string each (`null` clears, absent carries forward). */
+const hashesIn = (fields: ReadonlyArray<string>, cells: ChainPatch): ReadonlyArray<DocumentHash> =>
+  Arr.getSomes(Arr.map(fields, (field) => stringColumn(cells[field])));
+
+/** The patches a write sets: its shared columns' and, on a localised leaf, each locale's it writes. */
+const writtenPatches = (event: BeforeWriteEvent): ReadonlyArray<ChainPatch> => [
+  event.patch,
+  ...Arr.filter(R.values(event.locales ?? {}), P.isNotNullish),
+];
+
+/** The states the head holds: its shared columns' and each locale's. None for a create. */
+const priorStates = (event: BeforeWriteEvent): ReadonlyArray<ChainState> =>
+  Option.match(event.prior, {
+    onNone: () => [],
+    onSome: (head) => [head.state, ...R.values(localesOf(head))],
+  });
+
+/**
+ * `mention.created`: a write that sets a document mentioning an account
+ * the head's documents didn't mention notifies that account, once. For the
+ * hooks of a leaf whose documents carry mentions; the subject is the node,
+ * and the actor the writer.
+ *
+ * - **Only new mentions.** The accounts the written documents mention
+ *   (every declared field the patch sets, and on a localised leaf every
+ *   locale's) less those the head's documents already mention (every
+ *   declared field, every locale), so an edit that keeps a mention, or moves
+ *   it to another field or locale, emits nothing. A field the patch leaves
+ *   absent carries its documents forward and adds no mention. The diff is
+ *   over the head the write extends, whatever the action: a `restoreVersion`
+ *   that brings back a mention a later edit removed notifies again.
+ * - **Reads only when a new document is set.** A write whose documents are
+ *   all the head's (or that sets none: a `delete`, a publication write) reads
+ *   nothing; any other reads the new and the head's documents with one
+ *   `getMany`. A hash with no stored document mentions nobody.
+ * - **Gated at fan-out, as every node subject is.** The hook writes the
+ *   drafts inside the write's transaction ({@link notificationHook}); the
+ *   sweep drops a mention whose recipient can't read the node then (its
+ *   {@link SubjectGate}, `SEC-AUTH-ENUM-001`: a notification never reveals
+ *   a node), or who blocks or is blocked by the author
+ *   ({@link SocialSuppression}). A self-mention is dropped at the outbox.
+ *
+ * @example
+ * ```ts
+ * import { deepStrictEqual } from "node:assert";
+ * import * as Arr from "effect/Array";
+ * import * as Effect from "effect/Effect";
+ * import * as Option from "effect/Option";
+ * import { mentionCreatedHook } from "@thomasfosterau/pulpit/notifications";
+ * import type { BeforeWriteEvent } from "@thomasfosterau/pulpit/subtype";
+ * import {
+ *   jsonMentionExtractor,
+ *   makeInMemoryDocumentStore,
+ *   makeInMemoryOutbox,
+ * } from "@thomasfosterau/pulpit/testing";
+ * import type { KernelNotificationKind } from "@thomasfosterau/pulpit/notifications";
+ *
+ * const mention = (id: string) => ({ type: "mention", attrs: { id } });
+ * const documents = makeInMemoryDocumentStore();
+ * const outbox = makeInMemoryOutbox<KernelNotificationKind>();
+ * const hook = mentionCreatedHook({
+ *   outbox,
+ *   fields: ["body"],
+ *   documents,
+ *   extract: jsonMentionExtractor,
+ * });
+ *
+ * const program = Effect.gen(function* () {
+ *   const first = yield* documents.put({ content: [mention("u-1")] });
+ *   const second = yield* documents.put({ content: [mention("u-1"), mention("u-2")] });
+ *   const edit: BeforeWriteEvent = {
+ *     action: "update",
+ *     type: "posts",
+ *     id: "p-1",
+ *     prior: Option.some({
+ *       version: 0n,
+ *       action: "create",
+ *       timestamp: new Date(0),
+ *       state: { body: first.hash },
+ *     }),
+ *     patch: { body: second.hash },
+ *     actorId: Option.some("u-author"),
+ *     viewer: Option.some({ id: "u-author", role: "user" }),
+ *   };
+ *   yield* hook.run(edit);
+ * });
+ * await Effect.runPromise(program);
+ * // "u-1" was already mentioned; only "u-2" is told.
+ * deepStrictEqual(
+ *   Arr.map(outbox.events(), (event) => event.recipientId),
+ *   ["u-2"],
+ * );
+ * ```
+ *
+ * @since 0.2.0
+ */
+export const mentionCreatedHook = <Document, E, R>(
+  declaration: MentionDeclaration<Document, E, R>,
+): BeforeWriteHook<E, R> => {
+  const { outbox, fields, documents, extract } = declaration;
+  return notificationHook({
+    name: "notifications.mentionCreated",
+    outbox,
+    derive: (event) => {
+      const before = Arr.dedupe(
+        Arr.flatMap(priorStates(event), (state) => hashesIn(fields, state)),
+      );
+      const written = Arr.filter(
+        Arr.dedupe(Arr.flatMap(writtenPatches(event), (patch) => hashesIn(fields, patch))),
+        (hash) => !Arr.contains(before, hash),
+      );
+      return Arr.match(written, {
+        onEmpty: () => Effect.succeed([]),
+        onNonEmpty: (added) =>
+          Effect.map(documents.getMany(Arr.appendAll(added, before)), (found) => {
+            const mentionedIn = (hashes: ReadonlyArray<DocumentHash>) =>
+              Arr.flatMap(hashes, (hash) =>
+                Option.match(HashMap.get(found, hash), { onNone: () => [], onSome: extract }),
+              );
+            const known = HashSet.fromIterable(mentionedIn(before));
+            return mentionDrafts({
+              mentioned: Arr.filter(mentionedIn(added), (id) => !HashSet.has(known, id)),
+              actorId: actorOf(event),
+              subject: nodeSubject(event.type, event.id),
+            });
+          }),
+      });
+    },
+  });
+};
 
 // ── Fan-out and the inbox ─────────────────────────────────────────────
 
