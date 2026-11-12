@@ -113,14 +113,6 @@ export default defineConfig({
             "The `Buffer` global is typed `any` wherever @cloudflare/workers-types is loaded. Use Uint8Array/DataView.",
         },
       ],
-      // `casting-awareness` is an awareness prompt, not a defect rule: it
-      // fires on every `as`, including the narrowings a generic seam
-      // structurally requires (a member tuple rebuilt from its entries, a
-      // record whose key union `Record.fromEntries` erases, both in
-      // registry.ts). Every `as` here is already audited at `error` by
-      // `effect/require-safety-comment-for-type-assertion`, which demands the
-      // `// SAFETY:` invariant this rule only prompts for.
-      "effect/casting-awareness": "off",
       // Every former ported-code allowance (the preset rules this workspace
       // once held at `warn` while ported modules were paid down) is at zero;
       // a new site is a defect. `unicorn/no-empty-file` is in the
@@ -132,6 +124,18 @@ export default defineConfig({
       "vite-plus/prefer-vite-plus-imports": "error",
     },
     overrides: [
+      // The registry recovers, at the type level, what it builds at run time
+      // from the same entries: a member tuple (`asMemberTuple`) and a record
+      // keyed by the `Root` union, which `Record.fromEntries` erases to
+      // `string` (`NonLiteralKey`). Neither type exists at run time to be
+      // decoded into, so each is a `// SAFETY:`-commented `as` (audited by
+      // `effect/require-safety-comment-for-type-assertion`) and nothing else.
+      {
+        files: ["packages/pulpit/src/registry.ts"],
+        rules: {
+          "effect/casting-awareness": "off",
+        },
+      },
       // The type-level test slot: an expected-error directive IS the assertion
       // there (each paired with its positive control), so the rule that bans
       // suppressions has nothing to protect in these files.
