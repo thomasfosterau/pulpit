@@ -44,6 +44,7 @@ import {
   type ChainState,
   type UpdateInput,
 } from "../src/version-chain.ts";
+import { showValue } from "./fixtures.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 
@@ -59,7 +60,7 @@ const declaration = {
 /** A translator that prefixes each string value with its target locale. */
 const prefixing: Translator<never, never> = {
   translate: ({ to, values }) =>
-    Effect.succeed(R.map(values, (value): ChainState[string] => `${to}:${String(value)}`)),
+    Effect.succeed(R.map(values, (value): ChainState[string] => `${to}:${showValue(value)}`)),
 };
 
 /** Candidate nodes in ascending id order, keyset-paged. */

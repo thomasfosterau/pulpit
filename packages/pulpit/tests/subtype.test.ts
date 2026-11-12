@@ -130,6 +130,7 @@ import {
   moderator,
   NOW,
   otherMember,
+  showValue,
   websitePolicy,
 } from "./fixtures.ts";
 
@@ -290,7 +291,7 @@ describe("ownedListFilter ≡ canViewOwned", () => {
     Arr.flatMap([false, true], (draft) =>
       Arr.flatMap(states, (moderationState) =>
         Arr.map([member.id, otherMember.id], (ownerId) => ({
-          id: `${visibility}-${draft}-${String(moderationState)}-${ownerId}`,
+          id: `${visibility}-${draft}-${showValue(moderationState)}-${ownerId}`,
           version: 0n,
           action: "create" as const,
           visibility,
@@ -1643,7 +1644,7 @@ const showColumn = (seed: Seed, column: string): string =>
   Option.match(R.get(seed.state, column), {
     onNone: () => "absent",
     onSome: (value) =>
-      value === ABSENT ? "absent" : P.isString(value) ? `"${value}"` : String(value),
+      value === ABSENT ? "absent" : P.isString(value) ? `"${value}"` : showValue(value),
   });
 
 const labelOf = (seed: Seed): string =>

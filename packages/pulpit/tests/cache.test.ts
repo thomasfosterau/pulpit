@@ -23,7 +23,7 @@ import {
   makeInMemoryLeafStore,
   makeInMemoryVersionedKv,
 } from "../src/testing.ts";
-import { gardeneriaPolicy, member, NOW } from "./fixtures.ts";
+import { gardeneriaPolicy, member, NOW, textOf } from "./fixtures.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 
@@ -283,8 +283,8 @@ describe("makeResourceCache as subtypeHandlers' cache", () => {
       followers: makeInMemoryFollowers([]),
       toResource: (row: LeafRow): Post => ({
         id: row.id,
-        title: String(row["title"]),
-        visibility: String(row["visibility"]),
+        title: textOf(row["title"]),
+        visibility: textOf(row["visibility"]),
       }),
     });
     const handlers = subtypeHandlers(ops, {
