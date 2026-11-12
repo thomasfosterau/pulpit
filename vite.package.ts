@@ -55,15 +55,36 @@ if (process.env.VITEST_MAX_WORKERS !== undefined) {
   maxWorkers.maxWorkers = Number(process.env.VITEST_MAX_WORKERS);
 }
 
+/** What a package's config adds to the shared one. */
+interface PackageOptions {
+  /**
+   * The package has an integration suite (`vitest.integration.config.ts`,
+   * against a real database): add its `test:integration` task. Never one of
+   * the gates (AGENTS.md → Verification), and never cached: its input is the
+   * database it provisions.
+   */
+  readonly integration?: true;
+}
+
 /**
  * The config of the package at `dir` (workspace-relative, e.g.
  * `"packages/pulpit"`), for its `vite.config.ts` to export as its default.
  */
-export const packageConfig = (dir: string) => {
+export const packageConfig = (dir: string, options: PackageOptions = {}) => {
   const inputs = cacheInputs(dir);
+  const integration: { readonly [task: string]: { command: string; cache: false } } =
+    options.integration === true
+      ? {
+          "test:integration": {
+            command: "vp test run --config vitest.integration.config.ts",
+            cache: false as const,
+          },
+        }
+      : {};
   return defineConfig({
     run: {
       tasks: {
+        ...integration,
         // Type-checks `src/` AND `tests/` — the `*.types.ts` files under
         // `tests/` are the type-level test slot, whose expected-error
         // directives are the assertions.
@@ -123,6 +144,9 @@ export const packageConfig = (dir: string) => {
     },
     test: {
       include: ["tests/**/*.test.ts"],
+      // A package's integration suite (`test:integration`, against a real
+      // database) is never a unit test: it has its own config.
+      exclude: ["tests/integration/**"],
       testTimeout: 30_000,
       ...maxWorkers,
       coverage: {

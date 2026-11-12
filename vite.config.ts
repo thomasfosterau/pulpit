@@ -71,24 +71,11 @@ export default defineConfig({
       // and the generic `R` / `A` / `E` parameters mean names deliberately
       // recur in nested scopes.
       "eslint/no-shadow": "off",
-      // Matches every `.map` call, `Effect.map` / `Option.map` over a single
-      // value included, and spreading into a fresh object is how this library
-      // builds its immutable records; mutating in place would break the
-      // readonly types the rule's fix needs.
-      "oxc/no-map-spread": "off",
-      // Reports every spread of `Schema.JsonObject` (a plain-object index
-      // signature, never a class instance) in the WordPress body builders as
-      // a class spread: a false positive with no code-level fix.
-      "typescript/no-misused-spread": "off",
       // Its "explicit `undefined` is unnecessary on an optional parameter"
       // check contradicts the workspace convention (AGENTS.md → Conventions):
       // an optional parameter is spelled `x?: T | undefined`, like an
       // optional field, so a caller can forward its own optional value.
       "typescript/no-duplicate-type-constituents": "off",
-      // Every type assertion here carries a `// SAFETY:` comment stating its
-      // invariant, which `effect/require-safety-comment-for-type-assertion`
-      // enforces; this rule would report each audited one again.
-      "typescript/no-unsafe-type-assertion": "off",
       // The suites assert through helpers named `expect…` (`expectAgreement`
       // in tests/subtype.test.ts) as well as `expect` itself.
       "vitest/expect-expect": ["error", { assertFunctionNames: ["expect", "expect*"] }],
@@ -127,15 +114,30 @@ export default defineConfig({
         files: ["packages/pulpit/src/registry.ts"],
         rules: {
           "effect/casting-awareness": "off",
+          "typescript/no-unsafe-type-assertion": "off",
         },
       },
       // A test file IS the runtime boundary `effect-run-in-body` asks for
       // ("entrypoint/test harness"): its `run` helper is where each case's
       // Effect meets the Promise vitest awaits.
       {
-        files: ["**/tests/**/*.test.ts"],
+        files: ["**/tests/**/*.test.ts", "**/tests/integration/global-setup.ts"],
         rules: {
           "effect/effect-run-in-body": "off",
+        },
+      },
+      // pulpit-drizzle-pg's integration global setup is vitest's own entry
+      // point, before any Effect runtime exists: `-pg/testing`'s
+      // `provisionTestDatabase` takes `process.env` itself (its PG* and
+      // DATABASE_URL_TEST resolution), and the setup hands the provisioned
+      // URL to the suites the only way vitest offers, through `process.env`.
+      // Its whole job is the PostgreSQL driver and the Node platform, both of
+      // which the pinned Effect marks unstable.
+      {
+        files: ["packages/pulpit-drizzle-pg/tests/integration/global-setup.ts"],
+        rules: {
+          "effect/avoid-process-env": "off",
+          "effecttsgo/unstable-api-usage": "off",
         },
       },
       // The same boundary, seen by `@effect/tsgo`'s rules (raised from the
@@ -225,6 +227,7 @@ export default defineConfig({
         dependsOn: [
           "@thomasfosterau/pulpit#check",
           "@thomasfosterau/pulpit-wordpress#check",
+          "@thomasfosterau/pulpit-drizzle-pg#check",
           "@pulpit/dist-consumer#check",
         ],
         cache: false,

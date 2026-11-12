@@ -1,11 +1,12 @@
 # Publishing & releases
 
-Releases are automated with [Changesets](https://github.com/changesets/changesets) and published to npm via [OIDC trusted publishing](https://docs.npmjs.com/trusted-publishers) — there is no `NPM_TOKEN`. See [SECURITY.md](./SECURITY.md) for the security rationale behind the pipeline. This is a pnpm workspace with two packages under `packages/`, versioned and published independently (`.changeset/config.json` has no `fixed` or `linked` groups):
+Releases are automated with [Changesets](https://github.com/changesets/changesets) and published to npm via [OIDC trusted publishing](https://docs.npmjs.com/trusted-publishers) — there is no `NPM_TOKEN`. See [SECURITY.md](./SECURITY.md) for the security rationale behind the pipeline. This is a pnpm workspace with three packages under `packages/`, versioned and published independently (`.changeset/config.json` has no `fixed` or `linked` groups):
 
 | Package | Directory | Published |
 | --- | --- | --- |
 | `@thomasfosterau/pulpit` | `packages/pulpit` | Through the release flow below (no release yet). |
 | `@thomasfosterau/pulpit-wordpress` | `packages/pulpit-wordpress` | Not yet: `"private": true` until the owner completes [its one-time setup](#adding-pulpit-wordpress-to-the-release-flow). |
+| `@thomasfosterau/pulpit-drizzle-pg` | `packages/pulpit-drizzle-pg` | Not yet: `"private": true` until the owner makes it public and bootstraps it the same way ([the adapter's steps](#adding-pulpit-wordpress-to-the-release-flow), with this package's name and directory; [pulpit#247](https://github.com/thomasfosterau/pulpit/issues/247)). |
 
 A private package is never versioned, tagged or published (`privatePackages` in `.changeset/config.json`; `pnpm publish -r` skips it), and neither is `tests/dist-consumer`, which is also listed under `ignore`.
 
