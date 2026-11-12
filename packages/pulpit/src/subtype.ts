@@ -2035,14 +2035,8 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
 
   const publication = Option.fromUndefinedOr(definition.publication);
 
-  /** Whether the viewer's rung reads every head: the view-private rung, or a reference leaf's corpus writers. */
-  const readsHeadByRung = (viewer: Viewer): boolean =>
-    Option.exists(
-      viewer,
-      (account) =>
-        policy.canViewPrivate(account) ||
-        (access.kind === "reference" && policy.canWriteCorpus(account)),
-    );
+  /** Whether the viewer's rung reads every head (see {@link readsEveryHead}). */
+  const readsHeadByRung = (viewer: Viewer): boolean => readsEveryHead(access, policy, viewer);
 
   /** Whether the viewer reads this node's head: by rung, or as its owner. */
   const readsHeadOf = (viewer: Viewer, head: Row): boolean =>
@@ -2235,14 +2229,8 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     return HashMap.fromIterable(Arr.map(shown, (row) => [row.id, toResource(row)] as const));
   });
 
-  /** The heads a viewer below the head-reading rungs reads: their own, on an owned leaf. */
-  const ownHeads = (viewer: Viewer): ListFilter<Following> =>
-    access.kind === "owned"
-      ? Option.match(viewer, {
-          onNone: (): ListFilter<Following> => never,
-          onSome: (account) => eq(access.ownerColumn, account.id),
-        })
-      : never;
+  /** The heads a viewer below the head-reading rungs reads (see {@link ownHeadsOf}). */
+  const ownHeads = (viewer: Viewer): ListFilter<Following> => ownHeadsOf(access, viewer);
 
   const list = Effect.fn(`${type}.list`)(function* (request: ListRequest<Following>) {
     const orderBy = yield* checkedOrder(type, isSortable, request.orderBy ?? []);
@@ -2608,6 +2596,65 @@ export const searchScopeFilter = <Following>(
     request.where,
   );
 };
+
+/** Whether the viewer's rung reads every head: the view-private rung, or a reference leaf's corpus writers. */
+const readsEveryHead = (access: LeafAccess, policy: AccessPolicy, viewer: Viewer): boolean =>
+  Option.exists(
+    viewer,
+    (account) =>
+      policy.canViewPrivate(account) ||
+      (access.kind === "reference" && policy.canWriteCorpus(account)),
+  );
+
+/** The heads a viewer below the head-reading rungs reads: their own, on an owned leaf. */
+const ownHeadsOf = <Following>(access: LeafAccess, viewer: Viewer): ListFilter<Following> =>
+  access.kind === "owned"
+    ? Option.match(viewer, {
+        onNone: (): ListFilter<Following> => never,
+        onSome: (account) => eq(access.ownerColumn, account.id),
+      })
+    : never;
+
+/**
+ * The heads a search over one publish-gated leaf ranks for the viewer
+ * (pulpit#346): the `headFor` {@link defineSubtype}'s `list` hands
+ * {@link LiveView}'s `list`, for a search's `BranchRequest.headFor`
+ * (`./search`). Every head (`always`) for a viewer on a head-reading rung
+ * (the view-private rung, or a reference leaf's corpus writers), the
+ * viewer's own (`eq(ownerColumn, id)`) on an owned leaf, and none
+ * (`never`) otherwise, the anonymous reader included. A branch then ranks,
+ * per node, the head when it matches and the live row otherwise, so it
+ * scores exactly the rows `list` would show. Meaningless on an ungated
+ * leaf, whose branches ignore it.
+ *
+ * @example
+ * ```ts
+ * import { deepStrictEqual } from "node:assert";
+ * import * as Option from "effect/Option";
+ * import { never } from "@thomasfosterau/pulpit/filter";
+ * import { ownedAccess, searchHeadFor, type AccessPolicy } from "@thomasfosterau/pulpit/subtype";
+ *
+ * const policy: AccessPolicy = {
+ *   canViewPrivate: (account) => account.role === "admin",
+ *   canViewDeleted: () => false,
+ *   canModerate: () => false,
+ *   canWriteCorpus: () => false,
+ * };
+ * const leaf = { access: ownedAccess({ draft: true }), policy };
+ * deepStrictEqual(searchHeadFor(leaf, Option.none()), never);
+ * deepStrictEqual(
+ *   searchHeadFor(leaf, Option.some({ id: "u-1", role: "member" })),
+ *   { kind: "eq", column: "ownerId", value: "u-1" },
+ * );
+ * ```
+ *
+ * @since 0.2.0
+ */
+export const searchHeadFor = <Following>(
+  leaf: { readonly access: LeafAccess; readonly policy: AccessPolicy },
+  viewer: Viewer,
+): ListFilter<Following> =>
+  readsEveryHead(leaf.access, leaf.policy, viewer) ? always : ownHeadsOf(leaf.access, viewer);
 
 /**
  * Hydrate ranked search hits through the leaf's gated `getMany`: one read
