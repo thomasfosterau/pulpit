@@ -27,6 +27,7 @@ import {
   type LeafRow,
   type LeafStore,
   type ListOrder,
+  type LocalisedListQuery,
   type Page,
 } from "@thomasfosterau/pulpit/subtype";
 import { VersionAction } from "@thomasfosterau/pulpit/version-chain";
@@ -355,15 +356,31 @@ export const localisedStoreOver = <I, Relations extends AnyRelations>(
     columns: columnSet(keyed.columns),
     list: (query) => reads.page(keyed, query),
     distinct: (query) => reads.distinct(keyed, query),
-    listLocalised: (query) =>
-      Arr.isReadonlyArrayNonEmpty(query.locales) && query.locales.length <= MAX_SET_VALUES
-        ? reads.page(localeChoice(leaf, keyed, query.locales, query.where), {
-            ...query,
-            where: always,
-          })
-        : Effect.succeed({ rows: [], total: 0 }),
+    listLocalised: (query) => localisedPage(leaf, keyed, query, CurrentTransaction),
   };
 };
+
+/**
+ * One page of a localised source's rows, one per node in its most preferred
+ * carried locale of `query.locales` ({@link localeChoice}), then the filter,
+ * order and page; none for an empty `locales` or one past `MAX_SET_VALUES`.
+ * The read `LeafStore.listLocalised` and a gated leaf's
+ * `LiveView.listLocalised` share.
+ *
+ * @since 0.0.0
+ */
+export const localisedPage = <I, Relations extends AnyRelations>(
+  leaf: string,
+  source: RowSource,
+  query: LocalisedListQuery<SQLWrapper>,
+  CurrentTransaction: Context.Service<I, PgTransaction<Relations>>,
+): Effect.Effect<Page<LeafRow>, StoreQueryError<Relations>, I> =>
+  Arr.isReadonlyArrayNonEmpty(query.locales) && query.locales.length <= MAX_SET_VALUES
+    ? readsOver(leaf, CurrentTransaction).page(
+        localeChoice(leaf, source, query.locales, query.where),
+        { ...query, where: always },
+      )
+    : Effect.succeed({ rows: [], total: 0 });
 
 /**
  * The kernel's `LeafStore` over one row source: id reads, the page, the
@@ -408,8 +425,8 @@ export const storeOver = <I, Relations extends AnyRelations>(
 
 /**
  * How a search branch ranks a source's rows for a query (README → Seams →
- * `SearchBranch`): `matches`, the predicate a hit satisfies, and `score`,
- * higher first; none when the query can match nothing (a literal-id branch
+ * `SearchBranch`): `matches`, the predicate a hit satisfies, and `score`, a
+ * number read as `double precision`, higher first; none when the query can match nothing (a literal-id branch
  * handed a query that is no identifier, say).
  *
  * @since 0.0.0
@@ -449,6 +466,9 @@ export const searchOver = <I, Relations extends AnyRelations>(
       onSome: ({ matches, score }) =>
         Effect.gen(function* () {
           const tx = yield* CurrentTransaction;
+          // The score is read as a `double precision`: a cast, so even a
+          // constant score (`0`) is an expression, never an `ORDER BY`
+          // column position.
           const rows = yield* tx
             .select({ id: sql<string>`${source.id}::text` })
             .from(source.relation)
@@ -456,7 +476,7 @@ export const searchOver = <I, Relations extends AnyRelations>(
               and(matches, Option.getOrUndefined(renderListFilter(request.scope, source.columns))),
             )
             .orderBy(
-              sql`${score} DESC NULLS LAST`,
+              sql`(${score})::float8 DESC NULLS LAST`,
               ...renderListOrder([], source.columns, source.id),
             )
             .limit(limit);

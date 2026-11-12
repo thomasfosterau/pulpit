@@ -69,7 +69,7 @@ export const tables = makeTreeTables(tree, {
 
 export const views = makeTreeViews(tree, tables, {
   schema,
-  pointers: { live: ["posts"] },
+  pointers: { live: ["posts", "notes"] },
   // The search union view over every entry: its `search` vector, per leaf.
   branches: {
     entry: {
@@ -115,6 +115,8 @@ export const fixtureSchema = {
   postsVersion: tables.levels.posts.version,
   livePointer: tables.pointers.live,
   postsLiveView: views.pointers.live.leaves.posts,
+  notesLiveView: views.pointers.live.leaves.notes,
+  notesLocaleLiveView: views.pointers.live.keyed.notes,
   owners,
   paths,
   documents,
