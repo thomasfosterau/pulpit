@@ -68,11 +68,11 @@ const docs = makeDocumentStore({
 const notesVersion = tables.levels.notes.version;
 const linksVersion = tables.levels.links.version;
 const purgeStore = makePurgeStore({
-  references: [
-    { table: notesVersion, id: notesVersion.id, documents: [notesVersion.body] },
-    { table: linksVersion, id: linksVersion.id, blobs: [linksVersion.href] },
-  ],
-  documents: [documents],
+  documents: {
+    tables: [documents],
+    references: [{ table: notesVersion, id: notesVersion.id, column: notesVersion.body }],
+  },
+  blobs: [{ table: linksVersion, id: linksVersion.id, column: linksVersion.href }],
   dependents: [{ table: owners, id: owners.nodeId }],
   CurrentTransaction,
 });
@@ -250,6 +250,17 @@ describe("PurgeStore over PostgreSQL agrees with the in-memory store", () => {
     expect(
       await run(purgeStore.unreferencedBlobs([blob("a"), blob("b"), blob("c"), "nope"])),
     ).toEqual([blob("b"), blob("c")]);
+  });
+
+  it("a document still referenced survives a direct delete (the guard fails closed)", async () => {
+    // node 2 still carries d1: asked outright, the store keeps it.
+    expect(await run(purgeStore.deleteUnreferencedDocuments([d1]))).toEqual([]);
+    expect(await storedDocuments()).toEqual([d1]);
+    // A store with no `documents` deletes nothing at all.
+    const blind = makePurgeStore({ CurrentTransaction });
+    expect(await run(blind.deleteUnreferencedDocuments([d1]))).toEqual([]);
+    expect(await run(blind.unreferencedBlobs([blob("z")]))).toEqual([]);
+    expect(await storedDocuments()).toEqual([d1]);
   });
 
   it("an unknown or malformed id erases nothing", async () => {
