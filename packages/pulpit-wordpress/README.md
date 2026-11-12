@@ -142,6 +142,7 @@ const wp = defineWordPress({
 - **`status`.** The default is `publish` (`inherit` for media). Any other status from an anonymous caller is `401 rest_forbidden_status`, and `trash` without the view-deleted rung is `403` (pulpit#86, decision 4); the answer names no row. A signed-in caller's `draft` or `private` list is whatever the leaf's gates show them (their own drafts, say). A `followers` item reads as `private` to a viewer who may see it (decision 7).
 - **`context=edit`** is `rest_forbidden_context` (401 / 403), checked after the 404, so it never confirms a hidden item (decision 6). Revisions are not routed.
 - **List parameters are capped** at `MAX_LIST_PARAMETER` (100) values each, `400 rest_invalid_param` past it, before any id is decoded (`SEC-INPUT-003`). WordPress core sets no such cap; the cap keeps an over-long `exclude` from decoding to an all-none batch that would exclude nothing.
+- **Conditional reads** ([pulpit#86](https://github.com/thomasfosterau/pulpit/issues/86), the `ETag` question). A single-item response (an item, a term or a user) carries a weak `ETag`, `W/"<SHA-256 of the response body>"`, hashed through Web Crypto, so it changes whenever anything the body embeds does and stays correct with `_embed`, `_fields` and `context`; the cost is hashing each single-item body. A request whose `If-None-Match` matches (the weak comparison, so a list of tags, a strong spelling and `*` all match) answers `304` with the `ETag` and `Cache-Control` and no body. Collections and errors carry no tag, so a hidden item never answers `304`. Pass the header to `handle` as `WordPressRequest.ifNoneMatch`; `./http` does.
 - **Caching** (`CACHE-AUTH-005`). `Cache-Control: public` only for an anonymous viewer when every item, embeds included, is its binding's `serveable`; otherwise `private, no-store`.
 - **Batched reads** (`PERF-DB-001`). One response is one node `encode`, one author `encode` (plus one profile read with `_embed`), one `render`, and one `getMany` per related type, however many items it carries. `orderby=include` reads the whole `include` list (at most 100 items) and orders it in memory.
 
@@ -157,7 +158,7 @@ const wp = defineWordPress({
 
 ## `./http`
 
-`wordPressHttp(api)` is the API as an `effect/http` handler, `Effect<HttpServerResponse, never, HttpServerRequest | R>`: it reads the method, path and query pairs from the request URL and answers a JSON response (an empty one for `HEAD`) with the API's status and headers. Mount it on the application's router under the prefix.
+`wordPressHttp(api)` is the API as an `effect/http` handler, `Effect<HttpServerResponse, never, HttpServerRequest | R>`: it reads the method, path and query pairs from the request URL, and the `If-None-Match` header, and answers a JSON response (an empty one for `HEAD`) with the API's status and headers. Mount it on the application's router under the prefix.
 
 ## `./testing`
 
