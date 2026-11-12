@@ -26,6 +26,7 @@ import {
   defineLocaleLevel,
   defineSubtype,
   ownedAccess,
+  searchHeadFor,
   searchScopeFilter,
   type AccessPolicy,
   type LeafRow,
@@ -371,6 +372,7 @@ const site = (options: SiteOptions = {}) => {
               who,
               request,
             ),
+            headFor: searchHeadFor({ access: ownedAccess({ draft: true }), policy }, who),
           }),
     );
   const postBinding = {
