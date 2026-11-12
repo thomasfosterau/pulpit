@@ -21,6 +21,7 @@ import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 import { Visibility } from "@thomasfosterau/pulpit/content";
 import {
+  defineLocaleLevel,
   defineSubtype,
   ownedAccess,
   type AccessPolicy,
@@ -37,7 +38,7 @@ import {
   makeInMemoryLeafStore,
   makeInMemoryPathStore,
 } from "@thomasfosterau/pulpit/testing";
-import type { ColumnValue } from "@thomasfosterau/pulpit/version-chain";
+import type { ColumnValue, LocaleStates } from "@thomasfosterau/pulpit/version-chain";
 import {
   bind,
   bindTaxonomy,
@@ -158,6 +159,8 @@ interface SiteOptions {
   readonly failing?: "render" | "list";
   /** Bind `category` and `post_tag` over two term leaves and their assignment families (phase 2). */
   readonly terms?: boolean;
+  /** Make the `posts` leaf localised (`title` and `content` per locale, default `en`) and bind `?lang=` (pulpit#223). */
+  readonly localised?: boolean;
 }
 
 const TERM_COLUMNS = ["name", "slug", "description", "parentId"];
@@ -180,13 +183,20 @@ const site = (options: SiteOptions = {}) => {
     const chain = makeInMemoryVersionChain("posts");
     return { chain, leaves: makeInMemoryLeafStore(chain, { columns, now: NOW }) };
   };
+  const localisedStore = () => {
+    const chain = makeInMemoryVersionChain("posts");
+    return {
+      chain,
+      leaves: makeInMemoryLeafStore(chain, { columns: COLUMNS, now: NOW, localised: true }),
+    };
+  };
   const leafStores = {
-    posts: store(COLUMNS),
+    posts: options.localised === true ? localisedStore() : store(COLUMNS),
     pages: store(COLUMNS),
     media: store(COLUMNS),
   };
-  const leaf = (type: Target) =>
-    defineSubtype({
+  const leaf = (type: Target) => {
+    const declaration = {
       type,
       access: ownedAccess({ draft: true }),
       chain: leafStores[type].chain,
@@ -195,7 +205,14 @@ const site = (options: SiteOptions = {}) => {
       policy,
       followers,
       toResource: (row: LeafRow) => row,
-    });
+    };
+    return type === "posts" && options.localised === true
+      ? defineSubtype({
+          ...declaration,
+          locales: defineLocaleLevel({ columns: ["title", "content"] }),
+        })
+      : defineSubtype(declaration);
+  };
   const ops = { posts: leaf("posts"), pages: leaf("pages"), media: leaf("media") };
   const termStores = {
     category: store(TERM_COLUMNS),
@@ -284,6 +301,10 @@ const site = (options: SiteOptions = {}) => {
     visibility: "visibility",
     mimeType: "mimeType",
   };
+  const postOps =
+    options.failing === "list"
+      ? { ...ops.posts, list: () => Effect.fail("the store is down") }
+      : ops.posts;
   const api = defineWordPress({
     site: {
       url: "https://example.org",
@@ -306,15 +327,10 @@ const site = (options: SiteOptions = {}) => {
     link: (type, fields) => `https://example.org/${type}/${fields.slug}`,
     types: R.filter(
       {
-        post: bind({
-          ops:
-            options.failing === "list"
-              ? { ...ops.posts, list: () => Effect.fail("the store is down") }
-              : ops.posts,
-          columns,
-          fields: fieldsOf,
-          serveable,
-        }),
+        post:
+          options.localised === true
+            ? bind({ ops: postOps, columns, fields: fieldsOf, serveable, defaultLocale: "en" })
+            : bind({ ops: postOps, columns, fields: fieldsOf, serveable }),
         page: bind({ ops: ops.pages, columns, fields: fieldsOf, serveable }),
         attachment: bind({
           ops: {
@@ -370,16 +386,18 @@ const site = (options: SiteOptions = {}) => {
     target: Target,
     state: { readonly [column: string]: ColumnValue },
     owner: ViewerAccount = member,
+    locales: LocaleStates = {},
   ) => {
     const { id } = await run(
       as(
         Option.some(owner),
         ops[target].create({
           id: Option.none(),
+          locales,
           state: {
-            title: "A title",
-            content: "Body",
-            excerpt: "Short",
+            ...(options.localised === true && target === "posts"
+              ? { excerpt: "Short" }
+              : { title: "A title", content: "Body", excerpt: "Short" }),
             slug: "a-slug",
             publishedAt: PAST,
             updatedAt: PAST,
@@ -880,6 +898,152 @@ describe("the wp/v2 read API — conditional reads (pulpit#86, #65)", () => {
     const answered = await conditional(wp, `/wp/v2/posts/${hidden.wireId}`, "*");
     expect(answered).toEqual(missing);
     expect(answered.headers["etag"]).toBeUndefined();
+  });
+});
+
+describe("the wp/v2 read API — lang (pulpit#223)", () => {
+  /** `hello` in en, pt and pt-BR; `plain` in en alone; `french` in fr alone; a draft in pt. */
+  const localisedSite = async () => {
+    const wp = site({ localised: true });
+    const title = (tag: string, text: string) => [tag, { title: text }] as const;
+    const hello = await wp.create("posts", {}, member, {
+      en: { title: "Hello" },
+      pt: { title: "Ola" },
+      "pt-BR": { title: "Oi" },
+    });
+    const plain = await wp.create("posts", {}, member, R.fromEntries([title("en", "Plain")]));
+    const french = await wp.create("posts", {}, member, R.fromEntries([title("fr", "Salut")]));
+    const draft = await wp.create("posts", { draft: true }, member, {
+      pt: { title: "Rascunho" },
+    });
+    return { wp, hello, plain, french, draft };
+  };
+  const titleOf = (response: WordPressResponse) =>
+    decodeBody(Schema.Struct({ title: Schema.Struct({ rendered: Schema.String }) }))(response)
+      .title;
+  const titlesOf = (response: WordPressResponse) =>
+    decodeBody(Schema.Array(Schema.Struct({ title: Schema.Struct({ rendered: Schema.String }) })))(
+      response,
+    ).map(({ title }) => title.rendered);
+
+  it("serves an item in the requested locale, the best prefix of it, then the default, and says which", async () => {
+    const { wp, hello, plain } = await localisedSite();
+    const read = async (post: { readonly wireId: number }, lang: string) => {
+      const response = await wp.get(`/wp/v2/posts/${post.wireId}`, [["lang", lang]]);
+      return [
+        response.status,
+        response.headers["content-language"],
+        response.status === 200 ? titleOf(response).rendered : "",
+      ];
+    };
+    expect(
+      await inSequence(
+        [
+          [hello, "pt-BR"],
+          [hello, "pt-PT"],
+          [hello, "pt"],
+          [hello, "de"],
+          [plain, "pt-BR"],
+          [plain, "en"],
+        ] as const,
+        ([post, lang]) => read(post, lang),
+      ),
+    ).toEqual([
+      [200, "pt-BR", "<title>Oi</title>"],
+      [200, "pt", "<title>Ola</title>"],
+      [200, "pt", "<title>Ola</title>"],
+      [200, "en", "<title>Hello</title>"],
+      [200, "en", "<title>Plain</title>"],
+      [200, "en", "<title>Plain</title>"],
+    ]);
+  });
+
+  it("answers an item carrying none of the order, and a hidden one, as 404 rest_post_invalid_id", async () => {
+    const { wp, french, draft } = await localisedSite();
+    const missing = await wp.get("/wp/v2/posts/9999", [["lang", "pt"]]);
+    const none = await wp.get(`/wp/v2/posts/${french.wireId}`, [["lang", "pt"]]);
+    const hidden = await wp.get(`/wp/v2/posts/${draft.wireId}`, [["lang", "pt"]]);
+    expect([none.status, codeOf(none), hidden]).toEqual([404, "rest_post_invalid_id", missing]);
+    // The owner reads their draft, in the locale it carries.
+    const own = await wp.get(`/wp/v2/posts/${draft.wireId}`, [["lang", "pt"]], Option.some(member));
+    expect(titleOf(own).rendered).toBe("<title>Rascunho</title>");
+  });
+
+  it("lists each node once, in its best locale, with a total and pages over nodes", async () => {
+    const { wp, hello, plain, french } = await localisedSite();
+    const pt = await wp.get("/wp/v2/posts", [
+      ["lang", "pt-BR"],
+      ["orderby", "id"],
+      ["order", "asc"],
+    ]);
+    expect([listed(pt), titlesOf(pt), pt.headers["x-wp-total"]]).toEqual([
+      [hello.wireId, plain.wireId],
+      ["<title>Oi</title>", "<title>Plain</title>"],
+      "2",
+    ]);
+    const fr = await wp.get("/wp/v2/posts", [
+      ["lang", "fr"],
+      ["orderby", "id"],
+      ["order", "asc"],
+    ]);
+    expect([listed(fr), titlesOf(fr)]).toEqual([
+      [hello.wireId, plain.wireId, french.wireId],
+      ["<title>Hello</title>", "<title>Plain</title>", "<title>Salut</title>"],
+    ]);
+    const second = await wp.get("/wp/v2/posts", [
+      ["lang", "fr"],
+      ["orderby", "id"],
+      ["order", "asc"],
+      ["per_page", "2"],
+      ["page", "2"],
+    ]);
+    expect([
+      listed(second),
+      second.headers["x-wp-total"],
+      second.headers["x-wp-totalpages"],
+    ]).toEqual([[french.wireId], "3", "2"]);
+    // A viewer sees the same set their gate allows: the draft counts for its owner alone.
+    const own = await wp.get(
+      "/wp/v2/posts",
+      [
+        ["lang", "pt"],
+        ["status", "draft"],
+      ],
+      Option.some(member),
+    );
+    expect(titlesOf(own)).toEqual(["<title>Rascunho</title>"]);
+  });
+
+  it("orders by the resolved row's own column", async () => {
+    const { wp } = await localisedSite();
+    const response = await wp.get("/wp/v2/posts", [
+      ["lang", "pt"],
+      ["orderby", "title"],
+      ["order", "asc"],
+    ]);
+    expect(titlesOf(response)).toEqual(["<title>Ola</title>", "<title>Plain</title>"]);
+  });
+
+  it("refuses a malformed tag, and a type that declares no default locale, as rest_invalid_param", async () => {
+    const { wp, hello } = await localisedSite();
+    const refused = await inSequence(
+      [
+        ["/wp/v2/posts", "en_US"],
+        [`/wp/v2/posts/${hello.wireId}`, "en_US"],
+        ["/wp/v2/pages", "en"],
+        ["/wp/v2/pages/1", "en"],
+      ] as const,
+      async ([path, lang]) => {
+        const response = await wp.get(path, [["lang", lang]]);
+        return [response.status, codeOf(response)];
+      },
+    );
+    expect(refused).toEqual([
+      [400, "rest_invalid_param"],
+      [400, "rest_invalid_param"],
+      [400, "rest_invalid_param"],
+      [400, "rest_invalid_param"],
+    ]);
   });
 });
 

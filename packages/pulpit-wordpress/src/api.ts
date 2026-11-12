@@ -41,6 +41,11 @@
  *   and holds with `_embed`, `_fields` and `context`. A request whose
  *   `If-None-Match` matches (weak comparison, `*` included) is `304`, with the
  *   `ETag` and `Cache-Control` and no body. Collections carry none.
+ * - **`lang`** (pulpit#223). A localised leaf bound with a `defaultLocale`
+ *   is read in the fallback order of the requested BCP 47 tag
+ *   (`localePreferences`): a single item through `getLocalised`, a
+ *   collection through `listLocalised`, a row per node.
+ *   It names no plugin's convention and adds no `translations` field.
  * - **Caching** (`CACHE-AUTH-005`). A response is `Cache-Control: public`
  *   only when its viewer is anonymous and every item in it, embeds included,
  *   is serveable by its binding's `serveable`; anything else is
@@ -100,6 +105,7 @@ import {
 import type { EdgeOps } from "@thomasfosterau/pulpit/edges";
 import {
   InvalidListOrder,
+  localePreferences,
   MAX_PAGE_LIMIT,
   readableOwners,
   type AccessPolicy,
@@ -263,10 +269,20 @@ export interface PostColumns {
  * @since 0.1.0
  */
 export interface PostTypeBinding<Resource, E, R, Following = never> {
-  readonly ops: Pick<SubtypeOps<Resource, E, R, Following>, "get" | "getMany" | "list" | "owners">;
+  readonly ops: Pick<
+    SubtypeOps<Resource, E, R, Following>,
+    "get" | "getMany" | "list" | "owners" | "getLocalised" | "listLocalised"
+  >;
   readonly columns: PostColumns;
   readonly fields: (resource: Resource) => PostFields;
   readonly serveable: (resource: Resource) => boolean;
+  /**
+   * The default locale of a localised leaf (the one its `defineSubtype`
+   * declares a `locales` level for, pulpit#56): the last resort of the
+   * fallback order `?lang=` reads in. Absent, the leaf is not localised and
+   * `?lang=` is `400 rest_invalid_param` for its type.
+   */
+  readonly defaultLocale?: string;
 }
 
 /**
@@ -280,6 +296,46 @@ export interface ShownItem {
 }
 
 /**
+ * An item read in a locale: the locale served, which is the first of the
+ * fallback order the node carries, and the item in it.
+ *
+ * @since 0.1.0
+ */
+export interface LocalisedItem {
+  readonly locale: string;
+  readonly item: ShownItem;
+}
+
+/**
+ * A localised leaf's reads for `?lang=`: its default locale and the
+ * fallback read of one node.
+ *
+ * @since 0.1.0
+ */
+export interface LocalisedReads<R, Following = never> {
+  readonly defaultLocale: string;
+  /**
+   * The item in the first of `locales` it carries, or none when the read
+   * gate hides it, it is missing or carries none (`SEC-AUTH-ENUM-001`).
+   */
+  readonly get: (
+    id: string,
+    locales: ReadonlyArray<string>,
+  ) => Effect.Effect<Option.Option<LocalisedItem>, unknown, R>;
+  /**
+   * One page of the list, a row per node in the first of `locales` it
+   * carries (`SubtypeOps.listLocalised`, pulpit#272), and the count of nodes.
+   */
+  readonly list: (
+    request: ListRequest<Following> & { readonly locales: ReadonlyArray<string> },
+  ) => Effect.Effect<
+    { readonly rows: ReadonlyArray<LocalisedItem>; readonly total: number },
+    unknown,
+    R
+  >;
+}
+
+/**
  * A {@link PostTypeBinding} with its resource type closed over, as
  * {@link bind} returns it, so one config holds leaves of different resource
  * types. Its failures are the store's, which the API answers as a 500.
@@ -288,6 +344,8 @@ export interface ShownItem {
  */
 export interface BoundPostType<R, Following = never> {
   readonly columns: PostColumns;
+  /** The `?lang=` reads, none for a leaf with no `defaultLocale`. */
+  readonly localised: Option.Option<LocalisedReads<R, Following>>;
   /** The item, or none when the read gate hides it or it is missing (`SEC-AUTH-ENUM-001`). */
   readonly get: (id: string) => Effect.Effect<Option.Option<ShownItem>, unknown, R>;
   readonly getMany: (
@@ -405,6 +463,35 @@ export const bind = <Resource, E, R, Following = never>(
         }),
       ),
     owners: binding.ops.owners,
+    localised: Option.map(
+      Option.fromNullishOr(binding.defaultLocale),
+      (defaultLocale): LocalisedReads<R, Following> => ({
+        defaultLocale,
+        get: (id, locales) =>
+          binding.ops.getLocalised(id, locales).pipe(
+            Effect.map(({ locale, resource }) =>
+              Option.filter(Option.some({ locale, item: shown(resource) }), ({ item }) =>
+                isConfirmed(item),
+              ),
+            ),
+            Effect.catchIf(Schema.is(NodeNotFound), () => Effect.succeedNone),
+          ),
+        list: (request) =>
+          Effect.map(
+            binding.ops.listLocalised({
+              ...request,
+              where: and(request.where, confirmed),
+            }),
+            (page) => ({
+              rows: Arr.filter(
+                page.rows.map(({ locale, resource }) => ({ locale, item: shown(resource) })),
+                ({ item }) => isConfirmed(item),
+              ),
+              total: page.total,
+            }),
+          ),
+      }),
+    ),
   };
 };
 
@@ -818,7 +905,14 @@ interface CollectionParams {
    */
   readonly terms: ReadonlyArray<readonly [Taxonomy, "include" | "exclude", ReadonlyArray<string>]>;
   readonly taxRelation: "AND" | "OR";
+  /** The `lang` tag, when asked (the adapter's own parameter, pulpit#223). */
+  readonly lang: Option.Option<string>;
 }
+
+/** A BCP 47 language tag's shape: a primary subtag, then any number of hyphenated subtags. */
+const LANG_TAG = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/;
+
+const LANG_MESSAGE = "lang is not a BCP 47 language tag.";
 
 /** Each taxonomy's route base, which is also its item filter parameter. */
 const TAXONOMIES: ReadonlyArray<readonly [base: string, taxonomy: Taxonomy]> = [
@@ -1074,6 +1168,11 @@ const collectionParams = (
       modifiedBefore: date("modified_before"),
       terms,
       taxRelation: oneOf("tax_relation", ["AND", "OR"] as const, "AND"),
+      lang: Option.filter(query.scalar("lang"), (tag) => {
+        const valid = LANG_TAG.test(tag);
+        if (!valid) refuse("lang", LANG_MESSAGE);
+        return valid;
+      }),
     };
     return checked(bad, params);
   });
@@ -2091,6 +2190,23 @@ export const defineWordPress = <R, Following = never>(
       Effect.fromOption(shown).pipe(Effect.mapError(missing)),
     );
 
+  /** The `?lang=` bound of a type: its localised reads, or `lang` is not supported for it. */
+  const localisedOf = (binding: BoundPostType<R, Following>) =>
+    Effect.fromOption(binding.localised).pipe(
+      Effect.mapError(() => invalidParams({ lang: "lang is not supported for this post type." })),
+    );
+
+  /** One item in `tag`'s fallback order: the requested tag, its prefixes, then the leaf's default. */
+  const localisedItem = (binding: BoundPostType<R, Following>, id: string, tag: string) =>
+    Effect.gen(function* () {
+      const reads = yield* localisedOf(binding);
+      const found = yield* shownOr(
+        reads.get(id, localePreferences([tag], reads.defaultLocale)),
+        invalidId,
+      );
+      return { item: found.item, served: Option.some(found.locale) };
+    });
+
   const getItem = (
     type: PostType,
     binding: BoundPostType<R, Following>,
@@ -2098,8 +2214,22 @@ export const defineWordPress = <R, Following = never>(
     query: Query,
   ) =>
     Effect.gen(function* () {
+      const lang = yield* Option.match(query.scalar("lang"), {
+        onNone: () => Effect.succeedNone,
+        onSome: (tag) =>
+          LANG_TAG.test(tag)
+            ? Effect.asSome(Effect.succeed(tag))
+            : Effect.fail(invalidParams({ lang: LANG_MESSAGE })),
+      });
       const id = yield* decodeOne(ids, rawId, invalidId);
-      const item = yield* shownOr(binding.get(id), invalidId);
+      const { item, served } = yield* Option.match(lang, {
+        onNone: () =>
+          Effect.map(shownOr(binding.get(id), invalidId), (found) => ({
+            item: found,
+            served: Option.none<string>(),
+          })),
+        onSome: (tag) => localisedItem(binding, id, tag),
+      });
       const viewer = yield* config.viewer;
       // The 404 comes first, so a refused context never confirms the row.
       if (Option.contains(query.scalar("context"), "edit")) {
@@ -2110,6 +2240,7 @@ export const defineWordPress = <R, Following = never>(
       const related = yield* relate(type, [item], embed);
       return respond(200, itemResponse(type, item, related, context, query), [
         cacheControl(publicly(viewer, [item], related, embed)),
+        ...Arr.fromOption(Option.map(served, (tag) => ["content-language", tag] as const)),
       ]);
     });
 
@@ -2179,6 +2310,14 @@ export const defineWordPress = <R, Following = never>(
         );
       }
       yield* checkStatuses(type, params.statuses, viewer, policy);
+      // `lang`: the fallback order of the requested tag, for a leaf that declares a default.
+      const localised = yield* Option.match(params.lang, {
+        onNone: () => Effect.succeedNone,
+        onSome: (tag) =>
+          Effect.map(localisedOf(binding), (reads) =>
+            Option.some({ reads, order: localePreferences([tag], reads.defaultLocale) }),
+          ),
+      });
 
       // Every node id parameter decodes in one batch, every author id in another.
       const [include = [], exclude = [], parent = [], parentExclude = [], ...termIds] =
@@ -2256,24 +2395,31 @@ export const defineWordPress = <R, Following = never>(
       const offset = Option.getOrElse(params.offset, () => (params.page - 1) * params.perPage);
       // `orderby=include` orders by the include list, at most MAX_LIST_PARAMETER long: read it whole, then page it here.
       const byInclude = params.orderby === "include";
-      const page = yield* binding
-        .list({
-          where,
-          orderBy,
-          includeDeleted: Arr.contains(params.statuses, "trash"),
-          limit: byInclude ? MAX_LIST_PARAMETER : params.perPage,
-          offset: byInclude ? 0 : offset,
-        })
-        .pipe(
-          Effect.catchIf(Schema.is(InvalidListOrder), () =>
-            Effect.fail(
-              invalidParams({
-                orderby: `orderby ${params.orderby} is not sortable for this post type.`,
-              }),
-            ),
+      const request = {
+        where,
+        orderBy,
+        includeDeleted: Arr.contains(params.statuses, "trash"),
+        limit: byInclude ? MAX_LIST_PARAMETER : params.perPage,
+        offset: byInclude ? 0 : offset,
+      };
+      const page = yield* Option.match(localised, {
+        onNone: () => binding.list(request),
+        // One row per node, in its best locale, paged by the store (`total` counts nodes).
+        onSome: ({ reads, order }) =>
+          Effect.map(reads.list({ ...request, locales: order }), ({ rows, total }) => ({
+            rows: rows.map(({ item }) => item),
+            total,
+          })),
+      }).pipe(
+        Effect.catchIf(Schema.is(InvalidListOrder), () =>
+          Effect.fail(
+            invalidParams({
+              orderby: `orderby ${params.orderby} is not sortable for this post type.`,
+            }),
           ),
-          Effect.mapError((error) => (Schema.is(WpRestError)(error) ? error : internalError())),
-        );
+        ),
+        Effect.mapError((error) => (Schema.is(WpRestError)(error) ? error : internalError())),
+      );
       const rows = byInclude
         ? Arr.sort(
             page.rows,
