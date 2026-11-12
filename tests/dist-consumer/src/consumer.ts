@@ -319,7 +319,10 @@ import {
 import {
   defineNotifications,
   emitting,
+  mentionCreatedHook,
   notificationHook,
+  type MentionDeclaration,
+  type MentionExtractor,
   type NotificationDraft,
   type NotificationOps,
   type OutboxStore,
@@ -1715,6 +1718,21 @@ export type _NotificationHookRun = Assert<
   Equals<
     ReturnType<typeof notificationHook<"comment.replied", StoreFailure, Transaction>>["name"],
     string
+  >
+>;
+export type _MentionExtractor = Assert<
+  Equals<MentionExtractor<ProseDocument>, (document: ProseDocument) => ReadonlyArray<string>>
+>;
+export type _MentionCreatedHook = Assert<
+  Equals<
+    ReturnType<typeof mentionCreatedHook<ProseDocument, StoreFailure, Transaction>>,
+    BeforeWriteHook<StoreFailure, Transaction>
+  >
+>;
+export type _MentionDeclaration = Assert<
+  Equals<
+    keyof MentionDeclaration<ProseDocument, StoreFailure, Transaction>,
+    "outbox" | "fields" | "documents" | "extract"
   >
 >;
 declare const outboxStore: OutboxStore<"comment.replied", StoreFailure, Transaction>;

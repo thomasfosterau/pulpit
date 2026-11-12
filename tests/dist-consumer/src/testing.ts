@@ -26,6 +26,7 @@ import {
   type ResourceCacheSeam,
 } from "@thomasfosterau/pulpit/subtype";
 import {
+  jsonMentionExtractor,
   makeInMemoryVersionChain,
   versionChainConformance,
   type ConformanceHarness,
@@ -46,6 +47,7 @@ import {
   type InMemoryNodes,
   type InMemoryResourceCache,
 } from "@thomasfosterau/pulpit/testing";
+import type { MentionExtractor } from "@thomasfosterau/pulpit/notifications";
 import type { VersionChain, VersionRow } from "@thomasfosterau/pulpit/version-chain";
 
 /** A compile-time assertion: `T` must be exactly `true`. */
@@ -216,4 +218,10 @@ export type _CacheGet = Assert<
 // oxlint-enable effect/prefer-option-over-null
 export type _CacheVersionOf = Assert<
   Equals<InMemoryResourceCache<CachedPost>["versionOf"], (id: string) => Option.Option<bigint>>
+>;
+
+// ── the mention extractor (pulpit#198) ───────────────────────────────────
+
+export type _JsonMentionExtractor = Assert<
+  Equals<typeof jsonMentionExtractor, MentionExtractor<Schema.Json>>
 >;

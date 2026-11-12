@@ -101,6 +101,7 @@ import type {
   DeliverySeam,
   InboxEntry,
   InboxStore,
+  MentionExtractor,
   NotificationEvent,
   NotificationPreferences,
   OutboxStore,
@@ -3320,6 +3321,63 @@ export const makeInMemoryDelivery = <Kind extends string>(): InMemoryDelivery<Ki
     deliveries: () => deliveries,
   };
 };
+
+/** A JSON value's members, when it is an object (not an array). */
+const jsonMembers = (value: Schema.Json): Option.Option<{ readonly [key: string]: Schema.Json }> =>
+  value === null ||
+  P.isBoolean(value) ||
+  P.isNumber(value) ||
+  P.isString(value) ||
+  Arr.isArray<Schema.Json>(value)
+    ? Option.none()
+    : Option.some(value);
+
+/** The `attrs.id` string of a mention node's members, if any. */
+const mentionId = (members: { readonly [key: string]: Schema.Json }): ReadonlyArray<string> =>
+  Option.toArray(
+    Option.flatMap(Option.flatMap(R.get(members, "attrs"), jsonMembers), (attrs) =>
+      Option.filter(R.get(attrs, "id"), P.isString),
+    ),
+  );
+
+/**
+ * The reference {@link MentionExtractor} over a JSON document tree: the
+ * `attrs.id` string of every object whose `type` is `"mention"`, at any
+ * depth, in document order (the shape of an editor's inline mention atom,
+ * `{ type: "mention", attrs: { id, label } }`). A mention without a string
+ * id mentions nobody. In memory only; an application fills the seam with
+ * its own grammar's extractor.
+ *
+ * @example
+ * ```ts
+ * import { deepStrictEqual } from "node:assert";
+ * import { jsonMentionExtractor } from "@thomasfosterau/pulpit/testing";
+ *
+ * deepStrictEqual(
+ *   jsonMentionExtractor({
+ *     type: "doc",
+ *     content: [
+ *       { type: "paragraph", content: [{ type: "mention", attrs: { id: "u-1", label: "Ada" } }] },
+ *       { type: "mention", attrs: { label: "no id" } },
+ *     ],
+ *   }),
+ *   ["u-1"],
+ * );
+ * ```
+ *
+ * @since 0.2.0
+ */
+export const jsonMentionExtractor: MentionExtractor<Schema.Json> = (document) =>
+  Arr.isArray<Schema.Json>(document)
+    ? Arr.flatMap(document, jsonMentionExtractor)
+    : Option.match(jsonMembers(document), {
+        onNone: () => [],
+        onSome: (members) =>
+          Arr.appendAll(
+            members["type"] === "mention" ? mentionId(members) : [],
+            Arr.flatMap(R.values(members), jsonMentionExtractor),
+          ),
+      });
 
 /**
  * An in-memory {@link ExternalIdStore}, plus the hook a test reads it
