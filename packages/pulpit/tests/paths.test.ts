@@ -77,14 +77,14 @@ const pagesLeaf = () => {
   const resolveTag = (path: string, who: Viewer = Option.none()) =>
     tagOf(as(who, pages.resolve(path)));
   /** Each viewer's outcome for each path, one at a time: its resolution or its error tag. */
-  const outcomes = (viewers: ReadonlyArray<Viewer>, paths: ReadonlyArray<string>) =>
+  const outcomes = (viewers: ReadonlyArray<Viewer>, requested: ReadonlyArray<string>) =>
     run(
       // One at a time: `as` swaps the one viewer the leaf reads.
       Effect.forEach(
         viewers,
         (who) =>
           Effect.forEach(
-            paths,
+            requested,
             (path) =>
               as(who, pages.resolve(path)).pipe(
                 Effect.match({

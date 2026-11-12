@@ -36,12 +36,12 @@ export const purgeNode =
   (id: string): Effect.Effect<PurgeReport, NodeNotFound | E, R> => {
     const { type, chain, store, transact } = definition;
     /** The erasure, in the caller's transaction: what it deleted and which bytes it freed. */
-    const erase = (id: string) =>
+    const erase = (nodeId: string) =>
       Effect.gen(function* () {
-        const head = yield* chain.head(id);
-        if (Option.isNone(head)) return yield* new NodeNotFound({ type, id });
-        const erased = yield* store.eraseNode(id);
-        yield* chain.purge(id);
+        const head = yield* chain.head(nodeId);
+        if (Option.isNone(head)) return yield* new NodeNotFound({ type, id: nodeId });
+        const erased = yield* store.eraseNode(nodeId);
+        yield* chain.purge(nodeId);
         const documents = yield* store.deleteUnreferencedDocuments(Arr.dedupe(erased.documents));
         const freed = yield* store.unreferencedBlobs(Arr.dedupe(erased.blobs));
         return { head: head.value.version, documents, freed };
