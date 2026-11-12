@@ -474,11 +474,9 @@ export const validateProposalPatch = <R>(
     readonly forbidden: ReadonlyArray<string>;
     readonly decode: (patch: Schema.Json) => Effect.Effect<ChainPatch, InvalidProposalPatch, R>;
     /** The per-locale patch as submitted (pulpit#184); absent, none. */
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no translation"
-    readonly locales?: Schema.Json | undefined;
+    readonly locales?: Schema.Json;
     /** The translated columns a proposal may touch, in declaration order; absent, none. */
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no locale level"
-    readonly localeAttributes?: ReadonlyArray<string> | undefined;
+    readonly localeAttributes?: ReadonlyArray<string>;
   },
 ): Effect.Effect<ValidatedPatch, InvalidProposalPatch, R> => {
   const invalid = (reason: string) => Effect.fail(new InvalidProposalPatch({ type, reason }));
@@ -635,8 +633,7 @@ export interface ProposalsDefinition<Resource, E, R> {
   /** The attributes a proposal may touch: the leaf's update fields, in declaration order. */
   readonly attributes: ReadonlyArray<string>;
   /** The keys no proposal may carry; {@link PROPOSAL_FORBIDDEN_KEYS} when omitted. */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is the kernel's default list
-  readonly forbidden?: ReadonlyArray<string> | undefined;
+  readonly forbidden?: ReadonlyArray<string>;
   /** The leaf's update decoder over a patch's values (`SEC-INPUT-001`), shared or one locale's. */
   readonly decode: (patch: Schema.Json) => Effect.Effect<ChainPatch, InvalidProposalPatch, R>;
   /**
@@ -644,15 +641,13 @@ export interface ProposalsDefinition<Resource, E, R> {
    * (pulpit#184), in declaration order: the leaf's locale level's columns,
    * or fewer. Omitted, a proposal carries no per-locale patch.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no translation is proposable"
-  readonly localeAttributes?: ReadonlyArray<string> | undefined;
+  readonly localeAttributes?: ReadonlyArray<string>;
   /**
    * A write budget on `submit` (pulpit#199, `./budgets`' `bindBudget`),
    * spent as the `submit` action once the submission validates and before
    * it is stored. Omitted, submissions are unthrottled.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no budget"
-  readonly budget?: BoundBudget<E, R> | undefined;
+  readonly budget?: BoundBudget<E, R>;
 }
 
 /**
@@ -694,8 +689,7 @@ export interface ProposalOps<E, R> {
     readonly targetId: string;
     readonly patch: Schema.Json;
     /** A localised leaf's per-locale patch (pulpit#184); absent, none. */
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no translation"
-    readonly locales?: Schema.Json | undefined;
+    readonly locales?: Schema.Json;
     readonly rationale: Option.Option<string>;
   }) => Effect.Effect<
     { readonly id: string },
@@ -804,14 +798,20 @@ export const defineProposals = <Resource, E, R>(
 ): ProposalOps<E, R> => {
   const { type, target, proposals, policy } = definition;
   const forbidden = definition.forbidden ?? PROPOSAL_FORBIDDEN_KEYS;
+  const base = { attributes: definition.attributes, forbidden, decode: definition.decode };
+  const validation =
+    definition.localeAttributes === undefined
+      ? base
+      : { ...base, localeAttributes: definition.localeAttributes };
   const validate = (patch: Schema.Json, locales: Option.Option<Schema.Json>) =>
-    validateProposalPatch(type, patch, {
-      attributes: definition.attributes,
-      forbidden,
-      decode: definition.decode,
-      locales: Option.getOrUndefined(locales),
-      localeAttributes: definition.localeAttributes,
-    });
+    validateProposalPatch(
+      type,
+      patch,
+      Option.match(locales, {
+        onNone: () => validation,
+        onSome: (perLocale) => ({ ...validation, locales: perLocale }),
+      }),
+    );
 
   const signedIn = signedInAs(definition.viewer);
 
@@ -877,8 +877,7 @@ export const defineProposals = <Resource, E, R>(
   const submit = Effect.fn(`${type}.proposals.submit`)(function* (input: {
     readonly targetId: string;
     readonly patch: Schema.Json;
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no translation"
-    readonly locales?: Schema.Json | undefined;
+    readonly locales?: Schema.Json;
     readonly rationale: Option.Option<string>;
   }) {
     const account = yield* signedIn;

@@ -200,12 +200,14 @@ import {
   classifyProposalConflict,
   defineProposals,
   type ProposalOps,
+  type ProposalsDefinition,
   type ProposalRow,
   type ProposalStatus,
 } from "@thomasfosterau/pulpit/proposals";
 import type { ColumnValue, VersionRow } from "@thomasfosterau/pulpit/version-chain";
 import {
   defineModeration,
+  defineReports,
   gradeScores,
   moderationHook,
   type ModerationGrade,
@@ -240,12 +242,24 @@ import {
 
 import type { PublicationFact, PublicationOps, SubtypeOps } from "@thomasfosterau/pulpit/subtype";
 import { defineWorkingCopy } from "@thomasfosterau/pulpit/working-copy";
-import { CommentDepthExceeded, defineComments } from "@thomasfosterau/pulpit/comments";
-import { definePurge, type PurgeOps, type PurgeReport } from "@thomasfosterau/pulpit/purge";
+import {
+  CommentDepthExceeded,
+  defineComments,
+  type CommentListRequest,
+  type CommentsDefinition,
+} from "@thomasfosterau/pulpit/comments";
+import {
+  definePurge,
+  type PurgeDefinition,
+  type PurgeOps,
+  type PurgeReport,
+} from "@thomasfosterau/pulpit/purge";
 import {
   defineAccountErasure,
+  type AccountErasureDefinition,
   type AccountErasureOps,
   type Disposition,
+  type ErasureFamily,
   type ErasureSummary,
   type TombstoneErasure,
 } from "@thomasfosterau/pulpit/erasure";
@@ -270,6 +284,7 @@ import {
   type BoundBudget,
   type BudgetCounter,
   type BudgetRequest,
+  type WriteBudget,
 } from "@thomasfosterau/pulpit/budgets";
 import {
   defineReactions,
@@ -284,6 +299,7 @@ import {
 } from "@thomasfosterau/pulpit/cache";
 import {
   defineCollection,
+  type CollectionDefinition,
   type CollectionMember,
   type CollectionOps,
 } from "@thomasfosterau/pulpit/collections";
@@ -301,6 +317,7 @@ import {
   socialFollowers,
   type InteractionBlocked,
   type SelfRelationship,
+  type SocialDefinition,
   type SocialOps,
   type SocialStore,
 } from "@thomasfosterau/pulpit/social";
@@ -315,8 +332,11 @@ import {
 import {
   defineDiscovery,
   purgeHintHook,
+  type DiscoveryCursor,
+  type DiscoveryDefinition,
   type DiscoveryOps,
   type DiscoveryPage,
+  type DiscoveryRequest,
   type PurgeHint,
 } from "@thomasfosterau/pulpit/discovery";
 import {
@@ -1256,6 +1276,45 @@ export type _HybridSearchOptionalMembers = Assert<
       Pick<SearchBranch<never, never, never>, "weight">,
     ],
     [{ readonly k?: number; readonly perBranch?: number }, { readonly weight?: number }]
+  >
+>;
+// The remaining modules' optional members are bare `?: T` too (pulpit#238,
+// PR 4): `Bare` is false for a member that still admits an explicit `undefined`.
+type Bare<T, K extends keyof T> = Equals<
+  Pick<T, K>,
+  { readonly [P in K]?: Exclude<T[P], undefined> }
+>;
+export type _RemainingOptionalMembers = Assert<
+  Equals<
+    [
+      Bare<WriteBudget, "exempt">,
+      Bare<CollectionDefinition<never, never, never, never>, "mode">,
+      Bare<CommentsDefinition<never, never, never, never>, "maxDepth">,
+      Bare<CommentListRequest, "orderBy">,
+      Bare<DiscoveryCursor, "locale">,
+      Bare<DiscoveryRequest, "after" | "locale">,
+      Bare<DiscoveryDefinition<LeafRow, never, never, never, never>, "serveable">,
+      Bare<ErasureFamily<never, never>, "accountColumns" | "cache">,
+      Bare<
+        AccountErasureDefinition<never, never, never>,
+        | "blobs"
+        | "proposals"
+        | "reports"
+        | "reactions"
+        | "social"
+        | "workingCopies"
+        | "memberships"
+        | "relations"
+        | "batchSize"
+      >,
+      Bare<NonNullable<Parameters<AccountErasureOps<never, never>["erase"]>[1]>, "maxBatches">,
+      Bare<Parameters<typeof defineReports>[0], "budget">,
+      Bare<ProposalsDefinition<never, never, never>, "forbidden" | "localeAttributes" | "budget">,
+      Bare<Parameters<ProposalOps<never, never>["submit"]>[0], "locales">,
+      Bare<PurgeDefinition<never, never, never>, "blobs" | "cache">,
+      Bare<SocialDefinition<never, never, never>, "accounts">,
+    ],
+    [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true]
   >
 >;
 export type _EdgeValidity = Assert<

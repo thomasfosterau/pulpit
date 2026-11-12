@@ -47,6 +47,8 @@ deepStrictEqual(
 
 Discovery (pulpit#203), after website's `packages/database/src/discovery.ts` and gardeneria's `lib/server/discovery.ts`: what a site's feeds and sitemap list. The kernel owns _what is discoverable_ and the metadata; the serialisers stay the application's.
 
+The optional members (a cursor's and a request's `locale`, the request's `after`, and the definition's `serveable`) are bare `?: T` (pulpit#238): a caller that has no value omits the key rather than passing `undefined`, so a page loop resumes with `{ ...request, after: cursor }` only once it holds a cursor.
+
 ```ts
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

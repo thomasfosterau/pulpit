@@ -6,6 +6,8 @@ The one destructive path, purging a node's whole history (`./purge`), and accoun
 
 Erasure (pulpit#58). A tombstone hides a node and keeps every version of its content. Where that content is personal data that must be erased rather than hidden, `purge` hard-deletes it. It is the one sanctioned exception to the append-only chain (`VERSION-CHAIN-001/002`) and to `DOC-001`.
 
+`PurgeDefinition`'s `blobs` and `cache`, and `./testing`'s `makeInMemoryPurgeStore` options (`documents`, `documentColumns`, `blobColumns`, `dependents`), are bare `?: T` (pulpit#238): a caller that has no value omits the key rather than passing `undefined`.
+
 ```ts
 import { definePurge } from "@thomasfosterau/pulpit/purge";
 
@@ -37,6 +39,8 @@ const posts = definePurge({
 ## `./erasure`
 
 Account erasure (pulpit#207). `./purge` erases one node; this erases one account: when a member deletes their account, everything they own or wrote is purged, reassigned or anonymised, and every row that names them goes.
+
+The optional members (a family's `accountColumns` and `cache`; the definition's `blobs`, `proposals`, `reports`, `reactions`, `social`, `workingCopies`, `memberships`, `relations` and `batchSize`; `erase`'s `maxBatches`) are bare `?: T` (pulpit#238): a caller that has no value omits the key rather than passing `undefined`.
 
 ```ts
 import { defineAccountErasure, ErasurePresets } from "@thomasfosterau/pulpit/erasure";

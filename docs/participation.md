@@ -6,6 +6,8 @@ Participation and user-generated content: comments, reactions, write budgets, th
 
 The comments family (pulpit#50). A comment is an ordinary owned leaf, built with `defineSubtype` with `./moderation`'s `moderationHook` among its hooks. Edits append versions, a delete tombstones, and its history is gated like any leaf's. `defineComments` wraps it with the comment's own rules.
 
+`CommentsDefinition.maxDepth` and `CommentListRequest.orderBy` are bare `?: T` (pulpit#238): a caller that has no value omits the key rather than passing `undefined`.
+
 ```ts
 import { defineComments } from "@thomasfosterau/pulpit/comments";
 import { moderatedColumns, moderationHook } from "@thomasfosterau/pulpit/moderation";
@@ -78,6 +80,8 @@ reactions.tally(pageOfPostIds); // HashMap<postId, { counts, total }>
 
 Write budgets (pulpit#199): every family that takes user content needs a write throttle, and gardeneria re-adds one per family (a count-then-insert in the write's transaction). A budget is declared once per family and action: at most `limit` writes per account in any window of `windowSeconds`.
 
+`WriteBudget.exempt` is a bare `?: (policy) => (account) => boolean` (pulpit#238): omit the key for the default (the moderate rung) rather than passing `undefined`.
+
 ```ts
 import * as Effect from "effect/Effect";
 import { bindBudget, budgetHook, countingCounter } from "@thomasfosterau/pulpit/budgets";
@@ -114,6 +118,8 @@ const reports = defineReports({ /* … */ budget }); // throttles file
 ## `./social`
 
 The social graph (pulpit#195), after gardeneria's `social.follows`: who follows, mutes and blocks whom.
+
+`SocialDefinition.accounts` is a bare `?: AccountVisibility<R>` (pulpit#238): omit the key to show every account rather than passing `undefined`.
 
 ```ts
 import { defineSocial, socialFollowers } from "@thomasfosterau/pulpit/social";

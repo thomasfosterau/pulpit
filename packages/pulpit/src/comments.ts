@@ -196,8 +196,7 @@ export interface CommentsDefinition<Resource, Following, E, R> {
    * replies, `N` deeper. A non-negative safe integer, or
    * {@link defineComments} throws {@link CommentDeclarationError}.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is the default depth of 1
-  readonly maxDepth?: number | undefined;
+  readonly maxDepth?: number;
 }
 
 /**
@@ -231,8 +230,7 @@ export interface CommentListRequest {
   readonly offset: number;
   /** Tombstoned comments too, for the view-deleted rung (as the leaf's own `list` takes it). */
   readonly includeDeleted: boolean;
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is the leaf's default order
-  readonly orderBy?: ReadonlyArray<ListOrder> | undefined;
+  readonly orderBy?: ReadonlyArray<ListOrder>;
 }
 
 /**

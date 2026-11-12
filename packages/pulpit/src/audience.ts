@@ -539,8 +539,7 @@ export const defineAudience = <Following, E, R>(
   const addMember = Effect.fn("audience.addMember")(function* (
     groupId: string,
     accountId: string,
-    // oxlint-disable-next-line effect/prefer-option-over-null -- `AudienceOps.addMember`'s optional parameter, defaulted here
-    role: MembershipRole | undefined = "member",
+    role: MembershipRole = "member",
   ) {
     yield* manager(groupId);
     const at = yield* nowDate;
@@ -604,8 +603,7 @@ export const defineAudience = <Following, E, R>(
   const invite = Effect.fn("audience.invite")(function* (
     groupId: string,
     accountId: string,
-    // oxlint-disable-next-line effect/prefer-option-over-null -- `AudienceOps.invite`'s optional parameter, defaulted here
-    role: MembershipRole | undefined = "member",
+    role: MembershipRole = "member",
   ) {
     const { account } = yield* manager(groupId);
     if (accountId === account.id) return yield* new SelfInvitation({ groupId });

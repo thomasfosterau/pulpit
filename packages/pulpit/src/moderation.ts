@@ -653,8 +653,7 @@ export const defineReports = <Resource, E, R>(definition: {
    * as the `file` action once the reporter can read the target and before
    * the report is stored. Omitted, reports are unthrottled.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is "no budget"
-  readonly budget?: BoundBudget<E, R> | undefined;
+  readonly budget?: BoundBudget<E, R>;
 }): ReportOps<E, R> => {
   const { target, reports, policy } = definition;
   const type = target.type;
