@@ -12,6 +12,7 @@
 import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
 import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
 import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makeCollectionTable } from "@thomasfosterau/pulpit-drizzle-pg/collections";
 import { makeDocumentTable } from "@thomasfosterau/pulpit-drizzle-pg/documents";
 import { makeEdgeTable } from "@thomasfosterau/pulpit-drizzle-pg/edges";
 import { makeExternalIdTable } from "@thomasfosterau/pulpit-drizzle-pg/external-ids";
@@ -110,6 +111,13 @@ export const relations = makeEdgeTable({
 /** The external-identifier table, over the identity table. */
 export const externalIds = makeExternalIdTable({ schema, identity: tables.root.identity });
 
+/** An ordered family: an entry's members, over the identity table. */
+export const collection = makeCollectionTable({
+  schema,
+  name: "entry_member",
+  identity: tables.root.identity,
+});
+
 /** The owner table the leaf stores read and stamp. */
 export const owners = makeNodeOwnerTable({ schema, identity: tables.root.identity });
 
@@ -147,6 +155,7 @@ export const fixtureSchema = {
   documents,
   relations,
   externalIds,
+  collection,
   proposals,
   notesView: views.leaves.notes,
   linksView: views.leaves.links,

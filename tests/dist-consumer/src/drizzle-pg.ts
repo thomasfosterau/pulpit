@@ -72,6 +72,12 @@ import {
   makeExternalIdTable,
   type ExternalIdTable,
 } from "@thomasfosterau/pulpit-drizzle-pg/external-ids";
+import type { CollectionStore } from "@thomasfosterau/pulpit/collections";
+import {
+  makeCollectionStore,
+  makeCollectionTable,
+  type CollectionTable,
+} from "@thomasfosterau/pulpit-drizzle-pg/collections";
 import {
   makeProposalStore,
   makeProposalTable,
@@ -113,6 +119,7 @@ export type _Root = Assert<
     | "Edges"
     | "Proposals"
     | "ExternalIds"
+    | "Collections"
   >
 >;
 export type _RootChains = Assert<
@@ -371,4 +378,21 @@ const externalIdStore = makeExternalIdStore({
 export type _ExternalIdTable = Assert<Equals<typeof externalIdTable, ExternalIdTable>>;
 export type _ExternalIdStore = Assert<
   Equals<typeof externalIdStore, ExternalIdStore<EffectDrizzleQueryError, Key>>
+>;
+
+// ── ./collections ────────────────────────────────────────────────────────
+
+const collectionTable = makeCollectionTable({
+  schema,
+  name: "list_item",
+  identity: tables.root.identity,
+});
+const collectionStore = makeCollectionStore({
+  table: collectionTable,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _CollectionTable = Assert<Equals<typeof collectionTable, CollectionTable>>;
+export type _CollectionStore = Assert<
+  Equals<typeof collectionStore, CollectionStore<EffectDrizzleQueryError, Key>>
 >;

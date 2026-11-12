@@ -65,6 +65,7 @@ Every module is a namespace on the root export (`import { VersionChain } from "@
 | [`./proposals`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#proposals) | `makeProposalTable` / `makeProposalStore`: the kernel's `ProposalStore` (suggested edits) over one proposal table. |
 | [`./search`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#search) | `makeSearchBranch` / `fullTextRank`: the kernel's `SearchBranch`, one ranked and scoped statement over a view. |
 | [`./edges`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#edges) | `makeEdgeTable` / `makeEdgeStore`: the kernel's `EdgeStore`, one table per edge family, its ends joined to the tree's views. |
+| [`./collections`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#collections) | `makeCollectionTable` / `makeCollectionStore`: the kernel's `CollectionStore`, one membership table per ordered family. |
 | [`./external-ids`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#external-ids) | `makeExternalIdTable` / `makeExternalIdStore`: the kernel's `ExternalIdStore`, an authority's identifiers linked to nodes. |
 | [`./filter`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#filter) | `renderListFilter` / `renderListOrder`: the kernel's `ListFilter` and list order as Drizzle SQL. |
 

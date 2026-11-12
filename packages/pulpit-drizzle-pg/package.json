@@ -37,6 +37,7 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
+    "./collections": "./src/collections.ts",
     "./documents": "./src/documents.ts",
     "./edges": "./src/edges.ts",
     "./external-ids": "./src/external-ids.ts",
@@ -53,6 +54,10 @@
       ".": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      },
+      "./collections": {
+        "types": "./dist/collections.d.ts",
+        "default": "./dist/collections.js"
       },
       "./documents": {
         "types": "./dist/documents.d.ts",
