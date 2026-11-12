@@ -181,6 +181,7 @@ export type _Request = Assert<
       readonly method: string;
       readonly path: string;
       readonly query: ReadonlyArray<readonly [string, string]>;
+      readonly ifNoneMatch?: string;
     }
   >
 >;

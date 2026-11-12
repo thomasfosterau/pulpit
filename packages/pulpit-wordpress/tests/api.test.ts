@@ -13,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
+import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as P from "effect/Predicate";
@@ -397,7 +398,22 @@ const site = (options: SiteOptions = {}) => {
     query: ReadonlyArray<readonly [string, string]> = [],
     who: Viewer = Option.none(),
     method = "GET",
-  ) => run(as(who, api.handle({ method, path: `/wp-json${path}`, query })));
+    ifNoneMatch: Option.Option<string> = Option.none(),
+  ) =>
+    run(
+      as(
+        who,
+        api.handle({
+          method,
+          path: `/wp-json${path}`,
+          query,
+          ...Option.match(ifNoneMatch, {
+            onNone: () => ({}),
+            onSome: (value) => ({ ifNoneMatch: value }),
+          }),
+        }),
+      ),
+    );
   /** A term, created by a moderator (a reference leaf's writer). */
   const createTerm = async (
     taxonomy: Taxonomy,
@@ -772,6 +788,98 @@ describe("the wp/v2 read API — caching (CACHE-AUTH-005)", () => {
         ([path, query, who]) => cacheOf(path, query, who),
       ),
     ).toEqual(["public", "private, no-store", "private, no-store", "private, no-store"]);
+  });
+});
+
+describe("the wp/v2 read API — conditional reads (pulpit#86, #65)", () => {
+  const conditional = (
+    wp: ReturnType<typeof site>,
+    path: string,
+    ifNoneMatch: string,
+    query: ReadonlyArray<readonly [string, string]> = [],
+    who: Viewer = Option.none(),
+  ) => wp.get(path, query, who, "GET", Option.some(ifNoneMatch));
+
+  it("sends a weak ETag hashed from the body of an item, a term and a user, and none on a collection", async () => {
+    const wp = site({ terms: true });
+    const post = await wp.create("posts", {});
+    const category = await wp.createTerm("category");
+    const [item, term, user, list] = await Promise.all([
+      wp.get(`/wp/v2/posts/${post.wireId}`),
+      wp.get(`/wp/v2/categories/${category.wireId}`),
+      wp.get(`/wp/v2/users/${wp.accounts.assign(member.id)}`),
+      wp.get("/wp/v2/posts"),
+    ]);
+    expect(
+      [item, term, user].map((response) =>
+        /^W\/"[0-9a-f]{64}"$/.test(response.headers["etag"] ?? ""),
+      ),
+    ).toEqual([true, true, true]);
+    expect(list.headers["etag"]).toBeUndefined();
+    // The same body, the same tag; a HEAD carries it too.
+    expect((await wp.get(`/wp/v2/posts/${post.wireId}`)).headers["etag"]).toBe(
+      item.headers["etag"],
+    );
+    expect(
+      (await wp.get(`/wp/v2/posts/${post.wireId}`, [], Option.none(), "HEAD")).headers["etag"],
+    ).toBe(item.headers["etag"]);
+  });
+
+  it("answers 304 with the tag and Cache-Control alone when If-None-Match matches", async () => {
+    const wp = site();
+    const post = await wp.create("posts", {});
+    const path = `/wp/v2/posts/${post.wireId}`;
+    const fresh = await wp.get(path);
+    const etag = fresh.headers["etag"] ?? "";
+    const matched = await conditional(wp, path, etag);
+    expect([matched.status, matched.headers, matched.body]).toEqual([
+      304,
+      { etag, "cache-control": "public" },
+      Option.none(),
+    ]);
+    // A strong spelling of the tag, a list holding it, and `*` all match (weak comparison).
+    const statuses = await Promise.all(
+      [etag.slice(2), `"other", ${etag}`, "*"].map(
+        async (header) => (await conditional(wp, path, header)).status,
+      ),
+    );
+    expect(statuses).toEqual([304, 304, 304]);
+    expect((await conditional(wp, path, '"other"')).status).toBe(200);
+  });
+
+  it("hashes the body asked for, so _embed, _fields and context each have their own tag", async () => {
+    const wp = site();
+    const post = await wp.create("posts", {});
+    const path = `/wp/v2/posts/${post.wireId}`;
+    const tags = await inSequence(
+      [[], [["_embed", "1"]], [["_fields", "id"]], [["context", "embed"]]] as const,
+      async (query) => (await wp.get(path, query)).headers["etag"],
+    );
+    expect(HashSet.size(HashSet.fromIterable(tags))).toBe(4);
+    const embedded = tags[1] ?? "";
+    expect((await conditional(wp, path, embedded, [["_embed", "1"]])).status).toBe(304);
+    expect((await conditional(wp, path, embedded)).status).toBe(200);
+  });
+
+  it("changes the tag when the item or something it embeds changes", async () => {
+    const wp = site();
+    const media = await wp.create("media", { mimeType: "image/jpeg" });
+    const post = await wp.create("posts", { featuredMediaId: media.id });
+    const path = `/wp/v2/posts/${post.wireId}`;
+    const before = (await wp.get(path, [["_embed", "1"]])).headers["etag"] ?? "";
+    await run(
+      wp.as(Option.some(member), wp.ops.media.update({ id: media.id, patch: { slug: "renamed" } })),
+    );
+    expect((await conditional(wp, path, before, [["_embed", "1"]])).status).toBe(200);
+  });
+
+  it("never tags or conditions an error, so a hidden item still answers as a missing one", async () => {
+    const wp = site();
+    const hidden = await wp.create("posts", { visibility: "private" });
+    const missing = await wp.get("/wp/v2/posts/9999");
+    const answered = await conditional(wp, `/wp/v2/posts/${hidden.wireId}`, "*");
+    expect(answered).toEqual(missing);
+    expect(answered.headers["etag"]).toBeUndefined();
   });
 });
 

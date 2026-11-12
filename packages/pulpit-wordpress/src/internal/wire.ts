@@ -62,6 +62,25 @@ export const errorBody = (error: WpRestError): Schema.JsonObject => ({
       : { status: error.status, params: error.params, details: {} },
 });
 
+// ── Entity tags ───────────────────────────────────────────────────────
+
+/** A weak entity tag over a body's content hash: `W/"<hash>"`. */
+export const weakEtag = (hash: string): string => `W/"${hash}"`;
+
+/**
+ * Whether an `If-None-Match` header matches `etag`, by the weak comparison
+ * RFC 9110 §13.1.2 prescribes for it: `*` matches any current
+ * representation, otherwise any listed tag with the same opaque value
+ * does, whether either side is marked weak.
+ */
+export const matchesIfNoneMatch = (header: string, etag: string): boolean => {
+  const opaque = (tag: string) => (tag.startsWith("W/") ? tag.slice(2) : tag);
+  return header
+    .split(",")
+    .map((tag) => tag.trim())
+    .some((tag) => tag === "*" || opaque(tag) === opaque(etag));
+};
+
 // ── Dates ─────────────────────────────────────────────────────────────
 
 const pad = (value: number, width = 2): string => String(value).padStart(width, "0");

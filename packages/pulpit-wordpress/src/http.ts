@@ -70,12 +70,14 @@ export const wordPressHttp = <R>(
   Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
     // The request URL may be a path alone; the base only fills in the origin, never read.
     const url = new URL(request.url, "http://localhost");
+    const ifNoneMatch = request.headers["if-none-match"];
+    const asked = {
+      method: request.method,
+      path: url.pathname,
+      query: Array.from(url.searchParams),
+    };
     return Effect.map(
-      api.handle({
-        method: request.method,
-        path: url.pathname,
-        query: Array.from(url.searchParams),
-      }),
+      api.handle(ifNoneMatch === undefined ? asked : { ...asked, ifNoneMatch }),
       (response) =>
         Option.match(response.body, {
           onNone: () =>
