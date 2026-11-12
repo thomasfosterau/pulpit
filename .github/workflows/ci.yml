@@ -1,12 +1,11 @@
 name: CI
 
-# ONE job, ONE required check: the pipeline's task graph lives in
-# vite.config.ts (the root `check` task), not in GitHub Actions `needs:`.
+# The gates are ONE job, ONE required check: the pipeline's task graph lives
+# in vite.config.ts (the root `check` task), not in GitHub Actions `needs:`.
 # Copied in shape from the effect-drizzle-ext library (and through it the
-# gardeneria application). There is no integration suite yet: the kernel is
-# pure until its Drizzle-backed stores land (pulpit#4), at which point the
-# `postgres` service container and the `test:integration` step come back
-# from effect-drizzle-ext's copy of this file.
+# gardeneria application). The second job, `integration`, runs
+# pulpit-drizzle-pg's integration suite against a `postgres` service
+# container; it is not one of the gates (AGENTS.md → Verification).
 
 on:
   pull_request:
@@ -84,3 +83,47 @@ jobs:
         run: pnpm exec vp run -r docgen
       - name: Audit
         run: pnpm audit --audit-level high
+
+  # pulpit-drizzle-pg's integration suite (`test:integration`): the kernel's
+  # conformance suites against a real PostgreSQL. The service container is
+  # the "reachable local server" `-pg/testing`'s `provisionTestDatabase`
+  # resolves through the PG* variables, so the setup drops, recreates and
+  # builds its own database there. Exact release tags, per the owner's rule
+  # for actions this workflow adds.
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      NODE_OPTIONS: --max-old-space-size=2048
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Vite+ and install dependencies
+        uses: voidzero-dev/setup-vp@v1.22.0
+        with:
+          version-file: pnpm-workspace.yaml
+          node-version: lts
+          cache: true
+          run-install: |
+            - args: ["--frozen-lockfile"]
+      - name: Integration tests (pulpit-drizzle-pg, PostgreSQL)
+        run: pnpm exec vp run --filter ./packages/pulpit-drizzle-pg test:integration
