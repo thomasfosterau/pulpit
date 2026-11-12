@@ -197,8 +197,8 @@ const site = (options: SiteOptions = {}) => {
     pages: store(COLUMNS),
     media: store(COLUMNS),
   };
-  const leaf = (type: Target) =>
-    defineSubtype({
+  const leaf = (type: Target) => {
+    const declaration = {
       type,
       access: ownedAccess({ draft: true }),
       chain: leafStores[type].chain,
@@ -207,11 +207,14 @@ const site = (options: SiteOptions = {}) => {
       policy,
       followers,
       toResource: (row: LeafRow) => row,
-      publication:
-        gated && type === "posts"
-          ? { live: gatedPosts.publication.live, facts: gatedPosts.publication.facts }
-          : undefined,
-    });
+    };
+    return gated && type === "posts"
+      ? defineSubtype({
+          ...declaration,
+          publication: { live: gatedPosts.publication.live, facts: gatedPosts.publication.facts },
+        })
+      : defineSubtype(declaration);
+  };
   const ops = { posts: leaf("posts"), pages: leaf("pages"), media: leaf("media") };
   const termStores = {
     category: store(TERM_COLUMNS),
