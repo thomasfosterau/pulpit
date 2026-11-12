@@ -5,8 +5,10 @@
 
 import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
+import * as Formatter from "effect/Formatter";
 import * as HashMap from "effect/HashMap";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as P from "effect/Predicate";
 import { defineWordPress, type WordPressRequest } from "../src/api.ts";
 import { wordPressHttp } from "../src/http.ts";
 import { stringIds } from "../src/ids.ts";
@@ -22,7 +24,10 @@ const base = defineWordPress({
     canModerate: () => false,
     canWriteCorpus: () => false,
   },
-  render: (requests) => Effect.succeed(requests.map(({ value }) => String(value))),
+  render: (requests) =>
+    Effect.succeed(
+      requests.map(({ value }) => (P.isString(value) ? value : Formatter.format(value))),
+    ),
   link: (_, fields) => `https://example.org/${fields.slug}`,
   types: {},
   authors: { ids: stringIds(), getMany: () => Effect.succeed(HashMap.empty()) },

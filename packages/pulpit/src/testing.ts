@@ -106,6 +106,7 @@ import type {
   OutboxStore,
   PreferenceStore,
 } from "./notifications.ts";
+import type { ExternalIdLink, ExternalIdStore } from "./reference-import.ts";
 import type { Relationship, SocialStore } from "./social.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
 import type { ReportRow, ReportStore } from "./moderation.ts";
@@ -994,13 +995,15 @@ export const versionChainConformance = <E, R>(
     });
 
     describe("locales — the keyed level (pulpit#56)", () => {
+      // A translated column is never a shared one (a tree rejects a key both
+      // levels of one path declare), so the locale level writes `heading`.
       it("a version carries its locale level: set, drop (null) and carry forward, restored together", async () => {
         const { chain } = await harness.make();
         await value(
           chain.create({
             id: Option.some(ID),
-            state: { slug: "a" },
-            locales: { en: { title: "Hello" }, fr: { title: "Salut" } },
+            state: { title: "a" },
+            locales: { en: { heading: "Hello" }, fr: { heading: "Salut" } },
             actorId: ACTOR,
           }),
         );
@@ -1008,15 +1011,15 @@ export const versionChainConformance = <E, R>(
           chain.update({
             id: ID,
             patch: {},
-            locales: { en: { title: "Hi" }, fr: null },
+            locales: { en: { heading: "Hi" }, fr: null },
             actorId: ACTOR,
           }),
         );
-        expect(localesOf(await value(chain.getVersion(ID, 1n)))).toEqual({ en: { title: "Hi" } });
+        expect(localesOf(await value(chain.getVersion(ID, 1n)))).toEqual({ en: { heading: "Hi" } });
         await value(chain.restoreVersion(ID, 0n, ACTOR));
         expect(localesOf(await value(chain.getVersion(ID, 2n)))).toEqual({
-          en: { title: "Hello" },
-          fr: { title: "Salut" },
+          en: { heading: "Hello" },
+          fr: { heading: "Salut" },
         });
       });
     });
@@ -2025,6 +2028,25 @@ export const makeInMemoryPublication = (options: {
       }),
     effective: (id) => Effect.map(instantOf(fixedNow), (now) => effectiveAt(id, now)),
     facts: (id, limit) => Effect.sync(() => log.filter((fact) => fact.id === id).slice(0, limit)),
+    scheduled: (ids) =>
+      Effect.map(instantOf(fixedNow), (now) =>
+        Arr.flatMap(Arr.dedupe(ids), (id) => {
+          const own = Arr.filter(log, (fact) => fact.id === id);
+          // The latest record naming a version, still ahead, that no later record overtakes.
+          return Option.toArray(
+            Arr.findLast(
+              own,
+              (fact, index) =>
+                Option.isSome(fact.version) &&
+                fact.at.getTime() > now.getTime() &&
+                !Arr.some(
+                  Arr.drop(own, index + 1),
+                  (later) => later.at.getTime() <= fact.at.getTime(),
+                ),
+            ),
+          );
+        }),
+      ),
   };
   const live: LiveView<LeafRow, InMemoryFollowing, never, never> = {
     get: (id) =>
@@ -3241,5 +3263,63 @@ export const makeInMemoryDelivery = <Kind extends string>(): InMemoryDelivery<Ki
         deliveries.push({ channel, event });
       }),
     deliveries: () => deliveries,
+  };
+};
+
+/**
+ * An in-memory {@link ExternalIdStore}, plus the hook a test reads it
+ * through. In memory only; not for production.
+ *
+ * @since 0.2.0
+ */
+export interface InMemoryExternalIdStore extends ExternalIdStore<never, never> {
+  /** Every stored link, in insertion order. */
+  readonly links: () => ReadonlyArray<ExternalIdLink>;
+}
+
+/**
+ * An in-memory {@link ExternalIdStore}: the seam's contract (README → Seams
+ * → `ExternalIdStore`) over a list of links. It enforces what the table's
+ * schema does, the two unique keys `(authority, externalId)` and
+ * `(authority, nodeId)`, and nothing the import is responsible for. In
+ * memory only; not for production.
+ *
+ * @since 0.2.0
+ */
+export const makeInMemoryExternalIdStore = (): InMemoryExternalIdStore => {
+  let links: ReadonlyArray<ExternalIdLink> = [];
+  const named = (authority: string, externalId: string) => (link: ExternalIdLink) =>
+    link.authority === authority && link.externalId === externalId;
+  return {
+    lookup: (authority, externalIds) =>
+      Effect.sync(() =>
+        HashMap.fromIterable(
+          Arr.flatMap(externalIds, (externalId) =>
+            Option.toArray(
+              Option.map(
+                Arr.findFirst(links, named(authority, externalId)),
+                (link) => [externalId, link] as const,
+              ),
+            ),
+          ),
+        ),
+      ),
+    link: (authority, externalId, nodeId) =>
+      Effect.sync(() => {
+        const byId = Arr.findFirst(links, named(authority, externalId));
+        if (Option.isSome(byId)) return byId.value.nodeId === nodeId ? "present" : "taken";
+        if (links.some((link) => link.authority === authority && link.nodeId === nodeId)) {
+          return "taken";
+        }
+        links = [...links, { authority, externalId, nodeId, baseline: Option.none() }];
+        return "linked";
+      }),
+    recordBaseline: (authority, externalId, baseline) =>
+      Effect.sync(() => {
+        links = Arr.map(links, (link) =>
+          named(authority, externalId)(link) ? { ...link, baseline: Option.some(baseline) } : link,
+        );
+      }),
+    links: () => links,
   };
 };

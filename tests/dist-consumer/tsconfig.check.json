@@ -20,7 +20,9 @@
       "@thomasfosterau/pulpit": ["../../packages/pulpit/dist/index.d.ts"],
       "@thomasfosterau/pulpit/*": ["../../packages/pulpit/dist/*.d.ts"],
       "@thomasfosterau/pulpit-wordpress": ["../../packages/pulpit-wordpress/dist/index.d.ts"],
-      "@thomasfosterau/pulpit-wordpress/*": ["../../packages/pulpit-wordpress/dist/*.d.ts"]
+      "@thomasfosterau/pulpit-wordpress/*": ["../../packages/pulpit-wordpress/dist/*.d.ts"],
+      "@thomasfosterau/pulpit-drizzle-pg": ["../../packages/pulpit-drizzle-pg/dist/index.d.ts"],
+      "@thomasfosterau/pulpit-drizzle-pg/*": ["../../packages/pulpit-drizzle-pg/dist/*.d.ts"]
     }
   },
   "include": ["src"]
