@@ -21,6 +21,7 @@ The module guide for [`@thomasfosterau/pulpit-drizzle-pg`](../packages/pulpit-dr
 - **Landed:** the `ReactionStore` ([`./reactions`](#reactions), pulpit#363), checked against the kernel's in-memory store on PostgreSQL.
 - **Landed:** the `SocialStore` ([`./social`](#social), pulpit#364), checked against the kernel's in-memory store on PostgreSQL, a block racing a follow in two transactions.
 - **Landed:** the `MembershipStore` and `GroupOwnerStore` ([`./memberships`](#memberships), pulpit#364), checked against the kernel's in-memory stores on PostgreSQL.
+- **Landed:** the erasure seams, `PurgeStore` and `AccountErasureStore` ([`./erasure`](#erasure), pulpit#361), checked against the kernel's in-memory stores on PostgreSQL, the purge as the whole chain or nothing and the redaction marker.
 - **Next:** the other stores that aren't tree-bound (reports, budgets, working copies, erasure, social and notification tables), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
 
 ## End to end
@@ -409,6 +410,33 @@ The kernel's `MembershipStore` and `GroupOwnerStore` ([seams.md → `MembershipS
   - **`reassignOwner(accountId, to, limit)`** is `UPDATE … SET owner = $to WHERE id IN (SELECT id … WHERE owner = $accountId ORDER BY id LIMIT $limit)`, counted (`PERF-DB-001`). It leaves memberships and invitations alone.
 
 The integration suite runs the same calls through these stores and the kernel's `makeInMemoryMembershipStore` and `makeInMemoryGroupOwners`. It checks every answer, every page and the `groupsOf` set agree, and that the stored active and pending rows match the fakes'. It also checks that deleting a group or an account cascades.
+
+## `./erasure`
+
+The kernel's erasure seams ([seams.md → `PurgeStore`](seams.md#purgestoree-r-erasure) and [`AccountErasureStore`](seams.md#accounterasurestoree-r-owner-records-and-the-redaction-marker), pulpit#361). Erasure is the only path that deletes a version row, a document or bytes (`VERSION-CHAIN-001/002`, `DOC-001`). The version rows go through the leaf's `VersionChain.purge`, one identity-row delete that cascades through the chain, and nothing else may call this module's deletes. Every call runs in the caller's transaction, so `definePurge`'s single `transact` makes the purge the whole chain or nothing.
+
+- **`makePurgeStore({ references, documents?, dependents?, CurrentTransaction })`** binds the `PurgeStore`.
+  - `references` is every version table whose rows may carry a hash: `{ table, id, documents?, blobs? }`, the hash columns `text` holding the hex `DocumentHash` or `ContentHash`.
+  - `documents` is every document table ([`./documents`](#documents)) an unreferenced hash is deleted from.
+  - `dependents` is every table of rows kept for a node that the identity row's `ON DELETE CASCADE` does not take, by its node-id column. Every store in this package cascades, so it is the application's own tables.
+  - **`eraseNode(id)`** reads the distinct hashes the node's rows carry in those columns, then deletes its `dependents` rows. The version and identity rows are `VersionChain.purge`'s, which `definePurge` calls next.
+  - **`deleteUnreferencedDocuments(hashes)`** is one `DELETE … WHERE hash IN (…) AND NOT EXISTS (…) RETURNING` per document table, the `NOT EXISTS` over every document column of every reference.
+  - **`unreferencedBlobs(hashes)`** is one read of the candidates no blob column still carries. It deletes nothing: `definePurge` deletes the bytes after the commit.
+  - An id that is no canonical UUID, or a string that is no hash, names nothing.
+- **`makeAccountErasureStore({ root, owners, CurrentTransaction })`** binds the `AccountErasureStore` to the tree's root tables and the owner table. It writes no version row: every redaction goes through the family's `VersionChain`.
+  - **`ownedNodes`** is `SELECT node_id … JOIN identity … WHERE owner_id = $1 AND type = $2 ORDER BY node_id LIMIT $3`.
+  - **`setOwner`** upserts the owner row, or deletes it for none.
+  - **`unredactedNodes`** is one grouped read over the root version table, restricted to the leaf's nodes whose head is no tombstone: `GROUP BY id HAVING MAX(version) FILTER (WHERE actor = $1 OR proposed_by = $1) > COALESCE(MAX(version) FILTER (WHERE actor IS NOT DISTINCT FROM $redactedAs AND proposed_by IS NULL), -1) ORDER BY id LIMIT $limit`. Over a tree with no `proposedBy` column it is the actor arms alone.
+
+Every `DELETE` the module issues, with its bound:
+
+| Method | Statement | Bound |
+| --- | --- | --- |
+| `PurgeStore.eraseNode(id)` | `DELETE FROM <dependent> WHERE <dependent.id> = $id::uuid`, once per declared dependent | one node's key (a canonical UUID; otherwise none runs) |
+| `PurgeStore.deleteUnreferencedDocuments(hashes)` | `DELETE FROM <documents> WHERE hash IN (decode($h, 'hex'), …) AND NOT EXISTS (SELECT 1 FROM <reference> WHERE <column> = encode(hash, 'hex')) [AND …] RETURNING encode(hash, 'hex')`, once per document table | the given hashes (`definePurge` passes the purged node's own), each only while no remaining row references it |
+| `AccountErasureStore.setOwner({ id, ownerId: none })` | `DELETE FROM node_owner WHERE node_id = $id` | one node's key |
+
+The integration suite runs the same purges through this store and the kernel's `makeInMemoryPurgeStore` over the same chains, and the same queries through `makeInMemoryAccountErasureStore`, and checks every answer agrees. Beyond the fakes, it checks that a failure after `VersionChain.purge` rolls back the owner row, every version and the documents. It also pins the redaction marker: a version by `redactedAs` with no `proposedBy` clears a node, one carrying a `proposedBy` does not, and a tombstoned head never needs redacting.
 
 ## `./search`
 

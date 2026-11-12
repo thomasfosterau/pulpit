@@ -41,6 +41,7 @@
     "./documents": "./src/documents.ts",
     "./edges": "./src/edges.ts",
     "./embeddings": "./src/embeddings.ts",
+    "./erasure": "./src/erasure.ts",
     "./external-ids": "./src/external-ids.ts",
     "./filter": "./src/filter.ts",
     "./leaf-store": "./src/leaf-store.ts",
@@ -74,6 +75,10 @@
       "./embeddings": {
         "types": "./dist/embeddings.d.ts",
         "default": "./dist/embeddings.js"
+      },
+      "./erasure": {
+        "types": "./dist/erasure.d.ts",
+        "default": "./dist/erasure.js"
       },
       "./external-ids": {
         "types": "./dist/external-ids.d.ts",

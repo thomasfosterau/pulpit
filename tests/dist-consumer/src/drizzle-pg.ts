@@ -78,6 +78,13 @@ import {
   makeSocialStore,
   type RelationshipTable,
 } from "@thomasfosterau/pulpit-drizzle-pg/social";
+import type { AccountErasureStore } from "@thomasfosterau/pulpit/erasure";
+import type { PurgeStore } from "@thomasfosterau/pulpit/purge";
+import {
+  makeAccountErasureStore,
+  makePurgeStore,
+  type ErasureRoot,
+} from "@thomasfosterau/pulpit-drizzle-pg/erasure";
 import type { CollectionStore } from "@thomasfosterau/pulpit/collections";
 import {
   makeCollectionStore,
@@ -150,6 +157,7 @@ export type _Root = Assert<
     | "Embeddings"
     | "ExternalIds"
     | "Social"
+    | "Erasure"
     | "Collections"
     | "Reactions"
     | "Memberships"
@@ -505,4 +513,24 @@ export type _GroupOwners = Assert<
     typeof groupOwners,
     GroupOwnership<EffectDrizzleQueryError, Key> & GroupOwnerStore<EffectDrizzleQueryError, Key>
   >
+>;
+
+// ── ./erasure ────────────────────────────────────────────────────────────
+
+const purgeStore = makePurgeStore({
+  references: [{ table: tables.root.version, id: tables.root.version.id }],
+  CurrentTransaction: database.CurrentTransaction,
+});
+const accountErasureStore = makeAccountErasureStore({
+  root: tables.root,
+  owners: makeNodeOwnerTable({ schema, identity: tables.root.identity }),
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _ErasureRoot = Assert<Satisfies<typeof tables.root, ErasureRoot>>;
+export type _PurgeStore = Assert<
+  Equals<typeof purgeStore, PurgeStore<EffectDrizzleQueryError, Key>>
+>;
+export type _AccountErasureStore = Assert<
+  Equals<typeof accountErasureStore, AccountErasureStore<EffectDrizzleQueryError, Key>>
 >;
