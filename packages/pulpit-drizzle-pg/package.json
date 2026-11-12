@@ -1,0 +1,80 @@
+{
+  "name": "@thomasfosterau/pulpit-drizzle-pg",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The tree-bound seams of @thomasfosterau/pulpit (the version-chain port, the leaf store) over the tables and views @thomasfosterau/effect-drizzle-ext derives from an application's tree, on PostgreSQL.",
+  "keywords": [
+    "cms",
+    "drizzle",
+    "drizzle-orm",
+    "effect",
+    "headless-cms",
+    "postgres",
+    "postgresql",
+    "typescript",
+    "versioning"
+  ],
+  "homepage": "https://github.com/thomasfosterau/pulpit/tree/trunk/packages/pulpit-drizzle-pg#readme",
+  "bugs": {
+    "url": "https://github.com/thomasfosterau/pulpit/issues"
+  },
+  "license": "MIT",
+  "author": "Thomas Foster <me@thomasfoster.au>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thomasfosterau/pulpit.git",
+    "directory": "packages/pulpit-drizzle-pg"
+  },
+  "files": [
+    "dist",
+    "src",
+    "!src/**/*.test.ts",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./version-chain": "./src/version-chain.ts"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./version-chain": {
+        "types": "./dist/version-chain.d.ts",
+        "default": "./dist/version-chain.js"
+      }
+    },
+    "access": "public"
+  },
+  "devDependencies": {
+    "@effect/docgen": "catalog:",
+    "@effect/language-service": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@effect/sql-pg": "catalog:",
+    "@thomasfosterau/effect-drizzle-ext": "catalog:",
+    "@thomasfosterau/effect-drizzle-ext-pg": "catalog:",
+    "@thomasfosterau/pulpit": "workspace:*",
+    "@types/node": "catalog:",
+    "@vitest/coverage-istanbul": "catalog:",
+    "drizzle-kit": "catalog:",
+    "drizzle-orm": "catalog:",
+    "effect": "catalog:",
+    "tsx": "catalog:"
+  },
+  "peerDependencies": {
+    "@thomasfosterau/effect-drizzle-ext": "catalog:peers",
+    "@thomasfosterau/effect-drizzle-ext-pg": "catalog:peers",
+    "@thomasfosterau/pulpit": "workspace:^",
+    "drizzle-orm": "catalog:peers",
+    "effect": "catalog:peers"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}

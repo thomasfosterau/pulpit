@@ -136,9 +136,23 @@ export default defineConfig({
       // ("entrypoint/test harness"): its `run` helper is where each case's
       // Effect meets the Promise vitest awaits.
       {
-        files: ["**/tests/**/*.test.ts"],
+        files: ["**/tests/**/*.test.ts", "**/tests/integration/global-setup.ts"],
         rules: {
           "effect/effect-run-in-body": "off",
+        },
+      },
+      // pulpit-drizzle-pg's integration global setup is vitest's own entry
+      // point, before any Effect runtime exists: `-pg/testing`'s
+      // `provisionTestDatabase` takes `process.env` itself (its PG* and
+      // DATABASE_URL_TEST resolution), and the setup hands the provisioned
+      // URL to the suites the only way vitest offers, through `process.env`.
+      // Its whole job is the PostgreSQL driver and the Node platform, both of
+      // which the pinned Effect marks unstable.
+      {
+        files: ["packages/pulpit-drizzle-pg/tests/integration/global-setup.ts"],
+        rules: {
+          "effect/avoid-process-env": "off",
+          "effecttsgo/unstable-api-usage": "off",
         },
       },
       // The same boundary, seen by `@effect/tsgo`'s rules (raised from the
@@ -228,6 +242,7 @@ export default defineConfig({
         dependsOn: [
           "@thomasfosterau/pulpit#check",
           "@thomasfosterau/pulpit-wordpress#check",
+          "@thomasfosterau/pulpit-drizzle-pg#check",
           "@pulpit/dist-consumer#check",
         ],
         cache: false,

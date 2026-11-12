@@ -39,6 +39,12 @@
     "packages/pulpit-wordpress/src/testing.ts",
     "packages/pulpit-wordpress/tests/**/*.test.ts",
     "packages/pulpit-wordpress/tests/**/*.types.ts",
+    "packages/pulpit-drizzle-pg/src/index.ts",
+    "packages/pulpit-drizzle-pg/src/version-chain.ts",
+    "packages/pulpit-drizzle-pg/tests/**/*.test.ts",
+    "packages/pulpit-drizzle-pg/tests/**/*.types.ts",
+    "packages/pulpit-drizzle-pg/tests/integration/global-setup.ts",
+    "packages/pulpit-drizzle-pg/vitest.integration.config.ts",
     "tests/dist-consumer/src/*.ts",
     "**/vite.config.ts"
   ],
@@ -46,7 +52,8 @@
     "**/dist/**",
     "**/coverage/**",
     "packages/pulpit/docs/**",
-    "packages/pulpit-wordpress/docs/**"
+    "packages/pulpit-wordpress/docs/**",
+    "packages/pulpit-drizzle-pg/docs/**"
   ],
   "ignoreDependencies": [
     "@types/node",
@@ -74,7 +81,8 @@
     // undeclared import of either package has no `node_modules` link (pnpm
     // hoists no workspace package to the root), so tsc fails with TS2307.
     "@thomasfosterau/pulpit",
-    "@thomasfosterau/pulpit-wordpress"
+    "@thomasfosterau/pulpit-wordpress",
+    "@thomasfosterau/pulpit-drizzle-pg"
   ],
   "rulePacks": ["fallow-rules.json"],
   "rules": {
@@ -107,6 +115,10 @@
         "patterns": ["packages/pulpit-wordpress/**"]
       },
       {
+        "name": "pulpit-drizzle-pg",
+        "patterns": ["packages/pulpit-drizzle-pg/**"]
+      },
+      {
         "name": "dist-consumer",
         "patterns": ["tests/dist-consumer/**"]
       }
@@ -125,8 +137,12 @@
         "allow": ["pulpit"]
       },
       {
+        "from": "pulpit-drizzle-pg",
+        "allow": ["pulpit"]
+      },
+      {
         "from": "dist-consumer",
-        "allow": ["pulpit", "pulpit-wordpress"]
+        "allow": ["pulpit", "pulpit-wordpress", "pulpit-drizzle-pg"]
       }
     ]
   },

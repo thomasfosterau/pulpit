@@ -1,0 +1,31 @@
+# packages/pulpit-drizzle-pg — `@thomasfosterau/pulpit-drizzle-pg`
+
+Agent guidance for the Drizzle / PostgreSQL package (`CLAUDE.md` here imports this file). The repository-wide guidance is the root [AGENTS.md](../../AGENTS.md).
+
+The kernel's tree-bound seams over the tables and views `@thomasfosterau/effect-drizzle-ext` derives from an application's `defineTree`, on PostgreSQL through `@thomasfosterau/effect-drizzle-ext-pg`: the third package in this repo (owner decision, design session 2026-11-04, effect-drizzle-ext#112). It exports the `VersionChain` port over `-pg/chain` (`./version-chain`, pulpit#247); `src/internal/` holds the per-leaf mapping, off docgen. The remaining seams of pulpit#247 (`LeafStore`, `PublicationStore` / `LiveView`, the localised `LeafStore`, `SearchBranch`) land as their own slices. It is `"private": true` until the owner sets up its publishing ([PUBLISHING.md](../../PUBLISHING.md)). The spec, and the owner's decisions on it, are on pulpit#247; read them before adding code.
+
+## Boundary
+
+- **Import only `effect`, `@thomasfosterau/pulpit`, `@thomasfosterau/effect-drizzle-ext`, `@thomasfosterau/effect-drizzle-ext-pg` and `drizzle-orm`, all peers.** Never `@effect/sql-pg`, `pg` or `node:*` from `src/`: the driver is `-pg`'s, and the pool is the application's (`pgClientFromUrl` / `pgClientFromPool`). A test or the integration setup may import the dev-only `@effect/sql-pg`, `@effect/platform-node` and `drizzle-kit`.
+- **Import the kernel by its name and through its exports only** (`@thomasfosterau/pulpit/version-chain`, `@thomasfosterau/pulpit/testing`, …), never by a relative path into `packages/pulpit`, in `tests/` as in `src/`. Fallow's rule-pack rule `pulpit/adapter-imports-kernel-by-name` and the `.fallowrc.json` zones enforce it locally, exactly as for `pulpit-wordpress` (see its [AGENTS.md → Boundary](../pulpit-wordpress/AGENTS.md#boundary)); the zone `pulpit-drizzle-pg` may import only `pulpit`, so the kernel's `src/internal/` and `tests/` are out of reach.
+- **The kernel never imports this package**, and neither does `pulpit-wordpress`. The kernel stays `effect` + `effect-jsonapi` + `effect-auth`.
+- **No owner or application vocabulary in effect-drizzle-ext.** What is pulpit's (the owner row, `core.node_owner`, `proposedBy`'s meaning, the list filter) is spelled here, never asked of effect-drizzle-ext (effect-drizzle-ext#2, item 1). A capability effect-drizzle-ext lacks is an issue there, relayed through the owner; never vendor or patch it here.
+- **Delegate, never re-spell, the chain discipline.** Every `VersionChain` operation but `purge` is `-pg/chain`'s own; this package maps inputs and errors one to one and adds nothing between the head read and the append (the kernel's `VERSION-CHAIN-001/002/006` and its expected-version invariant hold because `-pg/chain` holds them, and `versionChainConformance` proves it against PostgreSQL).
+
+## Invariants
+
+- **The errors map one to one.** `-pg/chain`'s `NodeAlreadyExists`, `NodeNotFound`, `VersionNotFound`, `StaleVersion` and `VersionConflict` become the kernel's classes of the same name with the same fields; `BrokenChain` stays a defect. A mapping that merges, drops or renames one changes the wire's 404 / 409 / 412.
+- **`purge` is the only delete** (`VERSION-CHAIN-001/002`'s documented exception, pulpit#58): one identity-row delete scoped to the leaf's `type`, cascading through every level (effect-drizzle-ext#145). Never add a second path that deletes a version row.
+- **A contributor is never dropped.** An update carrying `proposedBy` over a tree whose root version table has no `proposedBy` column dies (`ProposedByUnrecorded`).
+
+## Tests
+
+- **`test:unit`** needs no database: it runs the kernel's `versionChainConformance` over `src/internal/leaf-chain.ts` and a fake `-pg/chain` (the kernel's in-memory chain re-spoken in `-pg/chain`'s inputs and errors), and the construction over the fixture tree (`tests/fixtures/tree.ts`).
+- **`test:integration`** (`vitest.integration.config.ts`, `tests/integration/*.test.ts`, which `test:unit` and `test:coverage` exclude) runs the same suite against PostgreSQL. It is not one of the gates. Its global setup provisions the database with `-pg/testing`'s `provisionTestDatabase`: `DATABASE_URL_TEST` (already migrated) wins; else the server the `PG*` variables name, on which it drops, recreates and builds this checkout's database from the fixture schema (drizzle-kit's `generateMigration`, so there are no committed migrations to drift); else a Testcontainers `postgres:17` (needs Docker and `@testcontainers/postgresql`, which is not installed here). Locally: `PGHOST=127.0.0.1 PGPORT=5432 PGUSER=postgres vp run --filter ./packages/pulpit-drizzle-pg test:integration`. CI runs it in its own job against a `postgres` service container.
+- Each integration case starts from truncated tables, and each operation commits its own transaction, so the suite's concurrent-writers case races two real transactions. The harness faults are real rows: `dropState` deletes the leaf level's version row, and `raceNextAppend` arms the setup's `race` trigger, which raises the unique violation a concurrent writer would, under the real constraint name.
+
+## In-repo wiring
+
+- It depends on the kernel as `workspace:*` (a devDependency) and peers on it as `workspace:^`, as `pulpit-wordpress` does (see its AGENTS.md → In-repo wiring for what a kernel minor does to that range).
+- Its tasks are the kernel's, from the root `vite.package.ts` (`packageConfig(dir, { integration: true })` adds `test:integration`). Its `check` is in the root `check` task, and `tests/dist-consumer/src/drizzle-pg.ts` type-checks its emitted declarations.
+- `vp run -r docgen` runs here too. An `@example` imports the package by its name and must run without a database: build the chains, never run them.
