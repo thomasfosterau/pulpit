@@ -210,7 +210,7 @@ describe("defineReactions", () => {
     const id = await post("public");
     await run(as(Option.some(member), reactions.react(id, "like")));
     await run(as(Option.some(otherMember), reactions.react(id, "like")));
-    expect(await run(store.eraseAccount(member.id))).toBe(1);
+    expect(await run(store.eraseAccount(member.id, 10))).toBe(1);
     expect(store.rows().map((row) => row.accountId)).toEqual([otherMember.id]);
   });
 });

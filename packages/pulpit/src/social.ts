@@ -163,8 +163,12 @@ export interface SocialStore<Following, E, R> {
   readonly followingOf: (follower: string) => Following;
   /** The accounts `viewer` muted or blocked, as the list filter's set (a subquery). */
   readonly silencedBy: (viewer: string) => Following;
-  /** Delete every relationship from or to the account (account erasure, pulpit#207); how many went. */
-  readonly eraseAccount: (accountId: string) => Effect.Effect<number, E, R>;
+  /**
+   * Delete at most `limit` of the relationships from or to the account
+   * (account erasure, pulpit#207, in bounded batches: `PERF-DB-001`); how
+   * many went. `./erasure` calls it again until it deletes fewer than `limit`.
+   */
+  readonly eraseAccount: (accountId: string, limit: number) => Effect.Effect<number, E, R>;
 }
 
 /**

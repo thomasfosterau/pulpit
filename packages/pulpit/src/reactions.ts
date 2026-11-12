@@ -159,8 +159,12 @@ export interface ReactionStore<E, R> {
     readonly limit: number;
     readonly offset: number;
   }) => Effect.Effect<ReadonlyArray<ReactionRow>, E, R>;
-  /** Delete every reaction the account made (account erasure, pulpit#207); how many went. */
-  readonly eraseAccount: (accountId: string) => Effect.Effect<number, E, R>;
+  /**
+   * Delete at most `limit` of the reactions the account made (account
+   * erasure, pulpit#207, in bounded batches: `PERF-DB-001`); how many went.
+   * `./erasure` calls it again until it deletes fewer than `limit`.
+   */
+  readonly eraseAccount: (accountId: string, limit: number) => Effect.Effect<number, E, R>;
 }
 
 // ── The operations ────────────────────────────────────────────────────

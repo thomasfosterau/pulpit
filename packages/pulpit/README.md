@@ -50,10 +50,11 @@ Every module is a namespace on the root export (`import { Content, Registry } fr
 | `./blobs` | File and media leaves: the `BlobStore` seam keyed by content hash, the file field spread, the commit-ordered byte write (`defineFileWrites`, with its `bytesPending` marker) and the usage index's edge ends. |
 | **Erasure** |  |
 | `./purge` | Erasure (`definePurge` over a `PurgeStore` seam): the one destructive path, which hard-deletes a node's chain and the rows kept for it, then the documents and bytes no other version references. |
+| `./erasure` | Account erasure (`defineAccountErasure` over an `AccountErasureStore` seam): a deleted member's nodes purged, reassigned to a tombstone account or anonymised per family, and every row naming them erased, in bounded, resumable batches. |
 | **Discovery and search** |  |
 | `./search` | Hybrid search: reciprocal rank fusion (`fuseRankings`), a reranker seam, `hybridSearch` over `SearchBranch` seams that each apply the leaf's read scope, and the embedding pipeline (`enqueueEmbeddings`, `embedPending`, `sweepEmbeddings`) over `EmbeddingStore` and `Embedder` seams. |
 | **Testing** |  |
-| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy, purge, embedding, reaction, collection, social and membership stores, the budget counter and write counts, a versioned KV, an endpoint view, a follower seam, a search branch and its scope check), for tests only. Not on the root export. |
+| `./testing` | In-memory fakes of the seams (the chain, leaf, document, edge, proposal, blob, path, report, publication, working-copy, purge, account-erasure, embedding, reaction, collection, social and membership stores, the budget counter and write counts, a versioned KV, an endpoint view, a follower seam, a search branch and its scope check), for tests only. Not on the root export. |
 
 **Discovery and search** is also `./subtype`'s searchable projection, read scope and hit hydration (see [Search](#subtype) under `./subtype`), which `./search` builds on. **Localisation** is the version chain's locale level (`./version-chain`, `./subtype`'s `getLocalised` and `./filter`'s `locale` arm), not a module of its own.
 
@@ -908,6 +909,63 @@ const posts = definePurge({
 | `PurgeStore`, `ErasedReferences` | The erasure seam (see [Seams](#seams)) and the hashes an erased node referenced. |
 | `PurgeReport` | What a purge did: the documents and bytes deleted, and the bytes left behind. |
 
+## `./erasure`
+
+Account erasure (pulpit#207). `./purge` erases one node; this erases one account: when a member deletes their account, everything they own or wrote is purged, reassigned or anonymised, and every row that names them goes.
+
+```ts
+import { defineAccountErasure, ErasurePresets } from "@thomasfosterau/pulpit/erasure";
+
+const erasure = defineAccountErasure({
+  viewer,
+  canErase: (actor, accountId) => actor.role === "admin" || actor.id === accountId,
+  tombstoneAccountId: DELETED_ACCOUNT, // the account reassigned rows name
+  transact,
+  store: accountErasureStore, // owner records, and the nodes still to redact (see Seams)
+  purge: purgeStore, // the `./purge` seam, for the `purge` families
+  blobs: r2, // optional, as for `./purge`
+  families: [
+    { type: "posts", disposition: ErasurePresets.ownedLeaf, chain: postChain, cache: postCache },
+    { type: "comments", disposition: ErasurePresets.comments, chain: commentChain },
+    {
+      type: "taxa",
+      disposition: ErasurePresets.referenceLeaf,
+      chain: taxonChain,
+      accountColumns: ["creditedTo"], // state columns holding an account id, if any
+    },
+  ],
+  proposals, // each kernel store the application keeps, all optional
+  reports,
+  reactions,
+  social,
+  workingCopies,
+  memberships, // `./audience`
+  relations: [{ name: "notifications", erase: eraseNotifications }], // the application's own
+});
+// erasure.erase(accountId, { maxBatches }) → { complete, batches, changed, purged }
+```
+
+- **A disposition per family** (owner decisions on pulpit#207, named as `ErasurePresets`):
+  - `purge`, the default for owned leaves: each node the account owns goes through `./purge`, whole chain, documents and bytes.
+  - `reassign`, the default for reference contributions: owner records name the tombstone account instead, and each node the account wrote gets a redacting version attributed to the tombstone account.
+  - `anonymise`, the default for comments: the content stays and the owner record is removed, so the row is no one's (an ownerless owned row reads only when public, pulpit#85), and each node the account wrote gets a redacting version with no actor. A reply keeps the thread it answers.
+- **A redacting version, never a rewrite** (owner decision on pulpit#207, 2026-11-11). The chain stays strictly append-only (SECURITY.md → `VERSION-CHAIN-001/002`): no version row is rewritten. Each node with a version the account wrote, its own or someone else's, or that an accepted proposal of theirs produced (`proposedBy`), gets one new version appended through the family's `VersionChain` port: a plain `update` pinned to the head it read (`expectedVersion`), carrying the head's state, attributed as the disposition says (the tombstone account for `reassign`, no one for `anonymise` and for a `purge` family's other members' nodes) and with no `proposedBy`. A state column the family declares in `accountColumns` is set to the tombstone account (`reassign`) or `null` in that version where it names the account; erasure knows no other field. **Earlier versions keep their original attribution by design**: the current version no longer names the account, and the history of who wrote what is not rewritten. `./purge` is the way to remove history, so a family whose history must go is a `purge` family.
+  - The append bypasses `defineVersionChain`'s hooks and the leaf's lifecycle hooks: it is not an edit.
+  - A node whose head is a tombstone gets no redacting version, since no port operation appends over a tombstone without resurrecting it (`VERSION-CHAIN-006`).
+  - **The marker** that keeps it to one: a node needs a redacting version when a version names the account (actor or `proposedBy`) and no later version is attributed the way the redacting one would be (the disposition's actor, no `proposedBy`); `AccountErasureStore.unredactedNodes` reads that off the version rows. A later write by another account keeps the node redacted; only a later version by the account itself makes it match again.
+  - The node is evicted from its family's `cache` at the redacting version (`CACHE-AUTH-005`), and a node whose owner record changes, past its head. A redacting append that loses a race fails `StaleVersion` or `VersionConflict`; its batch rolls back and a re-run resumes.
+- **The kernel's stores:** pending, rejected and withdrawn proposals are deleted, and accepted ones keep their row under the tombstone account; reports filed are deleted, and a resolution names the tombstone; reactions, follows, mutes, blocks, group memberships (`./audience`) and working copies are deleted. Add the application's own (memberships, notifications, …) as `relations`.
+- **Bounded, resumable, idempotent.** Each step reads or writes at most `batchSize` rows or nodes (default 100, capped at `MAX_PAGE_LIMIT`, `PERF-DB-001`) in its own `transact`, and repeats until a batch changes fewer. Written rows stop matching, so a run cut short by `maxBatches` (it counts the batches that change rows) or a crash resumes on the next run, and a run over an erased account changes nothing and appends no version (`changed: {}`).
+- **The gate:** `canErase(actor, accountId)` is checked before anything is read (`Unauthorized` / `Forbidden`), and erasing the tombstone account itself fails `TombstoneErasure`.
+- **The application deletes the account row itself** once a run answers `complete: true`; nothing the kernel stores names it then, save the earlier versions' attribution, kept by design (so a version table's actor column must not hold a foreign key that blocks the delete, or must point at an account row kept for it).
+
+| Export | What it is |
+| --- | --- |
+| `defineAccountErasure(definition)`, `AccountErasureDefinition`, `AccountErasureOps` | The operation (`erase`) and what it binds. |
+| `Disposition`, `ErasurePresets`, `ErasureFamily` | A family's declaration (its chain, cache and `accountColumns`), and the owner's defaults. |
+| `AccountErasureStore`, `AccountRelation` | The owner-record seam, with the redaction marker's read (see [Seams](#seams)), and an application relation. |
+| `ErasureSummary`, `TombstoneErasure`, `DEFAULT_ERASURE_BATCH` | What a run did, the tombstone refusal, the default batch. |
+
 ## `./search`
 
 Hybrid search (pulpit#204): the parts of the apps' search pipeline that are not SQL. The ranked queries stay the application's, as [`SearchBranch`](#searchbranchfollowing-e-r-and-embeddingstoree-r-search-and-embeddings) seams; pulpit fuses them, lets a reranker reorder the result, and runs the embedding pipeline over seams.
@@ -1243,6 +1301,7 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 | --- | --- | --- |
 | `makeInMemoryVersionChain(type)`, `InMemoryVersionChain` | [`VersionChain`](#versionchaine-r-the-version-chain-port) for one leaf, holding every chain invariant over an append log with the `(id, version)` key (`VersionConflict`), minting sequential UUID-shaped ids. | `rows()` (every appended row), `dropState(id, version)` (a partial chain), `raceNextAppend(id)` (a concurrent writer). |
 | `versionChainConformance(harness, runner)`, `ConformanceHarness`, `ConformanceChain`, `ConformanceRunner` | The `VersionChain` conformance suite: every invariant, registered through the `describe` / `it` / `expect` it is given (no test-runner dependency), against whatever `harness.make` returns. The kernel runs it against `makeInMemoryVersionChain`; pulpit-drizzle-pg runs it against its Drizzle chain. | `dropState` / `raceNextAppend` on a `ConformanceChain`, optional: the cases that need them are skipped without. |
+| `makeInMemoryAccountErasureStore(leaves)`, `InMemoryErasureLeaf` | [`AccountErasureStore`](#accounterasurestoree-r-owner-records-and-the-redaction-marker) over in-memory leaves: their owner stamps, and their chains' rows read for the redaction marker. | Read through the leaves' `owners()` and the chains' `rows()`. |
 | `makeInMemoryLeafStore(chain, { columns, now?, localised? })`, `InMemoryLeafStore`, `InMemoryLeafStoreOptions` | [`LeafStore`](#leafstorerow-following-e-r-the-current-version-view), as the current-version view over an in-memory chain plus the owner stamps; `list` evaluates the `ListFilter` in memory and sorts by the list order contract (`NULLS LAST`, code-point strings, `id` last). With `localised: true`, the view gains `locale` and `list` reads one row per `(id, locale)`. `distinct` reads the same rows `list` does. | `owners()` (the stamps), `dropOwner(id)` (an ownerless owned node). |
 | `makeInMemoryDocumentStore()`, `InMemoryDocumentStore` | [`DocumentStore`](#documentstoredocument-e-r-the-content-addressed-document-store), hashing exactly as the hash contract says (SHA-256 over `./documents`' `canonicalText`, pinned to hashes taken from Postgres). | `stored()` (every document by hash), `writes()` (how many `put`s inserted), `remove(hashes)` (the purge fake's delete). |
 | `makeInMemoryEdgeStore({ ends, uniqueKey, now? })`, `InMemoryEdgeStore`, `InMemoryEdgeStoreOptions` | [`EdgeStore`](#edgestorerow-following-e-r-the-edge-table), with the unique key (`NULLS NOT DISTINCT`), the INNER JOIN of each end's view, and the window-column total. | `rows()` (every edge, hidden ones included), `raceNextInsert(winner)` (a concurrent writer). |
@@ -1391,7 +1450,7 @@ Method contract:
 
 Filled by the application over its own proposal table (gardeneria's `participation.proposal`); no library is expected to provide one. Expected schema: `id` (a UUID primary key), `target_node_id` (a foreign key to `core.node`), `author_id`, `patch` (`jsonb`, as submitted), `locales` (`jsonb`, nullable: a localised leaf's per-locale patch as submitted, pulpit#184), `rationale` (nullable), `base_version` (`bigint`), `state` (`pending | accepted | rejected | withdrawn`), `submitted_at` (`timestamptz NOT NULL DEFAULT now()`), and the nullable `decided_at`, `decided_by`, `decision_note` and `applied_version` (with `(target_node_id, applied_version)` a foreign key to the root version table). Index `author_id`, `target_node_id`, and the pending rows.
 
-Method contract: `insert` inserts the row; `get(id)` is `id = $id LIMIT 1`, joined to `core.node` for `targetType`, with the target's head version as a correlated scalar subquery (`SELECT MAX(version) … WHERE id = target_node_id`: one indexed lookup per row, never a per-render aggregate over every node's versions); `lock(id)` is the row alone, `FOR UPDATE`, so two decisions on one proposal serialise; `close(id, decision)` updates the pending row's status, decider, timestamp, note and applied version; `list` renders `where` over the columns `authorId`, `targetId`, `targetType`, `status` and `targetOwnerId` (the target's owner, `core.node_owner`, `NULL` for none; a `LEFT JOIN`), orders by `submitted_at DESC, id DESC`, applies `LIMIT` / `OFFSET` and returns the unpaged total as a window column, each row with its target's head version as `get` reads it. `E` and `R` are as for the chain store, and the store never opens a transaction itself.
+Method contract: `insert` inserts the row; `get(id)` is `id = $id LIMIT 1`, joined to `core.node` for `targetType`, with the target's head version as a correlated scalar subquery (`SELECT MAX(version) … WHERE id = target_node_id`: one indexed lookup per row, never a per-render aggregate over every node's versions); `lock(id)` is the row alone, `FOR UPDATE`, so two decisions on one proposal serialise; `close(id, decision)` updates the pending row's status, decider, timestamp, note and applied version; `list` renders `where` over the columns `authorId`, `targetId`, `targetType`, `status` and `targetOwnerId` (the target's owner, `core.node_owner`, `NULL` for none; a `LEFT JOIN`), orders by `submitted_at DESC, id DESC`, applies `LIMIT` / `OFFSET` and returns the unpaged total as a window column, each row with its target's head version as `get` reads it; `eraseAuthor({ accountId, replacement, limit })` (account erasure, pulpit#207) touches at most `limit` rows: it deletes the account's non-`accepted` rows, sets `author_id` to `replacement` on its `accepted` ones and `decided_by` to `replacement` where the account decided, and returns how many rows it changed (a CTE over `… WHERE author_id = $1 OR decided_by = $1 ORDER BY id LIMIT $limit`). `E` and `R` are as for the chain store, and the store never opens a transaction itself.
 
 ### `BlobStore<E, R>`: the byte store
 
@@ -1416,7 +1475,7 @@ Filled by the application, over a path table per routable namespace (gardeneria'
 
 Filled by the application over its own report table (gardeneria's `user_reports`); no library is expected to provide one. Expected schema: `id` (a UUID primary key), `target_node_id` (a foreign key to `core.node`), `reporter_id`, `reason`, `details` (nullable), `status` (`open | resolved | dismissed`), `filed_at` (`timestamptz NOT NULL DEFAULT now()`), and the nullable `resolved_at`, `resolved_by` and `resolution_note`. Index `reporter_id`, `target_node_id`, and the open rows.
 
-Method contract: `insert` inserts the row; `get(id)` is `id = $id LIMIT 1`, joined to `core.node` for `targetType`; `lock(id)` is the same row `FOR UPDATE`, so two resolutions serialise; `close(id, resolution)` updates the open row's status, resolver, timestamp and note; `list` renders `where` over `reporterId`, `targetId`, `targetType` and `status`, orders by `filed_at DESC, id DESC`, applies `LIMIT` / `OFFSET` and returns the unpaged total as a window column. `E` and `R` are as for the chain store, and the store never opens a transaction itself.
+Method contract: `insert` inserts the row; `get(id)` is `id = $id LIMIT 1`, joined to `core.node` for `targetType`; `lock(id)` is the same row `FOR UPDATE`, so two resolutions serialise; `close(id, resolution)` updates the open row's status, resolver, timestamp and note; `list` renders `where` over `reporterId`, `targetId`, `targetType` and `status`, orders by `filed_at DESC, id DESC`, applies `LIMIT` / `OFFSET` and returns the unpaged total as a window column; `eraseReporter({ accountId, replacement, limit })` (account erasure, pulpit#207) deletes at most `limit` of the reports the account filed and sets `resolved_by` to `replacement` where it resolved one, returning how many rows it changed. `E` and `R` are as for the chain store, and the store never opens a transaction itself.
 
 ### `BudgetCounter<E, R>` and `WriteCountStore<E, R>`: the write budget counter
 
@@ -1467,7 +1526,8 @@ Filled by the application: a table keyed `(node_id, user_id)` holding the patch 
 
 - `put` upserts the copy;
 - `get` reads it;
-- `discard` deletes it, idempotently.
+- `discard` deletes it, idempotently;
+- `eraseAccount(userId, limit)` deletes at most `limit` of the account's copies and returns how many (account erasure, pulpit#207).
 
 It is the one overwritable store in the kernel's seams, and nothing in it is ever a version.
 
@@ -1481,6 +1541,14 @@ Filled by the application, over the same tables as its other stores. Like them i
 
 Erasure is the only path that deletes a version row, a document or bytes (`VERSION-CHAIN-001/002`, `DOC-001`): nothing else may call these methods' SQL.
 
+### `AccountErasureStore<E, R>`: owner records and the redaction marker
+
+Filled by the application, over its owner table (`core.node_owner`) and its version tables, which it only reads (pulpit#207): every version erasure writes goes through the family's `VersionChain`. Like every store it applies no policy and never opens a transaction; `defineAccountErasure` runs each call inside one `transact`.
+
+- `ownedNodes({ accountId, type, limit })` is the ids of leaf `type`'s nodes whose owner row names the account: `SELECT node_id … JOIN core.node USING (id) WHERE owner_id = $1 AND type = $2 ORDER BY node_id LIMIT $3`.
+- `setOwner({ type, id, ownerId })` replaces the node's owner row with `ownerId`, or deletes it for none. `core.node_owner.owner_id` stays `ON DELETE RESTRICT`: this is the explicit retract or reassign it asks for.
+- `unredactedNodes({ accountId, type, redactedAs, limit })` is at most `limit` ids, by id, of leaf `type`'s nodes still to redact: the head is not a tombstone, some version names the account as its actor or `proposedBy`, and no later version has actor `redactedAs` (`IS NOT DISTINCT FROM`, so none matches `NULL`) and no `proposedBy`. One grouped read over the root version table: `… GROUP BY id HAVING MAX(version) FILTER (WHERE actor_id = $1 OR proposed_by = $1) > COALESCE(MAX(version) FILTER (WHERE actor_id IS NOT DISTINCT FROM $redactedAs AND proposed_by IS NULL), -1)`, restricted to live heads, `ORDER BY id LIMIT $limit`, served by an index on `(actor_id)` and one on `(proposed_by)`. It writes nothing.
+
 ### `SearchBranch<Following, E, R>` and `EmbeddingStore<E, R>`: search and embeddings
 
 Filled by the application over its own search views and embedding tables (pulpit#204); no library is expected to provide one.
@@ -1490,7 +1558,7 @@ Filled by the application over its own search views and embedding tables (pulpit
 
 ### `ReactionStore<E, R>`: the reaction table
 
-Filled by the application over its own reaction table (gardeneria's `social.reactions`): `node_id` (a foreign key to `core.node`, `ON DELETE CASCADE`), `account_id` (`ON DELETE CASCADE`), `kind` (`text`), `reacted_at` (`timestamptz NOT NULL DEFAULT now()`), with primary key `(node_id, account_id)` and an index on `(account_id, reacted_at DESC)`. `upsert` is `INSERT … ON CONFLICT (node_id, account_id) DO UPDATE SET kind = EXCLUDED.kind, reacted_at = EXCLUDED.reacted_at` returning the replaced kind (read in the same statement through a CTE); `delete` is `DELETE … RETURNING`; `tally(nodeIds)` is one `SELECT node_id, kind, count(*) … WHERE node_id = ANY($ids) GROUP BY node_id, kind`; `byAccount` is `WHERE account_id = $id ORDER BY reacted_at DESC, node_id LIMIT … OFFSET …`; `eraseAccount` is `DELETE … WHERE account_id = $id`. It applies no policy and never opens a transaction.
+Filled by the application over its own reaction table (gardeneria's `social.reactions`): `node_id` (a foreign key to `core.node`, `ON DELETE CASCADE`), `account_id` (`ON DELETE CASCADE`), `kind` (`text`), `reacted_at` (`timestamptz NOT NULL DEFAULT now()`), with primary key `(node_id, account_id)` and an index on `(account_id, reacted_at DESC)`. `upsert` is `INSERT … ON CONFLICT (node_id, account_id) DO UPDATE SET kind = EXCLUDED.kind, reacted_at = EXCLUDED.reacted_at` returning the replaced kind (read in the same statement through a CTE); `delete` is `DELETE … RETURNING`; `tally(nodeIds)` is one `SELECT node_id, kind, count(*) … WHERE node_id = ANY($ids) GROUP BY node_id, kind`; `byAccount` is `WHERE account_id = $id ORDER BY reacted_at DESC, node_id LIMIT … OFFSET …`; `eraseAccount(accountId, limit)` deletes at most `limit` of the account's rows (`DELETE … WHERE (node_id, account_id) IN (SELECT … WHERE account_id = $id LIMIT $limit)`) and returns how many. It applies no policy and never opens a transaction.
 
 ### `VersionedKv<E, R>`: the cache's key-value store
 
@@ -1516,7 +1584,7 @@ It applies no policy and never opens a transaction. A versioned family's parent 
 
 ### `SocialStore<Following, E, R>`: the relationship table
 
-Filled by the application over its own relationship table (gardeneria's `social.follows`, widened by a `kind`): `kind` (`follow | mute | block`), `from_id` and `to_id` (account foreign keys, `ON DELETE CASCADE`), `at` (`timestamptz NOT NULL DEFAULT now()`), primary key `(kind, from_id, to_id)`, with indexes on `(kind, to_id, at DESC)` and `(kind, from_id, at DESC)`. `add` (a mute) is `INSERT … ON CONFLICT DO NOTHING RETURNING`; `addFollow` and `addBlock` first take one lock on the unordered account pair in the caller's transaction (`pg_advisory_xact_lock` on it), so the two are atomic against each other: `addFollow` is `INSERT … SELECT … WHERE NOT EXISTS (a block either way) ON CONFLICT DO NOTHING`, answering `blocked` when a block stands, and `addBlock` inserts the block and deletes both follows; `remove` is `DELETE … RETURNING`; `has` is an `EXISTS`; `list` is one page by `from_id` or `to_id`, `ORDER BY at DESC`, then the other account's id, with the window total; `isFollowing` is the follower seam's `EXISTS` (a failure reads as `false`, failing closed); `followingOf(follower)` is the subquery `SELECT to_id … WHERE kind = 'follow' AND from_id = $follower`, and `silencedBy(viewer)` the same over `kind IN ('mute', 'block')`, both never materialised; `eraseAccount` deletes every row from or to the account. It applies no policy and never opens a transaction.
+Filled by the application over its own relationship table (gardeneria's `social.follows`, widened by a `kind`): `kind` (`follow | mute | block`), `from_id` and `to_id` (account foreign keys, `ON DELETE CASCADE`), `at` (`timestamptz NOT NULL DEFAULT now()`), primary key `(kind, from_id, to_id)`, with indexes on `(kind, to_id, at DESC)` and `(kind, from_id, at DESC)`. `add` (a mute) is `INSERT … ON CONFLICT DO NOTHING RETURNING`; `addFollow` and `addBlock` first take one lock on the unordered account pair in the caller's transaction (`pg_advisory_xact_lock` on it), so the two are atomic against each other: `addFollow` is `INSERT … SELECT … WHERE NOT EXISTS (a block either way) ON CONFLICT DO NOTHING`, answering `blocked` when a block stands, and `addBlock` inserts the block and deletes both follows; `remove` is `DELETE … RETURNING`; `has` is an `EXISTS`; `list` is one page by `from_id` or `to_id`, `ORDER BY at DESC`, then the other account's id, with the window total; `isFollowing` is the follower seam's `EXISTS` (a failure reads as `false`, failing closed); `followingOf(follower)` is the subquery `SELECT to_id … WHERE kind = 'follow' AND from_id = $follower`, and `silencedBy(viewer)` the same over `kind IN ('mute', 'block')`, both never materialised; `eraseAccount(accountId, limit)` deletes at most `limit` of the rows from or to the account and returns how many. It applies no policy and never opens a transaction.
 
 ### `MembershipStore<Following, E, R>`: the membership table
 

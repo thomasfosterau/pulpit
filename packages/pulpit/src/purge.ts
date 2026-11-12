@@ -48,11 +48,10 @@
  * @since 0.1.0
  */
 
-import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
-import { blobKey, type BlobStore, type ContentHash } from "./blobs.ts";
+import type { BlobStore, ContentHash } from "./blobs.ts";
+import { purgeNode } from "./internal/purge-node.ts";
 import type { DocumentHash } from "./documents.ts";
 import {
   Forbidden,
@@ -252,7 +251,7 @@ export interface PurgeDefinition<E, EB, R> {
  * @since 0.1.0
  */
 export const definePurge = <E, EB, R>(definition: PurgeDefinition<E, EB, R>): PurgeOps<E, R> => {
-  const { type, chain, store, transact } = definition;
+  const { type } = definition;
 
   /** The purge rung, checked before any row is read. */
   const gate = Effect.flatMap(
@@ -265,52 +264,10 @@ export const definePurge = <E, EB, R>(definition: PurgeDefinition<E, EB, R>): Pu
       }),
   );
 
-  /** The erasure, in the caller's transaction: what it deleted and which bytes it freed. */
-  const erase = (id: string) =>
-    Effect.gen(function* () {
-      const head = yield* chain.head(id);
-      if (Option.isNone(head)) return yield* new NodeNotFound({ type, id });
-      const erased = yield* store.eraseNode(id);
-      yield* chain.purge(id);
-      const documents = yield* store.deleteUnreferencedDocuments(Arr.dedupe(erased.documents));
-      const freed = yield* store.unreferencedBlobs(Arr.dedupe(erased.blobs));
-      return { head: head.value.version, documents, freed };
-    });
-
-  /** Delete one blob's bytes after the commit: whether they are gone. */
-  const deleteBytes = (hash: ContentHash) =>
-    definition.blobs === undefined
-      ? Effect.succeed(false)
-      : Effect.exit(definition.blobs.delete(blobKey(hash))).pipe(
-          Effect.tap((exit) =>
-            Exit.isFailure(exit)
-              ? Effect.logWarning(`${type}: bytes ${hash} left after purge`, exit.cause)
-              : Effect.void,
-          ),
-          Effect.map(Exit.isSuccess),
-        );
-
+  const eraseNode = purgeNode(definition);
   const purge = Effect.fn(`${type}.purge`)(function* (id: string) {
     yield* gate;
-    const erased = yield* transact(erase(id));
-    if (definition.cache !== undefined) yield* definition.cache.delete(id, erased.head + 1n);
-    const deleted = yield* Effect.forEach(
-      erased.freed,
-      (hash) => Effect.map(deleteBytes(hash), (gone) => [hash, gone] as const),
-      { concurrency: 1 },
-    );
-    const gone = (wanted: boolean) =>
-      Arr.map(
-        Arr.filter(deleted, ([, deletedNow]) => deletedNow === wanted),
-        ([hash]) => hash,
-      );
-    const report: PurgeReport = {
-      id,
-      documents: erased.documents,
-      blobs: gone(true),
-      bytesLeft: gone(false),
-    };
-    return report;
+    return yield* eraseNode(id);
   });
 
   return { type, purge };

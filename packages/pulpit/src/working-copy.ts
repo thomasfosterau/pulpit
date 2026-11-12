@@ -74,6 +74,11 @@ export interface WorkingCopyStore<E, R> {
   readonly get: (key: WorkingCopyKey) => Effect.Effect<Option.Option<WorkingCopy>, E, R>;
   /** Remove the copy; idempotent. */
   readonly discard: (key: WorkingCopyKey) => Effect.Effect<void, E, R>;
+  /**
+   * Delete at most `limit` of the account's copies, of any node (account
+   * erasure, pulpit#207, in bounded batches: `PERF-DB-001`); how many went.
+   */
+  readonly eraseAccount: (userId: string, limit: number) => Effect.Effect<number, E, R>;
 }
 
 /**

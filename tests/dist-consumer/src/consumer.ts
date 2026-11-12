@@ -21,6 +21,7 @@ import {
   Pages,
   Paths,
   Purge,
+  Erasure,
   Moderation,
   Search,
   Reactions,
@@ -213,6 +214,13 @@ import type { PublicationFact, PublicationOps, SubtypeOps } from "@thomasfostera
 import { defineWorkingCopy } from "@thomasfosterau/pulpit/working-copy";
 import { CommentDepthExceeded, defineComments } from "@thomasfosterau/pulpit/comments";
 import { definePurge, type PurgeOps, type PurgeReport } from "@thomasfosterau/pulpit/purge";
+import {
+  defineAccountErasure,
+  type AccountErasureOps,
+  type Disposition,
+  type ErasureSummary,
+  type TombstoneErasure,
+} from "@thomasfosterau/pulpit/erasure";
 import {
   embedPending,
   fuseRankings,
@@ -1351,6 +1359,23 @@ export type _PurgeOp = Assert<
   >
 >;
 export type _PurgeReportBytes = Assert<Equals<PurgeReport["bytesLeft"], ReadonlyArray<string>>>;
+
+// ── erasure (pulpit#207) ─────────────────────────────────────────────────
+
+export type _ErasureBarrel = Assert<
+  Equals<typeof Erasure.defineAccountErasure, typeof defineAccountErasure>
+>;
+export type _ErasureOp = Assert<
+  Equals<
+    ReturnType<AccountErasureOps<StoreFailure, Transaction>["erase"]>,
+    Effect.Effect<
+      ErasureSummary,
+      Unauthorized | Forbidden | TombstoneErasure | StaleVersion | VersionConflict | StoreFailure,
+      Transaction
+    >
+  >
+>;
+export type _Disposition = Assert<Equals<Disposition, "purge" | "reassign" | "anonymise">>;
 
 // ── search (pulpit#204) ──────────────────────────────────────────────────
 

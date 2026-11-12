@@ -118,6 +118,14 @@ export * as Comments from "./comments.ts";
 export * as Purge from "./purge.ts";
 
 /**
+ * Account erasure: when a member's account is deleted, its nodes are
+ * purged, reassigned to a tombstone account or anonymised per family, and
+ * every relationship row naming it goes, in bounded, resumable batches
+ * (`defineAccountErasure` over an `AccountErasureStore`).
+ */
+export * as Erasure from "./erasure.ts";
+
+/**
  * Hybrid search: reciprocal rank fusion over ranked branches, the reranker
  * and branch seams every branch's scope runs through, and the embedding
  * pipeline as seams (`fuseRankings`, `hybridSearch`, `embedPending`).
