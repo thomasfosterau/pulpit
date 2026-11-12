@@ -45,6 +45,7 @@
     "./leaf-store": "./src/leaf-store.ts",
     "./proposals": "./src/proposals.ts",
     "./publication": "./src/publication.ts",
+    "./reactions": "./src/reactions.ts",
     "./paths": "./src/paths.ts",
     "./search": "./src/search.ts",
     "./version-chain": "./src/version-chain.ts"
@@ -86,6 +87,10 @@
       "./publication": {
         "types": "./dist/publication.d.ts",
         "default": "./dist/publication.js"
+      },
+      "./reactions": {
+        "types": "./dist/reactions.d.ts",
+        "default": "./dist/reactions.js"
       },
       "./paths": {
         "types": "./dist/paths.d.ts",

@@ -17,6 +17,7 @@ The module guide for [`@thomasfosterau/pulpit-drizzle-pg`](../packages/pulpit-dr
 - **Landed:** the `EdgeStore` ([`./edges`](#edges), pulpit#356), checked against the kernel's in-memory store on PostgreSQL, `members` through a leaf store's list and `countAt`'s lock against a second transaction.
 - **Landed:** the `EmbeddingStore` ([`./embeddings`](#embeddings), pulpit#357), checked against the kernel's in-memory store on PostgreSQL with `double precision[]` vectors; pgvector's form is pinned by unit tests.
 - **Landed:** the `ExternalIdStore` ([`./external-ids`](#external-ids), pulpit#359), checked against the kernel's in-memory store on PostgreSQL.
+- **Landed:** the `ReactionStore` ([`./reactions`](#reactions), pulpit#363), checked against the kernel's in-memory store on PostgreSQL.
 - **Next:** the other stores that aren't tree-bound (reports, budgets, working copies, erasure, social and notification tables), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
 
 ## End to end
@@ -341,6 +342,20 @@ The kernel's `ExternalIdStore` ([seams.md → `ExternalIdStore`](seams.md), pulp
   - **`recordBaseline`** replaces the baseline, bound as its JSON text. A baseline holding a `Date` or a `bigint` (no JSON) is a defect.
 
 The integration suite checks every answer against the kernel's `makeInMemoryExternalIdStore` and checks that a node's purge cascades to its links.
+
+## `./reactions`
+
+The kernel's `ReactionStore` ([seams.md → `ReactionStore`](seams.md#reactionstoree-r-the-reaction-table), pulpit#363): one account's reaction to one node per row.
+
+- **`makeReactionTable({ schema, identity, accounts?, name? })`** (`reaction` by default) has the columns `node_id` (referencing the identity row, cascading), `account_id` (`text`), `kind` and `reacted_at` (`DEFAULT now()`). Its primary key is `(node_id, account_id)`, and it is indexed on `(account_id, reacted_at DESC)`.
+  - `accounts` is the application's account key, a `text` column. Given, `account_id` references it `ON DELETE CASCADE`, as the seam has it. Without it the column has no foreign key, as `author_id` and `owner_id` have none, and `eraseAccount` is how an erasure clears it.
+- **`makeReactionStore({ table, CurrentTransaction })`** binds the store, every call in the caller's transaction:
+  - **`upsert`** is one statement. A CTE reads the replaced kind `FOR UPDATE`, beside `INSERT … ON CONFLICT (node_id, account_id) DO UPDATE SET kind = EXCLUDED.kind, reacted_at = EXCLUDED.reacted_at`, and the statement answers that kind (none for a first reaction).
+  - **`delete`** is `DELETE … RETURNING`. **`tally(nodeIds)`** is one `SELECT node_id, kind, count(*) … GROUP BY node_id, kind`. **`byAccount`** is one page `ORDER BY reacted_at DESC, node_id`.
+  - **`eraseAccount(accountId, limit)`** deletes at most `limit` of the account's rows (`ORDER BY node_id`) and counts them (`PERF-DB-001`).
+  - A node id that is no canonical UUID names no node: `upsert` writes nothing and answers none, `delete` answers `false`, and `tally` leaves it out. A limit below one reads and deletes nothing.
+
+The integration suite runs the same calls through this store and the kernel's `makeInMemoryReactionStore` and checks every answer and the stored rows agree. It also checks the malformed-id handling, and that purging a node or deleting an account cascades.
 
 ## `./search`
 

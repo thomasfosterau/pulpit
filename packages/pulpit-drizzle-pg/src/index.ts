@@ -16,9 +16,10 @@
  * (`Search`, `./search`), the `ProposalStore` over a proposal table
  * (`Proposals`, `./proposals`), the `EdgeStore` over one table per edge
  * family (`Edges`, `./edges`), the `EmbeddingStore` over a document
- * family's queue and vectors (`Embeddings`, `./embeddings`), and the
+ * family's queue and vectors (`Embeddings`, `./embeddings`), the
  * `ExternalIdStore` over an external-identifier table (`ExternalIds`,
- * `./external-ids`).
+ * `./external-ids`), and the `ReactionStore` over a reaction table
+ * (`Reactions`, `./reactions`).
  *
  * @copyright Thomas Foster
  * @module pulpit-drizzle-pg
@@ -43,6 +44,9 @@ export * as Documents from "./documents.ts";
 
 /** The kernel's `ProposalStore`: suggested edits against a tree's nodes. */
 export * as Proposals from "./proposals.ts";
+
+/** The kernel's `ReactionStore`: one account's reaction to one node per row. */
+export * as Reactions from "./reactions.ts";
 
 /** The kernel's `EdgeStore`: one table per edge family, its ends joined to the tree's views. */
 export * as Edges from "./edges.ts";
