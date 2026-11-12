@@ -1,6 +1,6 @@
 # Claude Code
 
-Claude Code loads this file as the project's memory. It holds only what is specific to Claude Code sessions; the project's general guidance is imported at the end, from [AGENTS.md](../AGENTS.md) (agent conventions, pitfalls, the Verification gates, the work tracker), [CONTRIBUTING.md](../CONTRIBUTING.md) (setup, commands, branches, pull requests and changesets) and [README.md](../README.md) (what the repository is). Each package's own `CLAUDE.md` imports that package's `AGENTS.md` (its boundary, invariants and terms), which Claude Code loads when it reads a file there. There is no root `CLAUDE.md`: keep it that way, or the imports below load twice.
+Claude Code loads this file as the project's memory. It holds only what is specific to Claude Code sessions; the project's general guidance is imported at the end, from [AGENTS.md](../AGENTS.md) (agent conventions, pitfalls, the Verification gates, the work tracker), [CONTRIBUTING.md](../CONTRIBUTING.md) (setup, commands, branches, pull requests and changesets) [README.md](../README.md) (what the repository is) and [docs/README.md](../docs/README.md) (the docs index, the repository layout and the toolchain). Each package's own `CLAUDE.md` imports that package's `AGENTS.md` (its boundary, invariants and terms), which Claude Code loads when it reads a file there. There is no root `CLAUDE.md`: keep it that way, or the imports below load twice.
 
 ## Hooks (`.claude/settings.json`)
 
@@ -25,3 +25,5 @@ Claude Code loads this file as the project's memory. It holds only what is speci
 @../CONTRIBUTING.md
 
 @../README.md
+
+@../docs/README.md
