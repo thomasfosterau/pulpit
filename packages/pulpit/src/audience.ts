@@ -213,11 +213,13 @@ export interface MembershipStore<Following, E, R> {
    */
   readonly groupsOf: (accountId: string) => Following;
   /**
-   * Delete every row of the account (account erasure, pulpit#207): its
-   * memberships, its pending invitations, and the pending invitations it
-   * sent; how many rows went.
+   * Delete at most `limit` rows of the account (account erasure, pulpit#207,
+   * in bounded batches: `PERF-DB-001`, pulpit#274): its memberships, its
+   * pending invitations and the pending invitations it sent, all counted
+   * against the one `limit`; how many rows went. `./erasure` calls it again
+   * until it deletes fewer than `limit`.
    */
-  readonly eraseAccount: (accountId: string) => Effect.Effect<number, E, R>;
+  readonly eraseAccount: (accountId: string, limit: number) => Effect.Effect<number, E, R>;
   /**
    * Insert a pending invitation (pulpit#227); whether a row was written. Any
    * row already at the key, active or pending, makes it a no-op

@@ -285,7 +285,7 @@ export interface AccountErasureDefinition<E, EB, R> {
   readonly reactions?: Pick<ReactionStore<E, R>, "eraseAccount"> | undefined;
   readonly social?: Pick<SocialStore<unknown, E, R>, "eraseAccount"> | undefined;
   readonly workingCopies?: Pick<WorkingCopyStore<E, R>, "eraseAccount"> | undefined;
-  /** Group memberships (`./audience`): every membership of the account is deleted. */
+  /** Group memberships (`./audience`): every membership and pending invitation of the account, and every pending invitation it sent, is deleted in bounded batches. */
   readonly memberships?: Pick<MembershipStore<unknown, E, R>, "eraseAccount"> | undefined;
   /** The application's own relationships to erase. */
   readonly relations?: ReadonlyArray<AccountRelation<E, R>> | undefined;
@@ -641,11 +641,9 @@ export const defineAccountErasure = <E, EB, R>(
         counted("workingCopies", copies.eraseAccount),
       ),
     ),
-    // `MembershipStore.eraseAccount` is unbounded (pulpit#274): one
-    // call deletes every membership, and the next answers 0.
     ...Option.toArray(
       Option.map(Option.fromUndefinedOr(definition.memberships), (memberships) =>
-        counted("memberships", (accountId) => memberships.eraseAccount(accountId)),
+        counted("memberships", memberships.eraseAccount),
       ),
     ),
     ...Arr.map(definition.relations ?? [], (relation) =>
