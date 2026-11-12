@@ -1111,12 +1111,16 @@ describe("defineSubtype — a reference leaf", () => {
 describe("defineSubtype — list ordering (pulpit#112)", () => {
   type Keys = ReadonlyArray<ListOrder>;
   /** One seeded node: its caller-chosen id, its state and whether it is tombstoned. */
-  interface Seed {
+  interface OrderSeed {
     readonly id: string;
     readonly state: ChainState;
     readonly deleted: boolean;
   }
-  const seed = (id: string, state: ChainState, deleted = false): Seed => ({ id, state, deleted });
+  const seed = (id: string, state: ChainState, deleted = false): OrderSeed => ({
+    id,
+    state,
+    deleted,
+  });
   /** Who lists, whether they asked for tombstones, and the page window. */
   interface Ask {
     readonly who: Viewer;
@@ -1138,7 +1142,7 @@ describe("defineSubtype — list ordering (pulpit#112)", () => {
    * allow-list, forwarded as given (`undefined` included).
    */
   const ranked = async (
-    seeds: ReadonlyArray<Seed>,
+    seeds: ReadonlyArray<OrderSeed>,
     leaf: Pick<SubtypeDefinition<LeafRow, LeafRow, never, never, never>, "sortable"> = {},
   ) => {
     const chain = makeInMemoryVersionChain("taxa");
@@ -2833,7 +2837,11 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     async ({ columns, access, policy, viewer }) => {
       const results = await run(probe(policy, columns, viewer, access));
       expect(results.map(({ operation, label, answer }) => ({ operation, label, answer }))).toEqual(
-        results.map(({ operation, label, implied }) => ({ operation, label, answer: implied })),
+        results.map(({ operation, label, implied: expected }) => ({
+          operation,
+          label,
+          answer: expected,
+        })),
       );
       // A refused operation writes nothing.
       expect(results.filter((result) => Option.isSome(result.answer) && result.wrote)).toEqual([]);
@@ -4396,7 +4404,7 @@ describe("defineSubtype — the live pointer (pulpit#46)", () => {
 
   it("on a gated leaf, draft means no live version", async () => {
     const { ops, actAs, publicationOps } = gatedPosts();
-    const drafts = await atClock(
+    const draftStates = await atClock(
       Effect.gen(function* () {
         const { id } = yield* actAs(
           as(member),
@@ -4413,7 +4421,7 @@ describe("defineSubtype — the live pointer (pulpit#46)", () => {
         return [before, published, yield* draftOf];
       }),
     );
-    expect(drafts).toEqual([true, false, true]);
+    expect(draftStates).toEqual([true, false, true]);
   });
 
   it("a scheduled version becomes visible at its stamp, with no write", async () => {

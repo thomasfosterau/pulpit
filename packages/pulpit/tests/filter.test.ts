@@ -171,7 +171,7 @@ describe("evaluate — notIn against `(col IS NULL OR col NOT IN (…))` (pulpit
 
   it("is the exact complement of in over the same set, NULL and absent columns included", () => {
     const asked: Array<ColumnValue> = [];
-    const context: EvaluationContext<Set> = {
+    const counting: EvaluationContext<Set> = {
       now: NOW,
       contains: (held, value) => {
         asked.push(value);
@@ -179,15 +179,15 @@ describe("evaluate — notIn against `(col IS NULL OR col NOT IN (…))` (pulpit
       },
     };
     const rows: ReadonlyArray<FilterRow> = [{ owner: "a" }, { owner: "b" }, { owner: null }, {}];
-    expect(Arr.map(rows, (row) => evaluate(isNotIn("owner", set), row, context))).toEqual([
+    expect(Arr.map(rows, (row) => evaluate(isNotIn("owner", set), row, counting))).toEqual([
       false,
       true,
       true,
       true,
     ]);
     Arr.forEach(rows, (row) =>
-      expect(evaluate(isNotIn("owner", set), row, context)).toBe(
-        !evaluate(isIn("owner", set), row, context),
+      expect(evaluate(isNotIn("owner", set), row, counting)).toBe(
+        !evaluate(isIn("owner", set), row, counting),
       ),
     );
     // A NULL or absent column is never asked about.

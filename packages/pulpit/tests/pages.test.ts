@@ -95,9 +95,7 @@ const site = () => {
       }),
     );
   const publish = (id: string, options?: PublishOptions) =>
-    Effect.flatMap(Effect.fromOption(pages.publication), (publication) =>
-      publication.publish(id, options),
-    );
+    Effect.flatMap(Effect.fromOption(pages.publication), (live) => live.publish(id, options));
   return { pages, resolve, answer, publish };
 };
 
@@ -129,14 +127,14 @@ describe("resolveLocalised (pulpit#201)", () => {
     const { pages, answer, publish } = site();
     const [id, exact, base, fallback, none] = await runAtNow(
       Effect.gen(function* () {
-        const { id } = yield* pages.create({
+        const { id: pageId } = yield* pages.create({
           id: Option.none(),
           state: { slug: "about", visibility: "public", draft: false },
           locales: { en: { title: "About" }, pt: { title: "Sobre" } },
         });
-        yield* publish(id);
+        yield* publish(pageId);
         return [
-          id,
+          pageId,
           yield* answer(anonymous, "about", "pt"),
           yield* answer(anonymous, "about", "pt-BR"),
           yield* answer(anonymous, "about", "de"),
@@ -180,14 +178,14 @@ describe("resolveLocalised (pulpit#201)", () => {
     const { pages, answer, publish } = site();
     const [id, redirected] = await runAtNow(
       Effect.gen(function* () {
-        const { id } = yield* pages.create({
+        const { id: pageId } = yield* pages.create({
           id: Option.none(),
           state: { slug: "about", visibility: "public", draft: false },
           locales: { en: { title: "About" } },
         });
-        yield* pages.update({ id, patch: { slug: "about-us" } });
-        yield* publish(id);
-        return [id, yield* answer(anonymous, "about", "xx")] as const;
+        yield* pages.update({ id: pageId, patch: { slug: "about-us" } });
+        yield* publish(pageId);
+        return [pageId, yield* answer(anonymous, "about", "xx")] as const;
       }),
     );
     expect(redirected).toEqual({ kind: "redirect", id, path: "about-us" });

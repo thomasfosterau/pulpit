@@ -432,7 +432,7 @@ describe("human edits (humanLineageHook)", () => {
     ).toEqual({
       fr: { title: "Y" },
     });
-    expect(stampHumanLineage(declaration, { prior: Option.none(), locales: undefined })).toEqual(
+    expect(stampHumanLineage(declaration, { prior: Option.none() })).toEqual(
       {},
     );
   });

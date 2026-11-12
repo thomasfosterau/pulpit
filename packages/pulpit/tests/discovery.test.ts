@@ -490,7 +490,10 @@ describe("a localised leaf", () => {
     const ops: SubtypeOps<Resource, never, never, InMemoryFollowing> = defineSubtype(leaf);
     const publish = (id: string, when: Option.Option<Date> = Option.none()) =>
       Effect.flatMap(Effect.fromOption(ops.publication), (live) =>
-        live.publish(id, Option.match(when, { onNone: () => ({}), onSome: (at) => ({ at }) })),
+        live.publish(
+          id,
+          Option.match(when, { onNone: () => ({}), onSome: (stamp) => ({ at: stamp }) }),
+        ),
       );
     const node = (
       id: string,

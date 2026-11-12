@@ -280,14 +280,14 @@ describe("a localised leaf's writes, through Content-Language", () => {
     const { ops, handlers, request, served } = localisedPages();
     const [created, german, english] = await run(
       Effect.gen(function* () {
-        const created = yield* request(
+        const response = yield* request(
           { "content-language": "de", "accept-language": "fr" },
           handlers.create({ payload: { title: "Hallo", colour: "red" } }),
         );
         return [
-          created,
-          yield* ops.getLocalised(created.data.id, ["de"]),
-          yield* Effect.flip(ops.getLocalised(created.data.id, ["en"])),
+          response,
+          yield* ops.getLocalised(response.data.id, ["de"]),
+          yield* Effect.flip(ops.getLocalised(response.data.id, ["en"])),
         ] as const;
       }),
     );
@@ -318,17 +318,17 @@ describe("a localised leaf's writes, through Content-Language", () => {
     const { ops, handlers, request } = localisedPages();
     const [plain, listed] = await run(
       Effect.gen(function* () {
-        const plain = yield* request(
+        const plainWrite = yield* request(
           {},
           handlers.create({ payload: { title: "Hi", colour: "red" } }),
         );
-        const listed = yield* request(
+        const listedWrite = yield* request(
           { "content-language": " it , de" },
           handlers.create({ payload: { title: "Ciao", colour: "red" } }),
         );
         return [
-          yield* ops.getLocalised(plain.data.id, ["en"]),
-          yield* ops.getLocalised(listed.data.id, ["it"]),
+          yield* ops.getLocalised(plainWrite.data.id, ["en"]),
+          yield* ops.getLocalised(listedWrite.data.id, ["it"]),
         ] as const;
       }),
     );
@@ -350,12 +350,12 @@ describe("a localised leaf's cache, keyed by locale", () => {
         });
         yield* cache.set(id, page("Hello"), version, "en");
         yield* cache.set(id, page("Bonjour"), version, "fr");
-        const before = [cache.get(id, "en"), cache.get(id, "fr")];
+        const cached = [cache.get(id, "en"), cache.get(id, "fr")];
         const written = yield* request(
           { "content-language": "fr" },
           handlers.update({ params: { id }, payload: { id, title: "Salut" } }),
         );
-        return [before, { id, written }] as const;
+        return [cached, { id, written }] as const;
       }),
     );
     expect(Arr.map(before, Option.isSome)).toEqual([true, true]);

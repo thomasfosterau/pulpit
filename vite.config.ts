@@ -67,10 +67,7 @@ export default defineConfig({
       // of; hoisting each one would scatter one definition across a module
       // (94 sites when the category was turned on).
       "unicorn/consistent-function-scoping": "off",
-      // The module-as-namespace convention (`Option`, `Schema`, `Effect`, …)
-      // and the generic `R` / `A` / `E` parameters mean names deliberately
-      // recur in nested scopes.
-      "eslint/no-shadow": "off",
+      "eslint/no-shadow": "error",
       // Matches every `.map` call, `Effect.map` / `Option.map` over a single
       // value included, and spreading into a fresh object is how this library
       // builds its immutable records; mutating in place would break the

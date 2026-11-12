@@ -350,7 +350,7 @@ export const branchOf = <Root extends string>(
   byKey: HashMap.HashMap<string, RegistryEntry>,
   roots: ReadonlyArray<Root>,
 ): Option.Option<Root> => {
-  const isRoot = (key: string): key is Root => Arr.some(roots, (root) => root === key);
+  const isRoot = (key: string): key is Root => Arr.some(roots, (candidate) => candidate === key);
   const walk = (key: string): Option.Option<Root> =>
     isRoot(key)
       ? Option.some(key)
@@ -447,7 +447,7 @@ export const flaggedMembers = <const T extends readonly RegistryEntry[], Flag ex
 
 /**
  * Runtime counterpart of {@link PickChildren} over a whole branch: every
- * resource-bearing leaf under `root` (one of `roots`), in registry order.
+ * resource-bearing leaf under `branchRoot` (one of `roots`), in registry order.
  *
  * The runtime walk is the whole tree; the static tuple is one level deep, so
  * a caller whose leaves hang off marker levels beneath the root names those
@@ -464,7 +464,7 @@ export const branchMembers = <
   const Parents extends string = Root,
 >(
   entries: T,
-  root: Root,
+  branchRoot: Root,
   roots: ReadonlyArray<string>,
   _parents?: ReadonlyArray<Parents>,
 ): PickChildren<T, Parents> => {
@@ -472,7 +472,7 @@ export const branchMembers = <
   const members: ReadonlyArray<Schema.Top> = Arr.filterMap(
     entries,
     (entry): Result.Result<Resource.Any, void> =>
-      Option.contains(branchOf(entry, byKey, roots), root)
+      Option.contains(branchOf(entry, byKey, roots), branchRoot)
         ? Result.fromOption(resourceOf(entry), () => undefined)
         : Result.failVoid,
   );
@@ -536,14 +536,14 @@ export const registryWireTypes = <Root extends string>(
     );
   const flagged = (flag: RegistryFlag): ReadonlyArray<string> =>
     Arr.filterMap(entries, (entry) => (entry[flag] === true ? typeOf(entry) : Result.failVoid));
-  const branch = (root: Root): ReadonlyArray<string> =>
+  const branch = (branchRoot: Root): ReadonlyArray<string> =>
     Arr.filterMap(entries, (entry) =>
-      Option.contains(branchOf(entry, byKey, roots), root) ? typeOf(entry) : Result.failVoid,
+      Option.contains(branchOf(entry, byKey, roots), branchRoot) ? typeOf(entry) : Result.failVoid,
     );
   // SAFETY: `R.fromEntries` erases the key union to `string`; the entries
   // are built from exactly `roots`, so every `Root` key is present.
   const branches = R.fromEntries(
-    Arr.map(roots, (root): [Root, ReadonlyArray<string>] => [root, branch(root)]),
+    Arr.map(roots, (key): [Root, ReadonlyArray<string>] => [key, branch(key)]),
   ) as { readonly [K in Root]: ReadonlyArray<string> };
   return {
     pageable: flagged("pageable"),
