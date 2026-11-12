@@ -734,7 +734,7 @@ export const defineReports = <Resource, E, R>(definition: {
     if (row.value.status !== "open") {
       return yield* new ReportClosed({ id, status: row.value.status });
     }
-    yield* reports.close(id, {
+    return yield* reports.close(id, {
       status: outcome,
       resolvedAt: yield* nowDate,
       resolvedBy: account.id,
