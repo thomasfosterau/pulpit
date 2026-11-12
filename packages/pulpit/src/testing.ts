@@ -97,6 +97,7 @@ import type {
   Membership,
   MembershipStore,
 } from "./audience.ts";
+import type { MediaReferences, NodeRef } from "./media.ts";
 import type { ExternalIdLink, ExternalIdStore } from "./reference-import.ts";
 import type { Relationship, SocialStore } from "./social.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
@@ -1924,6 +1925,50 @@ export const makeInMemoryBlobStore = (): InMemoryBlobStore => {
     objects: () => objects,
     failNextPut: () => {
       failing = true;
+    },
+  };
+};
+
+// ── Media ─────────────────────────────────────────────────────────────
+
+/**
+ * {@link makeInMemoryMediaReferences}' fake: the seam plus the test hooks
+ * that record and drop a node's reference to a content hash.
+ *
+ * @since 0.2.0
+ */
+export interface InMemoryMediaReferences extends MediaReferences<never, never> {
+  /** Record that `ref`'s versions reference `contentHash`. */
+  readonly add: (contentHash: string, ref: NodeRef) => void;
+  /** Drop every reference `ref` holds (a purge). */
+  readonly removeNode: (ref: NodeRef) => void;
+}
+
+/**
+ * An in-memory `MediaReferences` (README → Seams → `MediaReferences`): the
+ * nodes recorded against each content hash, at most `limit` of them, in
+ * insertion order. In memory only; not for production.
+ *
+ * @since 0.2.0
+ */
+export const makeInMemoryMediaReferences = (): InMemoryMediaReferences => {
+  let refs: ReadonlyArray<{ readonly contentHash: string; readonly ref: NodeRef }> = [];
+  return {
+    referencing: (contentHash, limit) =>
+      Effect.sync(() =>
+        Arr.take(
+          Arr.map(
+            Arr.filter(refs, (entry) => entry.contentHash === contentHash),
+            (entry) => entry.ref,
+          ),
+          Math.max(0, limit),
+        ),
+      ),
+    add: (contentHash, ref) => {
+      refs = [...refs, { contentHash, ref }];
+    },
+    removeNode: (ref) => {
+      refs = Arr.filter(refs, (entry) => entry.ref.type !== ref.type || entry.ref.id !== ref.id);
     },
   };
 };
