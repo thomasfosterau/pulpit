@@ -94,9 +94,10 @@ export type RegistryFlag = (typeof RESOURCE_FLAGS)[number];
 
 /**
  * One node in an application's registry tree. Marker levels carry no
- * `resource`; concrete leaves carry the `Resource.make` definition as
- * `Option.some(resource)`. An absent `resource` or `id` reads as
- * `Option.none()` (AGENTS.md → Conventions). The capability flags are the
+ * `resource`; concrete leaves carry the `Resource.make` definition. A
+ * declaration member is plain optional (AGENTS.md → Conventions): a marker
+ * level omits `resource` and `id` rather than passing `undefined`. The
+ * capability flags are the
  * membership predicates the families / unions filter on; they must be literal
  * `true` (or absent) so the type-level derivation ({@link PickResources}) can
  * select them.
@@ -108,10 +109,10 @@ export interface RegistryEntry {
   readonly key: string;
   /** Parent key in the settled tree — `Option.none()` only for the root. */
   readonly parent: Option.Option<string>;
-  /** The `Resource.make` definition; absent (or `Option.none()`) for marker levels. */
-  readonly resource?: Option.Option<Resource.Any>;
+  /** The `Resource.make` definition; omitted for marker levels. */
+  readonly resource?: Resource.Any;
   /** The application's id brand for this level. For resource leaves it must equal `resource.Id`. */
-  readonly id?: Option.Option<BrandedId>;
+  readonly id?: BrandedId;
   /** Page-able: has a `/type/<id>` route and is a page-family member. */
   readonly pageable?: true;
   /** Agent: an agent-family member. */
@@ -129,8 +130,8 @@ export interface RegistryEntry {
 }
 
 /**
- * An entry's resource: `Option.none()` for a marker level, whose `resource`
- * is absent or `Option.none()`. Every reader in this module goes through it,
+ * An entry's resource: `Option.none()` for a marker level, which omits
+ * `resource`. Every reader in this module goes through it,
  * and an application's {@link RegistryCheck} can too.
  *
  * @example
@@ -147,7 +148,7 @@ export interface RegistryEntry {
  * const leaf = {
  *   key: "posts",
  *   parent: Registry.parent("content"),
- *   resource: Option.some(PostResource),
+ *   resource: PostResource,
  * };
  *
  * strictEqual(Option.isNone(Registry.resourceOf(marker)), true);
@@ -157,10 +158,10 @@ export interface RegistryEntry {
  * @since 0.2.0
  */
 export const resourceOf = (entry: RegistryEntry): Option.Option<Resource.Any> =>
-  entry.resource ?? Option.none();
+  Option.fromUndefinedOr(entry.resource);
 
-/** An entry's id brand: `Option.none()` when `id` is absent or `Option.none()`. */
-const idOf = (entry: RegistryEntry): Option.Option<BrandedId> => entry.id ?? Option.none();
+/** An entry's id brand: `Option.none()` when `id` is omitted. */
+const idOf = (entry: RegistryEntry): Option.Option<BrandedId> => Option.fromUndefinedOr(entry.id);
 
 /**
  * Declare an entry's `parent` with its key literal preserved —
@@ -294,8 +295,8 @@ const checkEntry = (
  *   {
  *     key: "posts",
  *     parent: Registry.parent("content"),
- *     resource: Option.some(PostResource),
- *     id: Option.some(PostResource.Id),
+ *     resource: PostResource,
+ *     id: PostResource.Id,
  *     owned: true,
  *   },
  * ] as const satisfies readonly Registry.RegistryEntry[];
@@ -367,21 +368,6 @@ export const branchOf = <Root extends string>(
 // (registry-declaration) order, which `validateRegistry` guarantees.
 
 /**
- * The resource an entry declares, at the type level: the `R` of its
- * `resource: Option.Option<R>`, or `never` for a marker level. A marker's
- * `resource` is absent or `Option.none()`, whose `R` is `never`, or, under a
- * `satisfies readonly RegistryEntry[]`, the contextual `Resource.Any`; neither
- * names a member, so both read as `never`.
- */
-type DeclaredResource<Entry> = Entry extends {
-  readonly resource: Option.Option<infer R extends Resource.Any>;
-}
-  ? [Resource.Any] extends [R]
-    ? never
-    : R
-  : never;
-
-/**
  * The resources of every entry whose `Flag` capability is literally `true`, as a tuple.
  *
  * @since 0.1.0
@@ -395,9 +381,9 @@ export type PickResources<
   ...infer Rest extends readonly RegistryEntry[],
 ]
   ? Head extends Record<Flag, true>
-    ? [DeclaredResource<Head>] extends [never]
-      ? PickResources<Rest, Flag, Acc>
-      : PickResources<Rest, Flag, readonly [...Acc, DeclaredResource<Head>]>
+    ? Head extends { readonly resource: infer R extends Resource.Any }
+      ? PickResources<Rest, Flag, readonly [...Acc, R]>
+      : PickResources<Rest, Flag, Acc>
     : PickResources<Rest, Flag, Acc>
   : Acc;
 
@@ -419,9 +405,9 @@ export type PickChildren<
   ...infer Rest extends readonly RegistryEntry[],
 ]
   ? Head extends { readonly parent: Option.Option<Parent> }
-    ? [DeclaredResource<Head>] extends [never]
-      ? PickChildren<Rest, Parent, Acc>
-      : PickChildren<Rest, Parent, readonly [...Acc, DeclaredResource<Head>]>
+    ? Head extends { readonly resource: infer R extends Resource.Any }
+      ? PickChildren<Rest, Parent, readonly [...Acc, R]>
+      : PickChildren<Rest, Parent, Acc>
     : PickChildren<Rest, Parent, Acc>
   : Acc;
 

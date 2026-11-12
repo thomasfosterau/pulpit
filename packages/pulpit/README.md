@@ -105,7 +105,6 @@ The flag vocabulary an application's resource registry is declared in, and the c
 
 ```ts
 import { Resource } from "@thomasfosterau/effect-jsonapi";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
   parent,
@@ -124,8 +123,8 @@ const REGISTRY = [
   {
     key: "posts",
     parent: parent("content"),
-    resource: Option.some(PostResource),
-    id: Option.some(PostResource.Id),
+    resource: PostResource,
+    id: PostResource.Id,
     owned: true,
     pageable: true,
   },
@@ -137,8 +136,8 @@ registryWireTypes(REGISTRY, ["content"]).owned; // ["posts"]
 
 | Export | What it is |
 | --- | --- |
-| `RegistryEntry`, `RESOURCE_FLAGS` | The entry shape and its flags: `pageable`, `agent`, `owned`, `referenceData`, `searchable`, `routable`, `localised` (a locale level in its chain; see [Localisation](#subtype)). `owned` and `referenceData` are mutually exclusive. A leaf's `resource` and `id` are `Option.some(…)`; a marker level omits them (or passes `Option.none()`). A flag is literal `true` or omitted. |
-| `resourceOf(entry)` | The entry's resource as an `Option`: `Option.none()` for a marker level, whether `resource` is omitted or `Option.none()`. |
+| `RegistryEntry`, `RESOURCE_FLAGS` | The entry shape and its flags: `pageable`, `agent`, `owned`, `referenceData`, `searchable`, `routable`, `localised` (a locale level in its chain; see [Localisation](#subtype)). `owned` and `referenceData` are mutually exclusive. A marker level omits `resource` and `id`; a flag is literal `true` or omitted (never `undefined`). |
+| `resourceOf(entry)` | The entry's resource as an `Option`: `Option.none()` for a marker level, which omits `resource`. |
 | `parent(key)`, `root` | Declare an entry's parent with its key literal preserved (`Option.some` widens it to `string`, which empties every typed derivation). |
 | `validateRegistry(entries, checks?)` | Unique keys, parents resolve, a flag implies a resource, the trust axis, id / wire-type lockstep; then the application's own `RegistryCheck`s. |
 | `branchOf(entry, byKey, roots)` | The branch root an entry sits under, walking marker levels. |
