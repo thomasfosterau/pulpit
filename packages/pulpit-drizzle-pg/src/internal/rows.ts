@@ -39,6 +39,7 @@ import {
 import * as Arr from "effect/Array";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
@@ -282,8 +283,7 @@ export const storeOver = <I, Relations extends AnyRelations>(
 ): LeafStore<LeafRow, SQLWrapper, StoreQueryError<Relations>, I> => {
   const reads = readsOver(leaf, CurrentTransaction);
   return {
-    // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is the native `ReadonlySet` `LeafStore.columns` names
-    columns: new Set(R.keys(source.columns)),
+    columns: HashSet.fromIterable(R.keys(source.columns)),
     get: (nodeId) =>
       isNodeId(nodeId)
         ? Effect.map(reads.where(source, sql`${source.id} = ${nodeId}`, 1), Arr.head)

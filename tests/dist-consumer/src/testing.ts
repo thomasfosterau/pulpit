@@ -198,12 +198,7 @@ export type _MakeResourceCache = Assert<
 export type _CacheSet = Assert<
   Equals<
     ResourceCacheSeam<CachedPost, never>["set"],
-    (
-      id: string,
-      resource: CachedPost,
-      version: bigint,
-      locale?: string | undefined,
-    ) => Effect.Effect<void>
+    (id: string, resource: CachedPost, version: bigint, locale?: string) => Effect.Effect<void>
   >
 >;
 export type _CacheDelete = Assert<
@@ -215,7 +210,7 @@ export type _CacheDelete = Assert<
 export type _CacheGet = Assert<
   Equals<
     InMemoryResourceCache<CachedPost>["get"],
-    (id: string, locale?: string | undefined) => Option.Option<CachedPost>
+    (id: string, locale?: string) => Option.Option<CachedPost>
   >
 >;
 // oxlint-enable effect/prefer-option-over-null

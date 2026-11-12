@@ -13,6 +13,7 @@
  */
 
 import { describe, expect, it } from "vite-plus/test";
+import * as TestClock from "effect/testing/TestClock";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -33,13 +34,27 @@ import {
   type SearchBranch,
 } from "../src/search.ts";
 import {
+  defineSubtype,
+  hydrateSearchHits,
+  ownedAccess,
+  searchHeadFor,
+  searchScopeFilter,
+  type LeafRow,
+  type SubtypeDefinition,
+  type Viewer,
+} from "../src/subtype.ts";
+import {
   makeInMemoryDocumentStore,
   makeInMemoryEmbeddingStore,
+  makeInMemoryFollowers,
+  makeInMemoryLeafStore,
+  makeInMemoryPublication,
   makeInMemorySearchBranch,
+  makeInMemoryVersionChain,
   scopeCheckedBranch,
   type InMemoryFollowing,
 } from "../src/testing.ts";
-import { NOW } from "./fixtures.ts";
+import { gardeneriaPolicy, member, moderator, NOW } from "./fixtures.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 const ids = (hits: ReadonlyArray<{ readonly id: string }>) => hits.map((hit) => hit.id);
@@ -157,13 +172,17 @@ describe("hybridSearch", () => {
       },
     });
     const search = hybridSearch({ branches: [spy(text), spy(tags)] });
-    const hits = await run(search({ query: "tomato", scope: publicOnly, limit: 10 }));
+    const hits = await run(
+      search({ query: "tomato", scope: publicOnly, headFor: never, limit: 10 }),
+    );
     expect(asked).toEqual([publicOnly, publicOnly]);
     expect(ids(hits)).toEqual(["p-public", "p-other"]);
-    expect(ids(await run(search({ query: "tomato", scope: always, limit: 10 })))).toContain(
-      "p-private",
+    expect(
+      ids(await run(search({ query: "tomato", scope: always, headFor: never, limit: 10 }))),
+    ).toContain("p-private");
+    expect(await run(search({ query: "tomato", scope: never, headFor: never, limit: 10 }))).toEqual(
+      [],
     );
-    expect(await run(search({ query: "tomato", scope: never, limit: 10 }))).toEqual([]);
   });
 
   it("asks no branch for an empty query, and caps the result at the limit", async () => {
@@ -173,9 +192,13 @@ describe("hybridSearch", () => {
       search: (request) => Effect.suspend(() => ((called += 1), text.search(request))),
     };
     const search = hybridSearch({ branches: [counting, tags] });
-    expect(await run(search({ query: "  ", scope: always, limit: 10 }))).toEqual([]);
+    expect(await run(search({ query: "  ", scope: always, headFor: never, limit: 10 }))).toEqual(
+      [],
+    );
     expect(called).toBe(0);
-    expect(await run(search({ query: "tomato", scope: always, limit: 1 }))).toHaveLength(1);
+    expect(
+      await run(search({ query: "tomato", scope: always, headFor: never, limit: 1 })),
+    ).toHaveLength(1);
   });
 
   it("lets a reranker reorder the fused candidates and nothing more", async () => {
@@ -190,7 +213,9 @@ describe("hybridSearch", () => {
           }),
       },
     });
-    const hits = await run(search({ query: "tomato", scope: publicOnly, limit: 10 }));
+    const hits = await run(
+      search({ query: "tomato", scope: publicOnly, headFor: never, limit: 10 }),
+    );
     expect(shown).toEqual(["p-public", "p-other"]);
     expect(ids(hits)).toEqual(["p-other", "p-public"]);
   });
@@ -202,7 +227,12 @@ describe("hybridSearch", () => {
     };
     const checked = scopeCheckedBranch(leaky, { rows: () => rows, now: NOW });
     const exit = await Effect.runPromiseExit(
-      hybridSearch({ branches: [checked] })({ query: "tomato", scope: publicOnly, limit: 10 }),
+      hybridSearch({ branches: [checked] })({
+        query: "tomato",
+        scope: publicOnly,
+        headFor: never,
+        limit: 10,
+      }),
     );
     expect(Exit.isFailure(exit) && Option.getOrUndefined(Exit.findErrorOption(exit))).toMatchObject(
       { _tag: "SearchScopeLeak", branch: "leaky", id: "p-private" },
@@ -214,12 +244,16 @@ describe("hybridSearch", () => {
     );
     expect(
       Exit.isFailure(
-        await Effect.runPromiseExit(unknown.search({ query: "x", scope: always, limit: 10 })),
+        await Effect.runPromiseExit(
+          unknown.search({ query: "x", scope: always, headFor: never, limit: 10 }),
+        ),
       ),
     ).toBe(true);
     const honest = scopeCheckedBranch(text, { rows: () => rows, now: NOW });
     expect(
-      ids(await run(honest.search({ query: "tomato", scope: publicOnly, limit: 10 }))),
+      ids(
+        await run(honest.search({ query: "tomato", scope: publicOnly, headFor: never, limit: 10 })),
+      ),
     ).toEqual(["p-public"]);
   });
 
@@ -236,7 +270,134 @@ describe("hybridSearch", () => {
       now: NOW,
     });
     const scope = { kind: "in", column: "owner", set: following } as const;
-    expect(ids(await run(branch.search({ query: "tomato", scope, limit: 10 })))).toEqual(["f-1"]);
+    expect(
+      ids(await run(branch.search({ query: "tomato", scope, headFor: never, limit: 10 }))),
+    ).toEqual(["f-1"]);
+  });
+});
+
+describe("a publish-gated leaf's search ranks what list reads (pulpit#346)", () => {
+  type Resource = { readonly id: string; readonly title: unknown };
+  const setup = () => {
+    const chain = makeInMemoryVersionChain("posts");
+    const heads = makeInMemoryLeafStore(chain, { columns: ["title", "visibility", "draft"] });
+    const publication = makeInMemoryPublication({ chain, leaves: heads, now: NOW });
+    let viewer: Viewer = Option.some(member);
+    const leaf: SubtypeDefinition<LeafRow, Resource, InMemoryFollowing, never, never> = {
+      type: "posts",
+      access: ownedAccess({ draft: true }),
+      chain,
+      leaves: publication.leaves,
+      viewer: Effect.sync(() => viewer),
+      policy: gardeneriaPolicy,
+      followers: makeInMemoryFollowers([]),
+      toResource: (row) => ({ id: row.id, title: row["title"] }),
+      publication: { live: publication.live, facts: publication.facts },
+    };
+    const ops = defineSubtype(leaf);
+    // A gated branch as a plain value: it ranks the rows `LiveView.list`
+    // reads for the request's `headFor`, under its scope, in one pass.
+    const branch: SearchBranch<InMemoryFollowing, never, never> = {
+      name: "title",
+      search: (request) =>
+        Effect.map(
+          publication.live.list({
+            headFor: request.headFor,
+            where: request.scope,
+            orderBy: [],
+            limit: 1000,
+            offset: 0,
+          }),
+          (page) =>
+            Arr.take(
+              Arr.map(
+                Arr.filter(
+                  page.rows,
+                  (row) => P.isString(row["title"]) && row["title"].includes(request.query),
+                ),
+                (row) => ({ id: row.id }),
+              ),
+              request.limit,
+            ),
+        ),
+    };
+    const search = hybridSearch({ branches: [branch] });
+    /** What `viewer` finds for `query`: the scope and heads for them, hydrated through `getMany`. */
+    const find = (as: Viewer, query: string) =>
+      Effect.gen(function* () {
+        viewer = as;
+        const hits = yield* search({
+          query,
+          scope: searchScopeFilter(
+            {
+              access: leaf.access,
+              columns: publication.leaves.columns,
+              policy: leaf.policy,
+              followers: leaf.followers,
+            },
+            as,
+            { includeDeleted: false, where: always },
+          ),
+          headFor: searchHeadFor(leaf, as),
+          limit: 10,
+        });
+        const shown = yield* hydrateSearchHits(ops, hits);
+        return Arr.map(shown, ({ resource }) => resource);
+      });
+    const seed = Effect.fn("seed")(function* () {
+      viewer = Option.some(member);
+      const state = { visibility: "public", draft: false };
+      // p-1: live at "tomato", its head edited to "potato" and unpublished.
+      yield* ops.create({ id: Option.some("p-1"), state: { ...state, title: "tomato" } });
+      const lifecycle = yield* Effect.fromOption(ops.publication);
+      yield* lifecycle.publish("p-1", {});
+      yield* ops.update({ id: "p-1", patch: { title: "potato" } });
+      // p-2: never published.
+      yield* ops.create({ id: Option.some("p-2"), state: { ...state, title: "potato salad" } });
+    });
+    return { find, seed };
+  };
+  const runAt = <A, E>(effect: Effect.Effect<A, E>) =>
+    Effect.runPromise(
+      Effect.andThen(TestClock.setTime(NOW.getTime()), effect).pipe(
+        Effect.provide(TestClock.layer()),
+      ),
+    );
+
+  it("the writer finds their unpublished head, the anonymous reader only the live row", async () => {
+    const { find, seed } = setup();
+    const found = await runAt(
+      Effect.andThen(
+        seed(),
+        Effect.all(
+          {
+            writer: find(Option.some(member), "potato"),
+            readerPotato: find(Option.none(), "potato"),
+            readerTomato: find(Option.none(), "tomato"),
+            writerTomato: find(Option.some(member), "tomato"),
+          },
+          { concurrency: 1 },
+        ),
+      ),
+    );
+    expect(found).toEqual({
+      writer: [
+        { id: "p-1", title: "potato" },
+        { id: "p-2", title: "potato salad" },
+      ],
+      readerPotato: [],
+      readerTomato: [{ id: "p-1", title: "tomato" }],
+      writerTomato: [],
+    });
+  });
+
+  it("searchHeadFor is the head choice list makes: every head by rung, own heads, else none", () => {
+    const leaf = { access: ownedAccess({ draft: true }), policy: gardeneriaPolicy };
+    expect(searchHeadFor(leaf, Option.none())).toEqual(never);
+    expect(searchHeadFor(leaf, Option.some(member))).toEqual(eq("ownerId", member.id));
+    expect(searchHeadFor(leaf, Option.some(moderator))).toEqual(always);
+    const reference = { access: { kind: "reference" } as const, policy: gardeneriaPolicy };
+    expect(searchHeadFor(reference, Option.some(member))).toEqual(never);
   });
 });
 

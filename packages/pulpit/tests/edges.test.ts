@@ -758,8 +758,7 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
     );
     const curatedEnd = (
       columns: ReadonlyArray<string>,
-      // oxlint-disable-next-line effect/prefer-option-over-null -- the declaration's own optional field (AGENTS.md → Conventions)
-      followersOfColumn?: string | undefined,
+      followersOfColumn?: string,
     ): EdgeEnd<never, never> => ({
       column: "termId",
       type: "terms",
