@@ -454,34 +454,39 @@ export const searchOver = <I, Relations extends AnyRelations>(
     readonly rank: SearchRank;
   },
   CurrentTransaction: Context.Service<I, PgTransaction<Relations>>,
-): SearchBranch<SQLWrapper, StoreQueryError<Relations>, I> => ({
-  name: options.name,
-  weight: options.weight,
-  search: (request) => {
-    const limit = Math.max(0, Math.min(Math.trunc(request.limit), MAX_PAGE_LIMIT));
-    const source = sourceFor(request);
-    const ranked = limit > 0 ? options.rank(source.columns, request.query) : Option.none();
-    return Option.match(ranked, {
-      onNone: () => Effect.succeed([]),
-      onSome: ({ matches, score }) =>
-        Effect.gen(function* () {
-          const tx = yield* CurrentTransaction;
-          // The score is read as a `double precision`: a cast, so even a
-          // constant score (`0`) is an expression, never an `ORDER BY`
-          // column position.
-          const rows = yield* tx
-            .select({ id: sql<string>`${source.id}::text` })
-            .from(source.relation)
-            .where(
-              and(matches, Option.getOrUndefined(renderListFilter(request.scope, source.columns))),
-            )
-            .orderBy(
-              sql`(${score})::float8 DESC NULLS LAST`,
-              ...renderListOrder([], source.columns, source.id),
-            )
-            .limit(limit);
-          return Arr.map(rows, ({ id }): RankedHit => ({ id }));
-        }),
-    });
-  },
-});
+): SearchBranch<SQLWrapper, StoreQueryError<Relations>, I> => {
+  const branch: SearchBranch<SQLWrapper, StoreQueryError<Relations>, I> = {
+    name: options.name,
+    search: (request) => {
+      const limit = Math.max(0, Math.min(Math.trunc(request.limit), MAX_PAGE_LIMIT));
+      const source = sourceFor(request);
+      const ranked = limit > 0 ? options.rank(source.columns, request.query) : Option.none();
+      return Option.match(ranked, {
+        onNone: () => Effect.succeed([]),
+        onSome: ({ matches, score }) =>
+          Effect.gen(function* () {
+            const tx = yield* CurrentTransaction;
+            // The score is read as a `double precision`: a cast, so even a
+            // constant score (`0`) is an expression, never an `ORDER BY`
+            // column position.
+            const rows = yield* tx
+              .select({ id: sql<string>`${source.id}::text` })
+              .from(source.relation)
+              .where(
+                and(
+                  matches,
+                  Option.getOrUndefined(renderListFilter(request.scope, source.columns)),
+                ),
+              )
+              .orderBy(
+                sql`(${score})::float8 DESC NULLS LAST`,
+                ...renderListOrder([], source.columns, source.id),
+              )
+              .limit(limit);
+            return Arr.map(rows, ({ id }): RankedHit => ({ id }));
+          }),
+      });
+    },
+  };
+  return options.weight === undefined ? branch : { ...branch, weight: options.weight };
+};

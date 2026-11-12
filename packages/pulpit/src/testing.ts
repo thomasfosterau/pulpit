@@ -1485,8 +1485,7 @@ export interface InMemoryEdgeStoreOptions {
    * The instant `published` / `notPublished` compare against, and the base of
    * the minted `createdAt`s; the Effect `Clock`'s at each call when absent.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; the omitted key is the absence, read as such by every reader, so there is no value to model as an `Option`
-  readonly now?: Date | undefined;
+  readonly now?: Date;
 }
 
 /** Two column values the unique key treats as equal: `NULLS NOT DISTINCT`, an absent key read as `NULL`. */
@@ -2021,8 +2020,7 @@ export interface InMemoryPublication {
 export const makeInMemoryPublication = (options: {
   readonly chain: InMemoryVersionChain;
   readonly leaves: InMemoryLeafStore;
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is the Effect `Clock`
-  readonly now?: Date | undefined;
+  readonly now?: Date;
 }): InMemoryPublication => {
   const fixedNow = Option.fromNullishOr(options.now);
   const localised = HashSet.has(options.leaves.columns, LOCALE_COLUMN);
@@ -2442,33 +2440,34 @@ const scoredOrder: Order.Order<ScoredRow> = Order.combine(
  */
 export const makeInMemorySearchBranch = (options: {
   readonly name: string;
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is weight 1
-  readonly weight?: number | undefined;
+  readonly weight?: number;
   readonly rows: () => ReadonlyArray<FilterRow & { readonly id: string }>;
   /** The row's score for `query`, or none when it doesn't match. */
   readonly score: (row: FilterRow, query: string) => Option.Option<number>;
   readonly now: Date;
-}): SearchBranch<InMemoryFollowing, never, never> => ({
-  name: options.name,
-  weight: options.weight,
-  search: (request) =>
-    Effect.sync(() =>
-      Arr.take(
-        Arr.sort(
-          Arr.getSomes(
-            Arr.map(
-              Arr.filter(options.rows(), (row) =>
-                evaluate(request.scope, row, contextAt(options.now)),
+}): SearchBranch<InMemoryFollowing, never, never> => {
+  const branch: SearchBranch<InMemoryFollowing, never, never> = {
+    name: options.name,
+    search: (request) =>
+      Effect.sync(() =>
+        Arr.take(
+          Arr.sort(
+            Arr.getSomes(
+              Arr.map(
+                Arr.filter(options.rows(), (row) =>
+                  evaluate(request.scope, row, contextAt(options.now)),
+                ),
+                (row) => Option.map(options.score(row, request.query), (score) => ({ row, score })),
               ),
-              (row) => Option.map(options.score(row, request.query), (score) => ({ row, score })),
             ),
-          ),
-          scoredOrder,
-        ).map(({ row }): RankedHit => ({ id: row.id })),
-        Math.max(0, request.limit),
+            scoredOrder,
+          ).map(({ row }): RankedHit => ({ id: row.id })),
+          Math.max(0, request.limit),
+        ),
       ),
-    ),
-});
+  };
+  return options.weight === undefined ? branch : { ...branch, weight: options.weight };
+};
 
 /**
  * Wrap a {@link SearchBranch} so it fails {@link SearchScopeLeak} when it

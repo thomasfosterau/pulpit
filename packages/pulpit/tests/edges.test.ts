@@ -1603,12 +1603,13 @@ describe("what a create discloses: nothing that tells a hidden edge from a reada
 // ── Cardinality ───────────────────────────────────────────────────────
 
 describe("cardinality: an end's maxEdges is declared and enforced", () => {
+  /** `end` with `maxEdges: max`; absent, the end is unbounded. */
+  const limitedTo = (end: EdgeEnd<never, never>, max?: number): EdgeEnd<never, never> =>
+    max === undefined ? end : { ...end, maxEdges: max };
   const bounded = (
     limits: {
-      /* oxlint-disable effect/prefer-option-over-null -- the optional-field convention (AGENTS.md → Conventions), forwarded as-is to `maxEdges` */
-      readonly subject?: number | undefined;
-      readonly part?: number | undefined;
-      /* oxlint-enable effect/prefer-option-over-null */
+      readonly subject?: number;
+      readonly part?: number;
     },
     declaration: Pick<Definition, "onConflict"> = {},
   ) => {
@@ -1619,8 +1620,8 @@ describe("cardinality: an end's maxEdges is declared and enforced", () => {
         {
           ...declaration,
           ends: {
-            subject: { ...referenceEnd("subjectId", subjects), maxEdges: limits.subject },
-            part: { ...referenceEnd("partId", parts), maxEdges: limits.part },
+            subject: limitedTo(referenceEnd("subjectId", subjects), limits.subject),
+            part: limitedTo(referenceEnd("partId", parts), limits.part),
           },
         },
         ["subjectId", "partId"],
@@ -1659,8 +1660,8 @@ describe("cardinality: an end's maxEdges is declared and enforced", () => {
     expect(await tagOf(link(links, "s1", "p2"))).toEqual(Option.none());
   });
 
-  it("an absent or explicitly undefined limit is no limit", async () => {
-    const links = bounded({ subject: undefined });
+  it("an absent limit is no limit", async () => {
+    const links = bounded({});
     await run(link(links, "s1", "p1"));
     await run(link(links, "s1", "p2"));
     await run(link(links, "s1", "p3"));

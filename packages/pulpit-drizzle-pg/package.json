@@ -41,6 +41,7 @@
     "./edges": "./src/edges.ts",
     "./filter": "./src/filter.ts",
     "./leaf-store": "./src/leaf-store.ts",
+    "./proposals": "./src/proposals.ts",
     "./publication": "./src/publication.ts",
     "./paths": "./src/paths.ts",
     "./search": "./src/search.ts",
@@ -67,6 +68,10 @@
       "./leaf-store": {
         "types": "./dist/leaf-store.d.ts",
         "default": "./dist/leaf-store.js"
+      },
+      "./proposals": {
+        "types": "./dist/proposals.d.ts",
+        "default": "./dist/proposals.js"
       },
       "./publication": {
         "types": "./dist/publication.d.ts",

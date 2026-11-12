@@ -15,6 +15,7 @@ import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
 import { makeDocumentTable } from "@thomasfosterau/pulpit-drizzle-pg/documents";
 import { makeEdgeTable } from "@thomasfosterau/pulpit-drizzle-pg/edges";
 import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
+import { makeProposalTable } from "@thomasfosterau/pulpit-drizzle-pg/proposals";
 import { makePathTable } from "@thomasfosterau/pulpit-drizzle-pg/paths";
 import { sql } from "drizzle-orm";
 import { boolean, doublePrecision, integer, pgSchema, text, timestamp } from "drizzle-orm/pg-core";
@@ -86,6 +87,9 @@ export const paths = makePathTable({ schema, name: "post_paths", identity: table
 /** A document family's table, keyed by the generated hash. */
 export const documents = makeDocumentTable({ schema, name: "block_documents" });
 
+/** The proposal table, over the root tables. */
+export const proposals = makeProposalTable({ schema, root: tables.root });
+
 /**
  * An edge family between posts: a role (nullable, part of the unique key,
  * `NULLS NOT DISTINCT`) and a validity interval.
@@ -139,6 +143,7 @@ export const fixtureSchema = {
   paths,
   documents,
   relations,
+  proposals,
   notesView: views.leaves.notes,
   linksView: views.leaves.links,
   postsView: views.leaves.posts,

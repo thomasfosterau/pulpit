@@ -13,8 +13,9 @@
  * pointer level (`Publication`, `./publication`), the `PathStore` over a
  * path table (`Paths`, `./paths`), the content-addressed `DocumentStore`
  * (`Documents`, `./documents`), and the `SearchBranch` over a tree's views
- * (`Search`, `./search`), and the `EdgeStore` over one table per edge
- * family (`Edges`, `./edges`).
+ * (`Search`, `./search`), the `ProposalStore` over a proposal table
+ * (`Proposals`, `./proposals`), and the `EdgeStore` over one table per
+ * edge family (`Edges`, `./edges`).
  *
  * @copyright Thomas Foster
  * @module pulpit-drizzle-pg
@@ -36,6 +37,9 @@ export * as Publication from "./publication.ts";
 export * as Paths from "./paths.ts";
 /** The kernel's content-addressed `DocumentStore`, one table per document family. */
 export * as Documents from "./documents.ts";
+
+/** The kernel's `ProposalStore`: suggested edits against a tree's nodes. */
+export * as Proposals from "./proposals.ts";
 
 /** The kernel's `EdgeStore`: one table per edge family, its ends joined to the tree's views. */
 export * as Edges from "./edges.ts";

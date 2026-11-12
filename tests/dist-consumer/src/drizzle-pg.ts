@@ -65,6 +65,12 @@ import {
   makeEdgeTable,
   type EdgeStoreEnd,
 } from "@thomasfosterau/pulpit-drizzle-pg/edges";
+import type { ProposalStore } from "@thomasfosterau/pulpit/proposals";
+import {
+  makeProposalStore,
+  makeProposalTable,
+  type ProposalTable,
+} from "@thomasfosterau/pulpit-drizzle-pg/proposals";
 import {
   fullTextRank,
   makeSearchBranch,
@@ -99,6 +105,7 @@ export type _Root = Assert<
     | "Paths"
     | "Search"
     | "Edges"
+    | "Proposals"
   >
 >;
 export type _RootChains = Assert<
@@ -329,4 +336,19 @@ export type _EdgeStore = Assert<
 >;
 export type _EdgeStoreEnd = Assert<
   Equals<EdgeStoreEnd, { readonly column: string; readonly view: PgView }>
+>;
+
+// ── ./proposals ──────────────────────────────────────────────────────────
+
+const proposalTable = makeProposalTable({ schema, root: tables.root });
+const proposalStore = makeProposalStore({
+  table: proposalTable,
+  root: tables.root,
+  owners,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _ProposalTable = Assert<Equals<typeof proposalTable, ProposalTable>>;
+export type _ProposalStore = Assert<
+  Equals<typeof proposalStore, ProposalStore<EffectDrizzleQueryError, Key>>
 >;

@@ -148,6 +148,7 @@ import {
   duePublications,
   isPubliclyServeable,
   serveablePolicy,
+  type ServeabilityOptions,
 } from "@thomasfosterau/pulpit/publication";
 import {
   checkedDocumentStore,
@@ -164,7 +165,10 @@ import {
   defineEdgeOps,
   endpointColumn,
   rungGate,
+  type CloseValidity,
   type EdgeCardinalityExceeded,
+  type EdgeDefinition,
+  type EdgeEnd,
   type EdgeConflict,
   type EdgeDeclarationError,
   type EdgeNotFound,
@@ -253,6 +257,8 @@ import {
   type EmbeddingMismatch,
   type BranchRequest,
   type FusedHit,
+  type FusionOptions,
+  type HybridSearchDefinition,
   type SearchBranch,
 } from "@thomasfosterau/pulpit/search";
 import {
@@ -271,7 +277,11 @@ import {
   type ReactionOps,
   type Tally,
 } from "@thomasfosterau/pulpit/reactions";
-import { makeResourceCache, type ResourceCache } from "@thomasfosterau/pulpit/cache";
+import {
+  makeResourceCache,
+  type ResourceCache,
+  type ResourceCacheOptions,
+} from "@thomasfosterau/pulpit/cache";
 import {
   defineCollection,
   type CollectionMember,
@@ -1200,6 +1210,53 @@ export type _EdgeCloseValidity = Assert<
 >;
 export type _EdgeCloseValidityParameters = Assert<
   Equals<Parameters<typeof links.closeValidity>, [id: string, at: Date]>
+>;
+// The optional members of ./edges, ./publication, ./cache and ./search are
+// bare `?: T` (pulpit#238): a caller with no value omits the key, and an
+// explicit `undefined` does not fit.
+export type _EdgeOptionalMembers = Assert<
+  Equals<
+    [
+      Pick<EdgeEnd<never, never>, "maxEdges">,
+      Pick<EdgeStore<EdgeRow, never, never, never>, "closeValidity">,
+      Pick<
+        EdgeDefinition<unknown, EdgeRow, unknown, never, never, never>,
+        "onConflict" | "validity"
+      >,
+    ],
+    [
+      { readonly maxEdges?: number },
+      { readonly closeValidity?: CloseValidity<never, never> },
+      { readonly onConflict?: "fail" | "ignore"; readonly validity?: EdgeValidity },
+    ]
+  >
+>;
+export type _ServeabilityOptions = Assert<
+  Equals<
+    ServeabilityOptions,
+    { readonly owned?: boolean; readonly publishGated?: boolean; readonly now?: Date }
+  >
+>;
+export type _CacheTombstoneTtl = Assert<
+  Equals<
+    Pick<ResourceCacheOptions<unknown, never, never>, "tombstoneTtlSeconds">,
+    { readonly tombstoneTtlSeconds?: number }
+  >
+>;
+export type _FusionOptions = Assert<
+  Equals<
+    FusionOptions,
+    { readonly k?: number; readonly limit?: number; readonly perBranch?: number }
+  >
+>;
+export type _HybridSearchOptionalMembers = Assert<
+  Equals<
+    [
+      Pick<HybridSearchDefinition<never, never, never>, "k" | "perBranch">,
+      Pick<SearchBranch<never, never, never>, "weight">,
+    ],
+    [{ readonly k?: number; readonly perBranch?: number }, { readonly weight?: number }]
+  >
 >;
 export type _EdgeValidity = Assert<
   Equals<EdgeValidity, { readonly from: string; readonly to: string }>
