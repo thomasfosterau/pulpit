@@ -15,6 +15,7 @@ import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
 import { makeCollectionTable } from "@thomasfosterau/pulpit-drizzle-pg/collections";
 import { makeDocumentTable } from "@thomasfosterau/pulpit-drizzle-pg/documents";
 import { makeEdgeTable } from "@thomasfosterau/pulpit-drizzle-pg/edges";
+import { makeEmbeddingTables } from "@thomasfosterau/pulpit-drizzle-pg/embeddings";
 import { makeExternalIdTable } from "@thomasfosterau/pulpit-drizzle-pg/external-ids";
 import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
 import { makeProposalTable } from "@thomasfosterau/pulpit-drizzle-pg/proposals";
@@ -118,6 +119,14 @@ export const collection = makeCollectionTable({
   identity: tables.root.identity,
 });
 
+/** The block documents' embedding queue and vectors: `double precision[]`, so no extension is needed. */
+export const embeddings = makeEmbeddingTables({
+  schema,
+  name: "block_embedding",
+  documents,
+  vector: { kind: "float8" },
+});
+
 /** The owner table the leaf stores read and stamp. */
 export const owners = makeNodeOwnerTable({ schema, identity: tables.root.identity });
 
@@ -154,6 +163,8 @@ export const fixtureSchema = {
   paths,
   documents,
   relations,
+  embeddingQueue: embeddings.queue,
+  embeddingVectors: embeddings.vectors,
   externalIds,
   collection,
   proposals,

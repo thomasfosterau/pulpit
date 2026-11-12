@@ -40,6 +40,7 @@
     "./collections": "./src/collections.ts",
     "./documents": "./src/documents.ts",
     "./edges": "./src/edges.ts",
+    "./embeddings": "./src/embeddings.ts",
     "./external-ids": "./src/external-ids.ts",
     "./filter": "./src/filter.ts",
     "./leaf-store": "./src/leaf-store.ts",
@@ -66,6 +67,10 @@
       "./edges": {
         "types": "./dist/edges.d.ts",
         "default": "./dist/edges.js"
+      },
+      "./embeddings": {
+        "types": "./dist/embeddings.d.ts",
+        "default": "./dist/embeddings.js"
       },
       "./external-ids": {
         "types": "./dist/external-ids.d.ts",

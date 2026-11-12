@@ -56,7 +56,7 @@ const samples: ReadonlyArray<readonly [string, Schema.Json]> = [
 beforeAll(() =>
   run(
     Effect.flatMap(CurrentTransaction, (tx) =>
-      tx.execute(sql.raw(`TRUNCATE pulpit_test.${getTableName(documents)}`)),
+      tx.execute(sql.raw(`TRUNCATE pulpit_test.${getTableName(documents)} CASCADE`)),
     ),
   ),
 );
