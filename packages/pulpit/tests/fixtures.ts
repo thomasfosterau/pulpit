@@ -8,8 +8,11 @@
  */
 
 import * as DateTime from "effect/DateTime";
+import * as Formatter from "effect/Formatter";
+import * as P from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import type { AccessPolicy, ViewerAccount } from "../src/subtype.ts";
+import type { ColumnValue } from "../src/version-chain.ts";
 
 /**
  * A fixture value as a test hands it to a decoder: JSON, plus the `Date`
@@ -23,10 +26,8 @@ export type Fixture =
   | { readonly [key: string]: Fixture | undefined };
 
 /** Whether `value` decodes under `schema`. */
-export const decodes = (schema: Schema.Top, value: Fixture): boolean =>
-  // SAFETY: the fixture schemas are all service-free, which `Schema.Top` cannot
-  // say; the widening is the only way to hand one to the decoder generically.
-  Schema.decodeUnknownExit(schema as never)(value)._tag === "Success";
+export const decodes = (schema: Schema.ConstraintDecoder<unknown>, value: Fixture): boolean =>
+  Schema.decodeExit(schema)(value)._tag === "Success";
 
 /**
  * A column a seeded row omits, so the row carries no such key (`ColumnValue`
@@ -65,3 +66,15 @@ export const follower: ViewerAccount = { id: "u-follower", role: "user" };
 export const contributor: ViewerAccount = { id: "u-contributor", role: "contributor" };
 export const moderator: ViewerAccount = { id: "u-moderator", role: "moderator" };
 export const admin: ViewerAccount = { id: "u-admin", role: "admin" };
+
+const decodeText = Schema.decodeUnknownSync(Schema.String);
+
+/**
+ * A column the test itself wrote as a string, read back as one: decoded, so a
+ * value of any other shape is a defect rather than a `"[object Object]"`.
+ */
+export const textOf = (value: ColumnValue): string => decodeText(value);
+
+/** A column value as a test label: a string as itself, any other value formatted. */
+export const showValue = (value: ColumnValue): string =>
+  P.isString(value) ? value : Formatter.format(value);

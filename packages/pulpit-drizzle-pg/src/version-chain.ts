@@ -157,7 +157,6 @@ export const makeVersionChains = <
   // schema validates it above the port), so each typed leaf chain is read as
   // its erased form: the same runtime operations, over the same field keys
   // (`ErasedLeafChain`); only the per-leaf precision is dropped.
-  // oxlint-disable-next-line effect/no-chained-type-assertions, effect/avoid-any -- the seam above: each leaf's typed operations take its own state, the erased ones the kernel's `ChainState`, so the two share no overlap TypeScript can check (effect-drizzle-ext's `makeVersionChain` crosses the same seam the other way)
   const erased = chains as unknown as Readonly<Record<string, ErasedLeafChain<E, I>>>;
   const ports = R.map(erased, (chain, leaf) =>
     fromLeafChain(chain, { type: leaf, purge: purge(leaf), recordsProposedBy }),

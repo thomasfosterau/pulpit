@@ -9,8 +9,9 @@ The tree-bound seams of [`@thomasfosterau/pulpit`](../pulpit/README.md) over the
 **Not published.** The package is `"private": true` until the owner sets up its publishing ([PUBLISHING.md](../../PUBLISHING.md)). The spec is [pulpit#247](https://github.com/thomasfosterau/pulpit/issues/247), and it lands in slices:
 
 - **Landed:** the `VersionChain` port over `-pg/chain` ([`./version-chain`](#version-chain)), passing the kernel's `versionChainConformance` against PostgreSQL; the `LeafStore` over the tree's leaf views and the owner table ([`./leaf-store`](#leaf-store)), with the `ListFilter` → SQL renderer and the list order ([`./filter`](#filter)), checked row by row against the kernel's in-memory store on PostgreSQL.
+- **Landed:** the content-addressed `DocumentStore` ([`./documents`](#documents)), its hashes checked against the kernel's `canonicalText` on PostgreSQL.
 - **Landed:** the `PathStore` over a path table per routable namespace ([`./paths`](#paths)), checked step by step against the kernel's in-memory store on PostgreSQL.
-- **Next:** `PublicationStore` / `LiveView` (#338), the `DocumentStore` (#339), the localised `LeafStore` (#335) and `SearchBranch` (#336).
+- **Next:** `PublicationStore` / `LiveView` (#338), the localised `LeafStore` (#335) and `SearchBranch` (#336).
 
 ## Install
 
@@ -32,6 +33,7 @@ Every module is a namespace on the root export (`import { VersionChain } from "@
 | --- | --- |
 | `./version-chain` | `makeVersionChains`: the kernel's `VersionChain` port for every leaf of a tree. |
 | `./leaf-store` | `makeLeafStores`: the kernel's `LeafStore` for every leaf view of a tree; `makeNodeOwnerTable`, the owner table. |
+| `./documents` | `makeDocumentTable` / `makeDocumentStore`: the kernel's content-addressed `DocumentStore`, one table per family. |
 | `./paths` | `makePathTable` / `makePathStore`: the kernel's `PathStore`, one table per routable namespace. |
 | `./filter` | `renderListFilter` / `renderListOrder`: the kernel's `ListFilter` and list order as Drizzle SQL. |
 
@@ -159,6 +161,28 @@ What each store does, over the leaf's view:
 | `makeNodeOwnerTable({ schema, identity, name? })`, `NodeOwnerTable` | The owner table (`node_owner` by default): `node_id` primary key, cascading from the identity row, and `owner_id`, indexed. |
 | `OWNER_COLUMN` | `"ownerId"`, the key the owner joins in under. |
 | `StoreQueryError<Relations>` | The driver's query error. |
+
+## `./documents`
+
+The kernel's content-addressed `DocumentStore` (README → Seams → `DocumentStore`, `DOC-001`): one table per document family, built by `makeDocumentTable({ schema, name })`, with the hash the database generates to the kernel's contract:
+
+```sql
+hash bytea PRIMARY KEY GENERATED ALWAYS AS (digest(document::text, 'sha256')) STORED,
+document jsonb NOT NULL
+```
+
+`digest` is pgcrypto's (its immutable `text` overload): a migration must `CREATE EXTENSION pgcrypto` before the table. `makeDocumentStore({ table, document, CurrentTransaction })` binds the store, `document` the family's schema (a document read back that fails it is a defect):
+
+- **`put`** is `INSERT … ON CONFLICT DO NOTHING RETURNING encode(hash, 'hex')`: `{ hash, inserted: true }` for a first insert; for a document already stored, or equal to one under the canonical text (a reordering), nothing is written and the hash is Postgres's own, `encode(digest($document::jsonb::text, 'sha256'), 'hex')`, `inserted: false`. A stored row is never rewritten. The document is bound as its JSON text cast to `jsonb`, so a JSON `null` document is stored as `'null'`, never SQL `NULL`.
+- **`get` / `getMany`** read by `hash` (`getMany` one `IN (…)` read); a string that is no `DocumentHash` names no document.
+- **The first-insert hook** (website's embedding enqueue) is the kernel's `onDocumentInsert(store, hook)` over this store, with `EmbeddingStore.enqueue` in the same transaction; this package adds no hook of its own.
+
+The integration suite puts the same documents through this store and the kernel's `makeInMemoryDocumentStore` (whose hash is `canonicalText`'s) and checks every hash agrees, escapes, key order and exponent-free numbers included.
+
+| Export                                                 | What it is                   |
+| ------------------------------------------------------ | ---------------------------- |
+| `makeDocumentTable({ schema, name })`, `DocumentTable` | One family's table.          |
+| `makeDocumentStore(config)`                            | The `DocumentStore` over it. |
 
 ## `./paths`
 

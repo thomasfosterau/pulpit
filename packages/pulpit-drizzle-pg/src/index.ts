@@ -9,7 +9,8 @@
  * `-pg/chain` (`VersionChain`, `./version-chain`, pulpit#247), the
  * `LeafStore` over the tree's leaf views (`LeafStore`, `./leaf-store`) and
  * the `ListFilter` → SQL renderer it reads through (`Filter`, `./filter`),
- * and the `PathStore` over a path table (`Paths`, `./paths`).
+ * the `PathStore` over a path table (`Paths`, `./paths`), and the
+ * content-addressed `DocumentStore` (`Documents`, `./documents`).
  *
  * @copyright Thomas Foster
  * @module pulpit-drizzle-pg
@@ -26,3 +27,5 @@ export * as Filter from "./filter.ts";
 
 /** The kernel's `PathStore`, one table per routable namespace. */
 export * as Paths from "./paths.ts";
+/** The kernel's content-addressed `DocumentStore`, one table per document family. */
+export * as Documents from "./documents.ts";

@@ -37,6 +37,7 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
+    "./documents": "./src/documents.ts",
     "./filter": "./src/filter.ts",
     "./leaf-store": "./src/leaf-store.ts",
     "./paths": "./src/paths.ts",
@@ -47,6 +48,10 @@
       ".": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      },
+      "./documents": {
+        "types": "./dist/documents.d.ts",
+        "default": "./dist/documents.js"
       },
       "./filter": {
         "types": "./dist/filter.d.ts",
