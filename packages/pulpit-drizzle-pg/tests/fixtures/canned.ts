@@ -36,6 +36,7 @@ export const cannedTransaction = (rows: ReadonlyArray<object>) => {
           "execute",
           "where",
           "orderBy",
+          "groupBy",
           "limit",
           "offset",
           "as",
