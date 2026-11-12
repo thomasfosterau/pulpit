@@ -211,6 +211,14 @@ export * as Relations from "./relations.ts";
 export * as Translation from "./translation.ts";
 
 /**
+ * Notifications: an outbox of content events written in the triggering
+ * write's transaction, a fan-out gated on each subject's read, mute and
+ * block and per-account preferences, an inbox, and a delivery seam
+ * (`defineNotifications`, `notificationHook`, `emitting`).
+ */
+export * as Notifications from "./notifications.ts";
+
+/**
  * External reference import: upserting a reference leaf's nodes by their
  * `(authority, externalId)` identifiers, with per-field merge modes and
  * no-op detection (`defineReferenceImport` over an `ExternalIdStore`).
