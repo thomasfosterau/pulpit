@@ -4464,7 +4464,7 @@ describe("defineSubtype — the live pointer (pulpit#46)", () => {
             as(member),
             ops.create({ id: Option.none(), state: { title: "t", visibility, draft: false } }),
           ).pipe(Effect.map(({ id }) => id));
-        const [soon, later, never, unscheduled, tombstoned] = [
+        const [soon, later, cancelled, unscheduled, tombstoned] = [
           yield* create("public"),
           yield* create("public"),
           yield* create("public"),
@@ -4478,11 +4478,11 @@ describe("defineSubtype — the live pointer (pulpit#46)", () => {
         yield* schedule(later, hour(2));
         yield* schedule(later, hour(3));
         // Cancelled: an unpublish recorded after the schedule overtakes it.
-        yield* schedule(never, hour(1));
-        yield* actAs(as(member), publicationOps.unpublish(never));
+        yield* schedule(cancelled, hour(1));
+        yield* actAs(as(member), publicationOps.unpublish(cancelled));
         yield* schedule(tombstoned, hour(1));
         yield* actAs(as(member), ops.delete(tombstoned));
-        const everyone = [soon, later, never, unscheduled, tombstoned, "unknown"];
+        const everyone = [soon, later, cancelled, unscheduled, tombstoned, "unknown"];
         const atOf = (who: Viewer) =>
           Effect.map(actAs(who, publicationOps.scheduled(everyone)), (found) =>
             Arr.map(everyone, (id) =>
