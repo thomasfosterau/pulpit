@@ -114,12 +114,16 @@ export default defineConfig({
       "vite-plus/prefer-vite-plus-imports": "error",
     },
     overrides: [
-      // The registry recovers, at the type level, what it builds at run time
-      // from the same entries: a member tuple (`asMemberTuple`) and a record
-      // keyed by the `Root` union, which `Record.fromEntries` erases to
-      // `string` (`NonLiteralKey`). Neither type exists at run time to be
-      // decoded into, so each narrowing is a `// SAFETY:`-commented `as`
+      // The registry's member projections return a tuple computed by a
+      // conditional type over the caller's entries (`PickResources<T, Flag>`,
+      // `PickChildren<T, Parents>`, `Identifiers<Members>`). TypeScript cannot
+      // relate any value to a conditional type over an unresolved type
+      // parameter, and the tuple exists only at the type level, so there is
+      // nothing to decode into: the array built from the same entries, in
+      // the same order, is narrowed with a `// SAFETY:`-commented `as`
       // (audited by `effect/require-safety-comment-for-type-assertion`).
+      // The file's other assertion, the `Root`-keyed `branches` record, goes
+      // in #309 (a `HashMap`).
       {
         files: ["packages/pulpit/src/registry.ts"],
         rules: {
