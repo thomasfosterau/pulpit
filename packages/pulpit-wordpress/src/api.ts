@@ -1748,7 +1748,7 @@ export const defineWordPress = <R, Following = never>(
     });
     const _links = linksOf(type, item, related);
     /** The term fields of a page or attachment a taxonomy is bound to (a post always has both). */
-    const termFields: Schema.JsonObject = R.fromEntries(
+    const termFields = R.fromEntries(
       related.terms.map(([taxonomy]) => [
         taxonomyBase(taxonomy),
         termWires(related, taxonomy, fields.id),

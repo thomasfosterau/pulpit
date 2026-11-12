@@ -76,10 +76,6 @@ export default defineConfig({
       // builds its immutable records; mutating in place would break the
       // readonly types the rule's fix needs.
       "oxc/no-map-spread": "off",
-      // Reports every spread of `Schema.JsonObject` (a plain-object index
-      // signature, never a class instance) in the WordPress body builders as
-      // a class spread: a false positive with no code-level fix.
-      "typescript/no-misused-spread": "off",
       // Its "explicit `undefined` is unnecessary on an optional parameter"
       // check contradicts the workspace convention (AGENTS.md → Conventions):
       // an optional parameter is spelled `x?: T | undefined`, like an
