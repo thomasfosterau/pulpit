@@ -18,6 +18,7 @@ import { makeEdgeTable } from "@thomasfosterau/pulpit-drizzle-pg/edges";
 import { makeEmbeddingTables } from "@thomasfosterau/pulpit-drizzle-pg/embeddings";
 import { makeExternalIdTable } from "@thomasfosterau/pulpit-drizzle-pg/external-ids";
 import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
+import { makeRelationshipTable } from "@thomasfosterau/pulpit-drizzle-pg/social";
 import { makeProposalTable } from "@thomasfosterau/pulpit-drizzle-pg/proposals";
 import { makePathTable } from "@thomasfosterau/pulpit-drizzle-pg/paths";
 import { sql } from "drizzle-orm";
@@ -112,6 +113,12 @@ export const relations = makeEdgeTable({
 /** The external-identifier table, over the identity table. */
 export const externalIds = makeExternalIdTable({ schema, identity: tables.root.identity });
 
+/** An account table, for the reaction table's cascading account key. */
+export const accounts = schema.table("account", { id: text("id").primaryKey() });
+
+/** The relationship table (follows, mutes, blocks), its accounts cascading. */
+export const relationships = makeRelationshipTable({ schema, accounts: accounts.id });
+
 /** An ordered family: an entry's members, over the identity table. */
 export const collection = makeCollectionTable({
   schema,
@@ -166,6 +173,8 @@ export const fixtureSchema = {
   embeddingQueue: embeddings.queue,
   embeddingVectors: embeddings.vectors,
   externalIds,
+  accounts,
+  relationships,
   collection,
   proposals,
   notesView: views.leaves.notes,

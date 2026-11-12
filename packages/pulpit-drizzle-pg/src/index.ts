@@ -18,8 +18,9 @@
  * family (`Edges`, `./edges`), the `EmbeddingStore` over a document
  * family's queue and vectors (`Embeddings`, `./embeddings`), the
  * `ExternalIdStore` over an external-identifier table (`ExternalIds`,
- * `./external-ids`), and the `CollectionStore` over one membership table
- * per ordered family (`Collections`, `./collections`).
+ * `./external-ids`), the `CollectionStore` over one membership table per
+ * ordered family (`Collections`, `./collections`), and the `SocialStore`
+ * over a relationship table (`Social`, `./social`).
  *
  * @copyright Thomas Foster
  * @module pulpit-drizzle-pg
@@ -47,6 +48,9 @@ export * as Proposals from "./proposals.ts";
 
 /** The kernel's `CollectionStore`: one membership table per ordered family. */
 export * as Collections from "./collections.ts";
+
+/** The kernel's `SocialStore`: follows, mutes and blocks between accounts. */
+export * as Social from "./social.ts";
 
 /** The kernel's `EdgeStore`: one table per edge family, its ends joined to the tree's views. */
 export * as Edges from "./edges.ts";
