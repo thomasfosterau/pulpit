@@ -54,8 +54,8 @@ export const cannedTransaction = (rows: ReadonlyArray<object>) => {
     ),
   );
   // SAFETY: the store only chains these builder methods and yields the
-  // result, which is the canned rows; nothing else of the transaction is read.
-  // oxlint-disable-next-line effect/no-chained-type-assertions, effect/avoid-any -- a stand-in for Drizzle's transaction: the canned builder shares no type with it, so no single assertion reaches it
+  // result, which is the canned rows; nothing else of the transaction is
+  // read. `vite.config.ts` scopes the rules this stand-in needs.
   const tx = builder as unknown as Transaction;
   return { tx, calls };
 };
