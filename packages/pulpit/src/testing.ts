@@ -509,17 +509,15 @@ export const makeInMemoryVersionChain = (type: string): InMemoryVersionChain => 
  *
  * @since 0.2.0
  */
-/* oxlint-disable effect/no-unknown-parameters, effect/no-object-parameters -- a test runner's assertions take any value by contract: this is vitest's `expect` signature, the boundary the suite hands its results across */
 export interface ConformanceRunner {
   readonly describe: (name: string, body: () => void) => void;
   readonly it: (name: string, body: () => Promise<void>) => void;
-  readonly expect: (actual: unknown) => {
-    readonly toEqual: (expected: unknown) => void;
-    readonly toBe: (expected: unknown) => void;
-    readonly toMatchObject: (expected: object) => void;
+  readonly expect: <A>(actual: A) => {
+    readonly toEqual: (expected: A) => void;
+    readonly toBe: (expected: A) => void;
+    readonly toMatchObject: (expected: Partial<A>) => void;
   };
 }
-/* oxlint-enable effect/no-unknown-parameters, effect/no-object-parameters */
 
 /**
  * One fresh {@link VersionChain} for a conformance case, and the faults the
@@ -704,7 +702,7 @@ export const versionChainConformance = <E, R>(
         await value(chain.update({ id: ID, patch: { title: "Second" }, actorId: ACTOR }));
         await value(chain.update({ id: ID, patch: { title: "Third" }, actorId: ACTOR }));
         expect(await stateAt(chain, 0n)).toEqual(initial);
-        expect((await value(chain.history(ID))).slice(0, 1)).toEqual(before);
+        expect<typeof before>((await value(chain.history(ID))).slice(0, 1)).toEqual(before);
         expect(await actions(chain)).toEqual([
           [0n, "create"],
           [1n, "update"],
