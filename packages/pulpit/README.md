@@ -1331,7 +1331,7 @@ const translation = defineTranslation({
   candidates, // the nodes the sweep may send to the model, by id
   translator, // the application's model
   landing: { kind: "direct", update: pagesOps.update, actorId: Option.some(botId) },
-  // or: { kind: "proposal", submit: botProposals.submit, hasPending: Option.some(hasPending) }
+  // or: { kind: "proposal", submit: botProposals.submit, hasPending }
 });
 const hooks = { before: [humanLineageHook(declaration)], after: [] }; // the leaf's LifecycleHooks
 
