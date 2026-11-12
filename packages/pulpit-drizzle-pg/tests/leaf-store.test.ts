@@ -184,7 +184,7 @@ describe("makeLeafStores — what a store makes of a query's rows", () => {
       }),
     );
     expect(value).toEqual({ rows: [row], total: 7 });
-    expect(calls).toEqual(["select", "from", "leftJoin", "where", "orderBy", "limit", "offset"]);
+    expect(calls).toEqual(["select", "from", "where", "orderBy", "limit", "offset"]);
     expect(
       (await runWith([], stores.posts.list({ where: always, orderBy: [], limit: 1, offset: 9 })))
         .value,
