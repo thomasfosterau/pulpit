@@ -14,7 +14,7 @@ The tree-bound seams of [`@thomasfosterau/pulpit`](../pulpit/README.md) over the
 - **Landed:** the localised `LeafStore` over a tree's keyed views ([`./leaf-store`](#localised-leaves)), checked against the kernel's localised in-memory store on PostgreSQL.
 - **Landed:** the `PathStore` over a path table per routable namespace ([`./paths`](#paths)), checked step by step against the kernel's in-memory store on PostgreSQL.
 - **Landed:** `SearchBranch` over a tree's leaf and branch views and over a gated leaf's live rows ([`./search`](#search)), checked against the kernel's in-memory branch under every viewer's read scope on PostgreSQL.
-- **Next:** the localised live view (#343).
+- **Landed:** the localised live view and gated store of a publish-gated keyed leaf ([`./publication`](#publication), pulpit#343), checked against the kernel's in-memory publication over a localised store on PostgreSQL.
 
 ## Install
 
@@ -189,6 +189,8 @@ const gated = makePublications({
   pointer: "live",
   log: tables.pointers.live,
   live: views.pointers.live.leaves,
+  // A publish-gated leaf with a locale level (optional): its keyed head and pointer views.
+  keyed: { views: views.keyed, live: views.pointers.live.keyed },
   owners: nodeOwner,
   CurrentTransaction,
 });
@@ -202,7 +204,15 @@ const gated = makePublications({
 - **`leaves`**, the gated current-version store: the head rows with `draft` computed as `NOT EXISTS (a live row)`, a stored draft column ignored, as README → Seams asks.
 - **`searchBranch(options)`**, the leaf's [`SearchBranch`](#search), one value for every viewer: each request ranks the rows `live.list` reads for its `headFor` (per node, its head when it matches `headFor`, else its live row). Pass the kernel's `searchHeadFor(leaf, viewer)` as `headFor` (pulpit#346), the choice the leaf's `list` makes: every head on a head-reading rung, the viewer's own on an owned leaf, none for a reader. So a reader's search never scores a head's unpublished text, and an owner's finds their own.
 
-`listLocalised` reads none on both for now; the localised live view over the pointer's keyed view is #343. An id that is no canonical UUID names no node and has no facts.
+**A localised gated leaf** (pulpit#343): a leaf with a keyed level, listed under the pointer in `makeTreeViews` (`pointers: { live: ["post"] }` derives `views.pointers.live.keyed.post` beside its leaf view), reads one row per locale once `keyed` names both its keyed head view (`views.keyed`) and the pointer's keyed view; a leaf named on one side only is a `DerivationError` at module load.
+
+- `live.list` / `distinct` read, per node, the locale rows of its head when its **shared** head matches `headFor` (as the kernel's `LiveView` reads it), else those of its live version: the `UNION ALL` of the keyed head rows of the matching nodes and the keyed live rows of every other.
+- `live.listLocalised` picks each node's most preferred carried locale over those same rows, then the filter, order and page, as [`./leaf-store`'s](#localised-leaves) does. A reader sees the live version's locales, an owner their head's.
+- `live.get` / `getMany` read the shared live row, one per node.
+- `leaves` is the localised store over the keyed head rows, `draft` computed as "no live row".
+- `searchBranch` still ranks the shared rows, one hit per node, since a search hit is a node.
+
+An unkeyed gated leaf's `listLocalised` reads none on both. An id that is no canonical UUID names no node and has no facts.
 
 | Export | What it is |
 | --- | --- |
@@ -273,7 +283,7 @@ const search = hybridSearch({ branches: [text /* , trigram, vector … */] });
 //   headFor: searchHeadFor(leaf, viewer), limit })
 ```
 
-- **`search({ query, scope, headFor, limit })`** is `SELECT id … WHERE rank.matches AND scope ORDER BY rank.score DESC NULLS LAST, id LIMIT limit`, over the view's rows with the owner joined in as `ownerId`. `scope` renders through [`renderListFilter`](#filter) over the same columns `./leaf-store`'s `list` renders it over. It is never rank, then filter. `limit` is clamped to `[0, MAX_PAGE_LIMIT]`, and a zero limit reads nothing.
+- **`search({ query, scope, headFor, limit })`** is `SELECT id … WHERE rank.matches AND scope ORDER BY (rank.score)::float8 DESC NULLS LAST, id LIMIT limit`, over the view's rows with the owner joined in as `ownerId`. `scope` renders through [`renderListFilter`](#filter) over the same columns `./leaf-store`'s `list` renders it over. It is never rank, then filter. `limit` is clamped to `[0, MAX_PAGE_LIMIT]`, and a zero limit reads nothing.
 - **The rank is the application's** (`SearchRank`: the source's columns and the query to `{ matches, score }`, or none to read nothing): full text, trigram `similarity`, a vector's `embedding <=> $query`, or a literal-id match. `fullTextRank({ vector, config? })` is the full-text one: `vector @@ websearch_to_tsquery(config, query)`, scored by `ts_rank_cd`, `'simple'` by default; a blank query matches nothing.
 - **A branch view** (`views.branches[marker]`, a `UNION ALL` over the marker's leaves with the `type` column and its `project` columns) ranks every leaf of the union. `eq("type", leaf)` narrows it to one leaf. A scope node over a column the union lacks is `false`, so a leaf's owned scope over a branch view without that leaf's access columns ranks none of it: it fails closed. Give the projection the columns the scope reads, or search the leaf view.
 - **A publish-gated leaf** searches through [`./publication`](#publication)'s `searchBranch(options)`, which ranks the rows `LiveView.list` reads for the request's `headFor` (`BranchRequest.headFor`, pulpit#346). `makeSearchBranch` ignores `headFor`: a leaf or branch view has no live pointer.

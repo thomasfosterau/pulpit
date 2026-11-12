@@ -55,7 +55,7 @@ const runWith = <A, E>(
 
 describe("makePublications", () => {
   it("binds one gated leaf per pointer leaf, with the gated store's columns", () => {
-    expect(R.keys(publications)).toEqual(["posts"]);
+    expect(R.keys(publications)).toEqual(["posts", "notes"]);
     expect(Arr.sort([...gated.leaves.columns], Str.Order)).toContain("draft");
     expect([...gated.leaves.columns]).toContain("publishedAt");
   });
@@ -72,6 +72,73 @@ describe("makePublications", () => {
       });
     expect(build("draft", views.leaves)).toThrow(/no draftAt column/u);
     expect(build("live", R.empty())).toThrow(DerivationError);
+  });
+});
+
+describe("a localised gated leaf (pulpit#343)", () => {
+  const localised = makePublications({
+    views,
+    pointer: "live",
+    log: tables.pointers.live,
+    live: views.pointers.live.leaves,
+    keyed: { views: views.keyed, live: views.pointers.live.keyed },
+    owners,
+    CurrentTransaction: database.CurrentTransaction,
+  });
+
+  it("reads the keyed rows: the gated store's columns carry the locale level", () => {
+    const columns = [...localised.notes.leaves.columns];
+    expect(columns).toContain("locale");
+    expect(columns).toContain("heading");
+    expect(columns).toContain("draft");
+    // An unkeyed leaf of the same pointer is unchanged.
+    expect([...localised.posts.leaves.columns]).not.toContain("locale");
+  });
+
+  it("refuses a leaf keyed on one side only", () => {
+    const build =
+      (keyed: {
+        readonly views: Readonly<Record<string, PgView>>;
+        readonly live: Readonly<Record<string, PgView>>;
+      }) =>
+      () =>
+        makePublications({
+          views,
+          pointer: "live",
+          log: tables.pointers.live,
+          live: views.pointers.live.leaves,
+          keyed,
+          owners,
+          CurrentTransaction: database.CurrentTransaction,
+        });
+    expect(build({ views: views.keyed, live: R.empty() })).toThrow(/keyed view on one side only/u);
+    expect(build({ views: R.empty(), live: views.pointers.live.keyed })).toThrow(DerivationError);
+  });
+
+  it("listLocalised pages the chosen locale rows, and reads none for no locales", async () => {
+    const query = {
+      headFor: eq("ownerId", "u-1"),
+      where: always,
+      orderBy: [],
+      limit: 5,
+      offset: 0,
+    };
+    const chosen = await runWith(
+      [{ ...row, locale: "en", heading: "Hi", pageTotal: 1 }],
+      localised.notes.live.listLocalised({ ...query, locales: ["en", "fr"] }),
+    );
+    expect(chosen.value.total).toBe(1);
+    expect(chosen.calls).toContain("select");
+    const none = await runWith(
+      [row],
+      localised.notes.live.listLocalised({ ...query, locales: [] }),
+    );
+    expect(none).toEqual({ value: { rows: [], total: 0 }, calls: [] });
+    const list = await runWith(
+      [{ ...row, locale: "fr", heading: "Salut", pageTotal: 1 }],
+      localised.notes.live.list(query),
+    );
+    expect(list.value.rows).toHaveLength(1);
   });
 });
 

@@ -25,7 +25,8 @@ import * as Rows from "./internal/rows.ts";
 
 /**
  * How a branch ranks a row for a query: `matches`, the predicate every hit
- * satisfies, and `score`, best (highest) first, ties by id; none when the
+ * satisfies, and `score`, a number (read as `double precision`), best
+ * (highest) first, ties by id; none when the
  * query can match nothing, so the branch reads nothing (a literal-id branch
  * handed a query that is no identifier, say). `columns` are the branch's
  * row source's, by field key: the view's, a branch view's `project`
@@ -54,7 +55,7 @@ export interface SearchBranchOptions {
  * owner joined in as `ownerId` as `./leaf-store` reads it.
  *
  * `search({ query, scope, limit })` is one statement: `SELECT id … WHERE
- * rank.matches AND scope ORDER BY rank.score DESC NULLS LAST, id LIMIT
+ * rank.matches AND scope ORDER BY (rank.score)::float8 DESC NULLS LAST, id LIMIT
  * limit`, `scope` rendered by `renderListFilter` over the same columns
  * `./leaf-store`'s `list` renders it over, so the leaf's
  * `searchScopeFilter` scopes the ranking itself. A scope node over a column
