@@ -87,7 +87,7 @@ import {
 import type { ReactionRow, ReactionStore } from "./reactions.ts";
 import type { KvEntry, VersionedKv } from "./cache.ts";
 import type { CollectionEntry, CollectionStore } from "./collections.ts";
-import type { Membership, MembershipStore } from "./audience.ts";
+import type { Invitation, Membership, MembershipStore } from "./audience.ts";
 import type { Relationship, SocialStore } from "./social.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
 import type { ReportRow, ReportStore } from "./moderation.ts";
@@ -2617,14 +2617,17 @@ export const makeInMemorySocialStore = (): InMemorySocialStore => {
  * @since 0.2.0
  */
 export interface InMemoryMembershipStore extends MembershipStore<InMemoryFollowing, never, never> {
-  /** Every stored membership, in insertion order. */
+  /** Every stored active membership, in insertion order. */
   readonly rows: () => ReadonlyArray<Membership>;
+  /** Every pending invitation, in insertion order (pulpit#227). */
+  readonly pending: () => ReadonlyArray<Invitation>;
 }
 
 /**
  * An in-memory {@link MembershipStore}: the seam's contract (README → Seams
- * → the membership store) over an array of memberships keyed
- * `(groupId, accountId)`. `groupsOf` returns {@link InMemoryFollowing}, the
+ * → the membership store) over an array of active memberships and one of
+ * pending invitations (pulpit#227), sharing the key `(groupId, accountId)`:
+ * every membership read sees the active rows alone. `groupsOf` returns {@link InMemoryFollowing}, the
  * set the list filter's `in` node takes in memory. In memory only; not for
  * production.
  *
@@ -2644,22 +2647,38 @@ export interface InMemoryMembershipStore extends MembershipStore<InMemoryFollowi
  */
 export const makeInMemoryMembershipStore = (): InMemoryMembershipStore => {
   let rows: ReadonlyArray<Membership> = [];
-  const matches = (groupId: string, accountId: string) => (row: Membership) =>
-    row.groupId === groupId && row.accountId === accountId;
-  const removeWhere = (drop: (row: Membership) => boolean) =>
+  let pending: ReadonlyArray<Invitation> = [];
+  const matches =
+    (groupId: string, accountId: string) =>
+    (row: { readonly groupId: string; readonly accountId: string }) =>
+      row.groupId === groupId && row.accountId === accountId;
+  /** Drop the matching rows of both statuses; how many went. */
+  const removeWhere = (
+    dropActive: (row: Membership) => boolean,
+    dropPending: (row: Invitation) => boolean = () => false,
+  ) =>
     Effect.sync(() => {
-      const before = rows.length;
-      rows = Arr.filter(rows, (row) => !drop(row));
-      return before - rows.length;
+      const before = rows.length + pending.length;
+      rows = Arr.filter(rows, (row) => !dropActive(row));
+      pending = Arr.filter(pending, (row) => !dropPending(row));
+      return before - rows.length - pending.length;
     });
-  const oldestFirst = Order.combine(
-    Order.mapInput(Order.Number, (row: Membership) => row.at.getTime()),
-    Order.mapInput(byCodePoint, (row: Membership) => row.accountId),
-  );
+  const oldestFirst = <A extends { readonly at: Date }>(key: (row: A) => string) =>
+    Order.combine(
+      Order.mapInput(Order.Number, (row: A) => row.at.getTime()),
+      Order.mapInput(byCodePoint, key),
+    );
+  const takenKey = (groupId: string, accountId: string) =>
+    rows.some(matches(groupId, accountId)) || pending.some(matches(groupId, accountId));
   return {
     add: (membership) =>
       Effect.sync(() => {
         if (rows.some(matches(membership.groupId, membership.accountId))) return false;
+        // A direct add supersedes a pending invitation at the same key.
+        pending = Arr.filter(
+          pending,
+          (row) => !matches(membership.groupId, membership.accountId)(row),
+        );
         rows = [...rows, membership];
         return true;
       }),
@@ -2680,13 +2699,17 @@ export const makeInMemoryMembershipStore = (): InMemoryMembershipStore => {
         const members = Arr.map(
           Arr.sort(
             Arr.filter(rows, (row) => row.groupId === groupId),
-            oldestFirst,
+            oldestFirst((row: Membership) => row.accountId),
           ),
           ({ accountId, role, at }) => ({ accountId, role, at }),
         );
         return { rows: members.slice(offset, offset + limit), total: members.length };
       }),
-    removeGroup: (groupId) => removeWhere((row) => row.groupId === groupId),
+    removeGroup: (groupId) =>
+      removeWhere(
+        (row) => row.groupId === groupId,
+        (row) => row.groupId === groupId,
+      ),
     isMember: (accountId, groupId) => Effect.sync(() => rows.some(matches(groupId, accountId))),
     groupsOf: (accountId) =>
       HashSet.fromIterable(
@@ -2695,7 +2718,51 @@ export const makeInMemoryMembershipStore = (): InMemoryMembershipStore => {
           (row) => row.groupId,
         ),
       ),
-    eraseAccount: (accountId) => removeWhere((row) => row.accountId === accountId),
+    eraseAccount: (accountId) =>
+      removeWhere(
+        (row) => row.accountId === accountId,
+        (row) => row.accountId === accountId || row.invitedBy === accountId,
+      ),
+    invite: (invitation) =>
+      Effect.sync(() => {
+        if (takenKey(invitation.groupId, invitation.accountId)) return false;
+        pending = [...pending, invitation];
+        return true;
+      }),
+    invitationOf: (groupId, accountId) =>
+      Effect.sync(() => Arr.findFirst(pending, matches(groupId, accountId))),
+    accept: (groupId, accountId, at) =>
+      Effect.sync(() =>
+        Option.match(Arr.findFirst(pending, matches(groupId, accountId)), {
+          onNone: () => false,
+          onSome: (invitation) => {
+            pending = Arr.filter(pending, (row) => !matches(groupId, accountId)(row));
+            rows = [...rows, { groupId, accountId, role: invitation.role, at }];
+            return true;
+          },
+        }),
+      ),
+    removeInvitation: (groupId, accountId) =>
+      Effect.map(
+        removeWhere(() => false, matches(groupId, accountId)),
+        (count) => count > 0,
+      ),
+    invitations: (query) =>
+      Effect.sync(() => {
+        const selected = Arr.sort(
+          Arr.filter(pending, (row) =>
+            query.by === "group"
+              ? row.groupId === query.groupId
+              : row.accountId === query.accountId,
+          ),
+          oldestFirst((row: Invitation) => (query.by === "group" ? row.accountId : row.groupId)),
+        );
+        return {
+          rows: selected.slice(query.offset, query.offset + query.limit),
+          total: selected.length,
+        };
+      }),
     rows: () => rows,
+    pending: () => pending,
   };
 };

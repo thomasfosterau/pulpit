@@ -246,3 +246,219 @@ describe("the audience seam and the store", () => {
     expect(store.rows().map((row) => row.accountId)).toEqual([owner.id, groupAdmin.id]);
   });
 });
+
+describe("defineAudience — invitations (pulpit#227)", () => {
+  const invitee: ViewerAccount = { id: "u-invitee", role: "user" };
+  const pageAll = { limit: 100, offset: 0 };
+
+  const managers = [
+    ["the owner", owner],
+    ["an admin", groupAdmin],
+  ] as const;
+
+  it.each(managers)(
+    "%s invites; the invitee is pending, not a member, until they accept",
+    (_name, who) => {
+      const { as, store, roleOf } = world();
+      const seam = audienceSeam(store);
+      expect(Effect.runSync(as(Option.some(who)).invite(GROUP, invitee.id, "admin"))).toEqual({
+        changed: true,
+      });
+      // Inviting again changes nothing.
+      expect(Effect.runSync(as(Option.some(who)).invite(GROUP, invitee.id))).toEqual({
+        changed: false,
+      });
+      expect(roleOf(invitee.id)).toEqual(Option.none());
+      expect(Effect.runSync(seam.isMember(invitee.id, GROUP))).toBe(false);
+      expect(HashSet.size(seam.groups(invitee.id))).toBe(0);
+      expect(
+        Effect.runSync(as(Option.some(owner)).members(GROUP, pageAll)).rows.map(
+          (row) => row.accountId,
+        ),
+      ).not.toContain(invitee.id);
+      expect(
+        Effect.runSync(as(Option.some(who)).invitations(GROUP, pageAll)).rows.map((row) => [
+          row.accountId,
+          row.role,
+          row.invitedBy,
+        ]),
+      ).toEqual([[invitee.id, "admin", who.id]]);
+
+      Effect.runSync(as(Option.some(invitee)).accept(GROUP));
+      expect(roleOf(invitee.id)).toEqual(Option.some("admin"));
+      expect(Effect.runSync(seam.isMember(invitee.id, GROUP))).toBe(true);
+      expect(store.pending()).toEqual([]);
+    },
+  );
+
+  it("a pending admin invitation manages nothing until accepted", () => {
+    const { as, store } = world();
+    Effect.runSync(as(Option.some(owner)).invite(GROUP, invitee.id, "admin"));
+    const pendingOps = as(Option.some(invitee));
+    expect(tagOf(pendingOps.addMember(GROUP, "u-new"))).toEqual(Option.some("Forbidden"));
+    expect(tagOf(pendingOps.invite(GROUP, "u-new"))).toEqual(Option.some("Forbidden"));
+    expect(tagOf(pendingOps.revoke(GROUP, invitee.id))).toEqual(Option.some("Forbidden"));
+    expect(tagOf(pendingOps.members(GROUP, pageAll))).toEqual(Option.some("GroupNotFound"));
+    expect(tagOf(pendingOps.invitations(GROUP, pageAll))).toEqual(Option.some("GroupNotFound"));
+    expect(tagOf(pendingOps.leave(GROUP))).toEqual(Option.some("MemberNotFound"));
+    expect(store.rows().map((row) => row.accountId)).not.toContain("u-new");
+  });
+
+  it("the invitee declines; the invitation is gone and accepting it is InvitationNotFound", () => {
+    const { as, store, roleOf } = world();
+    Effect.runSync(as(Option.some(owner)).invite(GROUP, invitee.id));
+    Effect.runSync(as(Option.some(invitee)).decline(GROUP));
+    expect(store.pending()).toEqual([]);
+    expect(tagOf(as(Option.some(invitee)).accept(GROUP))).toEqual(
+      Option.some("InvitationNotFound"),
+    );
+    expect(tagOf(as(Option.some(invitee)).decline(GROUP))).toEqual(
+      Option.some("InvitationNotFound"),
+    );
+    expect(roleOf(invitee.id)).toEqual(Option.none());
+  });
+
+  it.each(managers)(
+    "%s revokes; accepting a revoked invitation is InvitationNotFound",
+    (_n, who) => {
+      const { as, store } = world();
+      Effect.runSync(as(Option.some(owner)).invite(GROUP, invitee.id));
+      Effect.runSync(as(Option.some(who)).revoke(GROUP, invitee.id));
+      expect(store.pending()).toEqual([]);
+      expect(tagOf(as(Option.some(invitee)).accept(GROUP))).toEqual(
+        Option.some("InvitationNotFound"),
+      );
+      expect(tagOf(as(Option.some(who)).revoke(GROUP, invitee.id))).toEqual(
+        Option.some("InvitationNotFound"),
+      );
+    },
+  );
+
+  const refusals = Arr.flatMap(
+    [
+      ["anonymous", Option.none(), "Unauthorized"],
+      ["a member", Option.some(member), "Forbidden"],
+      ["a stranger", Option.some(stranger), "Forbidden"],
+    ] as const,
+    ([name, who, tag]) =>
+      Arr.map(
+        [
+          [
+            "invite",
+            (ops: ReturnType<ReturnType<typeof world>["as"]>) => ops.invite(GROUP, invitee.id),
+          ],
+          [
+            "revoke",
+            (ops: ReturnType<ReturnType<typeof world>["as"]>) => ops.revoke(GROUP, invitee.id),
+          ],
+        ] as const,
+        ([operation, call]) => ({ label: `${operation} by ${name}`, who, call, tag }),
+      ),
+  );
+
+  it.each(refusals)("$label is refused, and writes nothing", ({ who, call, tag }) => {
+    const { as, store } = world();
+    Effect.runSync(as(Option.some(owner)).invite(GROUP, invitee.id));
+    const before = [store.rows(), store.pending()];
+    expect(tagOf<unknown, { readonly _tag: string }>(call(as(who)))).toEqual(Option.some(tag));
+    expect([store.rows(), store.pending()]).toEqual(before);
+  });
+
+  it("refuses a self-invitation and an invitation for an active member", () => {
+    const { as, store } = world();
+    expect(tagOf(as(Option.some(groupAdmin)).invite(GROUP, groupAdmin.id))).toEqual(
+      Option.some("SelfInvitation"),
+    );
+    expect(tagOf(as(Option.some(owner)).invite(GROUP, member.id))).toEqual(
+      Option.some("AlreadyMember"),
+    );
+    expect(store.pending()).toEqual([]);
+  });
+
+  it("only the invitee accepts or declines: another account has no invitation to answer", () => {
+    const { as, store } = world();
+    Effect.runSync(as(Option.some(owner)).invite(GROUP, invitee.id));
+    expect(tagOf(as(Option.some(stranger)).accept(GROUP))).toEqual(
+      Option.some("InvitationNotFound"),
+    );
+    expect(tagOf(as(Option.some(stranger)).decline(GROUP))).toEqual(
+      Option.some("InvitationNotFound"),
+    );
+    expect(tagOf(as(Option.none()).accept(GROUP))).toEqual(Option.some("Unauthorized"));
+    expect(store.pending()).toHaveLength(1);
+  });
+
+  it("an unknown group is GroupNotFound for every invitation operation", () => {
+    const { as } = world();
+    const ops = as(Option.some(owner));
+    expect(tagOf(ops.invite("g-none", invitee.id))).toEqual(Option.some("GroupNotFound"));
+    expect(tagOf(ops.revoke("g-none", invitee.id))).toEqual(Option.some("GroupNotFound"));
+    expect(tagOf(ops.invitations("g-none", pageAll))).toEqual(Option.some("GroupNotFound"));
+    expect(tagOf(as(Option.some(invitee)).accept("g-none"))).toEqual(Option.some("GroupNotFound"));
+    expect(tagOf(as(Option.some(invitee)).decline("g-none"))).toEqual(Option.some("GroupNotFound"));
+  });
+
+  it("the group's invitation list: managers read it, a member is Forbidden, a stranger GroupNotFound", () => {
+    const { as } = world();
+    Effect.runSync(as(Option.some(owner)).invite(GROUP, invitee.id));
+    Effect.runSync(as(Option.some(owner)).invite(GROUP, "u-second"));
+    const page = Effect.runSync(
+      as(Option.some(groupAdmin)).invitations(GROUP, { limit: 1, offset: 1 }),
+    );
+    expect(page.total).toBe(2);
+    expect(page.rows).toHaveLength(1);
+    expect(tagOf(as(Option.some(member)).invitations(GROUP, pageAll))).toEqual(
+      Option.some("Forbidden"),
+    );
+    expect(tagOf(as(Option.some(stranger)).invitations(GROUP, pageAll))).toEqual(
+      Option.some("GroupNotFound"),
+    );
+  });
+
+  it("the invitee reads their own invitations across groups", () => {
+    const { as, store } = world();
+    Effect.runSync(as(Option.some(owner)).invite(GROUP, invitee.id));
+    Effect.runSync(
+      store.invite({
+        groupId: "g-2",
+        accountId: invitee.id,
+        role: "member",
+        invitedBy: owner.id,
+        at: NOW,
+      }),
+    );
+    const mine = Effect.runSync(as(Option.some(invitee)).myInvitations(pageAll));
+    expect(mine.total).toBe(2);
+    expect(mine.rows.map((row) => row.groupId).toSorted()).toEqual([GROUP, "g-2"]);
+    expect(Effect.runSync(as(Option.some(stranger)).myInvitations(pageAll)).total).toBe(0);
+    expect(tagOf(as(Option.none()).myInvitations(pageAll))).toEqual(Option.some("Unauthorized"));
+  });
+
+  it("a direct add supersedes a pending invitation", () => {
+    const { as, store, roleOf } = world();
+    Effect.runSync(as(Option.some(owner)).invite(GROUP, invitee.id, "admin"));
+    expect(Effect.runSync(as(Option.some(owner)).addMember(GROUP, invitee.id))).toEqual({
+      changed: true,
+    });
+    expect(roleOf(invitee.id)).toEqual(Option.some("member"));
+    expect(store.pending()).toEqual([]);
+  });
+
+  it("removing a member leaves a pending invitation alone; deleting the group and erasure remove it", () => {
+    const { as, store } = world();
+    Effect.runSync(as(Option.some(owner)).invite(GROUP, invitee.id));
+    expect(Effect.runSync(as(Option.some(owner)).removeMember(GROUP, invitee.id))).toEqual({
+      changed: false,
+    });
+    expect(store.pending()).toHaveLength(1);
+    expect(Effect.runSync(store.eraseAccount(invitee.id))).toBe(1);
+    expect(store.pending()).toEqual([]);
+    Effect.runSync(as(Option.some(groupAdmin)).invite(GROUP, invitee.id));
+    // Erasing the inviter drops the invitations they sent.
+    expect(Effect.runSync(store.eraseAccount(groupAdmin.id))).toBe(2);
+    expect(store.pending()).toEqual([]);
+    Effect.runSync(as(Option.some(owner)).invite(GROUP, invitee.id));
+    expect(Effect.runSync(as(Option.some(owner)).removeGroup(GROUP))).toBe(3);
+    expect(store.pending()).toEqual([]);
+  });
+});

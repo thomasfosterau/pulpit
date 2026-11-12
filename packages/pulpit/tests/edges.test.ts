@@ -81,12 +81,14 @@ import {
   type Viewer,
   type ViewerAccount,
 } from "../src/subtype.ts";
+import { audienceSeam } from "../src/audience.ts";
 import type { ColumnValue, VersionAction } from "../src/version-chain.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryEdgeStore,
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
+  makeInMemoryMembershipStore,
   makeInMemoryNodes,
   type InMemoryEdgeStore,
   type InMemoryFollowing as Following,
@@ -2632,5 +2634,56 @@ describe("EDGE-001: a `group` end reads to its group's members, filter and predi
         .filter((row) => row.action !== "delete" && row["visibility"] === "public")
         .map((row) => row.id),
     );
+  });
+});
+
+describe("EDGE-001: a pending group invitation opens no `group` end (pulpit#227)", () => {
+  const memberships = makeInMemoryMembershipStore();
+  const seam: FollowerSeam<Following, never> = { ...follows, ...audienceSeam(memberships) };
+  const end: EdgeEnd<never, never> = {
+    column: "entryId",
+    type: "entries",
+    access: ownedAccess({ draft: true, group: true }),
+    nodes: makeInMemoryNodes(["ownerId", "visibility", "draft", "groupId"]),
+  };
+  const rows = [
+    node(
+      "shared",
+      { ownerId: member.id, visibility: "group", draft: false, groupId: "g-1" },
+      "create",
+    ),
+  ];
+  const readsAs = async () =>
+    (await readings(end, as(follower), rows, seam)).map(({ listed, readable }) => [
+      listed,
+      readable,
+    ]);
+
+  it("hidden while pending, open after accepting, hidden again after leaving or a revoke", async () => {
+    Effect.runSync(
+      memberships.invite({
+        groupId: "g-1",
+        accountId: follower.id,
+        role: "member",
+        invitedBy: member.id,
+        at: NOW,
+      }),
+    );
+    expect(await readsAs()).toEqual([[false, false]]);
+    Effect.runSync(memberships.accept("g-1", follower.id, NOW));
+    expect(await readsAs()).toEqual([[true, true]]);
+    Effect.runSync(memberships.remove("g-1", follower.id));
+    expect(await readsAs()).toEqual([[false, false]]);
+    Effect.runSync(
+      memberships.invite({
+        groupId: "g-1",
+        accountId: follower.id,
+        role: "member",
+        invitedBy: member.id,
+        at: NOW,
+      }),
+    );
+    Effect.runSync(memberships.removeInvitation("g-1", follower.id));
+    expect(await readsAs()).toEqual([[false, false]]);
   });
 });
