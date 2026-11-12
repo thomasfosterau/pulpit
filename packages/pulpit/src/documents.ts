@@ -31,6 +31,27 @@
  * document type is a parameter; its schema and validation are the
  * application's (prosekit-utilities), and pulpit never imports them.
  *
+ * ## The grammar check (pulpit#264)
+ *
+ * Which grammar a document field accepts is the application's too (owner
+ * decision on pulpit#202: the allow-lists live in prosekit-utilities,
+ * prosekit-utilities#156), so the kernel takes it as a seam, a
+ * {@link DocumentCheck}, and enforces it at the two places a document
+ * enters content:
+ *
+ * - **At `put`**, {@link checkedDocumentStore} runs the field's check before
+ *   the document is stored, so an off-grammar document is never written
+ *   (`DOC-001` keeps a stored document forever, so the check must come first);
+ * - **At the chain write**, {@link documentCheckHook} is a before-write hook
+ *   (`./subtype`'s `LifecycleHooks`) that reads back every document a
+ *   `create`, `update` or `restore` sets and refuses the write with
+ *   `WriteRejected` when one fails its field's check, so no version ever
+ *   references an unchecked document, whichever path stored it.
+ *
+ * A version row carries only the hash, and the application stores the
+ * document before it writes the version, so the hook can't stop the store;
+ * declaring both is what keeps the rule whole.
+ *
  * @copyright Thomas Foster
  * @module pulpit/documents
  * @since 0.1.0
@@ -40,11 +61,16 @@ import { Resource } from "@thomasfosterau/effect-jsonapi";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import type * as HashMap from "effect/HashMap";
-import type * as Option from "effect/Option";
+import * as HashMapModule from "effect/HashMap";
+import * as HashSet from "effect/HashSet";
+import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as P from "effect/Predicate";
 import * as R from "effect/Record";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import { WriteRejected, type BeforeWriteEvent, type BeforeWriteHook } from "./subtype.ts";
+import type { ChainPatch, ColumnValue } from "./version-chain.ts";
 
 // ── Vocabulary ────────────────────────────────────────────────────────
 
@@ -282,3 +308,192 @@ export const canonicalText = (value: Schema.Json): string => {
  */
 export const documentRef = <const Key extends string>(key: Key) =>
   R.singleton(key, Resource.attribute(DocumentHash));
+
+// ── The grammar check ─────────────────────────────────────────────────
+
+/**
+ * A document that fails its field's grammar: the application's checker names
+ * the field it checked and says why (a node type outside the allow-list, an
+ * unsafe link). The wire's 422.
+ *
+ * @since 0.2.0
+ */
+export class DocumentViolation extends Schema.TaggedError<
+  DocumentViolation,
+  { readonly brand: unique symbol }
+>()("DocumentViolation", { field: Schema.String, message: Schema.String }) {}
+
+/**
+ * The grammar seam (pulpit#264): whether `document` is allowed in `field`.
+ * It succeeds for a conforming document and fails {@link DocumentViolation}
+ * otherwise; it reads nothing else and has no other failure. The
+ * application fills it, typically with prosekit-utilities' allow-list
+ * checkers (one grammar per field: a post body, a comment, an inline title;
+ * prosekit-utilities#156); the kernel never imports a grammar.
+ *
+ * @since 0.2.0
+ */
+export type DocumentCheck<Document, R = never> = (
+  field: string,
+  document: Document,
+) => Effect.Effect<void, DocumentViolation, R>;
+
+/**
+ * A document store whose `put` runs `field`'s grammar check first, so an
+ * off-grammar document fails {@link DocumentViolation} and is never stored
+ * (`DOC-001`: a stored document is never rewritten, so nothing may be stored
+ * unchecked). Use one per document field, as the apps keep one store per
+ * document family; `get` and `getMany` are the store's own. Pair it with
+ * {@link documentCheckHook} on the leaf, which refuses a version that
+ * references a document stored another way.
+ *
+ * @example
+ * ```ts
+ * import { strictEqual } from "node:assert";
+ * import * as Effect from "effect/Effect";
+ * import * as Exit from "effect/Exit";
+ * import { checkedDocumentStore, DocumentViolation } from "@thomasfosterau/pulpit/documents";
+ * import { makeInMemoryDocumentStore } from "@thomasfosterau/pulpit/testing";
+ *
+ * type Doc = { readonly type: string };
+ * const inner = makeInMemoryDocumentStore<Doc>();
+ * const bodies = checkedDocumentStore(inner, "body", (field, document: Doc) =>
+ *   document.type === "paragraph"
+ *     ? Effect.void
+ *     : Effect.fail(new DocumentViolation({ field, message: `${document.type} is not allowed` })),
+ * );
+ * strictEqual(Exit.isSuccess(await Effect.runPromiseExit(bodies.put({ type: "paragraph" }))), true);
+ * strictEqual(Exit.isFailure(await Effect.runPromiseExit(bodies.put({ type: "script" }))), true);
+ * strictEqual(inner.writes(), 1);
+ * ```
+ *
+ * @since 0.2.0
+ */
+export const checkedDocumentStore = <Document, E, R, RC>(
+  store: DocumentStore<Document, E, R>,
+  field: string,
+  check: DocumentCheck<Document, RC>,
+): DocumentStore<Document, E | DocumentViolation, R | RC> => ({
+  ...store,
+  put: (document) => Effect.andThen(check(field, document), store.put(document)),
+});
+
+/**
+ * The `WriteRejected.reason` {@link documentCheckHook} refuses a write with
+ * starts with this, then names the field and the checker's message
+ * (`DOCUMENT_VIOLATION body: script is not allowed`).
+ *
+ * @since 0.2.0
+ */
+export const DOCUMENT_VIOLATION = "DOCUMENT_VIOLATION";
+
+/**
+ * What {@link documentCheckHook} checks: the leaf's document reference
+ * columns (each declared with {@link documentRef}), the store the documents
+ * are read back from, and the grammar check.
+ *
+ * @since 0.2.0
+ */
+export interface DocumentCheckDeclaration<Document, E, R> {
+  /** The leaf's wire type, which names the hook. */
+  readonly type: string;
+  /** The columns that hold a {@link DocumentHash}; any other column is never read. */
+  readonly fields: ReadonlyArray<string>;
+  /** Where the hook reads a referenced document back (one `getMany` per write). */
+  readonly documents: Pick<DocumentStore<Document, E, R>, "getMany">;
+  readonly check: DocumentCheck<Document, R>;
+}
+
+/** The actions whose patch the check reads: everything else sets no document. */
+const CHECKED_ACTIONS: HashSet.HashSet<string> = HashSet.make("create", "update", "restore");
+
+/** The document references a patch sets: each declared field holding a string (`null` clears, `undefined` carries forward). */
+const referencesIn = (
+  fields: ReadonlyArray<string>,
+  patch: ChainPatch,
+): ReadonlyArray<readonly [string, ColumnValue]> =>
+  Arr.filterMap(fields, (field) => {
+    const value = patch[field];
+    return value === undefined || value === null
+      ? Result.failVoid
+      : Result.succeed([field, value] as const);
+  });
+
+/**
+ * The grammar check as a before-write hook (pulpit#264): on a `create`,
+ * `update` or `restore`, every declared document field the patch (or, on a
+ * localised leaf, any locale's patch) sets is read back with one
+ * `getMany` and run through the check, and the first that fails refuses the
+ * write with `WriteRejected` (reason {@link DOCUMENT_VIOLATION}, the field
+ * and the message), appending nothing. A field the patch leaves absent
+ * carries its previous, already checked reference forward and is not read;
+ * `null` clears it. A reference that is not a stored document's hash fails
+ * closed (refused as missing), since nothing can be checked. The patch
+ * itself passes through unchanged.
+ *
+ * `restoreVersion` is exempt: it re-applies a version this hook already let
+ * through, whose documents `DOC-001` keeps exactly as they were checked.
+ * (A grammar tightened since then is the application's migration, not a
+ * restore's refusal.) `delete` and the publication writes set no document.
+ *
+ * @since 0.2.0
+ */
+export const documentCheckHook = <Document, E, R>(
+  declaration: DocumentCheckDeclaration<Document, E, R>,
+): BeforeWriteHook<E, R> => {
+  const { type, fields, documents, check } = declaration;
+  const verify = (
+    event: BeforeWriteEvent,
+    patches: ReadonlyArray<ChainPatch>,
+  ): Effect.Effect<void, WriteRejected | E, R> => {
+    if (!HashSet.has(CHECKED_ACTIONS, event.action)) return Effect.void;
+    const references = Arr.flatMap(patches, (patch) => referencesIn(fields, patch));
+    if (!Arr.isArrayNonEmpty(references)) return Effect.void;
+    const reject = (field: string, message: string) =>
+      new WriteRejected({
+        type,
+        id: event.id,
+        action: event.action,
+        reason: `${DOCUMENT_VIOLATION} ${field}: ${message}`,
+      });
+    const hashes = Arr.dedupe(
+      Arr.filterMap(references, ([, value]) =>
+        P.isString(value) ? Result.succeed(value) : Result.failVoid,
+      ),
+    );
+    const read = Arr.match(hashes, {
+      onEmpty: () => Effect.succeed(HashMapModule.empty<DocumentHash, Document>()),
+      onNonEmpty: (some) => documents.getMany(some),
+    });
+    return Effect.flatMap(read, (found) =>
+      Effect.forEach(
+        references,
+        ([field, value]) =>
+          Option.match(P.isString(value) ? HashMapModule.get(found, value) : Option.none(), {
+            onNone: () => Effect.fail(reject(field, "no stored document at this reference")),
+            onSome: (document) =>
+              Effect.mapError(check(field, document), (violation) =>
+                reject(violation.field, violation.message),
+              ),
+          }),
+        { concurrency: 1, discard: true },
+      ),
+    );
+  };
+  return {
+    name: `${type}.documentCheck`,
+    run: (event) => Effect.as(verify(event, [event.patch]), event.patch),
+    locales: (event) => {
+      const locales = event.locales ?? {};
+      return Effect.as(
+        verify(
+          event,
+          Arr.filterMap(R.values(locales), (patch) =>
+            patch === null || patch === undefined ? Result.failVoid : Result.succeed(patch),
+          ),
+        ),
+        locales,
+      );
+    },
+  };
+};

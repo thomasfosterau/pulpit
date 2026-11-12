@@ -22,10 +22,29 @@ import {
   documentRef,
   onDocumentInsert,
   type DocumentInserted,
+  checkedDocumentStore,
+  DOCUMENT_VIOLATION,
+  documentCheckHook,
+  DocumentViolation,
+  type DocumentCheck,
 } from "../src/documents.ts";
+import {
+  defineSubtype,
+  ownedAccess,
+  WriteRejected,
+  type BeforeWriteEvent,
+  type BeforeWriteHook,
+  type LeafRow,
+} from "../src/subtype.ts";
+import type { LocalePatch, WriteAction } from "../src/version-chain.ts";
 import { defineVersionChain } from "../src/version-chain.ts";
-import { decodes } from "./fixtures.ts";
-import { makeInMemoryVersionChain, makeInMemoryDocumentStore } from "../src/testing.ts";
+import { decodes, NOW } from "./fixtures.ts";
+import {
+  makeInMemoryDocumentStore,
+  makeInMemoryFollowers,
+  makeInMemoryLeafStore,
+  makeInMemoryVersionChain,
+} from "../src/testing.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 
@@ -308,5 +327,218 @@ describe("version rows that reference documents", () => {
     // Nothing was re-stored or rewritten: both drafts, each at its own hash.
     expect(HashMap.size(documents.stored())).toBe(2);
     expect(await run(documents.get(restored.before))).toEqual(Option.some(original));
+  });
+});
+
+// ── The grammar check (pulpit#264) ────────────────────────────────────
+
+describe("the grammar check (pulpit#264)", () => {
+  type Doc = { readonly type: string };
+  /** The allow-list: a paragraph only. */
+  const check: DocumentCheck<Doc> = (field, document) =>
+    document.type === "paragraph"
+      ? Effect.void
+      : Effect.fail(new DocumentViolation({ field, message: `${document.type} is not allowed` }));
+
+  const fixture = (extra: ReadonlyArray<BeforeWriteHook<never, never>> = []) => {
+    const store = makeInMemoryDocumentStore<Doc>();
+    const checks: Array<string> = [];
+    const counted: DocumentCheck<Doc> = (field, document) =>
+      Effect.andThen(
+        Effect.sync(() => checks.push(`${field}:${document.type}`)),
+        check(field, document),
+      );
+    const chain = makeInMemoryVersionChain("posts");
+    const leaves = makeInMemoryLeafStore(chain, {
+      columns: ["title", "body", "visibility"],
+      now: NOW,
+    });
+    const posts = defineSubtype({
+      type: "posts",
+      access: ownedAccess(),
+      chain,
+      leaves,
+      viewer: Effect.succeedSome({ id: "u-1", role: "user" }),
+      policy: {
+        canViewPrivate: () => false,
+        canViewDeleted: () => false,
+        canModerate: () => false,
+        canWriteCorpus: () => false,
+      },
+      followers: makeInMemoryFollowers([]),
+      toResource: (row: LeafRow) => row,
+      hooks: Effect.succeed({
+        before: [
+          ...extra,
+          documentCheckHook({ type: "posts", fields: ["body"], documents: store, check: counted }),
+        ],
+        after: [],
+      }),
+    });
+    const bodies = checkedDocumentStore(store, "body", check);
+    return { store, bodies, chain, posts, checks };
+  };
+
+  const reasonOf = <A, E>(effect: Effect.Effect<A, E>) =>
+    Effect.map(Effect.flip(effect), (error) =>
+      error instanceof WriteRejected ? error.reason : String(error),
+    );
+
+  it("checkedDocumentStore never stores an off-grammar document", async () => {
+    const { store, bodies } = fixture();
+    const exit = await Effect.runPromiseExit(bodies.put({ type: "script" }));
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(store.writes()).toBe(0);
+    expect((await Effect.runPromise(bodies.put({ type: "paragraph" }))).inserted).toBe(true);
+    expect(store.writes()).toBe(1);
+  });
+
+  it("refuses a create or an update whose document fails its grammar, appending nothing", async () => {
+    const { store, chain, posts } = fixture();
+    const outcome = await Effect.runPromise(
+      Effect.gen(function* () {
+        const good = yield* store.put({ type: "paragraph" });
+        const bad = yield* store.put({ type: "script" });
+        const created = yield* reasonOf(
+          posts.create({ id: Option.none(), state: { body: bad.hash, visibility: "public" } }),
+        );
+        const rowsAfterCreate = chain.rows().length;
+        const { id } = yield* posts.create({
+          id: Option.none(),
+          state: { body: good.hash, visibility: "public" },
+        });
+        const updated = yield* reasonOf(posts.update({ id, patch: { body: bad.hash } }));
+        return { created, rowsAfterCreate, updated, rows: chain.rows().length };
+      }),
+    );
+    expect(outcome).toEqual({
+      created: `${DOCUMENT_VIOLATION} body: script is not allowed`,
+      rowsAfterCreate: 0,
+      updated: `${DOCUMENT_VIOLATION} body: script is not allowed`,
+      rows: 1,
+    });
+  });
+
+  it("refuses a reference to no stored document (fail closed)", async () => {
+    const { posts } = fixture();
+    const reason = await Effect.runPromise(
+      reasonOf(
+        posts.create({ id: Option.none(), state: { body: "0".repeat(64), visibility: "public" } }),
+      ),
+    );
+    expect(reason).toBe(`${DOCUMENT_VIOLATION} body: no stored document at this reference`);
+  });
+
+  it("checks only what the patch sets: an absent field, a cleared one and undeclared columns are not read", async () => {
+    const { store, posts, checks } = fixture();
+    const versions = await Effect.runPromise(
+      Effect.gen(function* () {
+        const good = yield* store.put({ type: "paragraph" });
+        const { id } = yield* posts.create({
+          id: Option.none(),
+          state: { body: good.hash, title: "Hello", visibility: "public" },
+        });
+        yield* posts.update({ id, patch: { title: "Hi" } });
+        yield* posts.update({ id, patch: { body: null } });
+        return id;
+      }),
+    );
+    expect(versions).toBeTypeOf("string");
+    expect(checks).toEqual(["body:paragraph"]);
+  });
+
+  it("leaves restoreVersion, delete and restore over an unchanged reference unchecked", async () => {
+    const { store, posts, checks } = fixture();
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const good = yield* store.put({ type: "paragraph" });
+        const { id } = yield* posts.create({
+          id: Option.none(),
+          state: { body: good.hash, visibility: "public" },
+        });
+        yield* posts.delete(id);
+        yield* posts.restoreVersion(id, 0n);
+        yield* posts.delete(id);
+        yield* posts.restore({ id, patch: {} });
+      }),
+    );
+    expect(checks).toEqual(["body:paragraph"]);
+  });
+
+  it("checks a restore that sets a document", async () => {
+    const { store, posts } = fixture();
+    const reason = await Effect.runPromise(
+      Effect.gen(function* () {
+        const good = yield* store.put({ type: "paragraph" });
+        const bad = yield* store.put({ type: "script" });
+        const { id } = yield* posts.create({
+          id: Option.none(),
+          state: { body: good.hash, visibility: "public" },
+        });
+        yield* posts.delete(id);
+        return yield* reasonOf(posts.restore({ id, patch: { body: bad.hash } }));
+      }),
+    );
+    expect(reason).toBe(`${DOCUMENT_VIOLATION} body: script is not allowed`);
+  });
+
+  it("composes with other before hooks, seeing the patch they return", async () => {
+    const { bodies, posts, chain } = await Effect.runPromise(
+      Effect.sync(() => {
+        const swap: BeforeWriteHook<never, never> = {
+          name: "posts.swap",
+          run: (event) => Effect.succeed({ ...event.patch, title: "Normalised" }),
+          locales: (event) => Effect.succeed(event.locales ?? {}),
+        };
+        return fixture([swap]);
+      }),
+    );
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const good = yield* bodies.put({ type: "paragraph" });
+        yield* posts.create({
+          id: Option.none(),
+          state: { body: good.hash, visibility: "public" },
+        });
+      }),
+    );
+    expect(chain.rows().map((row) => row.state["title"])).toEqual(["Normalised"]);
+  });
+
+  const event = (action: WriteAction, locales: LocalePatch): BeforeWriteEvent => ({
+    type: "posts",
+    viewer: Option.none(),
+    action,
+    id: "p-1",
+    prior: Option.none(),
+    patch: {},
+    locales,
+    actorId: Option.none(),
+  });
+
+  it("checks every locale's patch, and passes the locale patch through", async () => {
+    const store = makeInMemoryDocumentStore<Doc>();
+    const hook = documentCheckHook({ type: "posts", fields: ["body"], documents: store, check });
+    const locales = hook.locales ?? (() => Effect.die("documentCheckHook declares no locale pass"));
+    const outcome = await Effect.runPromise(
+      Effect.gen(function* () {
+        const good = yield* store.put({ type: "paragraph" });
+        const bad = yield* store.put({ type: "script" });
+        const passed = yield* locales(event("update", { en: { body: good.hash }, fr: null }));
+        const refused = yield* reasonOf(locales(event("update", { de: { body: bad.hash } })));
+        const exempt = yield* locales(event("restoreVersion", { de: { body: bad.hash } }));
+        const { locales: _omitted, ...withoutLocales } = event("update", {});
+        const none = yield* locales(withoutLocales);
+        return { passed, refused, exempt, none, good: good.hash, bad: bad.hash };
+      }),
+    );
+    expect(outcome).toEqual({
+      passed: { en: { body: outcome.good }, fr: null },
+      refused: `${DOCUMENT_VIOLATION} body: script is not allowed`,
+      exempt: { de: { body: outcome.bad } },
+      none: {},
+      good: outcome.good,
+      bad: outcome.bad,
+    });
   });
 });

@@ -439,6 +439,9 @@ The document type is a parameter: its schema and validation are the application'
 | `DocumentHash` | A SHA-256 document hash as 64 lowercase hex characters. |
 | `documentRef(key)` | The attribute spread for a version row's document reference: the hash, required on the resource and at create, carried forward at update, never cleared. |
 | `canonicalText(json)` | The canonical text the hash contract takes SHA-256 over (Postgres's `jsonb` text output), for a store that doesn't run on Postgres. |
+| `DocumentCheck<Document, R>`, `DocumentViolation` | The grammar seam (pulpit#264): `(field, document)` succeeds for a document the field's grammar allows and fails `DocumentViolation { field, message }` otherwise (see [Seams](#seams)). |
+| `checkedDocumentStore(store, field, check)` | The store with the field's grammar check before `put`: an off-grammar document fails `DocumentViolation` and is never stored (`DOC-001`). One per document field. |
+| `documentCheckHook({ type, fields, documents, check })`, `DocumentCheckDeclaration`, `DOCUMENT_VIOLATION` | The grammar check as a before-write hook: a `create`, `update` or `restore` whose patch (or any locale's) sets a declared document field is refused with `WriteRejected` (reason `DOCUMENT_VIOLATION <field>: <message>`) when the referenced document fails its check or isn't stored; one `getMany` per write. `restoreVersion` is exempt (it re-applies a checked version). |
 
 ## `./edges`
 
@@ -1425,9 +1428,33 @@ document_jsonb jsonb NOT NULL
 
 So structurally equal documents share a hash whatever their member order, provided their numbers are spelled alike; that holds for documents serialised as `JSON.stringify` does (shortest round-trip digits, so `1.0` is written `1`). The hash is exchanged as a `DocumentHash`, the 32 bytes as 64 lowercase hex characters (`encode(hash_id, 'hex')`). A store that does not run on Postgres must reproduce these bytes exactly: `canonicalText(json)` in [`./documents`](#documents) produces the canonical text (pinned, with its hashes, to Postgres), and the store hashes its UTF-8 bytes. `makeInMemoryDocumentStore` in [`./testing`](#testing) is the reference store, for tests only.
 
+**The grammar check** (pulpit#264). A version row carries only a document's hash, and the application stores the document before it writes the version, so the check sits in two places, and a family declares both: `checkedDocumentStore` refuses an off-grammar document at `put`, so it is never stored, and `documentCheckHook` (in the leaf's `LifecycleHooks.before`) reads back every document a write references and refuses the write, so no version references an unchecked document whichever path stored it (an import, a proposal's accept, another store). A field the patch leaves absent keeps its already-checked reference and isn't read; `null` clears it.
+
+```ts
+import { checkedDocumentStore, documentCheckHook } from "@thomasfosterau/pulpit/documents";
+
+// `postBodyCheck` is the application's, e.g. prosekit-utilities' PostBody allow-list.
+const bodies = checkedDocumentStore(documentStore, "body", postBodyCheck);
+const hooks = {
+  before: [
+    documentCheckHook({
+      type: "posts",
+      fields: ["body"],
+      documents: documentStore,
+      check: postBodyCheck,
+    }),
+  ],
+  after: [],
+};
+```
+
 Method contract: `put` is `INSERT … ON CONFLICT DO NOTHING RETURNING hash_id`, and when the insert returns no row it reads the row that conflicted, `hash_id = digest($document::jsonb::text, 'sha256')`; it never updates a stored row (`DOC-001`). It returns `{ hash, inserted }`, `inserted` being whether the `RETURNING` gave a row back, so `onDocumentInsert` can tell a first insert from a no-op. `get` is `hash_id = $hash`; `getMany` is one `hash_id = ANY($hashes)` read, returning the documents found keyed by hash. `E` and `R` are as for the chain store, and the store never opens a transaction itself. A first insert's side effects (both apps enqueue an embedding job) go through `onDocumentInsert` (pulpit#45).
 
 **The apps' column differs.** Both apps generate the hash as `digest(document_jsonb::text::bytea, 'sha256')`. The `::bytea` cast parses the text as `bytea` escape-format input, so it agrees with the contract only on a document whose canonical text has no backslash. A document with a `"`, a newline, a tab or another escaped character in a string or key fails to insert (`invalid input syntax for type bytea`), and one with a literal backslash hashes different bytes (pulpit#71 tracks the apps' fix). Gardeneria's no-row lookup, `document_jsonb = $document`, also differs from the contract's: `jsonb` `=` ignores a number's scale, so it can match a row stored at another hash. The contract's spelling, `digest(document_jsonb::text, 'sha256')`, uses pgcrypto's `text` overload, which is immutable and therefore valid in a generated column; `convert_to(…, 'UTF8')` gives the same bytes but is only stable, so a generated column can't use it.
+
+### `DocumentCheck<Document, R>`: the grammar check
+
+`(field, document) => Effect<void, DocumentViolation, R>`: whether `document` is allowed in `field`, failing `DocumentViolation { field, message }` (the message is the wire's 422 detail) and nothing else. It reads only the document; `R` is whatever the checker needs (usually nothing). The application fills it, one grammar per document field, with prosekit-utilities' allow-list checkers (`PostBody`, `CommentBody`, `InlineTitle`, …; prosekit-utilities#156, the owner decision on pulpit#202). The kernel imports no grammar. It must be total over the stored document type: a document it can't parse is a violation, not a defect.
 
 ### `EdgeStore<Row, Following, E, R>`: the edge table
 
