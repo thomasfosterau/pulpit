@@ -34,14 +34,14 @@ jobs:
       NODE_OPTIONS: --max-old-space-size=2048
       VITEST_MAX_WORKERS: 2
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       # Vite+ at the catalog's `vite-plus` pin, Node.js, Vite+'s managed pnpm
       # (the `pnpm …` steps below) and the dependencies, installed from the
       # lockfile; the pnpm store is cached on pnpm-lock.yaml (pulpit#280).
       - name: Setup Vite+ and install dependencies
-        uses: voidzero-dev/setup-vp@0072dab61af1caed438a55cb90c8d6dc0dfa09ce # v1.22.0
+        uses: voidzero-dev/setup-vp@v1.22.0
         with:
           version-file: pnpm-workspace.yaml
           # Never `latest`: Vite+ resolves it to the newest entry of the
@@ -52,7 +52,7 @@ jobs:
           run-install: |
             - args: ["--frozen-lockfile"]
       - name: Restore the Vite+ task cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache@v6.1.0
         with:
           path: node_modules/.vite/task-cache
           key: vp-task-v1-${{ runner.os }}-${{ github.sha }}

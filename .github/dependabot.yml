@@ -84,7 +84,8 @@ updates:
     assignees:
       - thomasfosterau
   - package-ecosystem: "github-actions"
-    # The workflows pin every action by SHA.
+    # Every action is referenced by an exact `@vX.Y.Z` tag and locked to its
+    # commit in .github/workflows/actions.lock; Dependabot keeps the tags current.
     directories:
       - "/"
     target-branch: "trunk"
