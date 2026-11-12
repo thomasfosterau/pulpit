@@ -14,6 +14,7 @@ import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ex
 import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
 import { makeDocumentTable } from "@thomasfosterau/pulpit-drizzle-pg/documents";
 import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
+import { makePathTable } from "@thomasfosterau/pulpit-drizzle-pg/paths";
 import { sql } from "drizzle-orm";
 import { boolean, doublePrecision, integer, pgSchema, text, timestamp } from "drizzle-orm/pg-core";
 import * as Schema from "effect/Schema";
@@ -79,6 +80,8 @@ export const views = makeTreeViews(tree, tables, {
   },
 });
 
+/** A routable namespace's path table. */
+export const paths = makePathTable({ schema, name: "post_paths", identity: tables.root.identity });
 /** A document family's table, keyed by the generated hash. */
 export const documents = makeDocumentTable({ schema, name: "block_documents" });
 
@@ -113,6 +116,7 @@ export const fixtureSchema = {
   livePointer: tables.pointers.live,
   postsLiveView: views.pointers.live.leaves.posts,
   owners,
+  paths,
   documents,
   notesView: views.leaves.notes,
   linksView: views.leaves.links,

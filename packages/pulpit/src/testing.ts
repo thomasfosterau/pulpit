@@ -97,6 +97,7 @@ import type {
   Membership,
   MembershipStore,
 } from "./audience.ts";
+import type { MediaReferences, NodeRef } from "./media.ts";
 import type { ExternalIdLink, ExternalIdStore } from "./reference-import.ts";
 import type { Relationship, SocialStore } from "./social.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
@@ -537,6 +538,16 @@ export const makeInMemoryVersionChain = (type: string): InMemoryVersionChain => 
 // ── The version chain's conformance suite ─────────────────────────────
 
 /**
+ * How a {@link versionChainConformance} case fails when the chain answers
+ * other than the case expects: thrown at the test runner's Promise boundary,
+ * which reports it as the case's failure.
+ */
+class ConformanceFailure extends Schema.TaggedError<
+  ConformanceFailure,
+  { readonly brand: unique symbol }
+>()("ConformanceFailure", { message: Schema.String }) {}
+
+/**
  * The slice of a test runner {@link versionChainConformance} registers its
  * cases through, passed in rather than imported so `./testing` needs no
  * test-runner dependency (pulpit#246, owner decision (b)): vitest's (and
@@ -630,12 +641,15 @@ export const versionChainConformance = <E, R>(
   const OTHER = "00000000-0000-4000-8000-00000000beef";
   const initial: ChainState = { title: "First", body: "Hello", summary: "s" };
 
-  /* oxlint-disable effect/avoid-untagged-errors, effect/no-unknown-returns -- the suite's helpers live at the test runner's Promise boundary: a thrown Error is how a case fails, and a case's typed failure is any of the port's errors, matched by its `_tag` */
+  // The suite's helpers live at the test runner's Promise boundary: a thrown
+  // `ConformanceFailure` is how a case fails.
   /** Run to the value, or throw the failure (so a case fails on it). */
   const value = async <A, E2>(effect: Effect.Effect<A, E2, R>): Promise<A> => {
     const exit = await harness.run(effect);
     if (Exit.isSuccess(exit)) return exit.value;
-    throw new Error(`${type} conformance: unexpected failure ${String(exit.cause)}`);
+    throw new ConformanceFailure({
+      message: `${type} conformance: unexpected failure ${String(exit.cause)}`,
+    });
   };
   /** The failure's `_tag`, `"success"`, or `"defect"` for a die. */
   const outcome = async <A, E2>(effect: Effect.Effect<A, E2, R>): Promise<string> => {
@@ -647,10 +661,12 @@ export const versionChainConformance = <E, R>(
         P.hasProperty(error, "_tag") && P.isString(error._tag) ? error._tag : "error",
     });
   };
-  /** The typed failure itself. */
-  const failure = async <A, E2>(effect: Effect.Effect<A, E2, R>): Promise<unknown> =>
-    Option.getOrUndefined(Exit.findErrorOption(await harness.run(effect)));
-  /* oxlint-enable effect/avoid-untagged-errors, effect/no-unknown-returns */
+  /** The typed failure itself, or throw (so a case fails) when there is none. */
+  const failure = async <A, E2>(effect: Effect.Effect<A, E2, R>): Promise<E2> => {
+    const error = Exit.findErrorOption(await harness.run(effect));
+    if (Option.isSome(error)) return error.value;
+    throw new ConformanceFailure({ message: `${type} conformance: expected a typed failure` });
+  };
 
   /** A fresh chain holding node `ID` at version 0 with `initial`. */
   const created = async () => {
@@ -1152,15 +1168,14 @@ export const makeInMemoryLeafStore = (
       rowOrder([]),
     );
   return {
-    // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is the native `ReadonlySet` `LeafStore.columns` names
-    columns: new Set([
+    columns: HashSet.make(
       "id",
       "version",
       "action",
       "ownerId",
       ...options.columns,
       ...(options.localised === true ? [LOCALE_COLUMN] : []),
-    ]),
+    ),
     get: (id) => Effect.sync(() => Arr.findFirst(view(), (row) => row.id === id)),
     getMany: (ids) => Effect.sync(() => view().filter((row) => ids.includes(row.id))),
     list: (query) => Effect.map(instantOf(fixedNow), (now) => viewPage(listed(), query, now)),
@@ -1254,11 +1269,7 @@ export interface InMemoryResourceCache<Resource> extends ResourceCacheSeam<Resou
    * The resource the cache would serve for `id` (in `locale`, on a
    * localised leaf): none when evicted, refused or never set.
    */
-  readonly get: (
-    id: string,
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter is `?: T | undefined` (AGENTS.md → Conventions), as `ResourceCacheSeam.set` takes the locale; the omitted argument is the id's unlocalised entry
-    locale?: string | undefined,
-  ) => Option.Option<Resource>;
+  readonly get: (id: string, locale?: string) => Option.Option<Resource>;
   /** The highest version the cache holds for `id`, set or evicted, or none. */
   readonly versionOf: (id: string) => Option.Option<bigint>;
 }
@@ -1422,8 +1433,7 @@ export interface InMemoryNodes extends EndpointView<never, never> {
 export const makeInMemoryNodes = (columns: ReadonlyArray<string>): InMemoryNodes => {
   let nodes = HashMap.empty<string, LeafRow>();
   return {
-    // oxlint-disable-next-line effect/avoid-native-object-helpers -- the seam's column set is a `ReadonlySet`, the type `LeafStore.columns` already has, so a `LeafStore` satisfies `EndpointView`
-    columns: new Set(["id", "version", "action", ...columns]),
+    columns: HashSet.make("id", "version", "action", ...columns),
     get: (id) => Effect.sync(() => HashMap.get(nodes, id)),
     put: (row) => {
       nodes = HashMap.set(nodes, row.id, row);
@@ -1919,6 +1929,50 @@ export const makeInMemoryBlobStore = (): InMemoryBlobStore => {
   };
 };
 
+// ── Media ─────────────────────────────────────────────────────────────
+
+/**
+ * {@link makeInMemoryMediaReferences}' fake: the seam plus the test hooks
+ * that record and drop a node's reference to a content hash.
+ *
+ * @since 0.2.0
+ */
+export interface InMemoryMediaReferences extends MediaReferences<never, never> {
+  /** Record that `ref`'s versions reference `contentHash`. */
+  readonly add: (contentHash: string, ref: NodeRef) => void;
+  /** Drop every reference `ref` holds (a purge). */
+  readonly removeNode: (ref: NodeRef) => void;
+}
+
+/**
+ * An in-memory `MediaReferences` (README → Seams → `MediaReferences`): the
+ * nodes recorded against each content hash, at most `limit` of them, in
+ * insertion order. In memory only; not for production.
+ *
+ * @since 0.2.0
+ */
+export const makeInMemoryMediaReferences = (): InMemoryMediaReferences => {
+  let refs: ReadonlyArray<{ readonly contentHash: string; readonly ref: NodeRef }> = [];
+  return {
+    referencing: (contentHash, limit) =>
+      Effect.sync(() =>
+        Arr.take(
+          Arr.map(
+            Arr.filter(refs, (entry) => entry.contentHash === contentHash),
+            (entry) => entry.ref,
+          ),
+          Math.max(0, limit),
+        ),
+      ),
+    add: (contentHash, ref) => {
+      refs = [...refs, { contentHash, ref }];
+    },
+    removeNode: (ref) => {
+      refs = Arr.filter(refs, (entry) => entry.ref.type !== ref.type || entry.ref.id !== ref.id);
+    },
+  };
+};
+
 // ── Publication ───────────────────────────────────────────────────────
 
 /**
@@ -1959,7 +2013,7 @@ export const makeInMemoryPublication = (options: {
   readonly now?: Date | undefined;
 }): InMemoryPublication => {
   const fixedNow = Option.fromNullishOr(options.now);
-  const localised = options.leaves.columns.has(LOCALE_COLUMN);
+  const localised = HashSet.has(options.leaves.columns, LOCALE_COLUMN);
   /** A row as a localised view lists it: one per locale its version carries. */
   const listed = (row: LeafRow): ReadonlyArray<LeafRow> =>
     localised ? localeRows(row, localesAt(options.chain, row.id, row.version)) : [row];

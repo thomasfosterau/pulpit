@@ -282,7 +282,7 @@ describe("LeafStore over PostgreSQL agrees with the in-memory store", () => {
       Arr.map([false, true], (includeDeleted) => [name, includeDeleted, viewer] as const),
     );
     it.each(matrix)("%s, includeDeleted %s", async (_name, includeDeleted, viewer) => {
-      const scope = <F>(columns: ReadonlySet<string>, followers: FollowerSeam<F, unknown>) =>
+      const scope = <F>(columns: HashSet.HashSet<string>, followers: FollowerSeam<F, unknown>) =>
         searchScopeFilter({ access, columns, policy, followers }, viewer, {
           includeDeleted,
           where: always,

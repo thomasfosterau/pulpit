@@ -10,9 +10,10 @@
  * `LeafStore` over the tree's leaf views (`LeafStore`, `./leaf-store`) and
  * the `ListFilter` → SQL renderer it reads through (`Filter`, `./filter`),
  * the live pointer, `PublicationStore` / `LiveView` over the tree's
- * pointer level (`Publication`, `./publication`), the content-addressed
- * `DocumentStore` (`Documents`, `./documents`), and the `SearchBranch` over a
- * tree's views (`Search`, `./search`).
+ * pointer level (`Publication`, `./publication`), the `PathStore` over a
+ * path table (`Paths`, `./paths`), the content-addressed `DocumentStore`
+ * (`Documents`, `./documents`), and the `SearchBranch` over a tree's views
+ * (`Search`, `./search`).
  *
  * @copyright Thomas Foster
  * @module pulpit-drizzle-pg
@@ -29,6 +30,9 @@ export * as Filter from "./filter.ts";
 
 /** The kernel's live pointer: `PublicationStore`, `LiveView` and the gated store, over a tree's pointer level. */
 export * as Publication from "./publication.ts";
+
+/** The kernel's `PathStore`, one table per routable namespace. */
+export * as Paths from "./paths.ts";
 /** The kernel's content-addressed `DocumentStore`, one table per document family. */
 export * as Documents from "./documents.ts";
 

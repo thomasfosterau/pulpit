@@ -46,6 +46,7 @@ import * as Schema from "effect/Schema";
 import type { EdgeEnd, EdgeEnds } from "./edges.ts";
 import type { Forbidden, SubtypeOps, Unauthorized, WriteRejected } from "./subtype.ts";
 import type {
+  ChainPatch,
   ChainState,
   ChainWrite,
   NodeAlreadyExists,
@@ -223,6 +224,19 @@ export interface FileWrite extends ChainWrite {
 type WriteFailure = Unauthorized | Forbidden | WriteRejected | VersionConflict;
 
 /**
+ * The input to {@link FileWriteOps.replace}: the node, the new upload, any
+ * other columns the same version sets, and an optional expected version.
+ *
+ * @since 0.2.0
+ */
+export interface ReplaceInput extends Precondition {
+  readonly id: string;
+  readonly upload: Upload;
+  /** Other leaf columns this version sets (tri-state); the file columns win. Omitted, no other column. */
+  readonly patch?: ChainPatch;
+}
+
+/**
  * The operations {@link defineFileWrites} produces.
  *
  * @since 0.1.0
@@ -240,12 +254,14 @@ export interface FileWriteOps<E, R> {
     readonly upload: Upload;
   }) => Effect.Effect<FileWrite, WriteFailure | NodeAlreadyExists | E, R>;
   /**
-   * Replace a file node's bytes with a new version. Fails as the leaf's
-   * `update` does (`StaleVersion` against `expectedVersion`, `NodeNotFound`
-   * for a missing or tombstoned node).
+   * Replace a file node's bytes with a new version, with `patch` (any
+   * other leaf column, such as `./media`'s re-extracted metadata) in the
+   * same version. Fails as the leaf's `update` does (`StaleVersion`
+   * against `expectedVersion`, `NodeNotFound` for a missing or tombstoned
+   * node).
    */
   readonly replace: (
-    input: { readonly id: string; readonly upload: Upload } & Precondition,
+    input: ReplaceInput,
   ) => Effect.Effect<FileWrite, WriteFailure | NodeNotFound | StaleVersion | E, R>;
   /**
    * Finish a pending version (`version`, whose bytes `contentHash` names,
@@ -340,12 +356,12 @@ export const defineFileWrites = <Resource, E, R>(definition: {
     return yield* afterCommit(written, columns, input.upload);
   });
 
-  const replace = Effect.fn(`${leaf.type}.files.replace`)(function* (
-    input: { readonly id: string; readonly upload: Upload } & Precondition,
-  ) {
-    const { id, upload, ...precondition } = input;
+  const replace = Effect.fn(`${leaf.type}.files.replace`)(function* (input: ReplaceInput) {
+    const { id, upload, patch, ...precondition } = input;
     const columns = yield* columnsOf(upload);
-    const written = yield* transact(leaf.update({ id, patch: { ...columns }, ...precondition }));
+    const written = yield* transact(
+      leaf.update({ id, patch: { ...patch, ...columns }, ...precondition }),
+    );
     return yield* afterCommit(written, columns, upload);
   });
 

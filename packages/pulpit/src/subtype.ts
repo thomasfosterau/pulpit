@@ -123,6 +123,7 @@ import {
 } from "./filter.ts";
 import { byCodePoint } from "./internal/list-order.ts";
 import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
+import { qOf } from "./internal/qvalue.ts";
 import {
   canViewReferenceRow,
   groupArm,
@@ -610,7 +611,7 @@ export const ownedAccess = (
  */
 export const ownedListFilter = <Following>(
   access: Extract<LeafAccess, { kind: "owned" }>,
-  viewColumns: ReadonlySet<string>,
+  viewColumns: HashSet.HashSet<string>,
   scope: ReadScope<Following>,
 ): ListFilter<Following> => {
   if (!declaresColumns(access, viewColumns)) return never;
@@ -682,7 +683,7 @@ export const softDeleteFilter = <Following>(
 export const referencePrivacyFilter = <Following>(
   viewer: Viewer,
   policy: AccessPolicy,
-  viewColumns: ReadonlySet<string>,
+  viewColumns: HashSet.HashSet<string>,
   followersArm: Option.Option<{
     readonly access: Extract<LeafAccess, { kind: "reference" }>;
     readonly followers: FollowerSeam<Following, unknown>;
@@ -970,7 +971,7 @@ export interface LocalisedListQuery<Following> {
  */
 export interface LeafStore<Row extends LeafRow, Following, E, R> {
   /** The view's column names; an owned declaration naming a column outside this set reads nothing (`get`, `getMany` or `list`). */
-  readonly columns: ReadonlySet<string>;
+  readonly columns: HashSet.HashSet<string>;
   /** One row of the current-version view by id, or none. Applies no visibility policy. */
   readonly get: (id: string) => Effect.Effect<Option.Option<Row>, E, R>;
   /** One `id = ANY($ids)` read, never `ids.length` sequential gets. */
@@ -1540,11 +1541,11 @@ const checkedOrder = (
  */
 const sortableColumns = (
   type: string,
-  columns: ReadonlySet<string>,
+  columns: HashSet.HashSet<string>,
   sortable?: ReadonlyArray<string>,
 ): ((column: string) => boolean) => {
-  if (sortable === undefined) return (column) => columns.has(column);
-  const undeclared = Arr.findFirst(sortable, (column) => !columns.has(column));
+  if (sortable === undefined) return (column) => HashSet.has(columns, column);
+  const undeclared = Arr.findFirst(sortable, (column) => !HashSet.has(columns, column));
   if (Option.isSome(undeclared)) {
     throw new SubtypeDeclarationError({
       message: `${type}: sortable names '${undeclared.value}', which is not a column of the view`,
@@ -2494,12 +2495,12 @@ export interface SearchProjection {
   readonly languageColumn: Option.Option<string>;
 }
 
-const checkSearchProjection = (projection: SearchProjection, columns: ReadonlySet<string>) => {
+const checkSearchProjection = (projection: SearchProjection, columns: HashSet.HashSet<string>) => {
   const named = [
     ...Arr.map(projection.fields, (field) => field.column),
     ...Option.toArray(projection.languageColumn),
   ];
-  const undeclared = Arr.findFirst(named, (column) => !columns.has(column));
+  const undeclared = Arr.findFirst(named, (column) => !HashSet.has(columns, column));
   if (Option.isSome(undeclared)) {
     throw new SubtypeDeclarationError({
       message: `search names '${undeclared.value}', which is not a column of the view`,
@@ -2578,7 +2579,7 @@ export const defineSearchProjection = (declaration: {
 export const searchScopeFilter = <Following>(
   leaf: {
     readonly access: LeafAccess;
-    readonly columns: ReadonlySet<string>;
+    readonly columns: HashSet.HashSet<string>;
     readonly policy: AccessPolicy;
     readonly followers: FollowerSeam<Following, unknown>;
   },
@@ -2725,8 +2726,7 @@ export interface ResourceCacheSeam<Resource, R> {
     id: string,
     resource: Resource,
     version: bigint,
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter, #302's half of the convention (pulpit#238 converts properties only), so every existing three-argument cache still fits the seam; the omitted argument is "no locale"
-    locale?: string | undefined,
+    locale?: string,
   ) => Effect.Effect<void, never, R>;
   /**
    * Evict the resource as of `version`, which a later `set` must reach to
@@ -3172,19 +3172,9 @@ interface WeightedRange {
   readonly index: number;
 }
 
-/** An RFC 9110 qvalue: `0`, `1` or `0.` / `1.` with up to three decimals (`1.` only zeros). */
-const QVALUE = /^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/;
-
 const weightedRange = (range: string, index: number) => {
   const [tag = "", ...parameters] = Arr.map(range.split(";"), Str.trim);
-  const weight = Arr.findFirst(parameters, (parameter) => /^q=/i.test(parameter));
-  const q = Option.match(weight, {
-    onNone: () => 1,
-    onSome: (parameter) => {
-      const value = parameter.slice(2).trim();
-      return QVALUE.test(value) ? Number(value) : Number.NaN;
-    },
-  });
+  const q = qOf(parameters);
   return tag === "" || tag === "*" || !(q > 0)
     ? Result.failVoid
     : Result.succeed<WeightedRange>({ tag, q, index });
@@ -3435,8 +3425,7 @@ export const subtypeResourceHandlers = <
     Targets,
     Resource["type"]
   >,
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional parameter, #302's half of the convention (pulpit#238 converts properties only), so the existing two-argument calls keep compiling; the omitted argument is an unlocalised leaf
-  locale?: LocaleWire<R> | undefined,
+  locale?: LocaleWire<R>,
 ) => {
   const { type, listRequest, createInput, updateInput, ...rest } = config;
   const wire = Option.fromUndefinedOr(locale);
@@ -3581,7 +3570,7 @@ const PUBLICATION_COLUMNS: ReadonlyArray<string> = ["draft", "publishedAt"];
 
 const checkLocaleLevel = (
   level: LocaleLevel,
-  columns: ReadonlySet<string>,
+  columns: HashSet.HashSet<string>,
   gated: ReadonlyArray<string>,
 ) => {
   const gate = Arr.findFirst(level.columns, (column) => gated.includes(column));
@@ -3592,7 +3581,7 @@ const checkLocaleLevel = (
   }
   const undeclared = Arr.findFirst(
     [...level.columns, LOCALE_COLUMN],
-    (column) => !columns.has(column),
+    (column) => !HashSet.has(columns, column),
   );
   if (Option.isSome(undeclared)) {
     throw new SubtypeDeclarationError({
