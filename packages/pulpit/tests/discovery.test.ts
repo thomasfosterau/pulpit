@@ -58,7 +58,7 @@ import {
   type InMemoryFollowing,
 } from "../src/testing.ts";
 import type { ChainState, WriteAction } from "../src/version-chain.ts";
-import { follower, gardeneriaPolicy, member, NOW } from "./fixtures.ts";
+import { follower, gardeneriaPolicy, member, NOW, textOf } from "./fixtures.ts";
 
 const as = (account: ViewerAccount): Viewer => Option.some(account);
 
@@ -81,7 +81,7 @@ const toResource = (row: LeafRow): Resource => {
 };
 
 const project = (resource: Resource) => ({
-  title: String(resource.attributes["title"]),
+  title: textOf(resource.attributes["title"]),
   summary: Option.none<string>(),
   image: Option.none<{ readonly url: string; readonly alt: Option.Option<string> }>(),
   schemaType: "Article",
