@@ -129,15 +129,6 @@ export default defineConfig({
           "effect/casting-awareness": "off",
         },
       },
-      // The type-level test slot: an expected-error directive IS the assertion
-      // there (each paired with its positive control), so the rule that bans
-      // suppressions has nothing to protect in these files.
-      {
-        files: ["**/tests/**/*.types.ts"],
-        rules: {
-          "effect/avoid-ts-ignore": "off",
-        },
-      },
       // A test file IS the runtime boundary `effect-run-in-body` asks for
       // ("entrypoint/test harness"): its `run` helper is where each case's
       // Effect meets the Promise vitest awaits.
