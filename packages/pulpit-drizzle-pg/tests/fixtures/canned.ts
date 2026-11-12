@@ -19,9 +19,13 @@ import * as R from "effect/Record";
 type Transaction = PgTransaction<typeof relations>;
 const relations = {};
 
-export const cannedTransaction = (rows: ReadonlyArray<object>) => {
+export const cannedTransaction = (rows: ReadonlyArray<object>) => standIn(Effect.succeed(rows));
+
+/** A stand-in transaction whose every query fails with `error`, for a seam that must fail closed. */
+export const failingTransaction = (error: string) => standIn(Effect.fail(error)).tx;
+
+const standIn = (query: Effect.Effect<ReadonlyArray<object>, string>) => {
   const calls: Array<string> = [];
-  const query = Effect.succeed(rows);
   const builder = Object.assign(
     query,
     R.fromEntries(

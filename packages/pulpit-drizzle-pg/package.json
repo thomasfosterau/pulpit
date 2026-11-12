@@ -49,6 +49,7 @@
     "./reactions": "./src/reactions.ts",
     "./paths": "./src/paths.ts",
     "./search": "./src/search.ts",
+    "./social": "./src/social.ts",
     "./version-chain": "./src/version-chain.ts"
   },
   "publishConfig": {
@@ -104,6 +105,10 @@
       "./search": {
         "types": "./dist/search.d.ts",
         "default": "./dist/search.js"
+      },
+      "./social": {
+        "types": "./dist/social.d.ts",
+        "default": "./dist/social.js"
       },
       "./version-chain": {
         "types": "./dist/version-chain.d.ts",

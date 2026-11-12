@@ -19,6 +19,7 @@ The module guide for [`@thomasfosterau/pulpit-drizzle-pg`](../packages/pulpit-dr
 - **Landed:** the `ExternalIdStore` ([`./external-ids`](#external-ids), pulpit#359), checked against the kernel's in-memory store on PostgreSQL.
 - **Landed:** the `CollectionStore` ([`./collections`](#collections), pulpit#358), checked against the kernel's in-memory store on PostgreSQL.
 - **Landed:** the `ReactionStore` ([`./reactions`](#reactions), pulpit#363), checked against the kernel's in-memory store on PostgreSQL.
+- **Landed:** the `SocialStore` ([`./social`](#social), pulpit#364), checked against the kernel's in-memory store on PostgreSQL, a block racing a follow in two transactions.
 - **Next:** the other stores that aren't tree-bound (reports, budgets, working copies, erasure, social and notification tables), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
 
 ## End to end
@@ -366,10 +367,26 @@ The kernel's `ReactionStore` ([seams.md → `ReactionStore`](seams.md#reactionst
 - **`makeReactionStore({ table, CurrentTransaction })`** binds the store, every call in the caller's transaction:
   - **`upsert`** is one statement. A CTE reads the replaced kind `FOR UPDATE`, beside `INSERT … ON CONFLICT (node_id, account_id) DO UPDATE SET kind = EXCLUDED.kind, reacted_at = EXCLUDED.reacted_at`, and the statement answers that kind (none for a first reaction).
   - **`delete`** is `DELETE … RETURNING`. **`tally(nodeIds)`** is one `SELECT node_id, kind, count(*) … GROUP BY node_id, kind`. **`byAccount`** is one page `ORDER BY reacted_at DESC, node_id`.
-  - **`eraseAccount(accountId, limit)`** deletes at most `limit` of the account's rows (`ORDER BY node_id`) and counts them (`PERF-DB-001`).
+  - **`eraseAccount(accountId, limit)`** deletes at most `limit` of the account's rows, by key, and counts them (`PERF-DB-001`).
   - A node id that is no canonical UUID names no node: `upsert` writes nothing and answers none, `delete` answers `false`, and `tally` leaves it out. A limit below one reads and deletes nothing.
 
 The integration suite runs the same calls through this store and the kernel's `makeInMemoryReactionStore` and checks every answer and the stored rows agree. It also checks the malformed-id handling, and that purging a node or deleting an account cascades.
+
+## `./social`
+
+The kernel's `SocialStore` ([seams.md → `SocialStore`](seams.md#socialstorefollowing-e-r-the-relationship-table), pulpit#364): follows, mutes and blocks between accounts. Its `Following` is a SQL subquery, the list filter's `in` set (the `followers` visibility predicate reads it).
+
+- **`makeRelationshipTable({ schema, accounts?, name? })`** (`relationship` by default) has the columns `kind` (`follow | mute | block`, CHECKed), `from_id`, `to_id` and `at` (`DEFAULT now()`). Its primary key is `(kind, from_id, to_id)`, and it is indexed on `(kind, to_id, at DESC)` and `(kind, from_id, at DESC)`. `accounts` is the application's `text` account key: given, both account columns reference it `ON DELETE CASCADE`; without it they have no foreign key and `eraseAccount` clears them (as [`./reactions`](#reactions) does).
+- **`makeSocialStore({ table, CurrentTransaction })`** binds the store, every call in the caller's transaction:
+  - **`addFollow` and `addBlock`** first take `pg_advisory_xact_lock` on the unordered account pair: its two keys hash the table's name with the lesser and the greater account id. So the two are atomic against each other, and a block racing a follow never leaves the follow standing.
+    - `addFollow` is then one statement, `INSERT … SELECT … WHERE NOT EXISTS (a block either way) ON CONFLICT DO NOTHING`. It answers `blocked` when a block stands, `added` when it wrote, and `present` otherwise.
+    - `addBlock` deletes both follows and inserts the block in one statement, answering whether the block went in.
+  - **`add`** (a mute) is `INSERT … ON CONFLICT DO NOTHING RETURNING`. **`remove`** is `DELETE … RETURNING`. **`has`** and **`isFollowing`** are an `EXISTS`, and a failing `isFollowing` reads as `false` (failing closed).
+  - **`list`** is one page by `from_id` or `to_id`, `ORDER BY at DESC` then the other account's id, with the window total. A page past the end counts the rows instead.
+  - **`followingOf(follower)`** is the subquery `SELECT to_id … WHERE kind = 'follow' AND from_id = $follower`, and **`silencedBy(viewer)`** the same over `kind IN ('mute', 'block')`. Neither is ever materialised.
+  - **`eraseAccount(accountId, limit)`** deletes at most `limit` of the rows from or to the account and counts them (`PERF-DB-001`).
+
+The integration suite runs the same calls through this store and the kernel's `makeInMemorySocialStore` and checks every answer, every page and both subqueries' sets agree. It also races a block against a follow in two real transactions, and checks that deleting an account cascades.
 
 ## `./search`
 

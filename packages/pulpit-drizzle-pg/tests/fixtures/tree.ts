@@ -19,6 +19,7 @@ import { makeEmbeddingTables } from "@thomasfosterau/pulpit-drizzle-pg/embedding
 import { makeExternalIdTable } from "@thomasfosterau/pulpit-drizzle-pg/external-ids";
 import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
 import { makeReactionTable } from "@thomasfosterau/pulpit-drizzle-pg/reactions";
+import { makeRelationshipTable } from "@thomasfosterau/pulpit-drizzle-pg/social";
 import { makeProposalTable } from "@thomasfosterau/pulpit-drizzle-pg/proposals";
 import { makePathTable } from "@thomasfosterau/pulpit-drizzle-pg/paths";
 import { sql } from "drizzle-orm";
@@ -113,15 +114,18 @@ export const relations = makeEdgeTable({
 /** The external-identifier table, over the identity table. */
 export const externalIds = makeExternalIdTable({ schema, identity: tables.root.identity });
 
+/** An account table, for the reaction and relationship tables' cascading account keys. */
+export const accounts = schema.table("account", { id: text("id").primaryKey() });
+
+/** The relationship table (follows, mutes, blocks), its accounts cascading. */
+export const relationships = makeRelationshipTable({ schema, accounts: accounts.id });
+
 /** An ordered family: an entry's members, over the identity table. */
 export const collection = makeCollectionTable({
   schema,
   name: "entry_member",
   identity: tables.root.identity,
 });
-
-/** An account table, for the reaction table's cascading account key. */
-export const accounts = schema.table("account", { id: text("id").primaryKey() });
 
 /** The reaction table, its accounts cascading. */
 export const reactions = makeReactionTable({
@@ -177,8 +181,9 @@ export const fixtureSchema = {
   embeddingQueue: embeddings.queue,
   embeddingVectors: embeddings.vectors,
   externalIds,
-  collection,
   accounts,
+  relationships,
+  collection,
   reactions,
   proposals,
   notesView: views.leaves.notes,

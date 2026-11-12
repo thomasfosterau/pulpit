@@ -72,6 +72,12 @@ import {
   makeExternalIdTable,
   type ExternalIdTable,
 } from "@thomasfosterau/pulpit-drizzle-pg/external-ids";
+import type { SocialStore } from "@thomasfosterau/pulpit/social";
+import {
+  makeRelationshipTable,
+  makeSocialStore,
+  type RelationshipTable,
+} from "@thomasfosterau/pulpit-drizzle-pg/social";
 import type { CollectionStore } from "@thomasfosterau/pulpit/collections";
 import {
   makeCollectionStore,
@@ -132,6 +138,7 @@ export type _Root = Assert<
     | "Proposals"
     | "Embeddings"
     | "ExternalIds"
+    | "Social"
     | "Collections"
     | "Reactions"
   >
@@ -447,4 +454,17 @@ const reactionStore = makeReactionStore({
 export type _ReactionTable = Assert<Equals<typeof reactionTable, ReactionTable>>;
 export type _ReactionStore = Assert<
   Equals<typeof reactionStore, ReactionStore<EffectDrizzleQueryError, Key>>
+>;
+
+// ── ./social ─────────────────────────────────────────────────────────────
+
+const relationshipTable = makeRelationshipTable({ schema });
+const socialStore = makeSocialStore({
+  table: relationshipTable,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _RelationshipTable = Assert<Equals<typeof relationshipTable, RelationshipTable>>;
+export type _SocialStore = Assert<
+  Equals<typeof socialStore, SocialStore<SQL, EffectDrizzleQueryError, Key>>
 >;
