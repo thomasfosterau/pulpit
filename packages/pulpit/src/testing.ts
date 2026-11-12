@@ -50,6 +50,7 @@ import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Eq from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as HashSet from "effect/HashSet";
@@ -78,7 +79,7 @@ import {
   type ListFilter,
 } from "./filter.ts";
 import { byCodePoint, rowOrder } from "./internal/list-order.ts";
-import type { AccountErasureStore, AttributionColumn } from "./erasure.ts";
+import type { AccountErasureStore } from "./erasure.ts";
 import type { ErasedReferences, PurgeStore } from "./purge.ts";
 import {
   SearchScopeLeak,
@@ -263,19 +264,6 @@ export interface InMemoryVersionChain extends VersionChain<never, never> {
   readonly dropState: (id: string, version: bigint) => void;
   /** Simulate a concurrent writer: the next append for `id` finds its version taken. */
   readonly raceNextAppend: (id: string) => void;
-  /**
-   * Rewrite one attribution column (`actorId` or `proposedBy`) on at most
-   * `limit` of the rows where it names `accountId`, to `to`, and return the
-   * rows rewritten: what {@link makeInMemoryAccountErasureStore} reattributes
-   * through, and nothing else may call. It rewrites no other column
-   * (`VERSION-CHAIN-001/002`; erasure, pulpit#207).
-   */
-  readonly reattribute: (query: {
-    readonly accountId: string;
-    readonly column: AttributionColumn;
-    readonly to: Option.Option<string>;
-    readonly limit: number;
-  }) => ReadonlyArray<VersionRow>;
 }
 
 /** The write clock: the current instant, as the `Date` a version row stores. */
@@ -507,14 +495,6 @@ export const makeInMemoryVersionChain = (type: string): InMemoryVersionChain => 
     },
     raceNextAppend: (id) => {
       raced = HashSet.add(raced, id);
-    },
-    reattribute: ({ accountId, column, to, limit }) => {
-      const touched = Arr.take(
-        Arr.filter(log, (row) => Option.contains(row[column], accountId)),
-        limit,
-      );
-      log = Arr.map(log, (row) => (touched.includes(row) ? { ...row, [column]: to } : row));
-      return touched;
     },
   };
 };
@@ -2218,9 +2198,9 @@ export interface InMemoryErasureLeaf {
  * An in-memory {@link AccountErasureStore} over in-memory leaves: the
  * seam's contract (README → Seams → `AccountErasureStore`). `ownedNodes`
  * reads a leaf's owner stamps in id order, `setOwner` restamps or drops
- * one, and `reattribute` rewrites one attribution column of the leaf's
- * version rows through {@link InMemoryVersionChain.reattribute}. In memory
- * only; not for production.
+ * one, and `unredactedNodes` reads the leaf's chain rows for the nodes
+ * still to redact, in id order; it writes no version row. In memory only;
+ * not for production.
  *
  * @since 0.2.0
  */
@@ -2256,14 +2236,55 @@ export const makeInMemoryAccountErasureStore = (
             }),
         }),
       ),
-    reattribute: ({ accountId, type, column, to, limit }) =>
+    unredactedNodes: ({ accountId, type, redactedAs, limit }) =>
       Effect.sync(() =>
         Option.match(leafOf(type), {
-          onNone: () => 0,
-          onSome: (leaf) => leaf.chain.reattribute({ accountId, column, to, limit }).length,
+          onNone: () => [],
+          onSome: (leaf) => {
+            const rows = leaf.chain.rows();
+            const ids = Arr.sort(Arr.dedupe(Arr.map(rows, (row) => row.id)), byCodePoint);
+            return Arr.take(
+              Arr.filter(ids, (id) =>
+                needsRedaction(
+                  Arr.filter(rows, (row) => row.id === id),
+                  accountId,
+                  redactedAs,
+                ),
+              ),
+              limit,
+            );
+          },
         }),
       ),
   };
+};
+
+/**
+ * `AccountErasureStore.unredactedNodes`' marker over one node's rows,
+ * oldest first: the head is live, a version names the account (actor or
+ * `proposedBy`), and no later version has actor `redactedAs` and no
+ * `proposedBy`.
+ */
+const needsRedaction = (
+  chain: ReadonlyArray<VersionRow>,
+  accountId: string,
+  redactedAs: Option.Option<string>,
+): boolean => {
+  const live = Option.exists(Arr.last(chain), (head) => head.action !== "delete");
+  const named = Arr.findLastIndex(
+    chain,
+    (row) => Option.contains(row.actorId, accountId) || Option.contains(row.proposedBy, accountId),
+  );
+  return (
+    live &&
+    Option.exists(
+      named,
+      (index) =>
+        !chain
+          .slice(index + 1)
+          .some((row) => Eq.equals(row.actorId, redactedAs) && Option.isNone(row.proposedBy)),
+    )
+  );
 };
 
 // ── Search (pulpit#204) ───────────────────────────────────────────────

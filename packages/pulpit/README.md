@@ -920,13 +920,18 @@ const erasure = defineAccountErasure({
   canErase: (actor, accountId) => actor.role === "admin" || actor.id === accountId,
   tombstoneAccountId: DELETED_ACCOUNT, // the account reassigned rows name
   transact,
-  store: accountErasureStore, // owner records and version attribution (see Seams)
+  store: accountErasureStore, // owner records, and the nodes still to redact (see Seams)
   purge: purgeStore, // the `./purge` seam, for the `purge` families
   blobs: r2, // optional, as for `./purge`
   families: [
     { type: "posts", disposition: ErasurePresets.ownedLeaf, chain: postChain, cache: postCache },
     { type: "comments", disposition: ErasurePresets.comments, chain: commentChain },
-    { type: "taxa", disposition: ErasurePresets.referenceLeaf, chain: taxonChain },
+    {
+      type: "taxa",
+      disposition: ErasurePresets.referenceLeaf,
+      chain: taxonChain,
+      accountColumns: ["creditedTo"], // state columns holding an account id, if any
+    },
   ],
   proposals, // each kernel store the application keeps, all optional
   reports,
@@ -941,20 +946,23 @@ const erasure = defineAccountErasure({
 
 - **A disposition per family** (owner decisions on pulpit#207, named as `ErasurePresets`):
   - `purge`, the default for owned leaves: each node the account owns goes through `./purge`, whole chain, documents and bytes.
-  - `reassign`, the default for reference contributions: owner records, and the versions the account wrote, name the tombstone account instead.
-  - `anonymise`, the default for comments: the content stays and the owner record is removed, so the row is no one's (an ownerless owned row reads only when public, pulpit#85), and its versions record no actor. A reply keeps the thread it answers.
-- **Versions the account wrote on someone else's node** lose their actor as the family's disposition says (a `purge` family anonymises them), and the `proposedBy` of every version an accepted proposal of theirs produced is cleared.
+  - `reassign`, the default for reference contributions: owner records name the tombstone account instead, and each node the account wrote gets a redacting version attributed to the tombstone account.
+  - `anonymise`, the default for comments: the content stays and the owner record is removed, so the row is no one's (an ownerless owned row reads only when public, pulpit#85), and each node the account wrote gets a redacting version with no actor. A reply keeps the thread it answers.
+- **A redacting version, never a rewrite** (owner decision on pulpit#207, 2026-11-11). The chain stays strictly append-only (SECURITY.md → `VERSION-CHAIN-001/002`): no version row is rewritten. Each node with a version the account wrote, its own or someone else's, or that an accepted proposal of theirs produced (`proposedBy`), gets one new version appended through the family's `VersionChain` port: a plain `update` pinned to the head it read (`expectedVersion`), carrying the head's state, attributed as the disposition says (the tombstone account for `reassign`, no one for `anonymise` and for a `purge` family's other members' nodes) and with no `proposedBy`. A state column the family declares in `accountColumns` is set to the tombstone account (`reassign`) or `null` in that version where it names the account; erasure knows no other field. **Earlier versions keep their original attribution by design**: the current version no longer names the account, and the history of who wrote what is not rewritten. `./purge` is the way to remove history, so a family whose history must go is a `purge` family.
+  - The append bypasses `defineVersionChain`'s hooks and the leaf's lifecycle hooks: it is not an edit.
+  - A node whose head is a tombstone gets no redacting version, since no port operation appends over a tombstone without resurrecting it (`VERSION-CHAIN-006`).
+  - **The marker** that keeps it to one: a node needs a redacting version when a version names the account (actor or `proposedBy`) and no later version is attributed the way the redacting one would be (the disposition's actor, no `proposedBy`); `AccountErasureStore.unredactedNodes` reads that off the version rows. A later write by another account keeps the node redacted; only a later version by the account itself makes it match again.
+  - The node is evicted from its family's `cache` at the redacting version (`CACHE-AUTH-005`), and a node whose owner record changes, past its head. A redacting append that loses a race fails `StaleVersion` or `VersionConflict`; its batch rolls back and a re-run resumes.
 - **The kernel's stores:** pending, rejected and withdrawn proposals are deleted, and accepted ones keep their row under the tombstone account; reports filed are deleted, and a resolution names the tombstone; reactions, follows, mutes, blocks, group memberships (`./audience`) and working copies are deleted. Add the application's own (memberships, notifications, …) as `relations`.
-- **Attribution is the one rewrite.** A version row's actor and `proposedBy` are the only columns erasure rewrites in place, and no version is appended for it (SECURITY.md → `VERSION-CHAIN-001/002`). No kernel read returns either column, so no served resource changes; a node whose owner record changes is evicted from its family's `cache` past its head.
-- **Bounded, resumable, idempotent.** Each step reads or writes at most `batchSize` rows (default 100, capped at `MAX_PAGE_LIMIT`, `PERF-DB-001`) in its own `transact`, and repeats until a batch changes fewer. Written rows stop matching, so a run cut short by `maxBatches` (it counts the batches that change rows) or a crash resumes on the next run, and a run over an erased account changes nothing (`changed: {}`).
+- **Bounded, resumable, idempotent.** Each step reads or writes at most `batchSize` rows or nodes (default 100, capped at `MAX_PAGE_LIMIT`, `PERF-DB-001`) in its own `transact`, and repeats until a batch changes fewer. Written rows stop matching, so a run cut short by `maxBatches` (it counts the batches that change rows) or a crash resumes on the next run, and a run over an erased account changes nothing and appends no version (`changed: {}`).
 - **The gate:** `canErase(actor, accountId)` is checked before anything is read (`Unauthorized` / `Forbidden`), and erasing the tombstone account itself fails `TombstoneErasure`.
-- **The application deletes the account row itself** once a run answers `complete: true`; nothing the kernel stores names it then.
+- **The application deletes the account row itself** once a run answers `complete: true`; nothing the kernel stores names it then, save the earlier versions' attribution, kept by design (so a version table's actor column must not hold a foreign key that blocks the delete, or must point at an account row kept for it).
 
 | Export | What it is |
 | --- | --- |
 | `defineAccountErasure(definition)`, `AccountErasureDefinition`, `AccountErasureOps` | The operation (`erase`) and what it binds. |
-| `Disposition`, `ErasurePresets`, `ErasureFamily` | A family's declaration, and the owner's defaults. |
-| `AccountErasureStore`, `AttributionColumn`, `AccountRelation` | The owner-and-attribution seam (see [Seams](#seams)), and an application relation. |
+| `Disposition`, `ErasurePresets`, `ErasureFamily` | A family's declaration (its chain, cache and `accountColumns`), and the owner's defaults. |
+| `AccountErasureStore`, `AccountRelation` | The owner-record seam, with the redaction marker's read (see [Seams](#seams)), and an application relation. |
 | `ErasureSummary`, `TombstoneErasure`, `DEFAULT_ERASURE_BATCH` | What a run did, the tombstone refusal, the default batch. |
 
 ## `./search`
@@ -1221,9 +1229,9 @@ deepStrictEqual(Effect.runSync(program).name, "Ferns");
 
 | Export | Fakes | Test hooks |
 | --- | --- | --- |
-| `makeInMemoryVersionChain(type)`, `InMemoryVersionChain` | [`VersionChain`](#versionchaine-r-the-version-chain-port) for one leaf, holding every chain invariant over an append log with the `(id, version)` key (`VersionConflict`), minting sequential UUID-shaped ids. | `rows()` (every appended row), `dropState(id, version)` (a partial chain), `raceNextAppend(id)` (a concurrent writer), `reattribute(query)` (the account-erasure fake's attribution rewrite). |
+| `makeInMemoryVersionChain(type)`, `InMemoryVersionChain` | [`VersionChain`](#versionchaine-r-the-version-chain-port) for one leaf, holding every chain invariant over an append log with the `(id, version)` key (`VersionConflict`), minting sequential UUID-shaped ids. | `rows()` (every appended row), `dropState(id, version)` (a partial chain), `raceNextAppend(id)` (a concurrent writer). |
 | `versionChainConformance(harness, runner)`, `ConformanceHarness`, `ConformanceChain`, `ConformanceRunner` | The `VersionChain` conformance suite: every invariant, registered through the `describe` / `it` / `expect` it is given (no test-runner dependency), against whatever `harness.make` returns. The kernel runs it against `makeInMemoryVersionChain`; pulpit-drizzle-pg runs it against its Drizzle chain. | `dropState` / `raceNextAppend` on a `ConformanceChain`, optional: the cases that need them are skipped without. |
-| `makeInMemoryAccountErasureStore(leaves)`, `InMemoryErasureLeaf` | [`AccountErasureStore`](#accounterasurestoree-r-owner-records-and-attribution) over in-memory leaves: their owner stamps and their chains' attribution. | Read through the leaves' `owners()` and the chains' `rows()`. |
+| `makeInMemoryAccountErasureStore(leaves)`, `InMemoryErasureLeaf` | [`AccountErasureStore`](#accounterasurestoree-r-owner-records-and-the-redaction-marker) over in-memory leaves: their owner stamps, and their chains' rows read for the redaction marker. | Read through the leaves' `owners()` and the chains' `rows()`. |
 | `makeInMemoryLeafStore(chain, { columns, now?, localised? })`, `InMemoryLeafStore`, `InMemoryLeafStoreOptions` | [`LeafStore`](#leafstorerow-following-e-r-the-current-version-view), as the current-version view over an in-memory chain plus the owner stamps; `list` evaluates the `ListFilter` in memory and sorts by the list order contract (`NULLS LAST`, code-point strings, `id` last). With `localised: true`, the view gains `locale` and `list` reads one row per `(id, locale)`. `distinct` reads the same rows `list` does. | `owners()` (the stamps), `dropOwner(id)` (an ownerless owned node). |
 | `makeInMemoryDocumentStore()`, `InMemoryDocumentStore` | [`DocumentStore`](#documentstoredocument-e-r-the-content-addressed-document-store), hashing exactly as the hash contract says (SHA-256 over `./documents`' `canonicalText`, pinned to hashes taken from Postgres). | `stored()` (every document by hash), `writes()` (how many `put`s inserted), `remove(hashes)` (the purge fake's delete). |
 | `makeInMemoryEdgeStore({ ends, uniqueKey, now? })`, `InMemoryEdgeStore`, `InMemoryEdgeStoreOptions` | [`EdgeStore`](#edgestorerow-following-e-r-the-edge-table), with the unique key (`NULLS NOT DISTINCT`), the INNER JOIN of each end's view, and the window-column total. | `rows()` (every edge, hidden ones included), `raceNextInsert(winner)` (a concurrent writer). |
@@ -1463,13 +1471,13 @@ Filled by the application, over the same tables as its other stores. Like them i
 
 Erasure is the only path that deletes a version row, a document or bytes (`VERSION-CHAIN-001/002`, `DOC-001`): nothing else may call these methods' SQL.
 
-### `AccountErasureStore<E, R>`: owner records and attribution
+### `AccountErasureStore<E, R>`: owner records and the redaction marker
 
-Filled by the application, over its owner table (`core.node_owner`) and its version tables (pulpit#207). Like every store it applies no policy and never opens a transaction; `defineAccountErasure` runs each call inside one `transact`.
+Filled by the application, over its owner table (`core.node_owner`) and its version tables, which it only reads (pulpit#207): every version erasure writes goes through the family's `VersionChain`. Like every store it applies no policy and never opens a transaction; `defineAccountErasure` runs each call inside one `transact`.
 
 - `ownedNodes({ accountId, type, limit })` is the ids of leaf `type`'s nodes whose owner row names the account: `SELECT node_id … JOIN core.node USING (id) WHERE owner_id = $1 AND type = $2 ORDER BY node_id LIMIT $3`.
 - `setOwner({ type, id, ownerId })` replaces the node's owner row with `ownerId`, or deletes it for none. `core.node_owner.owner_id` stays `ON DELETE RESTRICT`: this is the explicit retract or reassign it asks for.
-- `reattribute({ accountId, type, column, to, limit })` sets one attribution column (`actorId`: the root version table's actor; `proposedBy`) to `to` on at most `limit` of leaf `type`'s version rows where it names the account, and returns how many it rewrote (`UPDATE … WHERE ctid IN (SELECT … LIMIT $limit)`). It touches no other column: the version's state, number, action and timestamp are never rewritten (`VERSION-CHAIN-001/002`).
+- `unredactedNodes({ accountId, type, redactedAs, limit })` is at most `limit` ids, by id, of leaf `type`'s nodes still to redact: the head is not a tombstone, some version names the account as its actor or `proposedBy`, and no later version has actor `redactedAs` (`IS NOT DISTINCT FROM`, so none matches `NULL`) and no `proposedBy`. One grouped read over the root version table: `… GROUP BY id HAVING MAX(version) FILTER (WHERE actor_id = $1 OR proposed_by = $1) > COALESCE(MAX(version) FILTER (WHERE actor_id IS NOT DISTINCT FROM $redactedAs AND proposed_by IS NULL), -1)`, restricted to live heads, `ORDER BY id LIMIT $limit`, served by an index on `(actor_id)` and one on `(proposed_by)`. It writes nothing.
 
 ### `SearchBranch<Following, E, R>` and `EmbeddingStore<E, R>`: search and embeddings
 

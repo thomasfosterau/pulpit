@@ -5,16 +5,20 @@
  *   reference leaf's contributions reassigned to the tombstone account,
  *   and comments anonymised, so a reply under an erased member's comment
  *   keeps its thread.
- * - Nothing readable stays attributed to the account: no owner record, no
- *   version row's actor or `proposedBy`, no proposal, report, reaction,
- *   relationship or working copy.
+ * - The chain stays append-only: every earlier version row is unchanged,
+ *   and each node the account wrote gets exactly one redacting version
+ *   (the head's state, attributed per the disposition, no `proposedBy`,
+ *   declared account columns redacted). Nothing current stays attributed
+ *   to the account: no owner record, no head version, no proposal, report,
+ *   reaction, relationship or working copy.
  * - Proposals: pending, rejected and withdrawn ones go; an accepted one
  *   stays under the tombstone account.
- * - A re-run changes nothing; a run cut short at a batch boundary resumes
- *   to the same end state.
+ * - A re-run changes nothing and appends nothing; a run cut short at a
+ *   batch boundary resumes to the same end state. A tombstoned node gets no
+ *   redacting version.
  * - The gate: anonymous, a refused actor and the tombstone account itself
  *   are refused before anything is read.
- * - The cache: an anonymised comment is evicted.
+ * - The cache: an anonymised comment is evicted at its redacting version.
  *
  * @module tests/erasure
  */
@@ -23,11 +27,13 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
+import * as P from "effect/Predicate";
 import { describe, expect, it } from "vite-plus/test";
 import { defineAccountErasure, ErasurePresets, type ErasureSummary } from "../src/erasure.ts";
 import type { ProposalRow } from "../src/proposals.ts";
 import type { ReportRow } from "../src/moderation.ts";
 import type { Viewer } from "../src/subtype.ts";
+import type { VersionRow } from "../src/version-chain.ts";
 import { NOW as AT } from "./fixtures.ts";
 import {
   makeInMemoryAccountErasureStore,
@@ -59,7 +65,7 @@ const makeWorld = () => {
   const commentChain = makeInMemoryVersionChain("comments");
   const comments = makeInMemoryLeafStore(commentChain, { columns: ["body", "parentId"] });
   const taxonChain = makeInMemoryVersionChain("taxa");
-  const taxa = makeInMemoryLeafStore(taxonChain, { columns: ["name"] });
+  const taxa = makeInMemoryLeafStore(taxonChain, { columns: ["name", "creditedTo"] });
   const documents = makeInMemoryDocumentStore();
   const proposals = makeInMemoryProposalStore({ chain: postChain, leaves: posts });
   const reports = makeInMemoryReportStore();
@@ -123,7 +129,12 @@ const makeWorld = () => {
             chain: commentChain,
             cache: commentCache,
           },
-          { type: "taxa", disposition: ErasurePresets.referenceLeaf, chain: taxonChain },
+          {
+            type: "taxa",
+            disposition: ErasurePresets.referenceLeaf,
+            chain: taxonChain,
+            accountColumns: ["creditedTo"],
+          },
         ],
         proposals,
         reports,
@@ -212,7 +223,7 @@ const seed = (world: World) =>
     yield* world.commentCache.set(comment.id, { id: comment.id }, 0n);
     const taxon = yield* world.ops.taxa.create({
       id: Option.some("n-taxon"),
-      state: { name: "Rosa" },
+      state: { name: "Rosa", creditedTo: GONE },
       actorId: Option.some(GONE),
     });
     // An accepted proposal of theirs, applied by a curator.
@@ -263,17 +274,29 @@ const seed = (world: World) =>
     };
   });
 
-/** Every account id the world still records, anywhere. */
+/** Each node's head row, in the order the chain first saw it. */
+const heads = (world: World): ReadonlyArray<VersionRow> =>
+  Arr.flatMap(world.chains, (chain) =>
+    Arr.flatMap(Arr.dedupe(Arr.map(chain.rows(), (row) => row.id)), (id) =>
+      Option.toArray(Arr.last(Arr.filter(chain.rows(), (row) => row.id === id))),
+    ),
+  );
+
+/**
+ * Every account id the world currently records: owner records, each head
+ * version's attribution and declared account column, and every other
+ * store. Earlier versions keep their attribution by design, so they are
+ * not read here.
+ */
 const recordedAccounts = (world: World): ReadonlyArray<string> => [
   ...Arr.flatMap([world.posts, world.comments, world.taxa], (leaves) =>
     HashMap.toValues(leaves.owners()),
   ),
-  ...Arr.flatMap(world.chains, (chain) =>
-    Arr.flatMap(chain.rows(), (row) => [
-      ...Option.toArray(row.actorId),
-      ...Option.toArray(row.proposedBy),
-    ]),
-  ),
+  ...Arr.flatMap(heads(world), (row) => [
+    ...Option.toArray(row.actorId),
+    ...Option.toArray(row.proposedBy),
+    ...Arr.filter([row.state["creditedTo"]], P.isString),
+  ]),
   ...Arr.flatMap(world.proposals.rows(), (row) => [row.authorId, ...Option.toArray(row.decidedBy)]),
   ...Arr.flatMap(world.reports.rows(), (row) => [
     row.reporterId,
@@ -323,8 +346,12 @@ describe("defineAccountErasure", () => {
     expect(summary.purged[0]?.documents.length).toBe(1);
     expect(Arr.filter(world.postChain.rows(), (row) => row.id === ids.mine)).toEqual([]);
     const edits = Arr.filter(world.postChain.rows(), (row) => row.id === ids.theirs);
-    expect(Arr.map(edits, (row) => row.state["body"])).toEqual(["theirs", "edited"]);
-    expect(Arr.map(edits, (row) => row.actorId)).toEqual([Option.some(OTHER), Option.none()]);
+    expect(Arr.map(edits, (row) => [row.action, row.state["body"], row.actorId])).toEqual([
+      ["create", "theirs", Option.some(OTHER)],
+      ["update", "edited", Option.some(GONE)],
+      // The redacting version: the head's state, no actor.
+      ["update", "edited", Option.none()],
+    ]);
     expect(HashMap.get(world.posts.owners(), ids.theirs)).toEqual(Option.some(OTHER));
   });
 
@@ -340,20 +367,59 @@ describe("defineAccountErasure", () => {
     expect(Option.map(reply, (row) => [row["parentId"], row["ownerId"]])).toEqual(
       Option.some([ids.comment, OTHER]),
     );
+    const versions = Arr.filter(world.commentChain.rows(), (row) => row.id === ids.comment);
+    expect(Arr.map(versions, (row) => [row.version, row.actorId, row.state["body"]])).toEqual([
+      [0n, Option.some(GONE), "first"],
+      [1n, Option.none(), "first"],
+    ]);
     expect(world.commentCache.get(ids.comment)).toEqual(Option.none());
     expect(world.commentCache.versionOf(ids.comment)).toEqual(Option.some(1n));
   });
 
-  it("reassigns a reference contribution to the tombstone and clears its accepted proposal's attribution", async () => {
+  it("reassigns a reference contribution with a redacting version under the tombstone, its declared column redacted", async () => {
     const world = makeWorld();
     const ids = await run(seed(world));
     await run(world.erasure().erase(GONE));
     const versions = Arr.filter(world.taxonChain.rows(), (row) => row.id === ids.taxon);
-    expect(Arr.map(versions, (row) => [row.actorId, row.proposedBy])).toEqual([
-      [Option.some(TOMBSTONE), Option.none()],
-      [Option.some(OTHER), Option.none()],
+    expect(Arr.map(versions, (row) => [row.actorId, row.proposedBy, row.state])).toEqual([
+      [Option.some(GONE), Option.none(), { name: "Rosa", creditedTo: GONE }],
+      [Option.some(OTHER), Option.some(GONE), { name: "Rosa canina", creditedTo: GONE }],
+      [Option.some(TOMBSTONE), Option.none(), { name: "Rosa canina", creditedTo: TOMBSTONE }],
     ]);
-    expect(Arr.map(versions, (row) => row.state["name"])).toEqual(["Rosa", "Rosa canina"]);
+  });
+
+  it("leaves every earlier version row unchanged and appends exactly one redacting version per node", async () => {
+    const world = makeWorld();
+    const ids = await run(seed(world));
+    // Every row of a node that survives (the account's own post is purged).
+    const before = Arr.map(world.chains, (chain) =>
+      Arr.filter(chain.rows(), (row) => row.id !== ids.mine),
+    );
+    await run(world.erasure().erase(GONE));
+    const after = Arr.map(world.chains, (chain) => chain.rows());
+    Arr.forEach(before, (rows, index) => {
+      const kept = (after[index] ?? []).slice(0, rows.length);
+      expect(kept).toEqual(rows);
+      // The very same row objects: nothing was rewritten, not even to an equal value.
+      Arr.forEach(rows, (row, at) => expect(kept[at]).toBe(row));
+    });
+    const appended = Arr.flatMap(after, (rows, index) => rows.slice((before[index] ?? []).length));
+    expect(Arr.map(appended, (row) => [row.id, row.action, row.actorId, row.proposedBy])).toEqual([
+      [ids.theirs, "update", Option.none(), Option.none()],
+      [ids.comment, "update", Option.none(), Option.none()],
+      [ids.taxon, "update", Option.some(TOMBSTONE), Option.none()],
+    ]);
+  });
+
+  it("appends no redacting version to a tombstoned node", async () => {
+    const world = makeWorld();
+    const ids = await run(seed(world));
+    await run(world.ops.comments.delete(ids.comment, Option.some(GONE)));
+    const before = world.commentChain.rows();
+    const summary = await run(world.erasure().erase(GONE));
+    expect(summary.complete).toBe(true);
+    expect(world.commentChain.rows()).toEqual(before);
+    expect(summary.changed["comments.redact"]).toBeUndefined();
   });
 
   it("deletes pending, rejected and filed rows, and keeps an accepted proposal and a resolution under the tombstone", async () => {
@@ -385,9 +451,28 @@ describe("defineAccountErasure", () => {
     await run(seed(world));
     await run(world.erasure().erase(GONE));
     const before = snapshot(world);
+    const rows = Arr.map(world.chains, (chain) => chain.rows().length);
     const again = await run(world.erasure().erase(GONE));
     expect(again).toMatchObject({ complete: true, changed: {}, purged: [] });
     expect(snapshot(world)).toEqual(before);
+    expect(Arr.map(world.chains, (chain) => chain.rows().length)).toEqual(rows);
+  });
+
+  it("keeps a node redacted when another account writes after the redacting version", async () => {
+    const world = makeWorld();
+    const ids = await run(seed(world));
+    await run(world.erasure().erase(GONE));
+    await run(
+      world.ops.comments.update({
+        id: ids.comment,
+        patch: { body: "moderated" },
+        actorId: Option.some(OTHER),
+      }),
+    );
+    const rows = world.commentChain.rows().length;
+    const again = await run(world.erasure().erase(GONE));
+    expect(again.changed).toEqual({});
+    expect(world.commentChain.rows().length).toBe(rows);
   });
 
   it.each([1, 2, 3])(

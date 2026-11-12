@@ -1361,7 +1361,7 @@ export type _ErasureOp = Assert<
     ReturnType<AccountErasureOps<StoreFailure, Transaction>["erase"]>,
     Effect.Effect<
       ErasureSummary,
-      Unauthorized | Forbidden | TombstoneErasure | StoreFailure,
+      Unauthorized | Forbidden | TombstoneErasure | StaleVersion | VersionConflict | StoreFailure,
       Transaction
     >
   >
