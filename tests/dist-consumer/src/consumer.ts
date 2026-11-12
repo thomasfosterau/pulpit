@@ -388,7 +388,7 @@ export type _OwnedBarrel = Assert<
 
 export const wire = registryWireTypes(REGISTRY, ["content"] as const);
 export type _Wire = Assert<
-  Equals<typeof wire.branches, { readonly content: ReadonlyArray<string> }>
+  Equals<typeof wire.branches, HashMap.HashMap<"content", ReadonlyArray<string>>>
 >;
 export type _WireRoutable = Assert<Equals<typeof wire.routable, ReadonlyArray<string>>>;
 
