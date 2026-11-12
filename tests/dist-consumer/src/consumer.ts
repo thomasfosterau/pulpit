@@ -34,6 +34,7 @@ import {
   Discovery,
   Relations,
   Translation,
+  ReferenceImport,
   Proposals,
   Registry,
   WorkingCopy,
@@ -301,6 +302,14 @@ import {
   type SweepSummary,
   type TranslationOps,
 } from "@thomasfosterau/pulpit/translation";
+import {
+  defineReferenceImport,
+  type ExternalIdStore,
+  type ImportSummary,
+  type ImportBatchTooLarge,
+  type ReferenceImportOps,
+  type UnknownAuthority,
+} from "@thomasfosterau/pulpit/reference-import";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =
@@ -1651,3 +1660,25 @@ export type _TranslationSweep = Assert<
 >;
 export type _LineageOf = Assert<Equals<ReturnType<typeof lineageOf>, Option.Option<LocaleLineage>>>;
 export type _HumanLineageHook = Assert<Equals<ReturnType<typeof humanLineageHook>["name"], string>>;
+
+// ── reference import (pulpit#209) ────────────────────────────────────────
+
+export type _ReferenceImportBarrel = Assert<
+  Equals<typeof ReferenceImport.defineReferenceImport, typeof defineReferenceImport>
+>;
+export type _ReferenceImportRun = Assert<
+  Equals<
+    ReturnType<ReferenceImportOps<StoreFailure, Transaction>["run"]>,
+    Effect.Effect<
+      ImportSummary,
+      UnknownAuthority | ImportBatchTooLarge | Unauthorized | Forbidden | StoreFailure,
+      Transaction
+    >
+  >
+>;
+export type _ExternalIdLink = Assert<
+  Equals<
+    ReturnType<ExternalIdStore<StoreFailure, Transaction>["link"]>,
+    Effect.Effect<"linked" | "present" | "taken", StoreFailure, Transaction>
+  >
+>;

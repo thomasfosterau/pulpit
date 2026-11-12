@@ -1053,6 +1053,17 @@ export interface PublicationStore<E, R> {
     id: string,
     limit: number,
   ) => Effect.Effect<ReadonlyArray<PublicationFact>, E, R>;
+  /**
+   * The pending scheduled publication of each of `ids`, in one read, at the
+   * store's clock (`now()`): the node's most recently recorded fact that
+   * names a version and whose `at` is still ahead, unless a later-recorded
+   * fact overtakes it (one whose `at` is no later than its own, which is
+   * effective by then, so the schedule never takes effect). A node with none
+   * is absent. Applies no policy.
+   */
+  readonly scheduled: (
+    ids: ReadonlyArray<string>,
+  ) => Effect.Effect<ReadonlyArray<PublicationFact>, E, R>;
 }
 
 /**
@@ -1219,6 +1230,24 @@ export interface PublicationOps<E, R> {
   readonly facts: (
     id: string,
   ) => Effect.Effect<ReadonlyArray<PublicationFact>, Gate | NodeNotFound | E, R>;
+  /**
+   * The pending scheduled publication of each of `ids` (pulpit#220): per
+   * node, the most recently recorded `publish` whose `at` is still ahead of
+   * the `Clock`, which no later record overtakes (see
+   * {@link PublicationStore.scheduled}), in one batched read
+   * (`PERF-DB-001`). Only nodes the viewer reads the **head** of appear (the
+   * view-private rung, a reference leaf's corpus writers, a row's own
+   * owner), and only those that are visible and not tombstoned, so a reader
+   * below them learns nothing of an unpublished schedule and a hidden or
+   * missing id is simply absent (`SEC-AUTH-ENUM-001`). A node already live
+   * with a newer version scheduled appears too: its pending fact is the
+   * schedule. Fails only with the store's `E`.
+   *
+   * @since 0.2.0
+   */
+  readonly scheduled: (
+    ids: ReadonlyArray<string>,
+  ) => Effect.Effect<HashMap.HashMap<string, PublicationFact>, E, R>;
 }
 
 // ── The lifecycle hook seam ───────────────────────────────────────────
@@ -2402,6 +2431,19 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     facts: Effect.fn(`${type}.publicationFacts`)(function* (id: string) {
       return yield* historyRead(id, facts.facts(id, MAX_HISTORY_LIMIT));
     }),
+    scheduled: Effect.fn(`${type}.scheduledPublications`)(function* (ids: ReadonlyArray<string>) {
+      if (!Arr.isReadonlyArrayNonEmpty(ids)) return HashMap.empty<string, PublicationFact>();
+      const viewer = yield* definition.viewer;
+      // The heads this viewer reads and may see: the rows whose draft state they are shown.
+      const heads = Arr.filter(
+        yield* leaves.getMany(Arr.dedupe(ids)),
+        (head) => head.action !== "delete" && readsHeadOf(viewer, head),
+      );
+      const shown = yield* Effect.filter(heads, (head) => visible(viewer, head));
+      if (!Arr.isReadonlyArrayNonEmpty(shown)) return HashMap.empty<string, PublicationFact>();
+      const pending = yield* facts.scheduled(Arr.map(shown, (head) => head.id));
+      return HashMap.fromIterable(Arr.map(pending, (fact) => [fact.id, fact] as const));
+    }),
   }));
 
   return {
@@ -3032,6 +3074,7 @@ export const subtypeHandlers = <Resource, E, R>(
           ),
         ),
       facts: publication.facts,
+      scheduled: publication.scheduled,
     })),
   };
 };
