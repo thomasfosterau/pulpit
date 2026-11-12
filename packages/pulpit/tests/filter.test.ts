@@ -300,8 +300,9 @@ describe("evaluate — gt / gte / lt / lte against SQL's comparison", () => {
   });
 
   it("a NaN or invalid-Date comparand is never, and a NaN or invalid-Date column satisfies none", () => {
-    // oxlint-disable-next-line effect/use-clock-service -- an `Invalid Date` is the case under test, and DateTime refuses to make one
-    const invalid = new Date(Number.NaN);
+    // DateTime refuses to make an `Invalid Date`, so the case invalidates a valid one in place.
+    const invalid = DateTime.toDate(DateTime.makeUnsafe(NOW.getTime()));
+    invalid.setTime(Number.NaN);
     expect(Number.isNaN(invalid.getTime())).toBe(true);
     // PostgreSQL orders NaN above every number; outside the contract, so the constructors fail closed.
     expect(

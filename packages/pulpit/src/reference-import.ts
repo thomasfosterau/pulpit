@@ -477,7 +477,7 @@ export const defineReferenceImport = <Row extends LeafRow, Resource, Following, 
   const fieldNames = R.keys(fields);
   if (Arr.isReadonlyArrayEmpty(fieldNames)) throw declarationError(`${type} declares no field`);
   Arr.forEach(fieldNames, (field) => {
-    if (HashSet.has(RESERVED, field) || !leaf.leaves.columns.has(field)) {
+    if (HashSet.has(RESERVED, field) || !HashSet.has(leaf.leaves.columns, field)) {
       throw declarationError(`${field} is not a writable column of ${type}'s view`);
     }
   });

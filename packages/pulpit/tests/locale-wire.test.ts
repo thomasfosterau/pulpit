@@ -373,8 +373,7 @@ describe("a localised leaf's cache, keyed by locale", () => {
         return {
           set: cache.set,
           delete: cache.delete,
-          // oxlint-disable-next-line effect/prefer-option-over-null -- the caches' optional `locale` parameter, `?: T | undefined` (AGENTS.md → Conventions)
-          get: (id: string, locale?: string | undefined) => Effect.succeed(cache.get(id, locale)),
+          get: (id: string, locale?: string) => Effect.succeed(cache.get(id, locale)),
         };
       },
     },

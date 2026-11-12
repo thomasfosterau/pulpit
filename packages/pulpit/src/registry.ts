@@ -57,7 +57,6 @@ import type { Resource } from "@thomasfosterau/effect-jsonapi";
 import * as Arr from "effect/Array";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
-import * as R from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -514,7 +513,8 @@ export interface RegistryWireTypes<Root extends string> {
   readonly searchable: ReadonlyArray<string>;
   readonly routable: ReadonlyArray<string>;
   readonly localised: ReadonlyArray<string>;
-  readonly branches: { readonly [K in Root]: ReadonlyArray<string> };
+  /** Each root's branch, keyed by the root (every one of `roots` is present). */
+  readonly branches: HashMap.HashMap<Root, ReadonlyArray<string>>;
 }
 
 /**
@@ -540,11 +540,9 @@ export const registryWireTypes = <Root extends string>(
     Arr.filterMap(entries, (entry) =>
       Option.contains(branchOf(entry, byKey, roots), branchRoot) ? typeOf(entry) : Result.failVoid,
     );
-  // SAFETY: `R.fromEntries` erases the key union to `string`; the entries
-  // are built from exactly `roots`, so every `Root` key is present.
-  const branches = R.fromEntries(
-    Arr.map(roots, (key): [Root, ReadonlyArray<string>] => [key, branch(key)]),
-  ) as { readonly [K in Root]: ReadonlyArray<string> };
+  const branches = HashMap.fromIterable(
+    Arr.map(roots, (key): readonly [Root, ReadonlyArray<string>] => [key, branch(key)]),
+  );
   return {
     pageable: flagged("pageable"),
     agent: flagged("agent"),
