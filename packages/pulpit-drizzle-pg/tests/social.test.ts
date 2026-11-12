@@ -111,6 +111,6 @@ describe("makeSocialStore over canned rows", () => {
 
   it("eraseAccount below one reads nothing; otherwise counts", async () => {
     expect(await runWith([], store.eraseAccount("ana", 0))).toEqual({ value: 0, calls: [] });
-    expect((await runWith([{ n: 2 }], store.eraseAccount("ana", 5))).value).toBe(2);
+    expect((await runWith([{ erased: 2 }], store.eraseAccount("ana", 5))).value).toBe(2);
   });
 });

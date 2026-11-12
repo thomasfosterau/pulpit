@@ -55,6 +55,7 @@
     "packages/pulpit-drizzle-pg/src/embeddings.ts",
     "packages/pulpit-drizzle-pg/src/external-ids.ts",
     "packages/pulpit-drizzle-pg/src/proposals.ts",
+    "packages/pulpit-drizzle-pg/src/reactions.ts",
     "packages/pulpit-drizzle-pg/src/social.ts",
     "packages/pulpit-drizzle-pg/tests/**/*.test.ts",
     "packages/pulpit-drizzle-pg/tests/**/*.types.ts",

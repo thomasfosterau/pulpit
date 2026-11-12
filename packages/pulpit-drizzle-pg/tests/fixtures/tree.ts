@@ -18,6 +18,7 @@ import { makeEdgeTable } from "@thomasfosterau/pulpit-drizzle-pg/edges";
 import { makeEmbeddingTables } from "@thomasfosterau/pulpit-drizzle-pg/embeddings";
 import { makeExternalIdTable } from "@thomasfosterau/pulpit-drizzle-pg/external-ids";
 import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
+import { makeReactionTable } from "@thomasfosterau/pulpit-drizzle-pg/reactions";
 import { makeRelationshipTable } from "@thomasfosterau/pulpit-drizzle-pg/social";
 import { makeProposalTable } from "@thomasfosterau/pulpit-drizzle-pg/proposals";
 import { makePathTable } from "@thomasfosterau/pulpit-drizzle-pg/paths";
@@ -113,7 +114,7 @@ export const relations = makeEdgeTable({
 /** The external-identifier table, over the identity table. */
 export const externalIds = makeExternalIdTable({ schema, identity: tables.root.identity });
 
-/** An account table, for the reaction table's cascading account key. */
+/** An account table, for the reaction and relationship tables' cascading account keys. */
 export const accounts = schema.table("account", { id: text("id").primaryKey() });
 
 /** The relationship table (follows, mutes, blocks), its accounts cascading. */
@@ -124,6 +125,13 @@ export const collection = makeCollectionTable({
   schema,
   name: "entry_member",
   identity: tables.root.identity,
+});
+
+/** The reaction table, its accounts cascading. */
+export const reactions = makeReactionTable({
+  schema,
+  identity: tables.root.identity,
+  accounts: accounts.id,
 });
 
 /** The block documents' embedding queue and vectors: `double precision[]`, so no extension is needed. */
@@ -176,6 +184,7 @@ export const fixtureSchema = {
   accounts,
   relationships,
   collection,
+  reactions,
   proposals,
   notesView: views.leaves.notes,
   linksView: views.leaves.links,

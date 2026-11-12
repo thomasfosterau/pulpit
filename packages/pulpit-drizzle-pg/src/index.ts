@@ -19,8 +19,9 @@
  * family's queue and vectors (`Embeddings`, `./embeddings`), the
  * `ExternalIdStore` over an external-identifier table (`ExternalIds`,
  * `./external-ids`), the `CollectionStore` over one membership table per
- * ordered family (`Collections`, `./collections`), and the `SocialStore`
- * over a relationship table (`Social`, `./social`).
+ * ordered family (`Collections`, `./collections`), the `ReactionStore`
+ * over a reaction table (`Reactions`, `./reactions`), and the
+ * `SocialStore` over a relationship table (`Social`, `./social`).
  *
  * @copyright Thomas Foster
  * @module pulpit-drizzle-pg
@@ -48,6 +49,9 @@ export * as Proposals from "./proposals.ts";
 
 /** The kernel's `CollectionStore`: one membership table per ordered family. */
 export * as Collections from "./collections.ts";
+
+/** The kernel's `ReactionStore`: one account's reaction to one node per row. */
+export * as Reactions from "./reactions.ts";
 
 /** The kernel's `SocialStore`: follows, mutes and blocks between accounts. */
 export * as Social from "./social.ts";

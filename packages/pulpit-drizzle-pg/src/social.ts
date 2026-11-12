@@ -28,6 +28,7 @@ import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { eraseBatch } from "./internal/erase.ts";
 import type { StoreQueryError } from "./internal/owners.ts";
 
 /**
@@ -278,25 +279,13 @@ export const makeSocialStore = <I, Relations extends AnyRelations>(config: {
     followingOf: (follower) => toIdsOf(follower, ["follow"]),
     silencedBy: (viewer) => toIdsOf(viewer, ["mute", "block"]),
     eraseAccount: (accountId, limit) =>
-      limit < 1
-        ? Effect.succeed(0)
-        : Effect.gen(function* () {
-            const tx = yield* CurrentTransaction;
-            const rows = yield* executeRows<{ readonly n: number }>(
-              tx,
-              sql`WITH gone AS (
-                DELETE FROM ${table}
-                WHERE (kind, from_id, to_id) IN (
-                  SELECT kind, from_id, to_id FROM ${table}
-                  WHERE ${table.fromId} = ${accountId} OR ${table.toId} = ${accountId}
-                  ORDER BY kind, from_id, to_id
-                  LIMIT ${Math.trunc(limit)}
-                )
-                RETURNING 1
-              )
-              SELECT count(*)::int AS n FROM gone`,
-            );
-            return countOf(yield* Effect.orDie(decodeCount(rows)));
-          }),
+      Effect.flatMap(CurrentTransaction, (tx) =>
+        eraseBatch(tx, {
+          table,
+          key: [table.kind, table.fromId, table.toId],
+          where: sql`${table.fromId} = ${accountId} OR ${table.toId} = ${accountId}`,
+          limit,
+        }),
+      ),
   };
 };
