@@ -41,6 +41,10 @@
  *   and holds with `_embed`, `_fields` and `context`. A request whose
  *   `If-None-Match` matches (weak comparison, `*` included) is `304`, with the
  *   `ETag` and `Cache-Control` and no body. Collections carry none.
+ * - **`search`** (pulpit#224). One capped ranked read per request (the
+ *   binding's `search`, under the viewer's search scope), hydrated through
+ *   `getMany`, so a hit the viewer's gate hides is dropped and never counted.
+ *   `X-WP-Total` counts the hydrated hits, capped at `MAX_PAGE_LIMIT`.
  * - **Caching** (`CACHE-AUTH-005`). A response is `Cache-Control: public`
  *   only when its viewer is anonymous and every item in it, embeds included,
  *   is serveable by its binding's `serveable`; anything else is
@@ -58,8 +62,8 @@
  *
  * No writes (`POST` / `PUT` / `PATCH` / `DELETE` are `rest_no_route`), no
  * `context=edit` (`rest_forbidden_context`, after the 404 check), no
- * revisions, no `search`. A parameter the adapter
- * can't honour (`search`, `sticky`, `orderby=term_group`, `roles`, …) is
+ * revisions. A parameter the adapter
+ * can't honour (`search_columns`, `sticky`, `orderby=term_group`, `roles`, …) is
  * `400 rest_invalid_param`, never silently ignored, so a client never
  * mistakes an unfiltered list for a filtered one.
  *
@@ -267,6 +271,32 @@ export interface PostTypeBinding<Resource, E, R, Following = never> {
   readonly columns: PostColumns;
   readonly fields: (resource: Resource) => PostFields;
   readonly serveable: (resource: Resource) => boolean;
+  /**
+   * The leaf's ranked search (pulpit#224), typically the kernel's
+   * `hybridSearch` over its branches, run under
+   * `searchScopeFilter(leaf, viewer, { includeDeleted, where })` for the
+   * viewer: it returns at most `limit` hits, best first. Absent, `search` is
+   * `400 rest_invalid_param` for the type.
+   */
+  readonly search?: (
+    request: SearchRequest<Following>,
+  ) => Effect.Effect<ReadonlyArray<{ readonly id: string }>, E, R>;
+}
+
+/**
+ * What a binding's `search` is asked: the text, and the request's other
+ * filters (status, author, terms, …) as `where`, which the search scope
+ * carries (`searchScopeFilter`'s `where`) so the ranked query applies them
+ * in SQL; `includeDeleted` is the soft-delete arm (`status=trash`), and the
+ * hits asked for are at most `limit` (`MAX_PAGE_LIMIT`).
+ *
+ * @since 0.1.0
+ */
+export interface SearchRequest<Following = never> {
+  readonly query: string;
+  readonly where: ListFilter<Following>;
+  readonly includeDeleted: boolean;
+  readonly limit: number;
 }
 
 /**
@@ -288,6 +318,10 @@ export interface ShownItem {
  */
 export interface BoundPostType<R, Following = never> {
   readonly columns: PostColumns;
+  /** The ranked search, none for a leaf that binds none; its ids are best first (pulpit#224). */
+  readonly search: Option.Option<
+    (request: SearchRequest<Following>) => Effect.Effect<ReadonlyArray<string>, unknown, R>
+  >;
   /** The item, or none when the read gate hides it or it is missing (`SEC-AUTH-ENUM-001`). */
   readonly get: (id: string) => Effect.Effect<Option.Option<ShownItem>, unknown, R>;
   readonly getMany: (
@@ -405,6 +439,11 @@ export const bind = <Resource, E, R, Following = never>(
         }),
       ),
     owners: binding.ops.owners,
+    search: Option.map(
+      Option.fromNullishOr(binding.search),
+      (search) => (request: SearchRequest<Following>) =>
+        Effect.map(search(request), (hits) => hits.map(({ id }) => id)),
+    ),
   };
 };
 
@@ -780,7 +819,6 @@ const internal = <A, R>(effect: Effect.Effect<A, unknown, R>): Effect.Effect<A, 
 
 /** The parameters the adapter refuses rather than silently ignores. */
 const UNSUPPORTED = [
-  "search",
   "search_columns",
   "search_semantics",
   "sticky",
@@ -818,6 +856,8 @@ interface CollectionParams {
    */
   readonly terms: ReadonlyArray<readonly [Taxonomy, "include" | "exclude", ReadonlyArray<string>]>;
   readonly taxRelation: "AND" | "OR";
+  /** The `search` text, when asked and not blank (core ignores an empty one). */
+  readonly search: Option.Option<string>;
 }
 
 /** Each taxonomy's route base, which is also its item filter parameter. */
@@ -979,6 +1019,59 @@ const checked = <P extends { readonly orderby: string; readonly include: Option.
 };
 
 /**
+ * The order a `search` result is re-sorted in, from the hydrated items
+ * (pulpit#224): none for `relevance`, which keeps the search's own ranking.
+ * `order` flips a column's direction; ties keep their relevance order.
+ */
+const searchOrder = (
+  params: Pick<CollectionParams, "orderby" | "order">,
+  include: ReadonlyArray<string>,
+  wire: HashMap.HashMap<string, WireId>,
+): Option.Option<Order.Order<ShownItem>> => {
+  const text = (read: (item: ShownItem) => string) => Order.mapInput(Order.String, read);
+  const number = (read: (item: ShownItem) => number) => Order.mapInput(Order.Number, read);
+  const ascending = Match.value(params.orderby).pipe(
+    Match.when("relevance", () => Option.none<Order.Order<ShownItem>>()),
+    Match.when("author", () =>
+      Option.some(text(({ fields }) => Option.getOrElse(fields.author, () => ""))),
+    ),
+    Match.when("id", () => {
+      const wireOf = ({ fields }: ShownItem): WireId =>
+        Option.getOrElse(HashMap.get(wire, fields.id), (): WireId => 0);
+      return Option.some(
+        Order.make<ShownItem>((a, b) => {
+          const [x, y] = [wireOf(a), wireOf(b)];
+          return P.isNumber(x) && P.isNumber(y)
+            ? Order.Number(x, y)
+            : Order.String(String(x), String(y));
+        }),
+      );
+    }),
+    Match.when("include", () => Option.some(number(({ fields }) => include.indexOf(fields.id)))),
+    Match.when("modified", () => Option.some(number(({ fields }) => fields.modified.getTime()))),
+    Match.when("slug", () => Option.some(text(({ fields }) => fields.slug))),
+    Match.when("title", () =>
+      Option.some(text(({ fields }) => (P.isString(fields.title) ? fields.title : ""))),
+    ),
+    Match.when("parent", () =>
+      Option.some(text(({ fields }) => Option.getOrElse(fields.parent, () => ""))),
+    ),
+    Match.when("menu_order", () => Option.some(number(({ fields }) => fields.menuOrder))),
+    // `date`
+    Match.orElse(() =>
+      Option.some(
+        number(({ fields }) =>
+          Option.match(fields.date, { onNone: () => 0, onSome: (date) => date.getTime() }),
+        ),
+      ),
+    ),
+  );
+  return Option.map(ascending, (order) =>
+    params.order === "desc" && params.orderby !== "include" ? Order.flip(order) : order,
+  );
+};
+
+/**
  * Parse and check a collection's parameters, collecting every bad one into
  * one `rest_invalid_param`, as WordPress's argument validation does.
  */
@@ -1022,12 +1115,14 @@ const collectionParams = (
       ),
     );
 
+    const search = Option.filter(query.scalar("search"), (text) => text.trim() !== "");
     const orderbys = [
       "author",
       "date",
       "id",
       "include",
       "modified",
+      "relevance",
       "slug",
       "title",
       ...(type === "post" ? [] : ["parent"]),
@@ -1057,7 +1152,8 @@ const collectionParams = (
     const params: CollectionParams = {
       context,
       ...paging("desc"),
-      orderby: oneOf("orderby", orderbys, "date"),
+      orderby: oneOf("orderby", orderbys, Option.isSome(search) ? "relevance" : "date"),
+      search,
       statuses,
       author: list("author"),
       authorExclude: Option.getOrElse(list("author_exclude"), () => []),
@@ -2256,31 +2352,80 @@ export const defineWordPress = <R, Following = never>(
       const offset = Option.getOrElse(params.offset, () => (params.page - 1) * params.perPage);
       // `orderby=include` orders by the include list, at most MAX_LIST_PARAMETER long: read it whole, then page it here.
       const byInclude = params.orderby === "include";
-      const page = yield* binding
-        .list({
-          where,
-          orderBy,
-          includeDeleted: Arr.contains(params.statuses, "trash"),
-          limit: byInclude ? MAX_LIST_PARAMETER : params.perPage,
-          offset: byInclude ? 0 : offset,
-        })
-        .pipe(
-          Effect.catchIf(Schema.is(InvalidListOrder), () =>
-            Effect.fail(
-              invalidParams({
-                orderby: `orderby ${params.orderby} is not sortable for this post type.`,
-              }),
+      const plain = Effect.fn("wordpress.listPlain")(function* () {
+        const page = yield* binding
+          .list({
+            where,
+            orderBy,
+            includeDeleted: Arr.contains(params.statuses, "trash"),
+            limit: byInclude ? MAX_LIST_PARAMETER : params.perPage,
+            offset: byInclude ? 0 : offset,
+          })
+          .pipe(
+            Effect.catchIf(Schema.is(InvalidListOrder), () =>
+              Effect.fail(
+                invalidParams({
+                  orderby: `orderby ${params.orderby} is not sortable for this post type.`,
+                }),
+              ),
             ),
+            Effect.mapError((error) => (Schema.is(WpRestError)(error) ? error : internalError())),
+          );
+        return {
+          rows: byInclude
+            ? Arr.sort(
+                page.rows,
+                Order.mapInput(Order.Number, (item: ShownItem) => include.indexOf(item.fields.id)),
+              ).slice(offset, offset + params.perPage)
+            : page.rows,
+          total: page.total,
+        };
+      });
+      // `search`: one capped ranked read, hydrated through the viewer's own gate, ordered and paged here (pulpit#224).
+      const searched = Effect.fn("wordpress.listSearched")(function* (text: string) {
+        const search = yield* Effect.fromOption(binding.search).pipe(
+          Effect.mapError(() =>
+            invalidParams({ search: "search is not supported for this post type." }),
           ),
-          Effect.mapError((error) => (Schema.is(WpRestError)(error) ? error : internalError())),
         );
-      const rows = byInclude
-        ? Arr.sort(
-            page.rows,
-            Order.mapInput(Order.Number, (item: ShownItem) => include.indexOf(item.fields.id)),
-          ).slice(offset, offset + params.perPage)
-        : page.rows;
-      const { total } = page;
+        const hits = Arr.dedupe(
+          yield* internal(
+            search({
+              query: text,
+              where,
+              includeDeleted: Arr.contains(params.statuses, "trash"),
+              limit: MAX_PAGE_LIMIT,
+            }),
+          ),
+        );
+        const shown = Arr.isReadonlyArrayNonEmpty(hits)
+          ? yield* internal(binding.getMany(hits))
+          : HashMap.empty<string, ShownItem>();
+        // The hits the viewer's read gate lets through, best first.
+        const hydrated = Arr.flatMap(hits, (id) => Option.toArray(HashMap.get(shown, id)));
+        const wire =
+          Arr.isReadonlyArrayNonEmpty(hydrated) && params.orderby === "id"
+            ? HashMap.fromIterable(
+                Arr.zip(
+                  hydrated.map(({ fields }) => fields.id),
+                  yield* internal(ids.encode(hydrated.map(({ fields }) => fields.id))),
+                ),
+              )
+            : HashMap.empty<string, WireId>();
+        const ordered = searchOrder(params, include, wire);
+        const sorted = Option.match(ordered, {
+          onNone: () => hydrated,
+          onSome: (order) => Arr.sort(hydrated, order),
+        });
+        return {
+          rows: sorted.slice(offset, offset + params.perPage),
+          total: sorted.length,
+        };
+      });
+      const { rows, total } = yield* Option.match(params.search, {
+        onNone: () => plain(),
+        onSome: searched,
+      });
       const maxPages = Math.ceil(total / params.perPage);
       if (params.page > maxPages && total > 0) {
         return yield* new WpRestError({

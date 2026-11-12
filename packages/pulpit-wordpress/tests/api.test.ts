@@ -20,9 +20,12 @@ import * as P from "effect/Predicate";
 import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 import { Visibility } from "@thomasfosterau/pulpit/content";
+import { always } from "@thomasfosterau/pulpit/filter";
+import { hybridSearch } from "@thomasfosterau/pulpit/search";
 import {
   defineSubtype,
   ownedAccess,
+  searchScopeFilter,
   type AccessPolicy,
   type LeafRow,
   type Viewer,
@@ -36,6 +39,8 @@ import {
   makeInMemoryFollowers,
   makeInMemoryLeafStore,
   makeInMemoryPathStore,
+  makeInMemorySearchBranch,
+  type InMemoryFollowing,
 } from "@thomasfosterau/pulpit/testing";
 import type { ColumnValue } from "@thomasfosterau/pulpit/version-chain";
 import {
@@ -49,6 +54,7 @@ import {
   type PostFields,
   type PostType,
   type RenderRequest,
+  type SearchRequest,
   type Taxonomy,
   type TermFields,
   type WordPressResponse,
@@ -158,6 +164,12 @@ interface SiteOptions {
   readonly failing?: "render" | "list";
   /** Bind `category` and `post_tag` over two term leaves and their assignment families (phase 2). */
   readonly terms?: boolean;
+  /**
+   * Bind a ranked `search` over the posts' titles (pulpit#224): `scoped` runs the
+   * kernel's `hybridSearch` under the viewer's `searchScopeFilter`; `stale` is an index
+   * that ignores the scope, returning every post, so only hydration protects the reader.
+   */
+  readonly search?: "scoped" | "stale";
 }
 
 const TERM_COLUMNS = ["name", "slug", "description", "parentId"];
@@ -284,6 +296,44 @@ const site = (options: SiteOptions = {}) => {
     visibility: "visibility",
     mimeType: "mimeType",
   };
+  const postOps =
+    options.failing === "list"
+      ? { ...ops.posts, list: () => Effect.fail("the store is down") }
+      : ops.posts;
+  /** The posts' view rows, as the in-memory search branch reads them. */
+  const postRows = () =>
+    Effect.runSync(
+      leafStores.posts.leaves.list({ where: always, orderBy: [], limit: 10_000, offset: 0 }),
+    ).rows;
+  const titleBranch = makeInMemorySearchBranch({
+    name: "title",
+    rows: postRows,
+    // A shorter title matching the text ranks higher.
+    score: (row, text) => {
+      const title = P.isString(row["title"]) ? row["title"] : "";
+      return title.includes(text) ? Option.some(1 / title.length) : Option.none();
+    },
+    now: NOW,
+  });
+  const searchPosts = (request: SearchRequest<InMemoryFollowing>) =>
+    Effect.flatMap(viewerSeam, (who): Effect.Effect<ReadonlyArray<{ readonly id: string }>> =>
+      options.search === "stale"
+        ? Effect.succeed(postRows())
+        : hybridSearch({ branches: [titleBranch] })({
+            query: request.query,
+            limit: request.limit,
+            scope: searchScopeFilter(
+              {
+                access: ownedAccess({ draft: true }),
+                columns: leafStores.posts.leaves.columns,
+                policy,
+                followers,
+              },
+              who,
+              request,
+            ),
+          }),
+    );
   const api = defineWordPress({
     site: {
       url: "https://example.org",
@@ -306,15 +356,10 @@ const site = (options: SiteOptions = {}) => {
     link: (type, fields) => `https://example.org/${type}/${fields.slug}`,
     types: R.filter(
       {
-        post: bind({
-          ops:
-            options.failing === "list"
-              ? { ...ops.posts, list: () => Effect.fail("the store is down") }
-              : ops.posts,
-          columns,
-          fields: fieldsOf,
-          serveable,
-        }),
+        post:
+          options.search === undefined
+            ? bind({ ops: postOps, columns, fields: fieldsOf, serveable })
+            : bind({ ops: postOps, columns, fields: fieldsOf, serveable, search: searchPosts }),
         page: bind({ ops: ops.pages, columns, fields: fieldsOf, serveable }),
         attachment: bind({
           ops: {
@@ -696,7 +741,7 @@ describe("the wp/v2 read API — collections", () => {
     const search = decodeBody(ErrorBody)(await wp.get("/wp/v2/posts", [["search", "hello"]]));
     expect([search.code, search.data.params]).toEqual([
       "rest_invalid_param",
-      { search: "search is not supported by this API." },
+      { search: "search is not supported for this post type." },
     ]);
     expect(codeOf(await wp.get("/wp/v2/posts", [["per_page", "101"]]))).toBe("rest_invalid_param");
     expect(codeOf(await wp.get("/wp/v2/posts", [["menu_order", "1"]]))).toBe("rest_invalid_param");
@@ -880,6 +925,129 @@ describe("the wp/v2 read API — conditional reads (pulpit#86, #65)", () => {
     const answered = await conditional(wp, `/wp/v2/posts/${hidden.wireId}`, "*");
     expect(answered).toEqual(missing);
     expect(answered.headers["etag"]).toBeUndefined();
+  });
+});
+
+describe("the wp/v2 read API — search (pulpit#224)", () => {
+  const searchSite = async (search: "scoped" | "stale" = "scoped") => {
+    const wp = site({ search });
+    const post = (title: string, state: { readonly [column: string]: ColumnValue } = {}) =>
+      wp.create("posts", { title, slug: title.replaceAll(" ", "-"), ...state });
+    const soup = await post("tomato soup recipe");
+    const short = await post("tomato");
+    const basil = await post("basil");
+    const secret = await post("tomato secret", { visibility: "private" });
+    const draft = await post("tomato draft", { draft: true });
+    return { wp, soup, short, basil, secret, draft };
+  };
+  const slugsOf = (response: WordPressResponse) =>
+    decodeBody(Schema.Array(Schema.Struct({ slug: Schema.String })))(response).map(
+      ({ slug }) => slug,
+    );
+
+  it("orders by relevance by default, and counts the hydrated hits", async () => {
+    const { wp } = await searchSite();
+    const found = await wp.get("/wp/v2/posts", [["search", "tomato"]]);
+    expect([slugsOf(found), found.headers["x-wp-total"], found.headers["x-wp-totalpages"]]).toEqual(
+      [["tomato", "tomato-soup-recipe"], "2", "1"],
+    );
+    // `order` does not reverse relevance; an explicit orderby=relevance is the same.
+    const explicit = await wp.get("/wp/v2/posts", [
+      ["search", "tomato"],
+      ["orderby", "relevance"],
+      ["order", "asc"],
+    ]);
+    expect(slugsOf(explicit)).toEqual(["tomato", "tomato-soup-recipe"]);
+  });
+
+  it("re-sorts the hits by any other orderby, and ignores a blank search", async () => {
+    const { wp, soup, short } = await searchSite();
+    const by = async (orderby: string, order: string) =>
+      listed(
+        await wp.get("/wp/v2/posts", [
+          ["search", "tomato"],
+          ["orderby", orderby],
+          ["order", order],
+        ]),
+      );
+    expect(await by("title", "asc")).toEqual([short.wireId, soup.wireId]);
+    expect(await by("title", "desc")).toEqual([soup.wireId, short.wireId]);
+    expect(await by("slug", "desc")).toEqual([soup.wireId, short.wireId]);
+    expect(await by("id", "asc")).toEqual([soup.wireId, short.wireId]);
+    expect((await wp.get("/wp/v2/posts", [["search", "  "]])).headers["x-wp-total"]).toBe("3");
+  });
+
+  it("applies the request's other filters inside the search scope", async () => {
+    const { wp, soup } = await searchSite();
+    const filtered = await wp.get("/wp/v2/posts", [
+      ["search", "tomato"],
+      ["slug", "tomato-soup-recipe"],
+    ]);
+    expect(listed(filtered)).toEqual([soup.wireId]);
+    const draft = await wp.get(
+      "/wp/v2/posts",
+      [
+        ["search", "tomato"],
+        ["status", "draft"],
+      ],
+      Option.some(member),
+    );
+    expect(slugsOf(draft)).toEqual(["tomato-draft"]);
+  });
+
+  it("shows each viewer only what their gate reads, even from a stale index (SEC-AUTH-ENUM-001)", async () => {
+    const { wp } = await searchSite("stale");
+    const anonymous = await wp.get("/wp/v2/posts", [["search", "tomato"]]);
+    // The index returned every post; hydration dropped the private and the draft, and the total follows.
+    expect([slugsOf(anonymous).length, anonymous.headers["x-wp-total"]]).toEqual([3, "3"]);
+    const owner = await wp.get("/wp/v2/posts", [["search", "tomato"]], Option.some(member));
+    expect(owner.headers["x-wp-total"]).toBe("5");
+    const other = await wp.get("/wp/v2/posts", [["search", "tomato"]], Option.some(stranger));
+    expect(other.headers["x-wp-total"]).toBe("3");
+  });
+
+  it("pages in memory, and answers a page past the hits as rest_post_invalid_page_number", async () => {
+    const { wp, soup, short } = await searchSite();
+    const second = await wp.get("/wp/v2/posts", [
+      ["search", "tomato"],
+      ["per_page", "1"],
+      ["page", "2"],
+    ]);
+    expect([
+      listed(second),
+      second.headers["x-wp-total"],
+      second.headers["x-wp-totalpages"],
+    ]).toEqual([[soup.wireId], "2", "2"]);
+    const offset = await wp.get("/wp/v2/posts", [
+      ["search", "tomato"],
+      ["offset", "1"],
+    ]);
+    expect(listed(offset)).toEqual([soup.wireId]);
+    const past = await wp.get("/wp/v2/posts", [
+      ["search", "tomato"],
+      ["page", "3"],
+      ["per_page", "1"],
+    ]);
+    expect([past.status, codeOf(past)]).toEqual([400, "rest_post_invalid_page_number"]);
+    const none = await wp.get("/wp/v2/posts", [["search", "zucchini"]]);
+    expect([listed(none), none.headers["x-wp-total"]]).toEqual([[], "0"]);
+    expect(short.wireId).toBeGreaterThan(0);
+  });
+
+  it("is rest_invalid_param on a type that binds no search, and for search_columns", async () => {
+    const { wp } = await searchSite();
+    const refused = await inSequence(
+      [
+        ["/wp/v2/pages", [["search", "tomato"]]],
+        ["/wp/v2/posts", [["search_columns", "post_title"]]],
+        ["/wp/v2/users", [["search", "tomato"]]],
+      ] as const,
+      async ([path, query]) => {
+        const response = await wp.get(path, query);
+        return [response.status, codeOf(response)];
+      },
+    );
+    expect(refused).toEqual(Array.from({ length: 3 }, () => [400, "rest_invalid_param"]));
   });
 });
 
