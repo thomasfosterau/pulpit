@@ -65,6 +65,8 @@
  * A write budget (pulpit#199) is an opt-in: `budget` throttles `submit`.
  * Notifications and the wire shape are the application's.
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/history-and-review.md#proposals.
+ *
  * @copyright Thomas Foster
  * @module pulpit/proposals
  * @since 0.1.0
@@ -560,7 +562,7 @@ const localeViolation = (
 /**
  * The proposal table an application supplies (gardeneria's
  * `participation.proposal`). It applies no policy, never opens a
- * transaction, and fails only with its `E`. See the package README → Seams
+ * transaction, and fails only with its `E`. See docs/seams.md
  * for the expected schema.
  *
  * @since 0.1.0

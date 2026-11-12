@@ -46,6 +46,8 @@
  *   idempotency key, and the inbox entry is keyed by it, so a re-run adds
  *   no second entry.
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/participation.md#notifications.
+ *
  * @copyright Thomas Foster
  * @module pulpit/notifications
  * @since 0.2.0
@@ -186,7 +188,7 @@ export interface NotificationPreferences {
  * The outbox table an application supplies. A store seam: no policy, never
  * opens a transaction (`enqueue` runs inside the caller's, which is what
  * makes a rolled-back write notify nobody), fails only with its `E`. See
- * the package README → Seams.
+ * docs/seams.md.
  *
  * @since 0.2.0
  */

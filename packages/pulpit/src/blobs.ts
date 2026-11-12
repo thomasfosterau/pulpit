@@ -32,6 +32,8 @@
  * The adapters (R2, S3), image transforms, EXIF extraction and video
  * streaming are the application's.
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/media.md#blobs.
+ *
  * @copyright Thomas Foster
  * @module pulpit/blobs
  * @since 0.1.0
@@ -140,7 +142,7 @@ export interface BlobHead {
 /**
  * The byte store an application supplies (R2, S3, a local directory). It
  * applies no policy and fails only with its `E`. Keys come from
- * {@link blobKey}; see the package README → Seams for the contract.
+ * {@link blobKey}; see docs/seams.md for the contract.
  *
  * @since 0.1.0
  */

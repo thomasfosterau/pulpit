@@ -31,6 +31,8 @@
  * enforces with its own gate around `react` once the social graph lands;
  * a tally counts every account's reactions.
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/participation.md#reactions.
+ *
  * @copyright Thomas Foster
  * @module pulpit/reactions
  * @since 0.1.0
@@ -132,7 +134,7 @@ export interface ReactionRow {
  * The reaction table an application supplies (gardeneria's
  * `social.reactions`), keyed `(node_id, account_id)` with both foreign keys
  * cascading. A store seam: no policy, never opens a transaction, fails only
- * with its `E`. See the package README → Seams.
+ * with its `E`. See docs/seams.md.
  *
  * @since 0.1.0
  */

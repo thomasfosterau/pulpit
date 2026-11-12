@@ -8,8 +8,7 @@
  * `publishedFilter`), which ties the rule to one database layer and makes the
  * two readings impossible to compare. Here the set-shaped answer is a small
  * predicate tree, {@link ListFilter}: a Drizzle renderer (the seam
- * effect-drizzle-ext / effect-auth-drizzle fill, see the package README →
- * Seams) turns it into SQL, and
+ * effect-drizzle-ext / effect-auth-drizzle fill, see docs/seams.md) turns it into SQL, and
  * {@link evaluate} runs it against an in-memory row — which is what lets the
  * unit suite prove the list filter and the row predicate never disagree.
  *
@@ -58,6 +57,8 @@
  * - **Sub-millisecond instants.** A PostgreSQL timestamp keeps microseconds,
  *   a JavaScript `Date` milliseconds, so two instants within one millisecond
  *   can compare unequal in SQL and equal in `evaluate`.
+ *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/content-model.md#filter.
  *
  * @copyright Thomas Foster
  * @module pulpit/filter

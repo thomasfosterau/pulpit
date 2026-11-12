@@ -49,6 +49,8 @@
  * nothing here imports a platform. Workers KV alone has no conditional
  * write, so it can't fill {@link VersionedKv.putIfNotBehind}.
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/read-model.md#cache.
+ *
  * @copyright Thomas Foster
  * @module pulpit/cache
  * @since 0.1.0
@@ -76,7 +78,7 @@ export interface KvEntry {
 
 /**
  * The minimal versioned key-value store an application supplies. A store
- * seam: no policy, fails only with its `E`. See the package README → Seams.
+ * seam: no policy, fails only with its `E`. See docs/seams.md.
  *
  * @since 0.1.0
  */

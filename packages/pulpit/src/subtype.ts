@@ -67,7 +67,7 @@
  * ## Seams
  *
  * Three things the kernel does not own, each an explicit parameter rather
- * than an import (see the package README → Seams for each one's expected
+ * than an import (see docs/seams.md for each one's expected
  * shape and which package, if any, fills it):
  *
  * - the **viewer** and the **role axes** ({@link Viewer}, {@link AccessPolicy})
@@ -82,6 +82,8 @@
  *   handlers are expected to accept (effect-jsonapi's `ResourceHandlers`,
  *   exported since 0.15.0 but not yet wired here; pulpit#5), with the
  *   write-through to the resource cache the application fills.
+ *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/read-model.md#subtype.
  *
  * @copyright Thomas Foster
  * @module pulpit/subtype
@@ -1036,7 +1038,7 @@ export interface PublicationFact {
 }
 
 /**
- * The append-only publication log an application supplies (README → Seams).
+ * The append-only publication log an application supplies (docs/seams.md).
  * The **effective** fact is the most recently recorded one whose `at` has
  * arrived: a later record supersedes an earlier schedule, and a schedule
  * takes effect at its stamp with no write (the read-time gate,
@@ -2871,7 +2873,7 @@ export interface SubtypeHandlers<Resource, E, R> {
    * or `restoreVersion` for `discardDraft`) and the cache refresh. Their
    * cache stamps are the node's head, so two of them on one node compare
    * equal: the application runs them one at a time per node, the whole
-   * call under one lock (README → Seams → the live pointer, pulpit#164).
+   * call under one lock (docs/seams.md → the live pointer, pulpit#164).
    */
   readonly publication: Option.Option<PublicationOps<E, R>>;
 }
@@ -3226,7 +3228,7 @@ const prefixesOf = (tag: string): ReadonlyArray<string> => {
  * parameter). effect-jsonapi's handlers see only the decoded params, query
  * and payload, so the application reads the headers from its own request
  * context (`HttpServerRequest`'s `headers`) and sets the response's
- * (`HttpEffect.appendPreResponseHandler`); see the package README.
+ * (`HttpEffect.appendPreResponseHandler`); see docs/read-model.md → `./subtype` → Localisation, "On the wire".
  *
  * @since 0.2.0
  */

@@ -8,6 +8,8 @@
  * and answers a status, headers and a JSON body. This module is the one
  * place that reads `effect/http`.
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/wordpress.md#http.
+ *
  * @copyright Thomas Foster
  * @module pulpit-wordpress/http
  * @since 0.1.0

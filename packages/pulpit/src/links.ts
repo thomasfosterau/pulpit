@@ -4,7 +4,7 @@
  * (pulpit#313): a site's navigation and its sub-menus, a
  * footer's links, a "related reading" strip. A menu is the usual example,
  * but the kernel names no application type, so this is the generic shape an
- * application binds (see the package README → Link lists).
+ * application binds (see docs/structure.md → `./links`).
  *
  * It adds one read over the existing modules and no store of its own:
  *
@@ -46,6 +46,8 @@
  * that would nest past {@link LinkListDefinition.maxDepth}. The whole read,
  * every level together, reads at most `MAX_COLLECTION_SIZE` entries
  * (`SEC-INPUT-003`).
+ *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/structure.md#links.
  *
  * @copyright Thomas Foster
  * @module pulpit/links

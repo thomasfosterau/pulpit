@@ -46,6 +46,8 @@
  * #1475); a family with one closes it on the write path (evict on the
  * target's mutation) with the cache TTL floor as the backstop.
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/read-model.md#publication.
+ *
  * @copyright Thomas Foster
  * @module pulpit/publication
  * @since 0.1.0

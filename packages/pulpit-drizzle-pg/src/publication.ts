@@ -1,7 +1,9 @@
 /**
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#publication.
+ *
  * @copyright Thomas Foster
  *
- * The kernel's live pointer (README → Seams → `PublicationStore` and
+ * The kernel's live pointer (docs/seams.md → `PublicationStore` and
  * `LiveView`, pulpit#46) over a tree's pointer level (pulpit#247):
  * effect-drizzle-ext's append-only `${pointer}_pointer` log and the leaf
  * views `makeTreeViews` resolves at its effective fact. One publish-gated

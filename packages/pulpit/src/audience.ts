@@ -40,6 +40,8 @@
  *   The erasure definition's `disposeGroups` overrides the reassignment
  *   (deleting the groups, say, or handing them to an admin).
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/participation.md#audience.
+ *
  * @copyright Thomas Foster
  * @module pulpit/audience
  * @since 0.2.0
@@ -178,7 +180,7 @@ export class SelfInvitation extends Schema.TaggedError<
  * it, and every membership read (`roleOf`, `list`, `isMember`, `groupsOf`)
  * reads `status = 'active'` rows alone. A store seam: no policy, never
  * opens a transaction, fails only with its `E`. `Following` is the list
- * filter's `in` set (a subquery in SQL). See the package README → Seams.
+ * filter's `in` set (a subquery in SQL). See docs/seams.md.
  *
  * @since 0.2.0
  */
@@ -274,7 +276,7 @@ export interface GroupOwnership<E, R> {
  * (pulpit#274): a bounded reassignment of the groups an account owns. The
  * same records {@link GroupOwnership} reads, so once a group is reassigned
  * its `ownerOf` answers the new owner. A store seam: no policy, never opens
- * a transaction, fails only with its `E`. See the package README → Seams.
+ * a transaction, fails only with its `E`. See docs/seams.md.
  *
  * @since 0.2.0
  */

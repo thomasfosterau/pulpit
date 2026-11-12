@@ -1,7 +1,7 @@
 /**
  * **In-memory fakes of the adapter's seams**, mirroring the kernel's
  * `@thomasfosterau/pulpit/testing`: the reference semantics of each seam's
- * contract in the package README → Seams, and the fakes the adapter's own
+ * contract in docs/wordpress.md → Seams, and the fakes the adapter's own
  * suites and an application's tests run against.
  *
  * **Not for production.** Each fake keeps its rows in a closure for the life
@@ -23,6 +23,8 @@
  * // One read for the whole batch, deduplicated.
  * deepStrictEqual(codec.encodeCalls(), [["node-a", "node-b"]]);
  * ```
+ *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/wordpress.md#testing.
  *
  * @copyright Thomas Foster
  * @module pulpit-wordpress/testing

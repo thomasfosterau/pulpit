@@ -25,8 +25,7 @@
  *
  * Hashing is the store's job, not the kernel's: the apps derive the hash in
  * Postgres and never re-derive it in JavaScript. The algorithm and the
- * canonical serialisation a store must use are stated in the package README →
- * Seams; {@link canonicalText} is that serialisation in JavaScript, for a
+ * canonical serialisation a store must use are stated in docs/seams.md; {@link canonicalText} is that serialisation in JavaScript, for a
  * store that doesn't run on Postgres. The kernel itself never hashes. The
  * document type is a parameter; its schema and validation are the
  * application's (prosekit-utilities), and pulpit never imports them.
@@ -51,6 +50,8 @@
  * A version row carries only the hash, and the application stores the
  * document before it writes the version, so the hook can't stop the store;
  * declaring both is what keeps the rule whole.
+ *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/content-model.md#documents.
  *
  * @copyright Thomas Foster
  * @module pulpit/documents
@@ -79,7 +80,7 @@ import type { ChainPatch, ColumnValue } from "./version-chain.ts";
  * digest as 64 lowercase hexadecimal characters (what gardeneria's
  * `byteaToHex` renders a `bytea` hash as). A Postgres store keeps the 32 bytes
  * in a `bytea` column and converts at its edge. The algorithm and the bytes it
- * is taken over are the contract in the package README → Seams.
+ * is taken over are the contract in docs/seams.md.
  *
  * @since 0.1.0
  */
@@ -129,7 +130,7 @@ export interface DocumentStore<Document, E, R> {
    * gave one back). Idempotent: a document already stored, or one equal to
    * it under the canonical serialisation, writes nothing and returns the
    * same hash with `inserted: false`. The hash is the store's to derive
-   * (README → Seams).
+   * (docs/seams.md).
    */
   readonly put: (document: Document) => Effect.Effect<DocumentPut, E, R>;
   /** The document stored at `hash`, or none. */
@@ -253,7 +254,7 @@ const stringText = (value: string): string =>
 
 /**
  * The canonical text of a JSON document, the bytes the {@link DocumentStore}
- * hash contract (README → Seams → `DocumentStore`) takes SHA-256 over:
+ * hash contract (docs/seams.md → `DocumentStore`) takes SHA-256 over:
  * PostgreSQL's `jsonb` text output, with object keys ordered shorter-first by
  * UTF-8 byte length and then bytewise, `": "` after a key, `", "` between
  * members and elements, only `"`, `\` and the control characters escaped, and

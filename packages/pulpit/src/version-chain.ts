@@ -66,6 +66,8 @@
  * module's concern either: the subtype factory (`./subtype`) gates before
  * it calls in.
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/history-and-review.md#version-chain.
+ *
  * @copyright Thomas Foster
  * @module pulpit/version-chain
  * @since 0.1.0
@@ -192,7 +194,7 @@ export interface VersionRow extends VersionSnapshot {
    * The contributor whose accepted proposal this version applies
    * (`./proposals`), recorded beside the actor, who is the account that
    * accepted it; none for every other write. A store persists it with the
-   * version row (README → Seams → `VersionChain`).
+   * version row (docs/seams.md → `VersionChain`).
    */
   readonly proposedBy: Option.Option<string>;
 }

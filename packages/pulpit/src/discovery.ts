@@ -60,6 +60,8 @@
  * `@thomasfosterau/effect-ext/JsonFeed`, `/RssFeed`, `/AtomFeed` and
  * `/Sitemap` subpaths.
  *
+ * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/discovery-and-search.md#discovery.
+ *
  * @copyright Thomas Foster
  * @module pulpit/discovery
  * @since 0.2.0
