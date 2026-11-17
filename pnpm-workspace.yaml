@@ -68,7 +68,7 @@ catalog:
   # 1.5.1 (oxlint 1.91.0, tsgolint 7.0.2005) is the pairing. Read the `components`
   # table in node_modules/@effect/tsgo/dist/effect-tsgo.cjs before bumping any
   # of the three.
-  "@effect/tsgo": 0.67.7
+  "@effect/tsgo": 0.69.0
   # The JSON:API model layer the `./content` and `./registry` subpaths build on.
   # pulpit-drizzle-pg's substrate (pulpit#247): the tree, its tables and
   # views (`./versioned-chain`) and the error classifier (`./errors`), and the
@@ -125,7 +125,7 @@ catalog:
   # the toolchain PR), and `vitest` must match vite-plus's exact pin (1.5.1 →
   # 5.1.0) because the `vitest: "catalog:"` override forces every resolution
   # to the catalog singleton, as must `@vitest/coverage-istanbul` (above).
-  vite-plus: 1.5.1
+  vite-plus: 1.6.0
   vite: npm:@voidzero-dev/vite-plus-core@1.5.1
   vitest: 5.1.0
 
