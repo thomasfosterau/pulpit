@@ -84,7 +84,7 @@ catalog:
   # `tests/effect-auth.test.ts` pins the kernel's read predicates to its
   # `OwnedAccess` / `Cacheability`. The dev pin; the published range is
   # `catalogs.peers`.
-  "@thomasfosterau/effect-auth": ^0.4.0
+  "@thomasfosterau/effect-auth": ^0.5.2
   "@types/node": ^26.6.6
   # The coverage provider for `vp run -r test:coverage`. vite-plus bundles its
   # own vitest and refuses to start a coverage run unless the provider's
