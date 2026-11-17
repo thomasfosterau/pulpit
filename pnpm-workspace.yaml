@@ -75,7 +75,7 @@ catalog:
   # `@effect/sql-pg` binding with `./chain`, the version-chain discipline the
   # kernel's `VersionChain` port delegates to. The dev pins; the published
   # ranges are `catalogs.peers`.
-  "@thomasfosterau/effect-drizzle-ext": ^0.2.0
+  "@thomasfosterau/effect-drizzle-ext": ^0.5.0
   "@thomasfosterau/effect-drizzle-ext-pg": ^0.5.0
   "@thomasfosterau/effect-jsonapi": ^0.22.1
   # A required peer of the kernel (pulpit#5, option (c)): `Unauthorized` /
