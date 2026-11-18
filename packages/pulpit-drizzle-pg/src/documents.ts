@@ -17,7 +17,7 @@
  * @since 0.0.0
  */
 
-import { executeRows } from "@thomasfosterau/effect-drizzle-ext/query";
+import { selectRows } from "./internal/query.ts";
 import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import { DocumentHash, type DocumentStore } from "@thomasfosterau/pulpit/documents";
 import { sql, type AnyRelations, type SQL } from "drizzle-orm";
@@ -121,9 +121,10 @@ export const makeDocumentStore = <
           onSome: ({ hash }) => Effect.succeed({ hash, inserted: true }),
           onNone: () =>
             Effect.gen(function* () {
-              const rows = yield* executeRows<{ readonly hash: string }>(
+              const rows = yield* selectRows(
                 tx,
                 sql`SELECT encode(digest(${asJsonb(text)}::text, 'sha256'), 'hex') AS hash`,
+                Schema.Struct({ hash: Schema.String }),
               );
               const hash = yield* Effect.orDie(
                 Effect.fromOption(Option.map(Arr.head(rows), (row) => row.hash)),

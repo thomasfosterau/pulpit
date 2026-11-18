@@ -22,6 +22,7 @@ import * as HashSet from "effect/HashSet";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Order from "effect/Order";
+import * as Schema from "effect/Schema";
 import * as Str from "effect/String";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 import { makeSocialStore } from "../../src/social.ts";
@@ -118,9 +119,10 @@ const ids = (set: SQL) =>
   run(
     Effect.gen(function* () {
       const tx = yield* CurrentTransaction;
-      const rows = yield* executeRows<{ readonly id: string }>(
+      const rows = yield* executeRows(
         tx,
         sql`SELECT to_id AS id FROM ${set} AS s(to_id) ORDER BY to_id`,
+        Schema.Struct({ id: Schema.String }),
       );
       return Arr.map(rows, (row) => row.id);
     }),

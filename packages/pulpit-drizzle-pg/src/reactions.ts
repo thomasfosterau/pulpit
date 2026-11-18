@@ -9,7 +9,7 @@
  * @since 0.0.0
  */
 
-import { executeRows } from "@thomasfosterau/effect-drizzle-ext/query";
+import { selectRows } from "./internal/query.ts";
 import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import type { ReactionRow, ReactionStore } from "@thomasfosterau/pulpit/reactions";
 import { and, asc, desc, eq, inArray, sql, type AnyRelations } from "drizzle-orm";
@@ -145,7 +145,7 @@ export const makeReactionStore = <I, Relations extends AnyRelations>(config: {
         ? Effect.succeedNone
         : Effect.gen(function* () {
             const tx = yield* CurrentTransaction;
-            const replaced = yield* executeRows<{ readonly kind: string }>(
+            const replaced = yield* selectRows(
               tx,
               sql`WITH replaced AS (
                 SELECT ${table.kind} AS kind FROM ${table}
@@ -159,6 +159,7 @@ export const makeReactionStore = <I, Relations extends AnyRelations>(config: {
                 DO UPDATE SET kind = EXCLUDED.kind, reacted_at = EXCLUDED.reacted_at
               )
               SELECT kind FROM replaced`,
+              Schema.Struct({ kind: Schema.String }),
             );
             const kinds = yield* Effect.orDie(decodeKinds(replaced));
             return Option.map(Arr.head(kinds), ({ kind }) => kind);

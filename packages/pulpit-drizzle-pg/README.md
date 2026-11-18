@@ -16,7 +16,7 @@ pnpm add @thomasfosterau/pulpit-drizzle-pg @thomasfosterau/pulpit \
   drizzle-orm @effect/sql-pg effect
 ```
 
-`@thomasfosterau/pulpit`, `@thomasfosterau/effect-drizzle-ext` (`>=0.2.0`), `@thomasfosterau/effect-drizzle-ext-pg` (`>=0.2.0`), `drizzle-orm` (`>=1.0.0-rc.5`) and `effect` are required peer dependencies, and so are their own peers (`@effect/sql-pg` for `-pg`; the kernel's). Node.js 22.18 or newer is required (effect-drizzle-ext's floor).
+`@thomasfosterau/pulpit`, `@thomasfosterau/effect-drizzle-ext` (`>=0.3.0`), `@thomasfosterau/effect-drizzle-ext-pg` (`>=0.2.0`), `drizzle-orm` (`>=1.0.0-rc.5`) and `effect` are required peer dependencies, and so are their own peers (`@effect/sql-pg` for `-pg`; the kernel's). Node.js 22.18 or newer is required (effect-drizzle-ext's floor).
 
 ## Example
 

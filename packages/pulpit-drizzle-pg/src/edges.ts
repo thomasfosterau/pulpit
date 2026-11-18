@@ -16,7 +16,7 @@
  */
 
 import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
-import { executeRows } from "@thomasfosterau/effect-drizzle-ext/query";
+import { selectRows } from "./internal/query.ts";
 import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import type { CloseValidity, EdgeRow, EdgeStore, EdgeValues } from "@thomasfosterau/pulpit/edges";
 import { MAX_SET_VALUES, type ListFilter } from "@thomasfosterau/pulpit/filter";
@@ -371,9 +371,10 @@ export const makeEdgeStore = <I, Relations extends AnyRelations>(config: {
         ? Effect.gen(function* () {
             const tx = yield* CurrentTransaction;
             // The one statement that updates an edge: the interval's end column alone (EDGE-002).
-            const rows = yield* executeRows<{ readonly id: string }>(
+            const rows = yield* selectRows(
               tx,
               sql`UPDATE ${table} SET ${sql.identifier(column(field).name)} = ${to} WHERE ${id} = ${edgeId} RETURNING ${id}::text AS id`,
+              Schema.Struct({ id: Schema.String }),
             );
             return Arr.isReadonlyArrayNonEmpty(rows);
           })

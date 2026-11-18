@@ -5,7 +5,7 @@
  * calls a store's `eraseAccount` again until it deletes fewer than `limit`.
  */
 
-import { executeRows } from "@thomasfosterau/effect-drizzle-ext/query";
+import { selectRows } from "./query.ts";
 import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import { sql, type AnyRelations, type SQL } from "drizzle-orm";
 import type { AnyPgColumn, PgTable } from "drizzle-orm/pg-core";
@@ -13,10 +13,6 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-
-const decodeErased = Schema.decodeUnknownEffect(
-  Schema.Array(Schema.Struct({ erased: Schema.Int })),
-);
 
 /**
  * Delete at most `limit` of `table`'s rows matching `where`, the first by
@@ -43,7 +39,7 @@ export const eraseBatch = <Relations extends AnyRelations>(
     : Effect.gen(function* () {
         const { table, where } = batch;
         const columns = sql.join([...batch.key], sql`, `);
-        const rows = yield* executeRows<{ readonly erased: number }>(
+        const rows = yield* selectRows(
           tx,
           sql`WITH gone AS (
             DELETE FROM ${table}
@@ -53,7 +49,7 @@ export const eraseBatch = <Relations extends AnyRelations>(
             RETURNING 1
           )
           SELECT count(*)::int AS erased FROM gone`,
+          Schema.Struct({ erased: Schema.Int }),
         );
-        const counted = yield* Effect.orDie(decodeErased(rows));
-        return Option.match(Arr.head(counted), { onNone: () => 0, onSome: ({ erased }) => erased });
+        return Option.match(Arr.head(rows), { onNone: () => 0, onSome: ({ erased }) => erased });
       });

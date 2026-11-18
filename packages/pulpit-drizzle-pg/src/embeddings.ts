@@ -13,7 +13,7 @@
  * @since 0.0.0
  */
 
-import { executeRows } from "@thomasfosterau/effect-drizzle-ext/query";
+import { selectRows } from "./internal/query.ts";
 import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import { DocumentHash } from "@thomasfosterau/pulpit/documents";
 import type { EmbeddingStore } from "@thomasfosterau/pulpit/search";
@@ -180,7 +180,7 @@ export const makeEmbeddingStore = <I, Relations extends AnyRelations>(config: {
         ? Effect.succeed([])
         : Effect.gen(function* () {
             const tx = yield* CurrentTransaction;
-            const rows = yield* executeRows<{ readonly hash: string }>(
+            const rows = yield* selectRows(
               tx,
               sql`SELECT hash FROM (
                 SELECT encode(${queue.hashId}, 'hex') AS hash, 0 AS arm, ${queue.queuedAt} AS at
@@ -193,6 +193,7 @@ export const makeEmbeddingStore = <I, Relations extends AnyRelations>(config: {
               ) pending
               ORDER BY arm, at, hash
               LIMIT ${Math.trunc(limit)}`,
+              Schema.Struct({ hash: Schema.String }),
             );
             return yield* Effect.orDie(decodeHashes(Arr.map(rows, (row) => row.hash)));
           }),

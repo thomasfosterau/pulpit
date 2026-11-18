@@ -25,6 +25,7 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
+import * as Schema from "effect/Schema";
 import * as Str from "effect/String";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 import { makeGroupOwners, makeMembershipStore } from "../../src/memberships.ts";
@@ -173,9 +174,10 @@ const groupIds = (set: SQL) =>
   run(
     Effect.gen(function* () {
       const tx = yield* CurrentTransaction;
-      const rows = yield* executeRows<{ readonly id: string }>(
+      const rows = yield* executeRows(
         tx,
         sql`SELECT g AS id FROM ${set} AS s(g) ORDER BY g`,
+        Schema.Struct({ id: Schema.String }),
       );
       return Arr.map(rows, (row) => row.id);
     }),

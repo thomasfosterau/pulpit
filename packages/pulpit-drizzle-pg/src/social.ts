@@ -10,7 +10,6 @@
  * @since 0.0.0
  */
 
-import { executeRows } from "@thomasfosterau/effect-drizzle-ext/query";
 import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import type { Relationship, RelationshipKind, SocialStore } from "@thomasfosterau/pulpit/social";
 import { and, asc, desc, eq, sql, type AnyRelations, type SQL } from "drizzle-orm";
@@ -31,6 +30,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { countOf } from "./internal/count.ts";
 import { eraseBatch } from "./internal/erase.ts";
+import { selectRows } from "./internal/query.ts";
 import type { StoreQueryError } from "./internal/owners.ts";
 
 /**
@@ -94,10 +94,6 @@ export type RelationshipTable = ReturnType<typeof makeRelationshipTable>;
 const decodeRelated = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ accountId: Schema.String, at: Schema.Date, total: Schema.Int })),
 );
-const decodeFollow = Schema.decodeUnknownEffect(
-  Schema.Array(Schema.Struct({ wasBlocked: Schema.Boolean, wasInserted: Schema.Boolean })),
-);
-
 /**
  * Bind the kernel's `SocialStore` to the relationship table, in the
  * caller's `CurrentTransaction`; its `Following` is a SQL subquery.
@@ -137,9 +133,10 @@ export const makeSocialStore = <I, Relations extends AnyRelations>(config: {
   const eitherWay = (kind: RelationshipKind, from: string, to: string): SQL =>
     sql`${table.kind} = ${kind} AND ((${table.fromId} = ${from} AND ${table.toId} = ${to}) OR (${table.fromId} = ${to} AND ${table.toId} = ${from}))`;
   /** Take the pair lock `addFollow` and `addBlock` share, then run `statement`'s rows. */
-  const underPairLock = <Row extends Record<string, unknown>>(
+  const underPairLock = <S extends Schema.Decoder<unknown>>(
     relationship: Relationship,
     statement: SQL,
+    row: S,
   ) =>
     Effect.gen(function* () {
       const tx = yield* CurrentTransaction;
@@ -147,7 +144,7 @@ export const makeSocialStore = <I, Relations extends AnyRelations>(config: {
       yield* tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey} || least(${from}::text, ${to}::text)), hashtext(${lockKey} || greatest(${from}::text, ${to}::text)))`,
       );
-      return yield* executeRows<Row>(tx, statement);
+      return yield* selectRows(tx, statement, row);
     });
   const at = (relationship: Relationship): SQL =>
     sql`${relationship.at.toISOString()}::timestamptz`;
@@ -186,10 +183,7 @@ export const makeSocialStore = <I, Relations extends AnyRelations>(config: {
     addFollow: (relationship) => {
       const { from, to } = relationship;
       return Effect.gen(function* () {
-        const rows = yield* underPairLock<{
-          readonly wasBlocked: boolean;
-          readonly wasInserted: boolean;
-        }>(
+        const outcome = yield* underPairLock(
           relationship,
           sql`WITH blocked AS (
             SELECT EXISTS (SELECT 1 FROM ${table} WHERE ${eitherWay("block", from, to)}) AS blocked
@@ -202,8 +196,8 @@ export const makeSocialStore = <I, Relations extends AnyRelations>(config: {
             RETURNING 1
           )
           SELECT (SELECT blocked FROM blocked) AS "wasBlocked", EXISTS (SELECT 1 FROM inserted) AS "wasInserted"`,
+          Schema.Struct({ wasBlocked: Schema.Boolean, wasInserted: Schema.Boolean }),
         );
-        const outcome = yield* Effect.orDie(decodeFollow(rows));
         return Option.match(Arr.head(outcome), {
           onNone: () => "present" as const,
           onSome: ({ wasBlocked, wasInserted }) =>
@@ -218,7 +212,7 @@ export const makeSocialStore = <I, Relations extends AnyRelations>(config: {
     addBlock: (relationship) => {
       const { from, to } = relationship;
       return Effect.gen(function* () {
-        const rows = yield* underPairLock<{ readonly n: number }>(
+        const rows = yield* underPairLock(
           relationship,
           sql`WITH unfollowed AS (
             DELETE FROM ${table} WHERE ${eitherWay("follow", from, to)}
@@ -230,6 +224,7 @@ export const makeSocialStore = <I, Relations extends AnyRelations>(config: {
             RETURNING 1
           )
           SELECT count(*)::int AS n FROM blocked`,
+          Schema.Struct({ n: Schema.Int }),
         );
         return (yield* countOf(rows)) > 0;
       });
