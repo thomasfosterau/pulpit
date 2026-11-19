@@ -11,8 +11,28 @@ on:
 permissions: {}
 
 jobs:
+  # Nothing privileged runs unless .github/workflows/actions.lock verifies.
+  verify-lockfile:
+    name: Verify the actions lockfile
+    if: github.repository == 'thomasfosterau/pulpit' && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install gh-actions-lock
+        run: gh extension install github/gh-actions-lock --pin v0.4.1
+      - name: Verify the workflow lockfile
+        run: gh actions-lock --verify
+
   select:
     name: Select mode
+    needs: verify-lockfile
     if: github.repository == 'thomasfosterau/pulpit' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -28,7 +48,7 @@ jobs:
         uses: voidzero-dev/setup-vp@v1.22.0
         with:
           version-file: pnpm-workspace.yaml
-          cache: true
+          cache: false
           # No dependency lifecycle scripts in release jobs.
           run-install: |
             - args: ["--frozen-lockfile", "--ignore-scripts"]
@@ -38,7 +58,7 @@ jobs:
 
   version:
     name: Version packages
-    needs: select
+    needs: [verify-lockfile, select]
     if: needs.select.outputs.mode == 'version'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -59,7 +79,7 @@ jobs:
         uses: voidzero-dev/setup-vp@v1.22.0
         with:
           version-file: pnpm-workspace.yaml
-          cache: true
+          cache: false
           run-install: |
             - args: ["--frozen-lockfile", "--ignore-scripts"]
       - name: Create or update the version PR
@@ -71,7 +91,7 @@ jobs:
 
   publish:
     name: Publish to npm
-    needs: select
+    needs: [verify-lockfile, select]
     if: needs.select.outputs.mode == 'publish'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -92,7 +112,7 @@ jobs:
         uses: voidzero-dev/setup-vp@v1.22.0
         with:
           version-file: pnpm-workspace.yaml
-          cache: true
+          cache: false
           run-install: |
             - args: ["--frozen-lockfile", "--ignore-scripts"]
       # The build runs on the Effect-patched tsc.

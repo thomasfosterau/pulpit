@@ -37,7 +37,7 @@ catalog:
   "@typescript/native": "npm:typescript@7.0.2"
   # `vite`, `vitest` and the devcontainer image tag follow vite-plus.
   vite-plus: 1.6.0
-  vite: npm:@voidzero-dev/vite-plus-core@1.5.1
+  vite: npm:@voidzero-dev/vite-plus-core@1.6.0
   vitest: 5.1.0
 
 # Published peer ranges (the adapters peer on the kernel with `workspace:^`).

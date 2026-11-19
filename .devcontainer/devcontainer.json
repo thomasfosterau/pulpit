@@ -1,7 +1,7 @@
 {
   "name": "pulpit",
   // Tag = the catalog's `vite-plus` pin; moved by hand with it.
-  "image": "ghcr.io/voidzero-dev/vite-plus:1.5.1",
+  "image": "ghcr.io/voidzero-dev/vite-plus:1.6.0",
   "features": {
     "ghcr.io/devcontainers/features/github-cli:1": {},
     "ghcr.io/devcontainers-extra/features/ripgrep:1": {},
