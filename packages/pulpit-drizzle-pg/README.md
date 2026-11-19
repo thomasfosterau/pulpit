@@ -4,7 +4,7 @@ The tree-bound seams of [`@thomasfosterau/pulpit`](https://github.com/thomasfost
 
 **Disclaimer:** This repository and package have been created using Claude Code. The package's API and functionality is in flux, so expect churn and breaking changes.
 
-**Not published.** The package is `"private": true`, at version `0.0.0`, until the owner sets up its publishing ([PUBLISHING.md → Adding `pulpit-drizzle-pg`](https://github.com/thomasfosterau/pulpit/blob/trunk/PUBLISHING.md#adding-pulpit-drizzle-pg-to-the-release-flow)). The spec is [pulpit#247](https://github.com/thomasfosterau/pulpit/issues/247); what has landed, and what is next, is in [docs/drizzle-pg.md → Status](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#status).
+**Not published** (`"private": true`). What has landed is in [docs/drizzle-pg.md → Status](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#status).
 
 ## Install
 

@@ -93,8 +93,8 @@ The operations are written against seams that the application fills; their expec
 
 - [docs/](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/README.md): the module guides each subpath above links to, and [the seams](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/seams.md), each with its expected shape and SQL sketch.
 - The API reference is each export's TSDoc: its contract, its error channel and the invariant IDs it honours.
-- [SECURITY.md](https://github.com/thomasfosterau/pulpit/blob/trunk/SECURITY.md): reporting a vulnerability, and the invariant IDs with their rationale.
-- [CHANGELOG.md](https://github.com/thomasfosterau/pulpit/blob/trunk/packages/pulpit/CHANGELOG.md), and the repository's [README](https://github.com/thomasfosterau/pulpit/blob/trunk/README.md) and [CONTRIBUTING.md](https://github.com/thomasfosterau/pulpit/blob/trunk/CONTRIBUTING.md).
+- [SECURITY.md](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/SECURITY.md): reporting a vulnerability, and the invariant IDs with their rationale.
+- [CHANGELOG.md](https://github.com/thomasfosterau/pulpit/blob/trunk/packages/pulpit/CHANGELOG.md), and the repository's [README](https://github.com/thomasfosterau/pulpit/blob/trunk/README.md) and [CONTRIBUTING.md](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/CONTRIBUTING.md).
 
 ## License
 

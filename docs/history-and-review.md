@@ -4,7 +4,7 @@ The append-only version chain and its compare (`./version-chain`), an editor's a
 
 ## `./version-chain`
 
-The append-only chain, written and read through a `VersionChain` port the application supplies, one per leaf (pulpit#246): in production pulpit-drizzle-pg over effect-drizzle-ext's `-pg/chain`, in tests `./testing`'s `makeInMemoryVersionChain`. `defineVersionChain` binds a leaf's operations over it, running the leaf's before-append hooks and adding `compare`.
+The append-only chain, written and read through a `VersionChain` port the application supplies, one per leaf: in production pulpit-drizzle-pg over effect-drizzle-ext's `-pg/chain`, in tests `./testing`'s `makeInMemoryVersionChain`. `defineVersionChain` binds a leaf's operations over it, running the leaf's before-append hooks and adding `compare`.
 
 ```ts
 import * as Effect from "effect/Effect";
@@ -26,7 +26,7 @@ const program = <E, R>(port: VersionChain<E, R>) =>
 
 These are the port's invariants, which every implementation holds and `./testing`'s `versionChainConformance` checks. Every write lands at `N_max + 1`; nothing is rewritten. A plain `update` never resurrects a tombstone (`restore` and `restoreVersion` do). A create is never an upsert (`NodeAlreadyExists`). `restoreVersion` refuses a version that cannot be fully reconstructed before writing anything. `history` is bounded (`MAX_HISTORY_LIMIT`).
 
-**Optional members** (pulpit#238). The chain's optional input, snapshot and hook members (`expectedVersion`, `locales`, `beforeAppend`, `beforeAppendLocales`) are bare `?: T`: a caller that has no value omits the key, and an explicit `undefined` does not type-check under `exactOptionalPropertyTypes`. `proposedBy` is `?: Option.Option<string>`, since none is a value a caller passes on. The tri-state patches (`ChainPatch`, `LocalePatch`) are the exception, a wire contract: there an `undefined` key is the carry-forward, as a decoded update input says it.
+**Optional members**. The chain's optional input, snapshot and hook members (`expectedVersion`, `locales`, `beforeAppend`, `beforeAppendLocales`) are bare `?: T`: a caller that has no value omits the key, and an explicit `undefined` does not type-check under `exactOptionalPropertyTypes`. `proposedBy` is `?: Option.Option<string>`, since none is a value a caller passes on. The tri-state patches (`ChainPatch`, `LocalePatch`) are the exception, a wire contract: there an `undefined` key is the carry-forward, as a decoded update input says it.
 
 **Optimistic concurrency.** `update`, `restore`, `delete` and `restoreVersion` take an optional `expectedVersion` (a `Precondition`): the head version the caller last read. If the head has moved, the write fails `StaleVersion`, which carries the head it found (`current`), and nothing is written. Without one, a write extends whatever the head is, so a column that two patches both set is last-writer-wins. The check runs against the same head read the append extends, and the append lands at that head + 1. A writer that slips in between therefore takes the `(id, version)` key first, and the later append fails `VersionConflict`. The `(id, version)` key is what makes the check atomic. **With hooks** (`defineVersionChain(type, port, hooks)`, which `./subtype`'s lifecycle hooks use) the kernel reads the head and its state, runs the hooks, and appends their patch with `expectedVersion` pinned to that head (the caller's own, when given), so the hooks always see the head the append extends; a writer that lands in between makes the write `StaleVersion` (both it and `VersionConflict` are the wire's 409), where an unhooked write without a precondition would report `VersionConflict`. A delete over a tombstone stays idempotent whatever the precondition (the delete it asked for has happened). A missing node is still `NodeNotFound`, and a plain `update` over a tombstone is still `NodeNotFound`, whatever version it expects.
 
@@ -46,7 +46,7 @@ These are the port's invariants, which every implementation holds and `./testing
 
 ## `./working-copy`
 
-An editor's autosave buffer (pulpit#46). Nothing in it is a version, so a hundred autosaves leave no trace in history (`VERSION-CHAIN-001`); an explicit save appends one.
+An editor's autosave buffer. Nothing in it is a version, so a hundred autosaves leave no trace in history (`VERSION-CHAIN-001`); an explicit save appends one.
 
 ```ts
 import { defineWorkingCopy } from "@thomasfosterau/pulpit/working-copy";
@@ -69,9 +69,9 @@ const copies = defineWorkingCopy({ leaf: postOps, chain, store: workingCopies })
 
 ## `./proposals`
 
-Suggested edits (pulpit#49). A contributor proposes a patch to a node they can read; the node's writer accepts it (appending it as a new version) or rejects it, and the proposer may withdraw it while it is pending. A proposal is a plain row, not a node: the target, the patch as submitted, the `baseVersion` it was written against (stamped from the target's head, never client-supplied), its status (`pending | accepted | rejected | withdrawn`), the decider and the timestamps.
+Suggested edits. A contributor proposes a patch to a node they can read; the node's writer accepts it (appending it as a new version) or rejects it, and the proposer may withdraw it while it is pending. A proposal is a plain row, not a node: the target, the patch as submitted, the `baseVersion` it was written against (stamped from the target's head, never client-supplied), its status (`pending | accepted | rejected | withdrawn`), the decider and the timestamps.
 
-The optional members (`ProposalsDefinition`'s `forbidden`, `localeAttributes` and `budget`, `submit`'s `locales`, and `validateProposalPatch`'s `locales` and `localeAttributes`) are bare `?: T` (pulpit#238): a caller that has no value omits the key rather than passing `undefined`.
+The optional members (`ProposalsDefinition`'s `forbidden`, `localeAttributes` and `budget`, `submit`'s `locales`, and `validateProposalPatch`'s `locales` and `localeAttributes`) are bare `?: T`: a caller that has no value omits the key rather than passing `undefined`.
 
 ```ts
 import * as Effect from "effect/Effect";
@@ -103,12 +103,12 @@ const program = Effect.gen(function* () {
 ```
 
 - **Classification comes in two tiers.** `classifyProposalBase(base, head)` is `clean` or `moved` from two version numbers, with no read, so `get` and `list` give it for every pending row. `classifyProposalConflict(baseSnapshot, headSnapshot, touchedKeys)` is `clean`, `stale` (the target moved, but no touched attribute changed) or `conflicting`, over `diffStates`; it needs two version reads, so only `review` and `accept` run it. A touched attribute either state lacks (kept outside the chain) counts as conflicting on a moved target: fail closed.
-- **A localised leaf** ([#184](https://github.com/thomasfosterau/pulpit/issues/184)). Declare `localeAttributes` (the translated columns a proposal may touch: the leaf's locale level's `columns`, or fewer), and `submit` takes `locales`, a per-locale patch beside `patch`, stored as submitted in the row's `locales` and accepted through the same `update` as one version. `classifyProposalConflict(base, head, touchedKeys, touchedLocales)` reads each touched locale from the two versions' locale levels: a touched translated column conflicts when it changed or either version lacks it, every touched column of a locale added or dropped in between conflicts, and a locale neither version carries (a new translation) does not. The verdict's `conflictingLocales` and `ProposalConflict`'s `locales` name them by locale. A proposal may add a translation but never drop one: a `null` locale is refused, since removing a locale is the owner's.
+- **A localised leaf**. Declare `localeAttributes` (the translated columns a proposal may touch: the leaf's locale level's `columns`, or fewer), and `submit` takes `locales`, a per-locale patch beside `patch`, stored as submitted in the row's `locales` and accepted through the same `update` as one version. `classifyProposalConflict(base, head, touchedKeys, touchedLocales)` reads each touched locale from the two versions' locale levels: a touched translated column conflicts when it changed or either version lacks it, every touched column of a locale added or dropped in between conflicts, and a locale neither version carries (a new translation) does not. The verdict's `conflictingLocales` and `ProposalConflict`'s `locales` name them by locale. A proposal may add a translation but never drop one: a `null` locale is refused, since removing a locale is the owner's.
 - **The patch rules** (`validateProposalPatch`, at submit and again at accept): an object with at least one key; no `PROPOSAL_FORBIDDEN_KEYS` (`id`, `type`, `visibility`, `draft`, `publishedAt`, plus the leaf's own `forbidden`), checked before unknown keys; no key outside `attributes` (refused, never dropped); then the leaf's `decode`. A per-locale patch follows the same rules per locale, against `localeAttributes`, with a non-empty locale tag and no `null` (and the shared patch may then be `{}`). A failure is `InvalidProposalPatch` (422).
 - **Accept appends through the target's own `update`** (`PUB-003`), as the account that accepted, with the head it classified against as `expectedVersion` and the proposer as the version's `proposedBy`; a conflicting proposal fails `ProposalConflict` (409) and writes nothing, and an edit landing between the classification and the append fails `StaleVersion`. The append and the proposal's close run in the caller's transaction, so they commit together. It runs the target's before hooks but not `subtypeHandlers`' cache write-through: an application that caches the target writes the accepted version through itself.
 - **Gates.** `submit`: signed in (`Unauthorized`), at `canPropose` (`Forbidden`), and able to `get` the target (`NodeNotFound` otherwise, never `Forbidden`). `review`, `accept`, `reject`: the target's write gate (`requireWriter`) before the proposal's status is disclosed; `review` and `accept` then read the versions through the target's gated `compare`. A proposal whose target was deleted can still be rejected. `withdraw`: its author (`Forbidden` for anyone else). A decided proposal fails `ProposalClosed` (409). `get` / `list`: the moderate rung reads every proposal; any other signed-in account reads its own and those on targets it owns; the anonymous read none, and a proposal the viewer can't read is `ProposalNotFound`.
 
-A [write budget](participation.md#budgets) (pulpit#199) throttles `submit` when the definition passes one as `budget`. Notifications and the wire shape (a JSON:API `proposals` resource) are the application's.
+A [write budget](participation.md#budgets) throttles `submit` when the definition passes one as `budget`. Notifications and the wire shape (a JSON:API `proposals` resource) are the application's.
 
 | Export | What it is |
 | --- | --- |
@@ -121,9 +121,9 @@ A [write budget](participation.md#budgets) (pulpit#199) throttles `submit` when 
 
 ## `./moderation`
 
-The moderation workflow (pulpit#51). The kernel owns the rules; the transport (a queue, running the classifier, an API-call ledger, moderator notifications) stays the application's. A leaf's moderation state is a column of its version row (`ModerationState`: `pending | approved | rejected`), so every decision is an appended version.
+The moderation workflow. The kernel owns the rules; the transport (a queue, running the classifier, an API-call ledger, moderator notifications) stays the application's. A leaf's moderation state is a column of its version row (`ModerationState`: `pending | approved | rejected`), so every decision is an appended version.
 
-`defineReports`' `budget` is a bare `?: BoundBudget<E, R>` (pulpit#238): omit the key for unthrottled reports rather than passing `undefined`.
+`defineReports`' `budget` is a bare `?: BoundBudget<E, R>`: omit the key for unthrottled reports rather than passing `undefined`.
 
 ```ts
 import * as Effect from "effect/Effect";
@@ -150,7 +150,7 @@ const moderation = defineModeration({ target: comments, declaration, viewer, pol
   - A `restoreVersion` below the moderate rung carries the current moderation columns over the restored version's, so an old approval never returns with old content.
   - An owner withdraws their own content by deleting it, which the owned write gate admits in every state.
 - **The decision**, `defineModeration(...).moderate(id, decision, precondition?)`, is the moderate rung's: it fails `Unauthorized` / `Forbidden` before anything is read, then appends through the target's own `update`.
-- **The read gate** is opt-in, on owned leaves only: declare the state column as the leaf's `moderationColumn` (`ownedAccess({ moderation: true })`), and `get` / `getMany` / `list` show a `pending` or `rejected` row only to its author and the view-private rung, as they do a draft (pulpit#154). Without it, readers see every state the visibility axes admit, and the rule is the application's.
+- **The read gate** is opt-in, on owned leaves only: declare the state column as the leaf's `moderationColumn` (`ownedAccess({ moderation: true })`), and `get` / `getMany` / `list` show a `pending` or `rejected` row only to its author and the view-private rung, as they do a draft. Without it, readers see every state the visibility axes admit, and the rule is the application's.
 - **The review queue** is the leaf's pending rows, `reviewQueueFilter(viewer, policy, column?)` (pass it as a list request's `where`; `never` below the moderate rung), plus the open member reports.
 - **Threshold grading**, `gradeScores(scores, thresholds, defaultThreshold?)`, is pure. It takes a classifier's report shaped like effect-ai-ext's `ModerationModel` output (`{ flagged, categoryScores }`; pulpit doesn't import it) and the leaf's per-category bars.
   - A category with no bar is graded against `DEFAULT_MODERATION_THRESHOLD` (0.5).

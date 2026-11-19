@@ -4,7 +4,7 @@ File and media leaves over a content-addressed byte store (`./blobs`), and the m
 
 ## `./blobs`
 
-File and media leaves (pulpit#55). A file is an ordinary leaf (owned, like a member's image, or reference material) whose version row carries `fileResourceFields`: the `contentHash` of its bytes, their `byteSize` and `mediaType`, the original `filename`, and `bytesPending`. The bytes live behind a `BlobStore` the application supplies (R2, S3), under `blobKey(contentHash)`, so a version's bytes are immutable. New bytes are a new hash and a new version, `restoreVersion` restores the reference to the old bytes, and equal bytes are stored once.
+File and media leaves. A file is an ordinary leaf (owned, like a member's image, or reference material) whose version row carries `fileResourceFields`: the `contentHash` of its bytes, their `byteSize` and `mediaType`, the original `filename`, and `bytesPending`. The bytes live behind a `BlobStore` the application supplies (R2, S3), under `blobKey(contentHash)`, so a version's bytes are immutable. New bytes are a new hash and a new version, `restoreVersion` restores the reference to the old bytes, and equal bytes are stored once.
 
 ```ts
 import * as Effect from "effect/Effect";
@@ -31,7 +31,7 @@ fileUrl(row, r2); // none while the row's bytesPending is anything but false
   4. append `bytesPending: false` over exactly that version.
 - **A failed byte write leaves the node pending.** If the put, or its confirmation, fails, the node stays `bytesPending` and the write still succeeds, reporting `bytesPending: true`. `fileUrl` gives no URL for it, so no reader is pointed at missing bytes.
 - **`confirmBytes({ id, version, contentHash })` finishes a pending version** once the bytes are there (a retry, or a client's signed upload). It never lands over a later version (`StaleVersion`).
-- **Nothing garbage-collects bytes.** They stay for as long as any version references them; purge (pulpit#58) is the one removal path, and `BlobStore.delete` is there for it.
+- **Nothing garbage-collects bytes.** They stay for as long as any version references them; purge is the one removal path, and `BlobStore.delete` is there for it.
 - **Usage is an edge family.** "Where is this file used" is answered by `./edges`, using `fileUsageEnds({ user, file })` as a family's ends, so `EDGE-001` hides every use whose content the viewer can't read. Maintaining the edges is the referencing leaf's job, or an after hook's. Key the edge table uniquely on `(user_id, file_id)` and declare `onConflict: "ignore"`.
 - **The writes bypass `subtypeHandlers`.** They go through the leaf's operations, so its gates, preconditions and before hooks apply, but not the handlers' cache write-through and after hooks.
 - **Stays in the app:** the adapters, image transforms, EXIF extraction and video streaming.
@@ -47,7 +47,7 @@ fileUrl(row, r2); // none while the row's bytesPending is anything but false
 
 ## `./media`
 
-The media library (pulpit#206), after gardeneria's media and album operations and website's image renditions. A media item is a `./blobs` file leaf that also spreads `mediaResourceFields`; the kernel records what an upload's metadata says, gates its renditions, and orders albums. Parsing the bytes, transforming them and the transport (multipart, tus) are the application's.
+The media library, after gardeneria's media and album operations and website's image renditions. A media item is a `./blobs` file leaf that also spreads `mediaResourceFields`; the kernel records what an upload's metadata says, gates its renditions, and orders albums. Parsing the bytes, transforming them and the transport (multipart, tus) are the application's.
 
 ```ts
 import * as Effect from "effect/Effect";
@@ -92,7 +92,7 @@ const program = Effect.gen(function* () {
 
 - **The fields.** `mediaResourceFields` is the spread beside `fileResourceFields`. The editorial fields `altText`, `caption` and `license` are the writer's, optional at create and clearable with `null`. The extracted fields are read-only on the wire: `mediaKind` (`image | video | audio | other`), `width` / `height`, `durationSeconds` and `exif` (`MediaExif`: capture time, camera, lens, orientation, `location`), each `null` when the extractor found nothing.
 - **The upload pipeline.** `defineMediaUploads({ files, extractor, stripLocation })` runs the extractor over the upload first (its failure writes nothing), turns the metadata into columns with `mediaColumns`, and writes them with the file columns in the one version `./blobs`' commit-ordered write appends. `replace` re-records the metadata for the new bytes; the editorial fields carry forward unless its `patch` sets them.
-- **EXIF location: kept by default, stripped per family.** Owner decision on pulpit#206. A photo's GPS coordinates can reveal where its author lives, so a family that holds UGC (members' uploads) should declare `stripLocation: true`; a family of curated or field-record media (a species observation, a press photo) keeps them, because the location is the point. Know what each setting does and doesn't do:
+- **EXIF location: kept by default, stripped per family.** A photo's GPS coordinates can reveal where its author lives, so a family that holds UGC (members' uploads) should declare `stripLocation: true`; a family of curated or field-record media (a species observation, a press photo) keeps them, because the location is the point. Know what each setting does and doesn't do:
   - `stripLocation: true` drops `location` from what the kernel _records_ in `exif`, so it is never on the resource, in search, or in a feed.
   - It does **not** change the bytes. The original file's own EXIF block still holds the coordinates, and anyone who can fetch the original can read them. Stripping them from the bytes is the application's: re-encode in the extractor before the bytes are stored, or serve only transformed renditions (most image services drop metadata) and never the original.
   - Omitting `stripLocation` records the location on the resource, where every reader of the node sees it. Gate the node accordingly.
