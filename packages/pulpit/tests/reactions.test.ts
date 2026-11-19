@@ -1,5 +1,5 @@
 /**
- * Reactions (pulpit#196), after gardeneria's `apps/api/src/operations/reactions.ts`
+ * Reactions, after gardeneria's `apps/api/src/operations/reactions.ts`
  * and its tests: one reaction per account per node (reacting again
  * replaces), the target's read gate on every operation (a hidden node is
  * `NodeNotFound`, never `Forbidden`: `SEC-AUTH-ENUM-001`), and the tally as

@@ -1,11 +1,11 @@
 /**
- * Ordered link lists (pulpit#266): the one gated read over a collection of
+ * Ordered link lists: the one gated read over a collection of
  * entry nodes, each pointing at a path or a node, with a per-locale label.
  * An entry whose target the viewer can't follow (a private, unpublished,
  * scheduled or tombstoned page, an unclaimed path, an alias to a hidden
  * node) is omitted without a gap or a trace (`SEC-AUTH-ENUM-001`), and the
  * owner and the view-private rung see what others can't. A nested list
- * (pulpit#313) is read in place, and omitted when hidden, empty, cyclic or
+ * is read in place, and omitted when hidden, empty, cyclic or
  * past the depth cap.
  *
  * @module tests/links
@@ -225,7 +225,7 @@ const seeded = Effect.fn(function* (ops: ReturnType<typeof site>) {
   return { menuId, ids, pageIds: { home, secret, contact } };
 });
 
-describe("defineLinkList (pulpit#266)", () => {
+describe("defineLinkList", () => {
   it("omits entries to a private, unpublished, scheduled or tombstoned page, or an unclaimed path, in order and without a gap", async () => {
     const ops = site();
     const [anon, stranger, indices] = await runAtNow(
@@ -406,7 +406,7 @@ const outlineOf = (links: ReadonlyArray<Link<Entry>>): ReadonlyArray<Outline> =>
     return link.target.kind === "list" ? [label, outlineOf(link.target.links)] : label;
   });
 
-describe("defineLinkList — nested lists (pulpit#313)", () => {
+describe("defineLinkList — nested lists", () => {
   it("reads a nested list in place, in order, and omits a hidden or empty one without a gap", async () => {
     const ops = site();
     const [anon, owner, indices] = await runAtNow(

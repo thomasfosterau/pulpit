@@ -7,7 +7,7 @@
  * (bytes written only after the transaction commits) and `apps/api/src/files.ts`
  * (the content hash), and website's `apps/api/src/operations/file-chain.ts`.
  *
- * ## The model (owner decisions on pulpit#55)
+ * ## The model
  *
  * - **Bytes are keyed by their content hash** ({@link blobKey}), so a
  *   version's bytes are immutable: new bytes are a new hash and a new
@@ -22,7 +22,7 @@
  *   missing bytes. `confirmBytes` finishes it later, once the bytes are
  *   there.
  * - **Nothing garbage-collects bytes.** They stay for as long as any
- *   version references them; purge (pulpit#58) is the only removal path,
+ *   version references them; purge is the only removal path,
  *   which is what {@link BlobStore.delete} is for.
  * - **"Where is this file used" is an edge family** ({@link fileUsageEnds}),
  *   so the endpoint-visibility gate (`EDGE-001`) applies: a "used by" list
@@ -153,7 +153,7 @@ export interface BlobStore<E, R> {
   readonly get: (key: string) => Effect.Effect<Option.Option<Uint8Array>, E, R>;
   /** The object's size and media type, or none when nothing is stored at `key`. */
   readonly head: (key: string) => Effect.Effect<Option.Option<BlobHead>, E, R>;
-  /** Remove the object at `key`. Purge's alone (pulpit#58): nothing else deletes bytes. */
+  /** Remove the object at `key`. Purge's alone: nothing else deletes bytes. */
   readonly delete: (key: string) => Effect.Effect<void, E, R>;
   /** The URL a reader fetches `key` from, when the store serves one. */
   readonly publicUrl: (key: string) => Option.Option<string>;

@@ -2,11 +2,11 @@
  * The in-memory reading of the list-filter rendering contract. `eq` and `ne`
  * are pinned against SQL's three-valued logic: a `NULL` or absent column
  * satisfies neither, because `NULL = $v` and `NULL <> $v` are both `NULL`
- * and a `WHERE` drops the row (pulpit#75). `in` is pinned the same way:
+ * and a `WHERE` drops the row. `in` is pinned the same way:
  * `NULL IN (…)` is `NULL`, so a `NULL` or absent column satisfies no `in`
- * and the follower seam is never asked about it (pulpit#94). The comparison
+ * and the follower seam is never asked about it. The comparison
  * arms (`gt` / `gte` / `lt` / `lte`) and the literal sets (`anyOf` /
- * `noneOf`) follow the same rule (pulpit#113): `NULL > $v`, `NULL = ANY(…)`
+ * `noneOf`) follow the same rule: `NULL > $v`, `NULL = ANY(…)`
  * and `NULL <> ALL(…)` are all `NULL`. Strings order by code point (SQL's
  * `"C"` collation), `±Infinity` equals itself, and an empty `<> ALL` is true
  * even for `NULL`. Outside the contract (a column of another type than the
@@ -165,7 +165,7 @@ describe("evaluate — in against SQL's `NULL IN (…)`", () => {
   });
 });
 
-describe("evaluate — notIn against `(col IS NULL OR col NOT IN (…))` (pulpit#191)", () => {
+describe("evaluate — notIn against `(col IS NULL OR col NOT IN (…))`", () => {
   type Set = HashSet.HashSet<ColumnValue>;
   const set: Set = HashSet.make<ReadonlyArray<ColumnValue>>("a");
 
@@ -495,7 +495,7 @@ describe("evaluate — anyOf / noneOf against `= ANY(…)` / `<> ALL(…)`", () 
   });
 });
 
-describe("evaluate — isNull against `col IS NULL` (pulpit#170)", () => {
+describe("evaluate — isNull against `col IS NULL`", () => {
   it("a NULL or absent column satisfies it; any value, falsy ones included, does not", () => {
     expect(run(isNull("parent"), { parent: null })).toBe(true);
     expect(run(isNull("parent"), { other: "x" })).toBe(true);

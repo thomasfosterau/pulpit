@@ -1,5 +1,5 @@
 /**
- * The UGC relation patterns (pulpit#200), over the in-memory seams:
+ * The UGC relation patterns, over the in-memory seams:
  *
  * - Reshares: the target as its own leaf's `get` serves each viewer, and
  *   the placeholder (no id, no content) for one it hides; the reshare edge

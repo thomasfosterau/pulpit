@@ -18,7 +18,7 @@ import { defineConfig } from "vite-plus";
  *
  * The bare `packages/<dir>` exclusion drops one auto-tracked entry: the
  * listing of the package's directory, which `tsc` reads to expand the
- * tsconfig `include` (pulpit#66). Without it, a gitignored directory
+ * tsconfig `include`. Without it, a gitignored directory
  * appearing beside `src/` (vitest's `node_modules/.vite`, docgen's `docs/`)
  * misses `check` and `build` once, and in CI misses `build` at both steps,
  * since `test:unit` runs between them. A `!x/**` glob never matches the entry
@@ -60,7 +60,7 @@ interface PackageOptions {
   /**
    * The package has an integration suite (`vitest.integration.config.ts`,
    * against a real database): add its `test:integration` task. Never one of
-   * the gates (AGENTS.md → Verification), and never cached: its input is the
+   * the gates (docs/CONTRIBUTING.md → Before pushing), and never cached: its input is the
    * database it provisions.
    */
   readonly integration?: true;
@@ -102,7 +102,7 @@ export const packageConfig = (dir: string, options: PackageOptions = {}) => {
         // file.
         //
         // The parentheses keep the clean and the emit ONE cached task
-        // (pulpit#63). Vite+ splits a top-level `&&` into sub-tasks cached
+        //. Vite+ splits a top-level `&&` into sub-tasks cached
         // separately, and then each saw the other's change to `dist/` as an
         // input change, so the build never hit; excluding `dist/**` from a
         // split pair would instead let the `rm` hit and be skipped while
@@ -126,8 +126,7 @@ export const packageConfig = (dir: string, options: PackageOptions = {}) => {
         // Type-checks AND executes every JSDoc `@example` (docgen.json), and
         // generates the API docs under docs/ (gitignored). Not part of
         // `check`: it is a CI step of its own, so a broken example fails
-        // visibly on its own line. Behind `build`, the edge the setup
-        // recorded on pulpit#8 asks for, so one `vp run -r docgen` also
+        // visibly on its own line. Behind `build`, so one `vp run -r docgen` also
         // proves the package still emits; an example's import of the
         // package by name still resolves to `src/`, never `dist/`: docgen
         // rewrites no imports, and the name resolves through the package's

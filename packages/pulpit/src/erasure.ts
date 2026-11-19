@@ -1,13 +1,13 @@
 /**
- * **Account erasure** (pulpit#207): when a member's account is deleted,
+ * **Account erasure**: when a member's account is deleted,
  * everything they own or authored is purged, reassigned or anonymised, and
  * every relationship row naming them goes, in bounded, resumable and
  * idempotent batches.
  *
- * `./purge` (pulpit#58) erases one node. This module erases one account,
+ * `./purge` erases one node. This module erases one account,
  * across every family and every kernel store that records an account id.
  *
- * ## The model (owner decisions on pulpit#207, 2026-10-29)
+ * ## The model
  *
  * Each family declares a {@link Disposition} for the nodes the account owns
  * and the versions it wrote:
@@ -21,7 +21,7 @@
  *   contributions.
  * - **`anonymise`**: the content stays and the attribution goes: the owner
  *   record is removed (an owned row with no owner reads as no one's,
- *   pulpit#85) and each node it wrote gets a redacting version with no
+ *) and each node it wrote gets a redacting version with no
  *   actor. The owner's default for comments, so a reply keeps the thread it
  *   answers.
  *
@@ -38,7 +38,7 @@
  * mutes, blocks, group memberships and working copies are deleted. An application adds its
  * own (memberships, notifications, …) as {@link AccountRelation}s.
  *
- * ## Groups the account owns (owner decision on pulpit#274, 2026-11-12)
+ * ## Groups the account owns
  *
  * Every group the account owns (`./audience`) is reassigned to the
  * tombstone account, through the definition's `groups`
@@ -60,8 +60,7 @@
  *
  * ## A redacting version, never a rewrite
  *
- * The chain stays strictly append-only (`VERSION-CHAIN-001/002`, owner
- * decision on pulpit#207, 2026-11-11): erasure rewrites no version row.
+ * The chain stays strictly append-only (`VERSION-CHAIN-001/002`): erasure rewrites no version row.
  * For each node that needs it, it appends one **redacting version**
  * through the family's `VersionChain` port, as a plain `update` with
  * `expectedVersion` pinned to the head it read: the head's state carried
@@ -81,7 +80,7 @@
  * over a tombstone without resurrecting it (`VERSION-CHAIN-006`): its
  * versions keep their attribution, as every earlier version does, and the
  * tombstone stays hidden below the view-deleted rung (owner decision on
- * pulpit#303). It is redacted on restore: once an application restores
+ *). It is redacted on restore: once an application restores
  * such a node its head is live again and still matches the marker, so the
  * application re-runs erasure for the account after the restore, and that
  * run appends the redacting version. A family whose history must go is a
@@ -165,7 +164,7 @@ export const Disposition = Schema.Literals(["purge", "reassign", "anonymise"]);
 export type Disposition = typeof Disposition.Type;
 
 /**
- * The owner's default dispositions (pulpit#207): an owned leaf is purged,
+ * The owner's default dispositions: an owned leaf is purged,
  * a reference leaf's contributions are reassigned to the tombstone account,
  * and comments are anonymised.
  *
@@ -315,7 +314,7 @@ export interface AccountErasureDefinition<E, EB, R> {
   /** Rows per batch, clamped to `[1, MAX_PAGE_LIMIT]`; {@link DEFAULT_ERASURE_BATCH} when omitted. */
   readonly batchSize?: number;
   /**
-   * The application's groups (`./audience`, pulpit#274): every group the
+   * The application's groups (`./audience`): every group the
    * account owns is reassigned to the tombstone account in bounded batches,
    * before its memberships go, so the group's members keep their access.
    * Absent, erasure touches no group.

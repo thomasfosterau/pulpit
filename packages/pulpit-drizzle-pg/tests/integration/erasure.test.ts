@@ -1,5 +1,5 @@
 /**
- * The erasure stores against PostgreSQL (pulpit#361), checked against the
+ * The erasure stores against PostgreSQL, checked against the
  * kernel's `makeInMemoryPurgeStore` and `makeInMemoryAccountErasureStore`
  * over the same chains:
  *
@@ -9,7 +9,7 @@
  *   row carries it. Beyond the fake: the purge is the whole chain or
  *   nothing, a failure after it rolling every delete back.
  * - `ownedNodes`, `setOwner`, and `unredactedNodes` with the redaction
- *   marker (pulpit#284): a node stops needing redaction once a later
+ *   marker: a node stops needing redaction once a later
  *   version has actor `redactedAs` and no `proposedBy`, and a tombstoned
  *   head never needs it.
  */

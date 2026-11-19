@@ -1,9 +1,9 @@
 /**
  * **The owned leaf's row reading**, shared by `./subtype` and `./edges` so
  * the two cannot read the same view or row differently: the declared-column
- * check (pulpit#79), the facts read off a row (pulpit#80), and the predicate
- * over those facts, which `canViewOwned` delegates to (pulpit#85) and which
- * itself delegates to effect-auth's `OwnedAccess.canView` (pulpit#5).
+ * check, the facts read off a row, and the predicate
+ * over those facts, which `canViewOwned` delegates to and which
+ * itself delegates to effect-auth's `OwnedAccess.canView`.
  *
  * Internal: not a package entry point (absent from `package.json`
  * `exports`) and excluded from the generated API docs (`docgen.json`).
@@ -32,23 +32,23 @@ interface OwnedColumns {
   readonly visibilityColumn: string;
   readonly draftColumn: Option.Option<string>;
   readonly moderationColumn: Option.Option<string>;
-  /** The group column a `group` row's audience is read from (pulpit#194); absent, no `group` row opens beyond the owner and the rung. */
+  /** The group column a `group` row's audience is read from; absent, no `group` row opens beyond the owner and the rung. */
   readonly groupColumn?: string;
 }
 
 /**
  * The facts {@link canViewOwnedRow} reads off an owned row: `./subtype`'s
  * `OwnedFacts`, except that the owner may be absent. A row whose owner
- * column holds no string has no owner (pulpit#85).
+ * column holds no string has no owner.
  */
 interface OwnedRowFacts {
   readonly ownerId: Option.Option<string>;
   readonly visibility: Visibility;
   readonly draft: boolean;
-  /** Under review or rejected: a moderated row whose state is not exactly `approved` (pulpit#154). */
+  /** Under review or rejected: a moderated row whose state is not exactly `approved`. */
   readonly unapproved: boolean;
   /**
-   * The group a `group` row is shared with (pulpit#194): the declared group
+   * The group a `group` row is shared with: the declared group
    * column's value when it holds a string, else none (no column declared, or
    * the group was deleted and the column cleared), so the row reads as
    * `private`.
@@ -92,10 +92,10 @@ export const declaresColumns = (
  * exactly `"approved"` reads as unapproved, since the filter's
  * `eq(moderation, "approved")` arms list only `approved`; a leaf without the
  * axis reads `unapproved: false`. A group column holding anything but a
- * string, or none declared, names no group (pulpit#194). An owner column holding anything but a
+ * string, or none declared, names no group. An owner column holding anything but a
  * non-empty string (a `NULL`, an absent key, a value outside the type, or
- * `""`, which names nobody as in effect-auth, effect-auth#661) reads as no owner,
- * never as its `String` form (pulpit#85; see pulpit#75): its `eq(owner, …)`
+ * `""`, which names nobody as in effect-auth) reads as no owner,
+ * never as its `String` form (see): its `eq(owner, …)`
  * and `in(owner, following)` arms match no `NULL`. Callers check
  * {@link declaresColumns} first. Never throws.
  *
@@ -127,17 +127,17 @@ export const ownedFacts = (
  * The owned-material read predicate over {@link ownedFacts}: `canViewOwned`
  * in `./subtype` is this with a present owner, and `defineSubtype`'s
  * `get` / `getMany` and `./edges`' `canViewEndpoint` call it directly. The
- * decision is effect-auth's `OwnedAccess.canView` (pulpit#5), through the
+ * decision is effect-auth's `OwnedAccess.canView`, through the
  * bridge in `./delegated-access.ts`: a `public` row that is neither a draft
  * nor unapproved shows to everyone; otherwise its owner and the view-private
  * rung read it, and, when published, the owner's followers a `followers`
- * row and the members of the group it names a `group` row (pulpit#194). A
+ * row and the members of the group it names a `group` row. A
  * row with no owner skips the owner arm and the follower check, so no
  * viewer's id matches it and the follower seam is never asked about it: it
  * is visible only when it is `public`, not a draft and not unapproved, or to
  * the view-private rung, as `ownedListFilter` lists it
  * (`SEC-AUTH-ENUM-001`). A viewer whose id is empty reads as anonymous
- * (effect-auth#661). Never fails.
+ *. Never fails.
  *
  * @internal
  */

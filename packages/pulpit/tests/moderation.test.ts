@@ -1,5 +1,5 @@
 /**
- * The moderation workflow (pulpit#51).
+ * The moderation workflow.
  *
  * - Threshold grading: gardeneria's `packages/jobs/tests/moderation-thresholds.test.ts`,
  *   over one leaf's threshold map.

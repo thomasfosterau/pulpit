@@ -1,5 +1,5 @@
 /**
- * **Write budgets** (pulpit#199): a declared ceiling on how many writes of
+ * **Write budgets**: a declared ceiling on how many writes of
  * one kind an account may make in a rolling window, so a family that takes
  * user content (comments, proposals, reports, posts) throttles it without
  * every application re-adding the check.
@@ -17,7 +17,7 @@
  *   wire's 429).
  * - **Exempt above a rung.** An account the budget's `exempt` rung admits
  *   (the moderate rung, by default) spends nothing.
- * - **One counter seam.** The owner's decision on #199: count within the
+ * - **One counter seam.** Count within the
  *   write's transaction, with the seam shaped so an atomic counter can be
  *   plugged in later. {@link countingCounter} is the counting
  *   implementation, one indexed `count(*)` over the family's own rows; a

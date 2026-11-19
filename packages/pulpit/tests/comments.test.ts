@@ -1,5 +1,5 @@
 /**
- * The comments family (pulpit#50).
+ * The comments family.
  *
  * - The moderation gate: `canViewModerated` and `moderationListFilter` never
  *   disagree, for every state × author × viewer.

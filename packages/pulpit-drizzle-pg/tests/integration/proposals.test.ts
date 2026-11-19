@@ -1,5 +1,5 @@
 /**
- * The proposal store against PostgreSQL (pulpit#355), checked against the
+ * The proposal store against PostgreSQL, checked against the
  * kernel's `makeInMemoryProposalStore` over the same writes: `get` with the
  * target's head version, `list` under every filter column (the target's
  * type and owner joined in) newest first with the unpaged total, `close`

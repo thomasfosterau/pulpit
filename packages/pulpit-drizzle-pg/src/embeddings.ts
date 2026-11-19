@@ -2,7 +2,7 @@
  * @copyright Thomas Foster
  *
  * The kernel's `EmbeddingStore` (docs/seams.md → `SearchBranch` and
- * `EmbeddingStore`, pulpit#204) on PostgreSQL (pulpit#357): the embedding
+ * `EmbeddingStore`) on PostgreSQL: the embedding
  * queue and the vectors of one document family (`./documents`). The
  * vectors live in a table of their own, keyed by the document's hash, so
  * the document table stays as `./documents` builds it. The vector column is

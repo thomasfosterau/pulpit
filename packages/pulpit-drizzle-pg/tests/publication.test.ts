@@ -75,7 +75,7 @@ describe("makePublications", () => {
   });
 });
 
-describe("a localised gated leaf (pulpit#343)", () => {
+describe("a localised gated leaf", () => {
   const localised = makePublications({
     views,
     pointer: "live",

@@ -1,5 +1,5 @@
 /**
- * The report store against PostgreSQL (pulpit#360), checked against the
+ * The report store against PostgreSQL, checked against the
  * kernel's `makeInMemoryReportStore` over the same writes: `get` with the
  * target's type joined in, `list` under every filter column newest first
  * with the unpaged total (a page past the end included), `close` only on an

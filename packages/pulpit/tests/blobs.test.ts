@@ -1,5 +1,5 @@
 /**
- * File and media leaves (pulpit#55).
+ * File and media leaves.
  *
  * - The content hash and its key: SHA-256 over the bytes, keyed `sha256/<hash>`.
  * - The commit-ordered write: the version first (pending), the bytes after

@@ -1,5 +1,5 @@
 /**
- * Notifications (pulpit#197): the outbox is written inside the triggering
+ * Notifications: the outbox is written inside the triggering
  * write and gone when it rolls back; each kernel kind is derived from its
  * module's write; fan-out tells a recipient only what they may read, and
  * never what they muted or a blocked or muted actor did; the inbox pages,
@@ -576,7 +576,7 @@ describe("the inbox is the viewer's own", () => {
   });
 });
 
-// ── Mentions (pulpit#198) ─────────────────────────────────────────────
+// ── Mentions ─────────────────────────────────────────────
 
 const mentionNode = (id: string): Schema.Json => ({ type: "mention", attrs: { id, label: id } });
 
@@ -650,7 +650,7 @@ const mentioning = () => {
   };
 };
 
-describe("mention.created: only the mentions a write adds (pulpit#198)", () => {
+describe("mention.created: only the mentions a write adds", () => {
   it("a create notifies each account its documents mention, once, and never the author", async () => {
     const { create, doc, outbox, recipients } = mentioning();
     const id = await create({

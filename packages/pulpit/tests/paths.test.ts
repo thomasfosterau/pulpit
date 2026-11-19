@@ -106,7 +106,7 @@ const node = (id: string, slug: string): Resolution<unknown> => ({
   resource: { id, slug },
 });
 
-describe("routable — claims follow the chain (pulpit#57)", () => {
+describe("routable — claims follow the chain", () => {
   it("lets one live node hold a path: a second create or an update onto it fails PathTaken", async () => {
     const leaf = pagesLeaf();
     const about = await leaf.create("about");
@@ -195,7 +195,7 @@ describe("routable — claims follow the chain (pulpit#57)", () => {
   });
 });
 
-describe("routable — aliases and gated resolution (pulpit#57, SEC-AUTH-ENUM-001)", () => {
+describe("routable — aliases and gated resolution (SEC-AUTH-ENUM-001)", () => {
   it("leaves the old path as an alias that redirects to the canonical one", async () => {
     const leaf = pagesLeaf();
     const id = await leaf.create("about");

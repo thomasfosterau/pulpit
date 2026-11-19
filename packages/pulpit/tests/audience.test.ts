@@ -1,5 +1,5 @@
 /**
- * The membership family (pulpit#194) against the in-memory store: who may
+ * The membership family against the in-memory store: who may
  * add, remove and re-role a member (the group's owner and its admins), who
  * may leave (any member but the owner), who may read the member list (the
  * owner and the members; anyone else gets `GroupNotFound`), the group's
@@ -239,14 +239,14 @@ describe("the audience seam and the store", () => {
     expect(seam.groups(stranger.id)).toEqual(HashSet.empty());
   });
 
-  it("erases an account's memberships (pulpit#207)", () => {
+  it("erases an account's memberships", () => {
     const { store } = world();
     Effect.runSync(store.add({ groupId: "g-2", accountId: member.id, role: "member", at: NOW }));
     expect(Effect.runSync(store.eraseAccount(member.id, 10))).toBe(2);
     expect(store.rows().map((row) => row.accountId)).toEqual([owner.id, groupAdmin.id]);
   });
 
-  it("erases at most `limit` rows, invitations to and from the account counted with its memberships (pulpit#274)", () => {
+  it("erases at most `limit` rows, invitations to and from the account counted with its memberships", () => {
     const { store } = world();
     Effect.runSync(store.add({ groupId: "g-2", accountId: member.id, role: "member", at: NOW }));
     const invite = (groupId: string, accountId: string, invitedBy: string) =>
@@ -266,7 +266,7 @@ describe("the audience seam and the store", () => {
   });
 });
 
-describe("defineAudience — invitations (pulpit#227)", () => {
+describe("defineAudience — invitations", () => {
   const invitee: ViewerAccount = { id: "u-invitee", role: "user" };
   const pageAll = { limit: 100, offset: 0 };
 

@@ -477,7 +477,7 @@ interface Transaction {
 }
 declare const port: VersionChain<StoreFailure, Transaction>;
 export const chain = defineVersionChain("posts", port);
-// The port's own reads beside the operations (pulpit#246).
+// The port's own reads beside the operations.
 export type _ChainHead = Assert<
   Equals<
     ReturnType<typeof port.head>,
@@ -578,7 +578,7 @@ export const filter = and<Subquery>(eq("visibility", "public"));
 export type _Filter = Assert<Equals<typeof filter, ListFilter<Subquery>>>;
 // Each `filter` export is asserted on its own declared type, not only through a
 // call: a call on a degraded (unbound, so error-typed) callee yields a result
-// that `Equals` cannot tell from the real one (pulpit#139).
+// that `Equals` cannot tell from the real one.
 export type _Scalar = Assert<Equals<Scalar, string | number | boolean>>;
 export type _Comparable = Assert<Equals<Comparable, string | number | Date>>;
 export type _MaxSetValues = Assert<Equals<typeof MAX_SET_VALUES, 1000>>;
@@ -851,7 +851,7 @@ export type _Get = Assert<
     Effect.Effect<PostDoc, NodeNotFound | StoreFailure, Transaction>
   >
 >;
-// Distinct readable owners (pulpit#186): per leaf, and the exact union across leaves.
+// Distinct readable owners: per leaf, and the exact union across leaves.
 export type _Owners = Assert<
   Equals<ReturnType<typeof posts.owners>, Effect.Effect<Page<string>, StoreFailure, Transaction>>
 >;
@@ -878,7 +878,7 @@ export type _OwnersRequest = Assert<
     }
   >
 >;
-// A list filter over the follower seam (pulpit#189): the member leaf's list takes memberFilter's output.
+// A list filter over the follower seam: the member leaf's list takes memberFilter's output.
 export type _ListRequestFollowing = Assert<
   Equals<ListRequest<Subquery>["where"], ListFilter<Subquery>>
 >;
@@ -888,7 +888,7 @@ export type _SubtypeOpsListFollowing = Assert<
     ListRequest<Subquery>
   >
 >;
-// The gated compare (pulpit#82): the chain's comparison behind `getVersion`'s gate.
+// The gated compare: the chain's comparison behind `getVersion`'s gate.
 export type _SubtypeCompare = Assert<
   Equals<
     ReturnType<typeof posts.compare>,
@@ -899,7 +899,7 @@ export type _SubtypeCompare = Assert<
     >
   >
 >;
-// List ordering (pulpit#112): the request's optional order, the store's
+// List ordering: the request's optional order, the store's
 // checked one, and `list`'s typed refusal of an undeclared column.
 export type _ListOrder = Assert<
   Equals<ListOrder, { readonly column: string; readonly direction: "asc" | "desc" }>
@@ -907,7 +907,7 @@ export type _ListOrder = Assert<
 export type _ListRequestOrder = Assert<
   Equals<Pick<ListRequest, "orderBy">, { readonly orderBy?: ReadonlyArray<ListOrder> }>
 >;
-// The leaf's optional sortable allow-list (pulpit#112), and its declaration error.
+// The leaf's optional sortable allow-list, and its declaration error.
 export type _SubtypeSortable = Assert<
   Equals<
     Pick<SubtypeDefinition<LeafRow, unknown, never, never, never>, "sortable">,
@@ -915,7 +915,7 @@ export type _SubtypeSortable = Assert<
   >
 >;
 /* oxlint-disable effect/prefer-option-over-null -- the assertions spell wire shapes exactly: a JSON:API resource object's `meta`, a request header, effect-jsonapi's update presence */
-// The head version on the wire (pulpit#65).
+// The head version on the wire.
 export type _LeafRowVersion = Assert<Equals<LeafRow["version"], bigint>>;
 export type _VersionMeta = Assert<
   Equals<typeof versionMeta, (row: Pick<LeafRow, "version">) => VersionMeta>
@@ -927,14 +927,14 @@ export type _VersionEtag = Assert<
 export type _VersionedResource = Assert<
   Equals<VersionedResource, { readonly meta?: object | undefined }>
 >;
-// effect-jsonapi's ResourceHandlers over the handler record (pulpit#5).
+// effect-jsonapi's ResourceHandlers over the handler record.
 export type _ResourceHandlerNames = Assert<
   Equals<
     keyof ReturnType<typeof subtypeResourceHandlers>,
     "list" | "get" | "create" | "update" | "delete"
   >
 >;
-// The locale on the JSON:API wire (pulpit#184).
+// The locale on the JSON:API wire.
 export type _AcceptLanguage = Assert<
   Equals<typeof acceptLanguage, (header: string | undefined) => ReadonlyArray<string>>
 >;
@@ -968,7 +968,7 @@ export type _ResourceHandlersListRequest = Assert<
   Equals<PostHandlersConfig["listRequest"], (query: PostQuery) => ListRequest>
 >;
 export type _ResourceHandlersSegment = Assert<Equals<PostHandlersConfig["segment"], string>>;
-// Search (pulpit#54): the projection, the scope and the gated hydration.
+// Search: the projection, the scope and the gated hydration.
 export type _SearchWeight = Assert<Equals<SearchWeight, "A" | "B" | "C" | "D">>;
 export type _SearchField = Assert<
   Equals<SearchField, { readonly column: string; readonly weight: SearchWeight }>
@@ -1035,7 +1035,7 @@ export const ordered = posts.list({
   where: eq("visibility", "public"),
   orderBy: [{ column: "title", direction: "desc" }],
 });
-// A caller with no order omits the key (pulpit#238).
+// A caller with no order omits the key.
 export const unordered = posts.list({
   limit: 10,
   offset: 0,
@@ -1046,12 +1046,12 @@ export type _SubtypeCompareParameters = Assert<
   Equals<Parameters<typeof posts.compare>, [id: string, from: bigint, to: bigint]>
 >;
 
-// A reference leaf's followers column (pulpit#92): an optional field, so
+// A reference leaf's followers column: an optional field, so
 // the bare declaration still compiles, and the list arm takes it as an
 // optional `Option`.
 export const curatedTerms: LeafAccess = { kind: "reference", followersOfColumn: "curatorId" };
 export const bareTerms: LeafAccess = { kind: "reference" };
-// The moderated owned leaf (pulpit#154): the column is an `Option`, as the draft column is.
+// The moderated owned leaf: the column is an `Option`, as the draft column is.
 export const moderatedComments: Option.Option<string> = ownedAccess({
   moderation: true,
 }).moderationColumn;
@@ -1061,7 +1061,7 @@ const closedPolicy = {
   canModerate: () => false,
   canWriteCorpus: () => false,
 };
-// The three-argument form, from before pulpit#92, still type-checks.
+// The three-argument form still type-checks.
 export const bareFilter = referencePrivacyFilter<Subquery>(
   Option.none(),
   closedPolicy,
@@ -1110,7 +1110,7 @@ export type _OnInsert = Assert<
     DocumentStore<ProseDocument, StoreFailure, Transaction>
   >
 >;
-// The grammar check (pulpit#264): the checked store adds `DocumentViolation`
+// The grammar check: the checked store adds `DocumentViolation`
 // to `put`'s failure; the hook is a plain before-write hook of the store's E.
 export type _CheckedStore = Assert<
   Equals<
@@ -1217,7 +1217,7 @@ export type _EdgeCreate = Assert<
     >
   >
 >;
-// Validity intervals (pulpit#210): the one edge update, and the instant filter.
+// Validity intervals: the one edge update, and the instant filter.
 export type _EdgeCloseValidity = Assert<
   Equals<
     ReturnType<typeof links.closeValidity>,
@@ -1232,7 +1232,7 @@ export type _EdgeCloseValidityParameters = Assert<
   Equals<Parameters<typeof links.closeValidity>, [id: string, at: Date]>
 >;
 // The optional members of ./edges, ./publication, ./cache and ./search are
-// bare `?: T` (pulpit#238): a caller with no value omits the key, and an
+// bare `?: T`: a caller with no value omits the key, and an
 // explicit `undefined` does not fit.
 export type _EdgeOptionalMembers = Assert<
   Equals<
@@ -1278,8 +1278,7 @@ export type _HybridSearchOptionalMembers = Assert<
     [{ readonly k?: number; readonly perBranch?: number }, { readonly weight?: number }]
   >
 >;
-// The remaining modules' optional members are bare `?: T` too (pulpit#238,
-// PR 4): `Bare` is false for a member that still admits an explicit `undefined`.
+// The remaining modules' optional members are bare `?: T` too: `Bare` is false for a member that still admits an explicit `undefined`.
 type Bare<T, K extends keyof T> = Equals<
   Pick<T, K>,
   { readonly [P in K]?: Exclude<T[P], undefined> }
@@ -1322,21 +1321,21 @@ export type _EdgeValidity = Assert<
 >;
 export type _ValidAt = Assert<Equals<ReturnType<typeof validAt<never>>, ListFilter<never>>>;
 export type _InvalidValidityTag = Assert<Equals<InvalidValidity["_tag"], "InvalidValidity">>;
-// Edge membership (pulpit#113): the filter is over the family's `Following`.
+// Edge membership: the filter is over the family's `Following`.
 export type _EdgeMemberFilter = Assert<
   Equals<
     ReturnType<typeof links.memberFilter>,
     Effect.Effect<ListFilter<Subquery>, StoreFailure, Transaction>
   >
 >;
-// Edge non-membership (pulpit#191): the complement, over the same `Following`.
+// Edge non-membership: the complement, over the same `Following`.
 export type _EdgeNonMemberFilter = Assert<
   Equals<
     ReturnType<typeof links.nonMemberFilter>,
     Effect.Effect<ListFilter<Subquery>, StoreFailure, Transaction>
   >
 >;
-// Readable-edge counts per node (pulpit#185): one grouped read, a count per id.
+// Readable-edge counts per node: one grouped read, a count per id.
 export type _EdgeCountBy = Assert<
   Equals<
     ReturnType<typeof links.countBy>,
@@ -1346,7 +1345,7 @@ export type _EdgeCountBy = Assert<
 export type _EdgeCountByParameters = Assert<
   Equals<
     Parameters<typeof links.countBy>,
-    // oxlint-disable-next-line effect/prefer-option-over-null -- pins the optional `where` parameter's declared `?: T | undefined` (AGENTS.md → Conventions)
+    // oxlint-disable-next-line effect/prefer-option-over-null -- pins the optional `where` parameter's declared `?: T | undefined` (docs/CONTRIBUTING.md → Coding guidelines)
     [end: string, ids: ReadonlyArray<string>, where?: ListFilter<never> | undefined]
   >
 >;
@@ -1408,7 +1407,7 @@ export type _Classify = Assert<
     ReadonlyArray<string>
   >
 >;
-// A localised leaf's proposals (pulpit#184): the per-locale patch as submitted, and the verdict by locale.
+// A localised leaf's proposals: the per-locale patch as submitted, and the verdict by locale.
 export type _ProposalLocales = Assert<Equals<ProposalRow["locales"], Option.Option<Schema.Json>>>;
 export type _ClassifyLocales = Assert<
   Equals<
@@ -1425,7 +1424,7 @@ export type _FileUrl = Assert<Equals<ReturnType<typeof fileUrl>, Option.Option<s
 export type _FileWrite = Assert<Equals<FileWrite["bytesPending"], boolean>>;
 export type _FileWriteVersion = Assert<Equals<FileWrite["version"], bigint>>;
 
-// ── pages (pulpit#201) ───────────────────────────────────────────────────
+// ── pages ───────────────────────────────────────────────────
 
 export type _PagesBarrel = Assert<Equals<typeof Pages.resolveLocalised, typeof resolveLocalised>>;
 export type _LocaleFallbacks = Assert<
@@ -1466,7 +1465,7 @@ export type _RoutableFitsPages = Assert<
   >
 >;
 
-// ── paths (pulpit#57) ────────────────────────────────────────────────────
+// ── paths ────────────────────────────────────────────────────
 
 export type _PathsBarrel = Assert<Equals<typeof Paths.routable, typeof routable>>;
 export type _PathEntry = Assert<
@@ -1559,7 +1558,7 @@ export type _PurgeOp = Assert<
 >;
 export type _PurgeReportBytes = Assert<Equals<PurgeReport["bytesLeft"], ReadonlyArray<string>>>;
 
-// ── erasure (pulpit#207) ─────────────────────────────────────────────────
+// ── erasure ─────────────────────────────────────────────────
 
 export type _ErasureBarrel = Assert<
   Equals<typeof Erasure.defineAccountErasure, typeof defineAccountErasure>
@@ -1576,12 +1575,12 @@ export type _ErasureOp = Assert<
 >;
 export type _Disposition = Assert<Equals<Disposition, "purge" | "reassign" | "anonymise">>;
 
-// ── search (pulpit#204) ──────────────────────────────────────────────────
+// ── search ──────────────────────────────────────────────────
 
 export type _SearchBarrel = Assert<Equals<typeof Search.fuseRankings, typeof fuseRankings>>;
 export type _Fused = Assert<Equals<ReturnType<typeof fuseRankings>, ReadonlyArray<FusedHit>>>;
 export type _FusedRanks = Assert<Equals<FusedHit["ranks"], { readonly [branch: string]: number }>>;
-// The gated branch's heads ride on the request (pulpit#346).
+// The gated branch's heads ride on the request.
 export type _BranchRequest = Assert<
   Equals<
     BranchRequest<Subquery>,
@@ -1646,7 +1645,7 @@ export type _ProposalSubmitBudget = Assert<
     : false
 >;
 
-// ── reactions (pulpit#196) ───────────────────────────────────────────────
+// ── reactions ───────────────────────────────────────────────
 
 export type _ReactionsBarrel = Assert<
   Equals<typeof Reactions.defineReactions, typeof defineReactions>
@@ -1668,7 +1667,7 @@ export type _Tally = Assert<
   >
 >;
 
-// ── cache (pulpit#205) ───────────────────────────────────────────────────
+// ── cache ───────────────────────────────────────────────────
 
 export type _CacheBarrel = Assert<Equals<typeof Cache.makeResourceCache, typeof makeResourceCache>>;
 export type _CacheIsSeam = Assert<
@@ -1686,7 +1685,7 @@ export type _CacheGet = Assert<
   >
 >;
 
-// ── collections (pulpit#193) ─────────────────────────────────────────────
+// ── collections ─────────────────────────────────────────────
 
 export type _CollectionsBarrel = Assert<
   Equals<typeof Collections.defineCollection, typeof defineCollection>
@@ -1698,7 +1697,7 @@ export type _CollectionList = Assert<
   >
 >;
 
-// ── social (pulpit#195) ──────────────────────────────────────────────────
+// ── social ──────────────────────────────────────────────────
 
 export type _SocialBarrel = Assert<Equals<typeof Social.defineSocial, typeof defineSocial>>;
 export type _Follow = Assert<
@@ -1720,7 +1719,7 @@ export type _SocialFollowers = Assert<
 >;
 export const socialSeam = socialFollowers(socialStore);
 
-// ── audience (pulpit#194) ────────────────────────────────────────────────
+// ── audience ────────────────────────────────────────────────
 
 export type _AudienceBarrel = Assert<Equals<typeof Audience.defineAudience, typeof defineAudience>>;
 export type _Members = Assert<
@@ -1746,7 +1745,7 @@ export const groupAudience: FollowerSeam<Subquery, Transaction> = {
   ...audienceSeam(membershipStore),
 };
 
-// ── links (pulpit#266) ───────────────────────────────────────────────────
+// ── links ───────────────────────────────────────────────────
 
 export type _LinksBarrel = Assert<Equals<typeof Links.defineLinkList, typeof defineLinkList>>;
 export type _LinkList = Assert<
@@ -1755,7 +1754,7 @@ export type _LinkList = Assert<
     Effect.Effect<ReadonlyArray<Link<string>>, NodeNotFound | StoreFailure, Transaction>
   >
 >;
-// Nested lists (pulpit#313): a list target, resolved to its never-empty links.
+// Nested lists: a list target, resolved to its never-empty links.
 export type _LinkTargetList = Assert<
   Equals<
     Extract<LinkTarget, { readonly kind: "list" }>,
@@ -1776,7 +1775,7 @@ export type _LinkDepth = Assert<
 >;
 export const linkDepth: number = DEFAULT_LINK_DEPTH;
 
-// ── discovery (pulpit#203) ───────────────────────────────────────────────
+// ── discovery ───────────────────────────────────────────────
 
 export type _DiscoveryBarrel = Assert<
   Equals<typeof Discovery.defineDiscovery, typeof defineDiscovery>
@@ -1794,7 +1793,7 @@ export type _PurgeHintEmit = Assert<
   >
 >;
 
-// ── relations (pulpit#200) ───────────────────────────────────────────
+// ── relations ───────────────────────────────────────────
 
 export type _RelationsBarrel = Assert<
   Equals<typeof Relations.defineReshares, typeof defineReshares>
@@ -1825,7 +1824,7 @@ export type _AcceptedAnswerGate = Assert<
 >;
 export type _AnswerTag = Assert<Equals<AnswerNotOfQuestion["_tag"], "AnswerNotOfQuestion">>;
 
-// ── effect-auth as a kernel peer (pulpit#5) ───────────────────────────
+// ── effect-auth as a kernel peer ───────────────────────────
 
 // The gate errors are effect-auth's own classes, re-exported, not look-alikes.
 export type _UnauthorizedIsEffectAuths = Assert<Equals<Unauthorized, Guard.Unauthorized>>;
@@ -1834,7 +1833,7 @@ export type _AccessPolicyFromGuards = Assert<
   Equals<ReturnType<typeof accessPolicyFromGuards>, AccessPolicy>
 >;
 
-// ── translation (pulpit#208) ─────────────────────────────────────────────
+// ── translation ─────────────────────────────────────────────
 
 export type _TranslationBarrel = Assert<
   Equals<typeof Translation.defineTranslation, typeof defineTranslation>
@@ -1848,7 +1847,7 @@ export type _TranslationSweep = Assert<
 export type _LineageOf = Assert<Equals<ReturnType<typeof lineageOf>, Option.Option<LocaleLineage>>>;
 export type _HumanLineageHook = Assert<Equals<ReturnType<typeof humanLineageHook>["name"], string>>;
 
-// ── notifications (pulpit#197) ───────────────────────────────────────────
+// ── notifications ───────────────────────────────────────────
 
 export type _NotificationsBarrel = Assert<
   Equals<typeof Notifications.defineNotifications, typeof defineNotifications>
@@ -1889,7 +1888,7 @@ export const emitted: Effect.Effect<number, "write" | StoreFailure, Transaction>
     Effect.succeed([]),
 );
 
-// ── media (pulpit#206) ───────────────────────────────────────────────────
+// ── media ───────────────────────────────────────────────────
 
 export type _MediaBarrel = Assert<Equals<typeof Media.defineRenditions, typeof defineRenditions>>;
 export type _RenditionWidth = Assert<
@@ -1940,7 +1939,7 @@ export type _MediaFields = Assert<
   >
 >;
 
-// ── reference import (pulpit#209) ────────────────────────────────────────
+// ── reference import ────────────────────────────────────────
 
 export type _ReferenceImportBarrel = Assert<
   Equals<typeof ReferenceImport.defineReferenceImport, typeof defineReferenceImport>

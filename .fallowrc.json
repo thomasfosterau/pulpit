@@ -89,7 +89,7 @@
     "@changesets/changelog-github",
     "@vitest/coverage-istanbul",
     "fallow",
-    // The two workspace packages, for tests/dist-consumer (pulpit#134). That
+    // The two workspace packages, for tests/dist-consumer. That
     // package resolves them only through its tsconfig `paths` mapping to the
     // emitted `dist/*.d.ts`, so until `dist/` is built fallow reports them as
     // unlisted. Declaring them `workspace:*` there would add a `node_modules`

@@ -2,7 +2,7 @@
  * @copyright Thomas Foster
  *
  * The kernel's `CollectionStore` (docs/seams.md → `CollectionStore`,
- * pulpit#193) on PostgreSQL (pulpit#358): one membership table per ordered
+ *) on PostgreSQL: one membership table per ordered
  * family (a list's items, a bibliography's entries, a menu's pages), keyed
  * `(parent_id, member_id)`, both referencing the tree's identity row and
  * cascading, with each member's `position`. Every call runs in the caller's

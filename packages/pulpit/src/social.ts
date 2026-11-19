@@ -1,5 +1,5 @@
 /**
- * **The social graph** (pulpit#195) — follow, mute and block between
+ * **The social graph** — follow, mute and block between
  * accounts, as relationship facts with their own gates, the follower and
  * following lists, a {@link FollowerSeam} built from the graph so
  * `followers` rows work end to end, and an opt-in read filter over the
@@ -8,7 +8,7 @@
  * The behavioural spec is gardeneria's `social.follows` and its operations
  * (`apps/api/src/operations/follows.ts`), with their tests.
  *
- * ## The model (owner decisions on pulpit#195)
+ * ## The model
  *
  * - **A relationship is a fact**, keyed `(kind, from, to)` for the kinds
  *   `follow`, `mute` and `block`: no history; asserting one twice is a
@@ -166,7 +166,7 @@ export interface SocialStore<Following, E, R> {
   readonly silencedBy: (viewer: string) => Following;
   /**
    * Delete at most `limit` of the relationships from or to the account
-   * (account erasure, pulpit#207, in bounded batches: `PERF-DB-001`); how
+   * (account erasure, in bounded batches: `PERF-DB-001`); how
    * many went. `./erasure` calls it again until it deletes fewer than `limit`.
    */
   readonly eraseAccount: (accountId: string, limit: number) => Effect.Effect<number, E, R>;

@@ -1,6 +1,6 @@
 /**
  * **Purge**: erasure, the one destructive path through a node's history
- * (pulpit#58).
+ *.
  *
  * A tombstone hides a node and keeps every version of its content, readable
  * at the view-deleted rung. Where that content is personal data and the law
@@ -9,11 +9,11 @@
  * other seams keep for the node, and the documents and file bytes no other
  * version references any longer.
  *
- * ## The model (owner decision on pulpit#58, 2026-10-14)
+ * ## The model
  *
  * - **The whole chain goes.** Every version row on every level of the
  *   node's chain is deleted, with its identity row. It is the one sanctioned
- *   exception to the append-only chain (`VERSION-CHAIN-001/002`, SECURITY.md):
+ *   exception to the append-only chain (`VERSION-CHAIN-001/002`, docs/SECURITY.md):
  *   nothing else deletes or rewrites a version row. With the chain go the
  *   node's working copies, proposals, publication facts, path claims, reports
  *   and every edge with the node at an end: rows that name a node that no
@@ -82,7 +82,7 @@ export interface ErasedReferences {
  * other stores. Like them it applies no policy, fails only with its `E`,
  * and never opens a transaction: {@link definePurge} runs its three methods,
  * in order, inside the caller's `transact`, with the leaf's
- * {@link VersionChain}`.purge` (which deletes the chain itself, pulpit#246)
+ * {@link VersionChain}`.purge` (which deletes the chain itself)
  * between the first and the second.
  *
  * @since 0.1.0

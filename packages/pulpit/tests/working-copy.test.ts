@@ -1,5 +1,5 @@
 /**
- * The working copy (pulpit#46): an autosave buffer outside the chain.
+ * The working copy: an autosave buffer outside the chain.
  *
  * - Saving writes no version, and merges tri-state over the editor's copy.
  * - One copy per (node, editor).

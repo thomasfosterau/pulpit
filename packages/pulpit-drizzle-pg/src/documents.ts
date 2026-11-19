@@ -4,7 +4,7 @@
  * @copyright Thomas Foster
  *
  * The kernel's content-addressed `DocumentStore` (docs/seams.md →
- * `DocumentStore`, pulpit#53) on PostgreSQL (pulpit#247): one table per
+ * `DocumentStore`) on PostgreSQL: one table per
  * document family, the document as `jsonb`, keyed by the hash the database
  * generates to the kernel's contract, `digest(document::text,
  * 'sha256')` (pgcrypto's immutable `text` overload, so a generated column

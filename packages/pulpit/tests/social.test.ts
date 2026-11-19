@@ -1,5 +1,5 @@
 /**
- * The social graph (pulpit#195), after gardeneria's `social.follows` and
+ * The social graph, after gardeneria's `social.follows` and
  * `apps/api/src/operations/follows.ts`: follow / mute / block as the
  * actor's own facts, a block ending both follows and refusing new ones
  * (interaction only: it hides no content), the follower seam filled from

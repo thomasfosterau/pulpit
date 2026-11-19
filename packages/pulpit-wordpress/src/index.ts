@@ -4,8 +4,8 @@
  *
  * Each module is exported here as a namespace, and as a subpath of its own,
  * following the kernel's convention: the `wp/v2` read API and its mapping
- * seam (`Api`, `./api`, pulpit#86 phase 1), its `effect/http` adapter
- * (`Http`, `./http`) and the `IdCodec` seam (`Ids`, `./ids`, pulpit#114).
+ * seam (`Api`, `./api`), its `effect/http` adapter
+ * (`Http`, `./http`) and the `IdCodec` seam (`Ids`, `./ids`).
  * The in-memory fakes are the `./testing` subpath only, never this barrel.
  *
  * @copyright Thomas Foster

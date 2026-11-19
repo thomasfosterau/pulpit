@@ -253,7 +253,7 @@ export default defineConfig({
     tasks: {
       // The whole of CI, as one task: `.github/workflows/ci.yml` runs
       // `vp run ci` and nothing else, on every Node version in its matrix.
-      // The gates run in AGENTS.md → Verification's order (steps 1–6, then
+      // The gates run in docs/CONTRIBUTING.md → Before pushing's order (steps 1–6, then
       // step 7's coverage gate), then pulpit-drizzle-pg's integration suite,
       // which needs a PostgreSQL the `PG*` variables (or `DATABASE_URL_TEST`)
       // name: CI gives it a `postgres` service container. An array runs its

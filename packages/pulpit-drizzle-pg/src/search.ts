@@ -3,13 +3,13 @@
  *
  * @copyright Thomas Foster
  *
- * The kernel's `SearchBranch` (docs/seams.md → `SearchBranch`, pulpit#204)
+ * The kernel's `SearchBranch` (docs/seams.md → `SearchBranch`)
  * over a tree's views: one ranked statement per branch that renders the
  * leaf's read scope (`searchScopeFilter`) through `./filter` beside the rank,
  * so a row outside the scope is never ranked and never shifts another hit's
  * rank (`SEC-AUTH-ENUM-001`). A publish-gated leaf's branch is
  * `./publication`'s `searchBranch`, over the rows `LiveView.list` reads for
- * the request's `headFor` (pulpit#346).
+ * the request's `headFor`.
  *
  * @since 0.0.0
  */

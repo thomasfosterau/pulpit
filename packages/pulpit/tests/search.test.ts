@@ -1,5 +1,5 @@
 /**
- * Hybrid search (pulpit#204).
+ * Hybrid search.
  *
  * - RRF fusion on fixed rankings: website's and gardeneria's `search.ts`
  *   fuse their branches as `Σ weight / (60 + rank)`.
@@ -276,7 +276,7 @@ describe("hybridSearch", () => {
   });
 });
 
-describe("a publish-gated leaf's search ranks what list reads (pulpit#346)", () => {
+describe("a publish-gated leaf's search ranks what list reads", () => {
   type Resource = { readonly id: string; readonly title: unknown };
   const setup = () => {
     const chain = makeInMemoryVersionChain("posts");

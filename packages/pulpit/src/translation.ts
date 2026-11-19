@@ -1,5 +1,5 @@
 /**
- * **Translation lineage and staleness on localised leaves** (pulpit#208),
+ * **Translation lineage and staleness on localised leaves**,
  * with a translator seam and a sweep that keeps machine translations
  * current. The behavioural spec is website's machine translation
  * (`packages/jobs/src/translation/`, the `derivedFromId` lineage of
@@ -46,7 +46,7 @@
  * read, and is where an application excludes owned or private content it
  * must not send to a third-party model.
  *
- * ## Landing a translation (owner decision on pulpit#208)
+ * ## Landing a translation
  *
  * Each family chooses: `direct` writes the translation as a version of the
  * node marked `machine` in its lineage, attributed to a bot actor; `proposal`
@@ -62,7 +62,7 @@
  * translation of a ProseKit document is not the kernel's: the
  * {@link Translator} seam takes the source locale's translatable column
  * values, opaque, and prosekit-utilities fills it for documents (the
- * owner decision on pulpit#202).
+ * owner decision on).
  *
  * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/participation.md#translation.
  *
@@ -206,7 +206,7 @@ export const lineagePatch = (columns: LineageColumns, lineage: LocaleLineage): C
  * one of the family's translatable columns refuses that node's write
  * (`TRANSLATOR_COLUMNS`). Values are opaque to the kernel: a document column
  * (its `DocumentHash`, or inline JSON) is the application's to translate
- * segment by segment (prosekit-utilities, pulpit#202). Its failure `E`
+ * segment by segment (prosekit-utilities). Its failure `E`
  * stops the sweep, which a re-run resumes.
  *
  * @since 0.2.0
@@ -236,7 +236,7 @@ export interface TranslationCandidates<E, R> {
 }
 
 /**
- * How a family lands a translation (owner decision on pulpit#208).
+ * How a family lands a translation.
  *
  * - `direct`: one `update` per node through the leaf's hooked
  *   `VersionChainOps.update`, attributed to `actorId` and pinned to the head

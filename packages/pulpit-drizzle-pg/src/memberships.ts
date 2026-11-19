@@ -2,8 +2,8 @@
  * @copyright Thomas Foster
  *
  * The kernel's `MembershipStore` and `GroupOwnerStore` (docs/seams.md →
- * `MembershipStore` and `GroupOwnerStore`, pulpit#227, pulpit#274) on
- * PostgreSQL (pulpit#364): a group's members and pending invitations in one
+ * `MembershipStore` and `GroupOwnerStore`) on
+ * PostgreSQL: a group's members and pending invitations in one
  * membership table keyed `(group_id, account_id)`, and the bounded owner
  * reassignment over the application's own group table. A pending row is an
  * invitation, not a membership: every membership read and write takes the

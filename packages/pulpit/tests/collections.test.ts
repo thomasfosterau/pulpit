@@ -1,5 +1,5 @@
 /**
- * Ordered collections (pulpit#193): both models over one store seam (the
+ * Ordered collections: both models over one store seam (the
  * order beside the chain, the default, and the order versioned with the
  * parent), the parent's read gate on a read and its write gate on a write,
  * and a member the viewer can't read omitted from the page and its total.

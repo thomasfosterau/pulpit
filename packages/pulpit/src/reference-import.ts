@@ -1,5 +1,5 @@
 /**
- * **External reference import** (pulpit#209) — upserting a reference leaf's
+ * **External reference import** — upserting a reference leaf's
  * nodes from a feed, a dataset or an authority by their external
  * identifiers, with per-field merge modes so an import never clobbers a
  * curated edit unless the family says it may.

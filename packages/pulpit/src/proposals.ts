@@ -4,10 +4,10 @@
  * the node's writer accepts (appending it) or rejects.
  *
  * The behavioural spec is gardeneria's `apps/api/src/operations/proposals.ts`,
- * `proposal-patch.ts` and `proposal-conflict.ts` (#565), with their tests; a
+ * `proposal-patch.ts` and `proposal-conflict.ts`, with their tests; a
  * `#NNN` here names a gardeneria issue.
  *
- * ## The model (owner decisions on pulpit#49)
+ * ## The model
  *
  * - **A proposal is a plain row, not a node.** It carries the target, the
  *   patch as submitted, the `baseVersion` it was written against (stamped
@@ -21,7 +21,7 @@
  *   (`VERSION-CHAIN-001/002`). The version records the proposer as its
  *   `proposedBy` fact beside that actor, so history shows both.
  *
- * ## Classification, in two tiers (#565, decision 2)
+ * ## Classification, in two tiers (decision 2)
  *
  * - {@link classifyProposalBase} — `clean` or `moved`, from two version
  *   numbers in hand: no read, safe for every row of a list page.
@@ -50,9 +50,9 @@
  *   account reads its own and those on targets it owns; the anonymous read
  *   none. A proposal is never public.
  *
- * ## A localised leaf (pulpit#184)
+ * ## A localised leaf
  *
- * On a leaf with a locale level (pulpit#56) a proposal may also carry a
+ * On a leaf with a locale level a proposal may also carry a
  * per-locale patch over the leaf's translated columns
  * ({@link ProposalsDefinition.localeAttributes}), stored beside its shared
  * patch and accepted through the same `update` as one version. Its conflict
@@ -62,7 +62,7 @@
  * translation but never drop one (a `null` locale is refused): removing a
  * locale is the owner's.
  *
- * A write budget (pulpit#199) is an opt-in: `budget` throttles `submit`.
+ * A write budget is an opt-in: `budget` throttles `submit`.
  * Notifications and the wire shape are the application's.
  *
  * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/history-and-review.md#proposals.
@@ -153,7 +153,7 @@ export interface ProposalRow {
   /** The patch as submitted (what the reviewer reads), decoded again at accept. */
   readonly patch: Schema.Json;
   /**
-   * A localised leaf's per-locale patch as submitted (pulpit#184), decoded
+   * A localised leaf's per-locale patch as submitted, decoded
    * again at accept; none for a proposal that touches no translation.
    */
   readonly locales: Option.Option<Schema.Json>;
@@ -236,7 +236,7 @@ export class ProposalConflict extends Schema.TaggedError<
 >()("ProposalConflict", {
   id: Schema.String,
   attributes: Schema.Array(Schema.String),
-  /** The conflicting translated columns, by locale (pulpit#184); `{}` when none. */
+  /** The conflicting translated columns, by locale; `{}` when none. */
   locales: Schema.Record(Schema.String, Schema.Array(Schema.String)),
 }) {}
 
@@ -285,14 +285,14 @@ export interface ProposalConflictVerdict {
   readonly conflictingAttributes: ReadonlyArray<string>;
   /**
    * The touched translated columns that changed or can't be compared, by
-   * locale (pulpit#184); a locale with none is omitted, so it is `{}` unless
+   * locale; a locale with none is omitted, so it is `{}` unless
    * `conflicting`.
    */
   readonly conflictingLocales: TouchedLocales;
 }
 
 /**
- * The translated columns a proposal touches, by locale (pulpit#184).
+ * The translated columns a proposal touches, by locale.
  *
  * @since 0.1.0
  */
@@ -307,7 +307,7 @@ export type TouchedLocales = { readonly [locale: string]: ReadonlyArray<string> 
  * when either state lacks it (fail closed).
  *
  * On a localised leaf, `touchedLocales` names the translated columns the
- * proposal touches, by locale (pulpit#184), and each is read from the two
+ * proposal touches, by locale, and each is read from the two
  * versions' locale levels the same way. A locale neither version carries
  * cannot conflict (a new translation); a locale only one carries (added or
  * dropped in between) conflicts on every touched column. Pure.
@@ -405,7 +405,7 @@ export interface ValidatedPatch {
   readonly patch: ChainPatch;
   /** The attribute names it touches, in the leaf's declaration order. */
   readonly touchedKeys: ReadonlyArray<string>;
-  /** The decoded per-locale patch (pulpit#184), ready for the target's `update`; `{}` for none. */
+  /** The decoded per-locale patch, ready for the target's `update`; `{}` for none. */
   readonly locales: LocalePatch;
   /** The translated columns it touches, by locale, each in the declaration order. */
   readonly touchedLocales: TouchedLocales;
@@ -457,7 +457,7 @@ const jsonMembers = (
  * {@link InvalidProposalPatch}.
  *
  * On a localised leaf, `options.locales` is the per-locale patch as
- * submitted (pulpit#184): an object from a non-empty locale tag to an object
+ * submitted: an object from a non-empty locale tag to an object
  * of changes to `options.localeAttributes` (the translated columns), each
  * checked and decoded as the shared patch is. A `null` locale (dropping a
  * translation) is refused, as is any locale on a leaf with no
@@ -473,7 +473,7 @@ export const validateProposalPatch = <R>(
     readonly attributes: ReadonlyArray<string>;
     readonly forbidden: ReadonlyArray<string>;
     readonly decode: (patch: Schema.Json) => Effect.Effect<ChainPatch, InvalidProposalPatch, R>;
-    /** The per-locale patch as submitted (pulpit#184); absent, none. */
+    /** The per-locale patch as submitted; absent, none. */
     readonly locales?: Schema.Json;
     /** The translated columns a proposal may touch, in declaration order; absent, none. */
     readonly localeAttributes?: ReadonlyArray<string>;
@@ -581,7 +581,7 @@ export interface ProposalStore<E, R> {
   /** Close a pending row: write its terminal status, decider and provenance. */
   readonly close: (id: string, decision: ProposalDecision) => Effect.Effect<void, E, R>;
   /**
-   * Account erasure (pulpit#207), at most `limit` rows per call
+   * Account erasure, at most `limit` rows per call
    * (`PERF-DB-001`): delete the account's `pending`, `rejected` and
    * `withdrawn` proposals, and on its `accepted` ones (whose patch is
    * already in the target's chain) replace `authorId` with `replacement`
@@ -638,12 +638,12 @@ export interface ProposalsDefinition<Resource, E, R> {
   readonly decode: (patch: Schema.Json) => Effect.Effect<ChainPatch, InvalidProposalPatch, R>;
   /**
    * The translated columns a proposal may touch on a localised leaf
-   * (pulpit#184), in declaration order: the leaf's locale level's columns,
+   *, in declaration order: the leaf's locale level's columns,
    * or fewer. Omitted, a proposal carries no per-locale patch.
    */
   readonly localeAttributes?: ReadonlyArray<string>;
   /**
-   * A write budget on `submit` (pulpit#199, `./budgets`' `bindBudget`),
+   * A write budget on `submit` (`./budgets`' `bindBudget`),
    * spent as the `submit` action once the submission validates and before
    * it is stored. Omitted, submissions are unthrottled.
    */
@@ -688,7 +688,7 @@ export interface ProposalOps<E, R> {
   readonly submit: (input: {
     readonly targetId: string;
     readonly patch: Schema.Json;
-    /** A localised leaf's per-locale patch (pulpit#184); absent, none. */
+    /** A localised leaf's per-locale patch; absent, none. */
     readonly locales?: Schema.Json;
     readonly rationale: Option.Option<string>;
   }) => Effect.Effect<

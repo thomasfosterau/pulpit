@@ -1,5 +1,5 @@
 /**
- * The locale on the JSON:API wire (pulpit#184, part 2): a localised leaf's
+ * The locale on the JSON:API wire (part 2): a localised leaf's
  * effect-jsonapi handlers read the request's `Accept-Language` (reads) and
  * `Content-Language` (writes), report the locale they served, and the
  * resource cache is keyed by locale under one per-id version.
@@ -232,7 +232,7 @@ describe("a localised leaf's get, through Accept-Language", () => {
   });
 });
 
-describe("a localised leaf's list, through Accept-Language (pulpit#272)", () => {
+describe("a localised leaf's list, through Accept-Language", () => {
   it("serves one item per node in its preferred locale and reports a shared one as Content-Language", async () => {
     const { handlers, request, served, seed } = localisedPages();
     const document = await run(
@@ -364,7 +364,7 @@ describe("a localised leaf's cache, keyed by locale", () => {
     expect(cache.versionOf(after.id)).toEqual(Option.some(1n));
   });
 
-  /** The two caches the locale rules are checked on: the fake and `./cache`'s reference cache (pulpit#271). */
+  /** The two caches the locale rules are checked on: the fake and `./cache`'s reference cache. */
   const caches = [
     {
       label: "the in-memory fake",
@@ -391,7 +391,7 @@ describe("a localised leaf's cache, keyed by locale", () => {
   ] as const;
 
   it.each(caches)(
-    "keeps one compare-on-set version per id across its locales (pulpit#121) — $label",
+    "keeps one compare-on-set version per id across its locales — $label",
     ({ make }) => {
       const cache = make();
       /** Each locale's read, `Option.none()` for the id's unlocalised entry. */

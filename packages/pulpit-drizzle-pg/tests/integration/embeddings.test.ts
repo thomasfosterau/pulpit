@@ -1,5 +1,5 @@
 /**
- * The embedding store against PostgreSQL (pulpit#357), checked against the
+ * The embedding store against PostgreSQL, checked against the
  * kernel's `makeInMemoryEmbeddingStore` over the same calls: an idempotent
  * `enqueue` (a document with a vector is never queued again), `pending`
  * oldest first, `write` storing each vector and dequeuing it in one

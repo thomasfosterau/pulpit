@@ -54,8 +54,8 @@
  * The chain is read and written through a {@link VersionChain} the
  * application supplies, one per leaf: the operations above, each holding
  * the invariants, plus a `head` read and the erasure's whole-chain `purge`
- * (pulpit#246). In production it is `@thomasfosterau/pulpit-drizzle-pg`
- * (pulpit#247) delegating to effect-drizzle-ext's `-pg/chain`, which owns
+ *. In production it is `@thomasfosterau/pulpit-drizzle-pg`
+ * delegating to effect-drizzle-ext's `-pg/chain`, which owns
  * the discipline over the tables; in the kernel's tests it is
  * `./testing`'s `makeInMemoryVersionChain`, and `./testing`'s
  * `versionChainConformance` is the suite both must pass, so they cannot
@@ -126,7 +126,7 @@ export type ChainState = { readonly [column: string]: ColumnValue };
 export type ChainPatch = { readonly [column: string]: ColumnValue | undefined };
 
 /**
- * A localised leaf's locale level at one version (pulpit#56, model (b)): each
+ * A localised leaf's locale level at one version (model (b)): each
  * locale the version carries, keyed by its tag (`"en"`, `"fr-CA"`), and that
  * locale's translated columns. The node's shared (untranslated) columns stay
  * in its {@link ChainState}; a translated column lives here only. A store
@@ -172,7 +172,7 @@ export interface VersionSnapshot extends VersionChainEntry {
   /** The shared (untranslated) columns, or every column of a leaf with no locale level. */
   readonly state: ChainState;
   /**
-   * A localised leaf's locale level at this version (pulpit#56); absent, the
+   * A localised leaf's locale level at this version; absent, the
    * version carries no locale. A store reconstructs it with the rest of the
    * snapshot, or reports the version absent.
    */
@@ -186,9 +186,9 @@ export interface VersionSnapshot extends VersionChainEntry {
  */
 export interface VersionRow extends VersionSnapshot {
   readonly id: string;
-  /** The concrete leaf's wire type, threaded onto the node row at version 0 (#864 S3). */
+  /** The concrete leaf's wire type, threaded onto the node row at version 0. */
   readonly type: string;
-  /** The acting account (#1581) — recorded on the version row, never inferred. */
+  /** The acting account — recorded on the version row, never inferred. */
   readonly actorId: Option.Option<string>;
   /**
    * The contributor whose accepted proposal this version applies
@@ -310,10 +310,10 @@ export class BrokenChain extends Schema.TaggedError<
 
 /**
  * One leaf's version chain: the operation-level port the kernel writes and
- * reads every node of that leaf through (pulpit#246). `E` is the
+ * reads every node of that leaf through. `E` is the
  * implementation's own failure (a Drizzle store's query error); `R` its
  * requirements (a Drizzle store's `CurrentTransaction` — no operation opens
- * a transaction itself: the boundary belongs to the caller, website #1883).
+ * a transaction itself: the boundary belongs to the caller).
  *
  * The operations and their error channels are effect-drizzle-ext `-pg/chain`'s
  * `LeafChain` (`create`, `update`, `restore`, `delete`, `restoreVersion`,
@@ -399,7 +399,7 @@ export interface VersionChain<E, R> {
   /**
    * Hard-delete the node's whole chain, every level and the identity row
    * (the Drizzle store: one identity delete that cascades). The erasure's
-   * one write (`./purge`, pulpit#58), the documented exception to
+   * one write (`./purge`), the documented exception to
    * `VERSION-CHAIN-001/002`; nothing else calls it, and it never deletes
    * part of a chain. A no-op for an id with no versions.
    */
@@ -573,7 +573,7 @@ const localeChangeOf = (
 
 /**
  * The per-locale change set from locale level `from` to locale level `to`
- * (pulpit#56): every locale added, removed, or whose columns changed by
+ *: every locale added, removed, or whose columns changed by
  * {@link diffStates}; an unchanged locale is omitted. Pure and total.
  *
  * @example
@@ -626,7 +626,7 @@ export interface VersionComparison {
   /** `diffStates(from.state, to.state)`: the shared columns. */
   readonly changes: StateDiff;
   /**
-   * `diffLocales` over the two versions' locale levels (pulpit#56): the
+   * `diffLocales` over the two versions' locale levels: the
    * per-locale changes, `{}` for a leaf with no locale level. Kept beside
    * `changes` rather than inside it, since a column may itself be named
    * `locales`.
@@ -645,7 +645,7 @@ export interface CreateInput {
   readonly id: Option.Option<string>;
   /** The leaf's full state at version 0: its shared columns, on a localised leaf. */
   readonly state: ChainState;
-  /** A localised leaf's locale level at version 0 (pulpit#56); absent, none. */
+  /** A localised leaf's locale level at version 0; absent, none. */
   readonly locales?: LocaleStates;
   /** The acting account, recorded on the version row; none for a write with no session behind it. */
   readonly actorId: Option.Option<string>;
@@ -686,7 +686,7 @@ export interface UpdateInput extends Precondition {
    */
   readonly patch: ChainPatch;
   /**
-   * A localised leaf's per-locale patch ({@link LocalePatch}, pulpit#56):
+   * A localised leaf's per-locale patch ({@link LocalePatch}):
    * absent, every locale carries forward. Even a write that touches one
    * locale appends one version of the whole node.
    */
@@ -770,7 +770,7 @@ export type WriteAction = typeof WriteAction.Type;
  * The version written is the hook's patch applied to `prior`'s state (to
  * nothing for `create` and `restoreVersion`, whose patch is the whole state).
  *
- * On a localised leaf (pulpit#56) `locales` is the write's locale patch, in
+ * On a localised leaf `locales` is the write's locale patch, in
  * the same reading: the whole locale level for `create` and
  * `restoreVersion`, the caller's {@link LocalePatch} for `update` /
  * `restore`, `{}` for `delete`. `beforeAppend`'s patch is the shared
@@ -806,7 +806,7 @@ export interface ChainHooks<E, R> {
    */
   readonly beforeAppend?: (event: ChainAppendEvent) => Effect.Effect<ChainPatch, E, R>;
   /**
-   * The locale level's counterpart of `beforeAppend` (pulpit#56): runs at the
+   * The locale level's counterpart of `beforeAppend`: runs at the
    * same point, shown the same event, and its {@link LocalePatch} replaces
    * the event's `locales`, so a hook that validates or transforms a column
    * does so in every locale too. Absent, the event's locale patch is applied

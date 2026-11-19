@@ -1,5 +1,5 @@
 /**
- * **The media library** (pulpit#206) — the editorial fields a media leaf
+ * **The media library** — the editorial fields a media leaf
  * carries, the upload pipeline that records what an upload's metadata says,
  * the renditions gate, and albums.
  *
@@ -22,7 +22,7 @@
  *   it found, and stores the bytes through `./blobs`' commit-ordered write,
  *   so the version and its metadata land together and the bytes follow the
  *   commit. The transport (multipart, tus) is the application's.
- * - **EXIF location is kept by default** (owner decision on pulpit#206).
+ * - **EXIF location is kept by default**.
  *   A family opts out with `stripLocation: true`, which drops the GPS
  *   fields from what is *recorded*. It does not touch the bytes: an image's
  *   own EXIF block still carries its coordinates unless the application's
@@ -310,7 +310,7 @@ export interface MediaUploadOps<FE, XE, R> {
 export const defineMediaUploads = <FE, XE, R>(definition: {
   readonly files: Pick<FileWriteOps<FE, R>, "create" | "replace">;
   readonly extractor: MetadataExtractor<XE, R>;
-  /** Drop EXIF location from what is recorded (pulpit#206: kept by default). */
+  /** Drop EXIF location from what is recorded (kept by default). */
   readonly stripLocation?: true;
 }): MediaUploadOps<FE, XE, R> => {
   const { files, extractor } = definition;

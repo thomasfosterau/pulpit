@@ -1,5 +1,5 @@
 /**
- * Write budgets (pulpit#199): a bound budget refuses the write past its
+ * Write budgets: a bound budget refuses the write past its
  * limit with `WriteRejected` (`RATE_LIMITED`), frees up as its window
  * rolls (a fixed clock), exempts the moderate rung, and spends through a
  * chain write's before hook, a proposal's `submit` and a report's `file`.

@@ -1,5 +1,5 @@
 /**
- * **Notifications** (pulpit#197) — an outbox of content events written in
+ * **Notifications** — an outbox of content events written in
  * the triggering write's own transaction, a fan-out that tells each
  * recipient only what they may read, per-account preferences, an inbox,
  * and a delivery seam the application's transports fill.
@@ -23,7 +23,7 @@
  *   `comment.replied`, `comment.moderated`, `content.flagged`,
  *   `proposal.decided`, `follow.created`, `mention.created`) or the
  *   application's: every type here is generic in `Kind extends string`.
- * - **Mentions** (pulpit#198): {@link mentionCreatedHook} emits
+ * - **Mentions**: {@link mentionCreatedHook} emits
  *   `mention.created` for the accounts a write's documents newly mention,
  *   through the application's {@link MentionExtractor}; the kernel never
  *   reads a document's grammar.
@@ -588,7 +588,7 @@ export const mentionDrafts = (options: {
   }));
 
 /**
- * The mention seam (pulpit#198): the account ids a document mentions, in
+ * The mention seam: the account ids a document mentions, in
  * any order, duplicates allowed. The kernel never reads a document's
  * grammar, so the application fills it (for ProseKit, prosekit-utilities'
  * `extractMentions` over the editor's `mention` atom); it is pure and total,

@@ -1,5 +1,5 @@
 /**
- * `./pages` — the page recipe's one resolution read (pulpit#201): a path and
+ * `./pages` — the page recipe's one resolution read: a path and
  * a locale resolve to the node in the best locale it carries, to a redirect
  * from an alias, or to `PathNotFound`, over a routable, localised,
  * publish-gated leaf on the in-memory stores. A hidden, unpublished,
@@ -122,7 +122,7 @@ describe("localeFallbacks", () => {
   });
 });
 
-describe("resolveLocalised (pulpit#201)", () => {
+describe("resolveLocalised", () => {
   it("resolves a published page in the requested locale, its base language, or the default", async () => {
     const { pages, answer, publish } = site();
     const [id, exact, base, fallback, none] = await runAtNow(

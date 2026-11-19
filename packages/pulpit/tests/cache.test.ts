@@ -1,7 +1,7 @@
 /**
- * The reference resource cache (pulpit#205): compare-on-set over a
+ * The reference resource cache: compare-on-set over a
  * versioned KV (a late write-through below a newer version or an eviction
- * never re-caches, pulpit#121), serveability checked on both the write and
+ * never re-caches), serveability checked on both the write and
  * the read (`CACHE-AUTH-005`), decode-or-evict, the TTL backstop, a KV
  * failure read as a miss, and the cache driving `subtypeHandlers`'
  * write-through.
@@ -201,7 +201,7 @@ describe("makeResourceCache — decode, TTL and failures", () => {
   });
 });
 
-describe("makeResourceCache — locale keys (pulpit#271)", () => {
+describe("makeResourceCache — locale keys", () => {
   const localeKey = (locale: string) => `posts:v1:p-1\u001f${locale}`;
 
   it("keeps each locale's entry apart, and serves none to a reader of another locale or of no locale", async () => {

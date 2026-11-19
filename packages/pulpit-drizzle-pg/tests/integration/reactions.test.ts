@@ -1,5 +1,5 @@
 /**
- * The reaction store against PostgreSQL (pulpit#363), checked against the
+ * The reaction store against PostgreSQL, checked against the
  * kernel's `makeInMemoryReactionStore` over the same calls: `upsert`
  * answering the kind it replaced, `delete`, `tally` per node and kind,
  * `byAccount` newest first then by node, one page, and `eraseAccount` in

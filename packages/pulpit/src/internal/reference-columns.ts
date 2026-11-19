@@ -4,14 +4,13 @@
  * ({@link referenceListFilter}, behind `referencePrivacyFilter`, the subtype
  * `list` and `./edges`' `endpointFilter`) and as a row predicate
  * ({@link canViewReferenceRow}, behind `defineSubtype`'s `visibleRow` and
- * `./edges`' `canViewEndpoint`). Before pulpit#92 each module spelled the
- * predicate for itself.
+ * `./edges`' `canViewEndpoint`).
  *
  * The row's facts are read by `ownedFacts`, so an owner-like value that is
  * not a non-empty string reads as no owner and never reaches the follower
- * seam (pulpit#85, pulpit#100). The row predicate's decision is effect-auth's
- * `ReferenceAccess.canView` (pulpit#5); the list filter stays the kernel's,
- * since effect-auth's drizzle filter renders no group arm (effect-auth#638).
+ * seam. The row predicate's decision is effect-auth's
+ * `ReferenceAccess.canView`; the list filter stays the kernel's,
+ * since effect-auth's drizzle filter renders no group arm.
  *
  * Internal: not a package entry point (absent from `package.json`
  * `exports`) and excluded from the generated API docs (`docgen.json`).
@@ -70,7 +69,7 @@ const followersColumn = (
 
 /**
  * The column naming a `group` row's group, when the leaf declares one and
- * the view carries it (pulpit#194). A declared column the view lacks reads
+ * the view carries it. A declared column the view lacks reads
  * as none: the group arm then matches nothing (fail closed).
  */
 const groupColumnOf = (
@@ -82,7 +81,7 @@ const groupColumnOf = (
   );
 
 /**
- * The group arm of a member's list (pulpit#194): `<visibility> = 'group' AND
+ * The group arm of a member's list: `<visibility> = 'group' AND
  * <groupColumn> IN (<groups>)`, when the column is there and the read scope
  * carries the viewer's groups; otherwise `never`. Shared by the owned and
  * reference list filters.
@@ -105,10 +104,10 @@ export const groupArm = <Following>(
  * otherwise `visibility = 'public'`, and for a signed-in viewer also
  * `visibility = 'followers' AND (<followersOfColumn> = <viewer> OR
  * <followersOfColumn> IN (<following>))` when the leaf declares that column
- * and the view carries it (pulpit#92): the account the column names and its
+ * and the view carries it: the account the column names and its
  * followers read its `followers` rows. Its `private` rows stay the
  * view-private rung's alone. A `group` row lists for the members of the
- * group its declared `groupColumn` names ({@link groupArm}, pulpit#194).
+ * group its declared `groupColumn` names ({@link groupArm}).
  * Never throws.
  *
  * @internal
@@ -148,19 +147,19 @@ export const referenceListFilter = <Following>(
 /**
  * The reference privacy arm as a row predicate, the same facts as
  * {@link referenceListFilter}, decided by effect-auth's
- * `ReferenceAccess.canView` (pulpit#5): a view without a `visibility`
+ * `ReferenceAccess.canView`: a view without a `visibility`
  * column shows the row; otherwise it shows when its visibility is exactly
  * `public`, to the view-private rung, or, when it is exactly `followers` and
  * the leaf declares a followers column the view carries, to the signed-in
  * account that column names and to its followers, as the follower seam
- * answers (pulpit#92). A `group` row shows to the members of the group its
+ * answers. A `group` row shows to the members of the group its
  * declared `groupColumn` (one the view carries) names, as the audience
- * seam's `isMember` answers (pulpit#194). That account's `private` rows stay
+ * seam's `isMember` answers. That account's `private` rows stay
  * the view-private rung's alone. A visibility outside the enum (a `NULL`
  * included) reads as `private`, never as an absent axis. A column value that
  * is not a non-empty string names no account, so it never matches the
- * viewer and the seam is never asked about it (pulpit#85, pulpit#100). A
- * viewer whose id is empty reads as anonymous (effect-auth#661). Anything
+ * viewer and the seam is never asked about it. A
+ * viewer whose id is empty reads as anonymous. Anything
  * else is hidden, which the caller answers as `NodeNotFound`
  * (`SEC-AUTH-ENUM-001`). The soft-delete axis is the caller's. Never fails.
  *

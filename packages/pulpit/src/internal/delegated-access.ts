@@ -1,5 +1,5 @@
 /**
- * **The bridge to effect-auth's read access** (pulpit#5, option (c)): the
+ * **The bridge to effect-auth's read access** (option (c)): the
  * kernel's row predicates and read scope are decided by effect-auth's
  * `OwnedAccess` / `ReferenceAccess`, never spelt here.
  *
@@ -18,7 +18,7 @@
  *   caller's own context, so a seam with requirements still runs in them.
  *
  * effect-auth's rules then hold for every kernel read: a viewer whose id is
- * empty is anonymous (effect-auth#661), an unprovided seam fails closed, and
+ * empty is anonymous, an unprovided seam fails closed, and
  * a seam is asked only for a signed-in viewer on a published row of its
  * visibility. Every value a row carries is read by the caller first
  * (`ownedFacts`, {@link referenceRowOf}), so a NULL or out-of-enum
@@ -81,7 +81,7 @@ const reference = ReferenceAccess.make({ guards, viewPrivate: "private" });
 
 /**
  * The viewer the kernel's reads act as: an account whose id is empty reads
- * as anonymous, as effect-auth's guards read it (effect-auth#661). The rung
+ * as anonymous, as effect-auth's guards read it. The rung
  * checks outside the delegated predicates (the view-deleted rung, the
  * head-reading rungs) read the viewer through it, so they agree with them.
  *

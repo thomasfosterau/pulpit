@@ -3,8 +3,8 @@
  *
  * @copyright Thomas Foster
  *
- * The kernel's `VersionChain` port (pulpit#246) over effect-drizzle-ext
- * `-pg/chain` (pulpit#247): one port per leaf of an application's tree,
+ * The kernel's `VersionChain` port over effect-drizzle-ext
+ * `-pg/chain`: one port per leaf of an application's tree,
  * written straight over the tables `makeTreeTables` derives from it.
  *
  * Every operation but `purge` is `-pg/chain`'s own, so every invariant of the
@@ -14,7 +14,7 @@
  * extends) is held by the chain; this module maps the kernel's inputs onto
  * it and its tagged errors one to one onto the kernel's. `purge` deletes the
  * node's identity row, which cascades through every level of its chain
- * (effect-drizzle-ext#145): the erasure's one write (`VERSION-CHAIN-001/002`'s
+ *: the erasure's one write (`VERSION-CHAIN-001/002`'s
  * documented exception). No operation opens a transaction: each requires the
  * application's `CurrentTransaction`, as the kernel's `R`.
  *

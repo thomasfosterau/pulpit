@@ -3,7 +3,7 @@
  *
  * @copyright Thomas Foster
  *
- * The kernel's read predicates and list order, rendered to SQL (pulpit#247):
+ * The kernel's read predicates and list order, rendered to SQL:
  * a `ListFilter` as a Drizzle `WHERE`, and a checked `ListOrder` as an
  * `ORDER BY`, over the columns of a view. The contract is the kernel's
  * (docs/content-model.md → `./filter`, and docs/seams.md → `LeafStore`), which its in-memory

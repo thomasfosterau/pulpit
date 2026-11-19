@@ -1,6 +1,6 @@
 /**
  * `./api` — the `wp/v2` read API over leaves bound to WordPress's post types,
- * against the kernel's in-memory fakes (pulpit#86, phase 1): the read rule
+ * against the kernel's in-memory fakes (phase 1): the read rule
  * (`SEC-AUTH-ENUM-001`) through `/posts/{id}` and `/posts`, the collection
  * headers, related nodes the viewer can't read, `_embed`'s batching, the
  * cache header, the routes it refuses, and the wire forms WordPress core
@@ -167,12 +167,12 @@ interface SiteOptions {
   readonly failing?: "render" | "list";
   /** Bind `category` and `post_tag` over two term leaves and their assignment families (phase 2). */
   readonly terms?: boolean;
-  /** Make the `posts` leaf publish-gated over `makeInMemoryPublication` (pulpit#220). */
+  /** Make the `posts` leaf publish-gated over `makeInMemoryPublication`. */
   readonly gated?: boolean;
-  /** Make the `posts` leaf localised (`title` and `content` per locale, default `en`) and bind `?lang=` (pulpit#223). */
+  /** Make the `posts` leaf localised (`title` and `content` per locale, default `en`) and bind `?lang=`. */
   readonly localised?: boolean;
   /**
-   * Bind a ranked `search` over the posts' titles (pulpit#224): `scoped` runs the
+   * Bind a ranked `search` over the posts' titles: `scoped` runs the
    * kernel's `hybridSearch` under the viewer's `searchScopeFilter`; `stale` is an index
    * that ignores the scope, returning every post, so only hydration protects the reader.
    */
@@ -334,7 +334,7 @@ const site = (options: SiteOptions = {}) => {
     visibility: "visibility",
     mimeType: "mimeType",
   };
-  /** Every batch the posts binding asked `scheduled` for (pulpit#220). */
+  /** Every batch the posts binding asked `scheduled` for. */
   const scheduledReads: Array<ReadonlyArray<string>> = [];
   const postOps =
     options.failing === "list"
@@ -431,7 +431,7 @@ const site = (options: SiteOptions = {}) => {
               return ops.media.getMany(ids);
             },
           },
-          // A file leaf's bytesPending column: lists read confirmed files only (pulpit#221).
+          // A file leaf's bytesPending column: lists read confirmed files only.
           columns: { ...columns, bytesPending: "bytesPending" },
           fields: fieldsOf,
           serveable,
@@ -901,7 +901,7 @@ describe("the wp/v2 read API — caching (CACHE-AUTH-005)", () => {
   });
 });
 
-describe("the wp/v2 read API — conditional reads (pulpit#86, #65)", () => {
+describe("the wp/v2 read API — conditional reads", () => {
   const conditional = (
     wp: ReturnType<typeof site>,
     path: string,
@@ -993,7 +993,7 @@ describe("the wp/v2 read API — conditional reads (pulpit#86, #65)", () => {
   });
 });
 
-describe("the wp/v2 read API — a publish-gated leaf (pulpit#46, #220)", () => {
+describe("the wp/v2 read API — a publish-gated leaf", () => {
   /** `live` is published; `fresh` never was; `soon` is scheduled for later; `edited` is live with a newer version scheduled. */
   const gatedSite = async () => {
     const wp = site({ gated: true });
@@ -1070,7 +1070,7 @@ describe("the wp/v2 read API — a publish-gated leaf (pulpit#46, #220)", () => 
   });
 });
 
-describe("the wp/v2 read API — lang (pulpit#223)", () => {
+describe("the wp/v2 read API — lang", () => {
   /** `hello` in en, pt and pt-BR; `plain` in en alone; `french` in fr alone; a draft in pt. */
   const localisedSite = async () => {
     const wp = site({ localised: true });
@@ -1216,7 +1216,7 @@ describe("the wp/v2 read API — lang (pulpit#223)", () => {
   });
 });
 
-describe("the wp/v2 read API — search (pulpit#224)", () => {
+describe("the wp/v2 read API — search", () => {
   const searchSite = async (search: "scoped" | "stale" = "scoped") => {
     const wp = site({ search });
     const post = (title: string, state: { readonly [column: string]: ColumnValue } = {}) =>
@@ -1322,7 +1322,7 @@ describe("the wp/v2 read API — search (pulpit#224)", () => {
     expect(short.wireId).toBeGreaterThan(0);
   });
 
-  it("shows a scheduled item found by search as future, with its scheduled date (pulpit#220)", async () => {
+  it("shows a scheduled item found by search as future, with its scheduled date", async () => {
     const wp = site({ gated: true, search: "scoped" });
     const publication = Option.match(wp.ops.posts.publication, {
       onNone: () => expect.unreachable("a gated leaf has publication operations"),
@@ -1349,7 +1349,7 @@ describe("the wp/v2 read API — search (pulpit#224)", () => {
     ).toEqual([{ status: "future", date_gmt: "2999-01-01T00:00:00" }]);
   });
 
-  it("refuses lang with search as rest_invalid_param, which names lang (pulpit#326)", async () => {
+  it("refuses lang with search as rest_invalid_param, which names lang", async () => {
     const wp = site({ localised: true, search: "scoped" });
     await wp.create("posts", {}, member, { en: { title: "tomato" } });
     const both = await wp.get("/wp/v2/posts", [
@@ -1574,12 +1574,12 @@ describe("the wp/v2 read API — every filter and order", () => {
     expect(await of([["author_exclude", String(memberWire)]])).toEqual([theirs.wireId]);
     expect(await of([["author", String(strangerWire)]])).toEqual([theirs.wireId]);
     expect(await of([["parent", String(top.wireId)]])).toEqual([child.wireId]);
-    // `top` has no parent, which WordPress stores as `post_parent = 0` and keeps (pulpit#170).
+    // `top` has no parent, which WordPress stores as `post_parent = 0` and keeps.
     expect(await of([["parent_exclude", String(top.wireId)]])).toEqual([theirs.wireId, top.wireId]);
     expect(await of([["menu_order", "2"]])).toEqual([child.wireId]);
   });
 
-  it("keeps every top-level page under parent_exclude, as WordPress does (pulpit#170)", async () => {
+  it("keeps every top-level page under parent_exclude, as WordPress does", async () => {
     const wp = site();
     const top = await wp.create("pages", { slug: "top" });
     const child = await wp.create("pages", { slug: "child", parentId: top.id });
@@ -1658,7 +1658,7 @@ describe("the wp/v2 read API — every filter and order", () => {
     const shown = await wp.create("posts", { slug: "shown" });
     const drafted = await wp.create("posts", { slug: "drafted", draft: true });
     const hidden = await wp.create("posts", { slug: "hidden", visibility: "private" });
-    // A `group` row is non-public, so its status is `private` too (pulpit#194).
+    // A `group` row is non-public, so its status is `private` too.
     const shared = await wp.create("posts", { slug: "shared", visibility: "group" });
     const owner = Option.some(member);
     const asc = [
@@ -2010,7 +2010,7 @@ describe("the wp/v2 read API — items and their terms (phase 2)", () => {
     expect(await ids([["categories", "999"]])).toEqual([]);
   });
 
-  it("excludes a term's readable members through nonMemberFilter (pulpit#215), joined by tax_relation", async () => {
+  it("excludes a term's readable members through nonMemberFilter, joined by tax_relation", async () => {
     const { wp, news, sport, hot, open, theirs } = await taxonomySite();
     const ids = async (query: ReadonlyArray<readonly [string, string]>) =>
       sorted(listed(await wp.get("/wp/v2/posts", query)));
@@ -2167,7 +2167,7 @@ describe("the wp/v2 read API — phase 2 wire forms (golden)", () => {
   });
 });
 
-describe("the wp/v2 read API — media from a file leaf (pulpit#221)", () => {
+describe("the wp/v2 read API — media from a file leaf", () => {
   it("reads a file whose bytes are pending as missing: 404, out of lists and totals, never featured", async () => {
     const wp = site();
     const ready = await wp.create("media", { mimeType: "image/jpeg", slug: "ready" });
@@ -2220,7 +2220,7 @@ describe("the wp/v2 read API — media from a file leaf (pulpit#221)", () => {
   });
 });
 
-describe("the wp/v2 read API — a routable leaf's paths (pulpit#222)", () => {
+describe("the wp/v2 read API — a routable leaf's paths", () => {
   /** A post written through `./paths`' `routable`, so its slug is its claimed path. */
   const routed = () => {
     const wp = site();

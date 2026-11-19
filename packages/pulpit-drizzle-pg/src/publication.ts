@@ -4,7 +4,7 @@
  * @copyright Thomas Foster
  *
  * The kernel's live pointer (docs/seams.md → `PublicationStore` and
- * `LiveView`, pulpit#46) over a tree's pointer level (pulpit#247):
+ * `LiveView`) over a tree's pointer level:
  * effect-drizzle-ext's append-only `${pointer}_pointer` log and the leaf
  * views `makeTreeViews` resolves at its effective fact. One publish-gated
  * leaf gets three seams, the kernel's `PublicationDeclaration` and its
@@ -12,7 +12,7 @@
  *
  * - `facts`, the `PublicationStore` over the log: `record`, `effective` (the
  *   latest-recorded fact whose `at` has arrived, at `now()`), `facts` and
- *   `scheduled` (#325);
+ *   `scheduled`;
  * - `live`, the `LiveView`: the row at the effective fact's version, with
  *   that version, the head's `action`, `draft = false` and the fact's `at`
  *   as `publishedAt`; `list` / `distinct` read the head row for a node
@@ -87,7 +87,7 @@ export interface PublishGated<E, I> {
   readonly leaves: LeafStore<LeafRow, SQLWrapper, E, I>;
   /**
    * The leaf's `SearchBranch`, one value for every viewer: each request
-   * ranks the rows `live.list` reads for its `headFor` (pulpit#346: per
+   * ranks the rows `live.list` reads for its `headFor` (per
    * node, its head when it matches `headFor`, else its live row), in the
    * same statement as its scope (`./search`'s `makeSearchBranch`
    * contract). The caller passes the kernel's `searchHeadFor(leaf,
@@ -127,7 +127,7 @@ const PUBLISHED_AT = "publishedAt";
  * - `leaves` is the current-version store with `draft = NOT EXISTS (a live
  *   row)`, the stored draft column ignored.
  * - A leaf in `keyed` (its keyed head view and the pointer's keyed view,
- *   pulpit#343) reads one row per locale: `live.list` / `distinct` the
+ *) reads one row per locale: `live.list` / `distinct` the
  *   locale rows of the version each node is read at (its head when its
  *   shared head matches `headFor`, else its live version), and
  *   `live.listLocalised` each node's most preferred carried locale of them;
@@ -225,7 +225,7 @@ export const makePublications = <Leaf extends string, I, Relations extends AnyRe
   /**
    * A localised leaf's keyed views: `views` its keyed head views
    * (`views.keyed`) and `live` the pointer's (`views.pointers[pointer].keyed`).
-   * A leaf in both reads one row per locale (pulpit#343).
+   * A leaf in both reads one row per locale.
    */
   readonly keyed?: {
     readonly views: { readonly [leaf: string]: PgView };
@@ -367,7 +367,7 @@ export const makePublications = <Leaf extends string, I, Relations extends AnyRe
           listLocalised: () => Effect.succeed({ rows: [], total: 0 }),
         },
         leaves: storeOver(leaf, sharedHeads, owners, CurrentTransaction),
-        // A search ranks nodes, so it reads the shared rows a live list would (pulpit#346).
+        // A search ranks nodes, so it reads the shared rows a live list would.
         searchBranch: (options) =>
           searchOver((request) => chosen(request.headFor), options, CurrentTransaction),
       }),
@@ -390,7 +390,7 @@ export const makePublications = <Leaf extends string, I, Relations extends AnyRe
             owners,
             CurrentTransaction,
           ),
-          // A search ranks nodes, so it reads the shared rows a live list would (pulpit#346).
+          // A search ranks nodes, so it reads the shared rows a live list would.
           searchBranch: (options) =>
             searchOver((request) => chosen(request.headFor), options, CurrentTransaction),
         };

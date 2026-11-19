@@ -1,5 +1,5 @@
 /**
- * `./discovery` (pulpit#203) against the in-memory seams.
+ * `./discovery` against the in-memory seams.
  *
  * - What is discoverable: for every visibility × draft × moderation state ×
  *   tombstone × path cell of an owned leaf, the feed and the sitemap list a
@@ -11,7 +11,7 @@
  * - Keyset paging: every page size walks the same order with no node
  *   skipped or repeated, ties and `NULL` keys included, and a page the
  *   guards thin still carries the cursor on.
- * - A localised leaf (pulpit#265): every listed `(node, locale)` exactly
+ * - A localised leaf: every listed `(node, locale)` exactly
  *   once in the feed and the sitemap, for every page size; a locale only
  *   the unpublished head carries is not listed; the per-locale feed; the
  *   sitemap's alternates, complete even when a page would end inside a
@@ -472,7 +472,7 @@ describe("purgeHintHook", () => {
   });
 });
 
-// ── A localised leaf (pulpit#265) ─────────────────────────────────────
+// ── A localised leaf ─────────────────────────────────────
 
 describe("a localised leaf", () => {
   /** A localised, publish-gated owned leaf and its discovery. */

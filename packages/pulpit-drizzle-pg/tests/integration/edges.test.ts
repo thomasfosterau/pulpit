@@ -1,5 +1,5 @@
 /**
- * The edge store against PostgreSQL (pulpit#356), checked against the
+ * The edge store against PostgreSQL, checked against the
  * kernel's `makeInMemoryEdgeStore` over the same writes. Edge ids differ
  * between the two (a random UUID, `edge-000n`), so edges are compared by
  * their columns, in the list's order (both insert-ordered here).

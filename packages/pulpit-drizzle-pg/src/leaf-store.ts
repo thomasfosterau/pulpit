@@ -5,7 +5,7 @@
  *
  * The kernel's `LeafStore` (docs/seams.md → `LeafStore`) over the
  * fail-closed current-version views effect-drizzle-ext's `makeTreeViews`
- * derives from a tree (pulpit#247), plus the owner table the kernel's owned
+ * derives from a tree, plus the owner table the kernel's owned
  * leaves stamp (`core.node_owner` in the applications), which is pulpit's
  * vocabulary and so lives here, not in effect-drizzle-ext.
  *
@@ -112,7 +112,7 @@ const PROJECTED = ["id", "version", "action", "timestamp", "createdAt", OWNER_CO
  * level column named `createdAt` shadowed by the birth timestamp (the trap
  * gardeneria hit in its hand-written current-version view). Refuse such a
  * tree at module load instead, naming both sources. `makeTreeViews` already
- * refuses a clash among its own sources (effect-drizzle-ext#168), so this
+ * refuses a clash among its own sources, so this
  * check is what still catches a key the owner join adds (`ownerId`).
  */
 const checkMerge = (
@@ -156,7 +156,7 @@ const checkMerge = (
  *
  * A keyed leaf (one in `views.keyed`, which `makeTreeViews` derives for a
  * leaf with a keyed level) reads its keyed view instead (docs/seams.md →
- * `LeafStore` → "A localised leaf's view", pulpit#56): `columns`, `list`
+ * `LeafStore` → "A localised leaf's view"): `columns`, `list`
  * and `distinct` read its `(id, locale)` rows, one `NULL`-locale row for a
  * node with none, so the `locale` arm and the translated columns filter;
  * `get` / `getMany` read the shared row, one per node; and `listLocalised`

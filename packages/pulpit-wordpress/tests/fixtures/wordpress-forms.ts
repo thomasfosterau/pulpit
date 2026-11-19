@@ -155,7 +155,7 @@ export const LINKS_FORM: WireForm = {
   ],
 };
 
-/** `CategoryModel` (pulpit#86, phase 2). */
+/** `CategoryModel` (phase 2). */
 export const CATEGORY_FORM: WireForm = {
   id: "number",
   count: "number",

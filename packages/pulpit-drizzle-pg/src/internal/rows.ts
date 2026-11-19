@@ -299,7 +299,7 @@ const columnSet = (columns: FilterColumns): HashSet.HashSet<string> =>
   HashSet.fromIterable(R.keys(columns));
 
 /**
- * One row per node of a localised source (pulpit#272): of the node's rows
+ * One row per node of a localised source: of the node's rows
  * matching `where` whose locale is one of `locales`, the one whose locale
  * comes first, as `LocalisedListQuery` spells it (`DISTINCT ON (id) …
  * ORDER BY id, array_position($locales, locale)`). `locales` is non-empty
@@ -336,7 +336,7 @@ const localeChoice = (
 
 /**
  * The kernel's localised `LeafStore` (docs/seams.md → `LeafStore` → "A
- * localised leaf's view", pulpit#56, pulpit#272): `get` / `getMany` and the
+ * localised leaf's view"): `get` / `getMany` and the
  * owner stamp over the shared rows, `list` / `distinct` over the
  * `(id, locale)` rows (`columns` includes `locale`), and `listLocalised` one
  * row per node in its most preferred locale.

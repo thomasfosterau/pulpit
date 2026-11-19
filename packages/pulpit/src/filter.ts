@@ -14,9 +14,9 @@
  *
  * `Following` is whatever a seam hands the `in` node: the follower seam's
  * set of followed accounts, or an edge family's members
- * (`EdgeStore.members`, pulpit#113); a subquery (`SQLWrapper`) for SQL, a
+ * (`EdgeStore.members`); a subquery (`SQLWrapper`) for SQL, a
  * set for the in-memory evaluator. The `notIn` node takes the same
- * `Following`, for an exclusion (`EdgeOps.nonMemberFilter`, pulpit#191).
+ * `Following`, for an exclusion (`EdgeOps.nonMemberFilter`).
  *
  * Rendering contract a SQL renderer must honour:
  *
@@ -25,15 +25,15 @@
  * | `always` | no predicate (`undefined` to Drizzle's `.where`) |
  * | `never` | a predicate no row satisfies (the apps: `id = '00000000-…'`) |
  * | `eq` / `ne` | `col = $v` / `col <> $v` — a `NULL` column satisfies neither |
- * | `in` | `col IN (<seam subquery>)` — a subquery, never a materialised array (#1107); a `NULL` column satisfies none |
- * | `notIn` | `(col IS NULL OR col NOT IN (<seam subquery>))` — the complement of `in` over the same subquery (pulpit#191); a `NULL` column satisfies it, and the subquery must never yield a `NULL` (`NOT IN` over a set holding one is `NULL` for every row) |
+ * | `in` | `col IN (<seam subquery>)` — a subquery, never a materialised array; a `NULL` column satisfies none |
+ * | `notIn` | `(col IS NULL OR col NOT IN (<seam subquery>))` — the complement of `in` over the same subquery; a `NULL` column satisfies it, and the subquery must never yield a `NULL` (`NOT IN` over a set holding one is `NULL` for every row) |
  * | `gt` / `gte` / `lt` / `lte` | `col > $v` / `col >= $v` / `col < $v` / `col <= $v` — a string compared with `COLLATE "C"` (code-point order), a `Date` as a timestamp, a number numerically (`±Infinity` included); a `NULL` column satisfies none |
  * | `anyOf` | `col = ANY($values)` — a `NULL` column satisfies none; empty is `never`; never a `NULL` element |
  * | `noneOf` | `col <> ALL($values)` — a `NULL` column satisfies none; empty is `always` (`<> ALL` over no values is true); never a `NULL` element (`<> ALL('{1,NULL}')` is `NULL` for every row outside the set) |
  * | `isNull` | `col IS NULL` — the one node a `NULL` column satisfies by itself |
  * | `published` | `(col IS NOT NULL AND col <= now())` — the database's clock, one per query |
  * | `notPublished` | `(col IS NULL OR col > now())` — parenthesised, so it cannot bind to a surrounding `AND` |
- * | `locale` | `col = ANY($locales)` over the view's locale column (pulpit#56) — as `anyOf`; on a view with no locale level, `never` |
+ * | `locale` | `col = ANY($locales)` over the view's locale column — as `anyOf`; on a view with no locale level, `never` |
  * | `and` / `or` | `AND` / `OR` over the parts |
  *
  * An `anyOf` / `noneOf` node carrying more than {@link MAX_SET_VALUES} values,
@@ -97,7 +97,7 @@ export type Comparable = string | number | Date;
  * literal set past it is `never`, so no request drives an unbounded
  * `= ANY($values)` parameter. An application's own bound sits below it:
  * `@thomasfosterau/pulpit-wordpress` caps each list parameter at 100, a cap
- * WordPress core itself doesn't set (pulpit#86).
+ * WordPress core itself doesn't set.
  *
  * @since 0.1.0
  */
@@ -185,7 +185,7 @@ export const isIn = <Following>(column: string, set: Following) =>
   ({ kind: "in", column, set }) as const;
 
 /**
- * `(column IS NULL OR column NOT IN (following))` (pulpit#191): the exact
+ * `(column IS NULL OR column NOT IN (following))`: the exact
  * complement of {@link isIn} over the same seam set, so `isIn(c, s)` and
  * `isNotIn(c, s)` partition every row. A `NULL` or absent column satisfies
  * it, whatever `following` holds, and is never asked about; the seam's set
@@ -288,7 +288,7 @@ export const noneOf = (column: string, values: ReadonlyArray<Scalar>) =>
  * `column IS NULL`: the column holds no value (`evaluate` reads an absent
  * column so, too). The one node a `NULL` column satisfies on its own, so
  * `or(isNull(column), noneOf(column, values))` is the exclusion that keeps an
- * unset column, which a bare {@link noneOf} drops (pulpit#170).
+ * unset column, which a bare {@link noneOf} drops.
  *
  * @since 0.1.0
  */
@@ -310,7 +310,7 @@ export const notPublished = (column: string) => ({ kind: "notPublished", column 
 
 /**
  * The column a localised leaf's current-version view keys its locale level
- * by (pulpit#56): one view row per `(id, locale)` the head carries, the
+ * by: one view row per `(id, locale)` the head carries, the
  * shared columns joined in, and a node carrying no locale as one row whose
  * `locale` is `NULL`. No leaf column may take the name.
  *
@@ -319,7 +319,7 @@ export const notPublished = (column: string) => ({ kind: "notPublished", column 
 export const LOCALE_COLUMN = "locale";
 
 /**
- * The locale arm (pulpit#56): the view rows in one of `locales`, read from
+ * The locale arm: the view rows in one of `locales`, read from
  * the view's {@link LOCALE_COLUMN} as {@link anyOf} reads its column. A row
  * carrying no locale (a `NULL` locale), and every row of a view with no
  * locale level, is in none. No locales is {@link never}, and so are more than
@@ -461,7 +461,7 @@ const instantOf = (value: ColumnValue): number =>
  * `NULL > $v` and `NULL <> ALL(…)` as `NULL`, which a `WHERE` drops, so `ne`
  * is not the complement of `eq`, nor `noneOf` of `anyOf`, over a nullable
  * column; {@link isNull} is the one node such a row satisfies. Such a row fails an `in` without `context.contains` being asked, so
- * the answer never depends on the seam (pulpit#94). A set past
+ * the answer never depends on the seam. A set past
  * {@link MAX_SET_VALUES} is `never`. Outside the contract it fails closed: a
  * column of another type than the comparand (or than any of a set's values),
  * and a `NaN` (or invalid `Date`) comparand, set element or column, satisfy

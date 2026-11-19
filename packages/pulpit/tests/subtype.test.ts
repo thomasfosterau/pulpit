@@ -2,7 +2,7 @@
  * The subtype factory's access semantics against the in-memory seams.
  *
  * - The row predicate: gardeneria's `packages/database/tests/guards.test.ts`
- *   (`canViewOwnedE`, the follower seam) plus the draft axis (#1118).
+ *   (`canViewOwnedE`, the follower seam) plus the draft axis.
  * - The list filter: that it NEVER disagrees with the row predicate — every
  *   row of the visibility × draft × owner matrix, for every viewer, with and
  *   without a draft column. The apps assert this with integration tests
@@ -18,18 +18,18 @@
  * - The factory's reads never disagree (`SEC-AUTH-ENUM-001`): `get` and
  *   `getMany` serve exactly the rows `list` does, for every row state ×
  *   viewer, out-of-enum visibility and a `null` or absent draft included
- *   (pulpit#73), and an owner column holding no string read as no owner
- *   (pulpit#85).
+ *, and an owner column holding no string read as no owner
+ *.
  * - A reference leaf's write and history operations answer every row ×
  *   caller × operation as that caller's `get` implies, and a refused one
- *   writes nothing (pulpit#101).
+ *   writes nothing.
  * - A reference leaf's `followers` rows, read through its declared
- *   `followersOfColumn` (pulpit#92): the list arm's shape, and `get` /
+ *   `followersOfColumn`: the list arm's shape, and `get` /
  *   `getMany` / `list` and the write and history gates agreeing for every
  *   visibility × curator × tombstone × viewer, the named curator reading
  *   its own `followers` rows (never its `private` ones), and a non-string
  *   curator matching no viewer and never reaching the follower seam.
- * - The list order (pulpit#112): one and two keys in each direction, `NULL`s
+ * - The list order: one and two keys in each direction, `NULL`s
  *   last in both, the `id` tiebreak across page boundaries, code-point
  *   strings, dates, an undeclared column refused before the store is read,
  *   and membership and the total unchanged under every order × viewer.
@@ -218,7 +218,7 @@ describe("canViewOwned (the owned-material read predicate)", () => {
     expect(await view("private", as(otherMember), { followers: everyoneFollows })).toBe(false);
   });
 
-  it("a draft narrows even public to the owner and moderator+ (#1118)", async () => {
+  it("a draft narrows even public to the owner and moderator+", async () => {
     expect(await view("public", anonymous, { draft: true })).toBe(false);
     expect(await view("public", as(otherMember), { draft: true })).toBe(false);
     expect(await view("followers", as(follower), { draft: true })).toBe(false);
@@ -226,7 +226,7 @@ describe("canViewOwned (the owned-material read predicate)", () => {
     expect(await view("private", as(moderator), { draft: true })).toBe(true);
   });
 
-  it("an unapproved row narrows even public to the owner and moderator+ (pulpit#154)", async () => {
+  it("an unapproved row narrows even public to the owner and moderator+", async () => {
     expect(await view("public", anonymous, { unapproved: true })).toBe(false);
     expect(await view("public", as(otherMember), { unapproved: true })).toBe(false);
     expect(await view("followers", as(follower), { unapproved: true })).toBe(false);
@@ -248,7 +248,7 @@ describe("readScopeFor", () => {
     expect(readScopeFor(as(moderator), websitePolicy, follows).kind).toBe("member");
   });
 
-  it("carries the member's groups when the seam answers them (pulpit#194)", () => {
+  it("carries the member's groups when the seam answers them", () => {
     const memberships = makeInMemoryMembershipStore();
     Effect.runSync(
       memberships.add({ groupId: "g-1", accountId: follower.id, role: "member", at: NOW }),
@@ -413,7 +413,7 @@ describe("the reference list predicates", () => {
     expect(filters(anonymous, false, viewOf())).toEqual(ne("action", "delete"));
   });
 
-  describe("the followers arm (pulpit#92)", () => {
+  describe("the followers arm", () => {
     const curated = viewOf("visibility", "curatorId");
     const declared: Extract<LeafAccess, { kind: "reference" }> = {
       kind: "reference",
@@ -497,7 +497,7 @@ describe("the write gates", () => {
     expect(await gate(as(moderator))).toEqual(Option.none());
     expect(await gate(as(admin))).toEqual(Option.none());
     // Another member below the rung: Forbidden, not NotFound. The gate never reads visibility, so it
-    // deliberately confirms any owned row with an owner record, hidden or not (pulpit#24; SECURITY.md →
+    // deliberately confirms any owned row with an owner record, hidden or not (docs/SECURITY.md →
     // "Existence disclosure by the write gates").
     expect(await gate(as(otherMember))).toEqual(Option.some("Forbidden"));
     expect(await gate(as(contributor))).toEqual(Option.some("Forbidden"));
@@ -547,7 +547,7 @@ const ownedPosts = () => {
     },
     leaves,
     // Yields first, as a real session lookup does: a history read forked
-    // beside the gate would then run before the gate refuses (pulpit#82).
+    // beside the gate would then run before the gate refuses.
     viewer: Effect.andThen(
       Effect.yieldNow,
       Effect.sync(() => viewer),
@@ -643,7 +643,7 @@ describe("defineSubtype — an owned leaf", () => {
     expect(await listed(as(moderator), true)).toContain(open);
   });
 
-  it("a moderated leaf shows an unapproved row only to its owner and moderator+ (pulpit#154)", async () => {
+  it("a moderated leaf shows an unapproved row only to its owner and moderator+", async () => {
     const chain = makeInMemoryVersionChain("comments");
     const leaves = makeInMemoryLeafStore(chain, {
       columns: ["title", "visibility", "moderationState"],
@@ -731,7 +731,7 @@ describe("defineSubtype — an owned leaf", () => {
     expect(chain.rows()[2]?.actorId).toEqual(Option.some(moderator.id));
   });
 
-  it("the write and history gates confirm existence: a stranger gets Forbidden on every hidden row, the anonymous Unauthorized (pulpit#24)", async () => {
+  it("the write and history gates confirm existence: a stranger gets Forbidden on every hidden row, the anonymous Unauthorized", async () => {
     const { ops, actAs, post, snapshots } = ownedPosts();
     const draft = await run(
       actAs(
@@ -807,7 +807,7 @@ describe("defineSubtype — an owned leaf", () => {
     expect(snapshots.slice(readBefore)).toEqual([]);
   });
 
-  describe("compare: getVersion's gate, then the chain's compare (pulpit#82)", () => {
+  describe("compare: getVersion's gate, then the chain's compare", () => {
     /** A version no row has. */
     const ABSENT_VERSION = 99n;
     const pairs: ReadonlyArray<readonly [bigint, bigint]> = [
@@ -1105,9 +1105,9 @@ describe("defineSubtype — a reference leaf", () => {
   });
 });
 
-// ── List ordering (pulpit#112) ────────────────────────────────────────
+// ── List ordering ────────────────────────────────────────
 
-describe("defineSubtype — list ordering (pulpit#112)", () => {
+describe("defineSubtype — list ordering", () => {
   type Keys = ReadonlyArray<ListOrder>;
   /** One seeded node: its caller-chosen id, its state and whether it is tombstoned. */
   interface OrderSeed {
@@ -1633,7 +1633,7 @@ interface RowReads {
   /** `get`'s error tag; none when the row reads. */
   readonly got: Option.Option<string>;
   readonly many: boolean;
-  /** Under `searchScopeFilter`, read straight from the store (pulpit#54). */
+  /** Under `searchScopeFilter`, read straight from the store. */
   readonly searched: boolean;
   /** Kept by `hydrateSearchHits`, given every seeded id as a hit. */
   readonly hydrated: boolean;
@@ -1968,7 +1968,7 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
     });
   });
 
-  describe("a reference leaf with a followers column: visibility × curator × tombstone, for every viewer (pulpit#92)", () => {
+  describe("a reference leaf with a followers column: visibility × curator × tombstone, for every viewer", () => {
     const curated: Extract<LeafAccess, { kind: "reference" }> = {
       kind: "reference",
       followersOfColumn: "curatorId",
@@ -2112,7 +2112,7 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
   });
 });
 
-describe("defineSubtype — a `group` row reads to its group's members (pulpit#194)", () => {
+describe("defineSubtype — a `group` row reads to its group's members", () => {
   /** `follower` belongs to `g-1`; nobody belongs to anything else. */
   const memberships = makeInMemoryMembershipStore();
   Effect.runSync(
@@ -2138,7 +2138,7 @@ describe("defineSubtype — a `group` row reads to its group's members (pulpit#1
   const referenceSeeds: ReadonlyArray<Seed> = Arr.flatMap(groupVisibilities, (visibility) =>
     Arr.flatMap(groupIds, (groupId) =>
       Arr.map([false, true], (deleted): Seed => ({
-        // The admin reads every row, so the seeding `delete` passes the read gate (pulpit#101).
+        // The admin reads every row, so the seeding `delete` passes the read gate.
         owner: admin,
         state: { visibility, groupId },
         deleted,
@@ -2310,7 +2310,7 @@ describe("defineSubtype — a `group` row reads to its group's members (pulpit#1
   });
 });
 
-describe("defineSubtype — a pending group invitation reads nothing a `group` row exposes (pulpit#227)", () => {
+describe("defineSubtype — a pending group invitation reads nothing a `group` row exposes", () => {
   const groupSeeds: ReadonlyArray<Seed> = Arr.flatMap(
     ["public", "group", "private"],
     (visibility) =>
@@ -2361,7 +2361,7 @@ describe("defineSubtype — a pending group invitation reads nothing a `group` r
   });
 });
 
-describe("defineSubtype — an owner column holding no string is no owner (pulpit#85)", () => {
+describe("defineSubtype — an owner column holding no string is no owner", () => {
   /** Accounts whose ids are what `String` makes of a `NULL`, an absent key and `42`. */
   const nullId: ViewerAccount = { id: "null", role: "user" };
   const undefinedId: ViewerAccount = { id: "undefined", role: "user" };
@@ -2424,7 +2424,7 @@ describe("defineSubtype — an owner column holding no string is no owner (pulpi
     },
   );
 
-  describe("a reference leaf's followers column holding no string names nobody (pulpit#92)", () => {
+  describe("a reference leaf's followers column holding no string names nobody", () => {
     const curated: Extract<LeafAccess, { kind: "reference" }> = {
       kind: "reference",
       followersOfColumn: "curatorId",
@@ -2535,7 +2535,7 @@ describe("defineSubtype — an owner column holding no string is no owner (pulpi
 
 // ── A reference row's write and history gates answer as `get` does ────
 
-describe("defineSubtype — a reference leaf's write and history gates answer a hidden row as get does (pulpit#101)", () => {
+describe("defineSubtype — a reference leaf's write and history gates answer a hidden row as get does", () => {
   /** Roles that split the view rungs apart: each corpus writer holds at most one of them. */
   const curator: ViewerAccount = { id: "u-curator", role: "curator" };
   const archivist: ViewerAccount = { id: "u-archivist", role: "archivist" };
@@ -2610,7 +2610,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
    * which every seeded row has, and at {@link ABSENT_VERSION}, which none
    * has, so a chain lookup that ran before the gate would answer a hidden
    * row `VersionNotFound` where a missing id answers `NodeNotFound`.
-   * `compare` (pulpit#82) runs with the absent version on either side.
+   * `compare` runs with the absent version on either side.
    */
   const operations = [
     "update",
@@ -2641,7 +2641,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     "compare absent to",
   );
 
-  /** A leaf declaring the followers column the `curatorId` seeds fill (pulpit#92). */
+  /** A leaf declaring the followers column the `curatorId` seeds fill. */
   const curated: Extract<LeafAccess, { kind: "reference" }> = {
     kind: "reference",
     followersOfColumn: "curatorId",
@@ -2673,7 +2673,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
       },
       leaves,
       // Yields first, as a real session lookup does: a history read forked
-      // beside the gate would then run before the gate refuses (pulpit#82).
+      // beside the gate would then run before the gate refuses.
       viewer: Effect.andThen(
         Effect.yieldNow,
         Effect.sync(() => viewer),
@@ -2843,7 +2843,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
       );
       // A refused operation writes nothing.
       expect(results.filter((result) => Option.isSome(result.answer) && result.wrote)).toEqual([]);
-      // A history read the gate refuses reads no version (pulpit#82).
+      // A history read the gate refuses reads no version.
       expect(
         results.filter(
           (result) =>
@@ -2919,7 +2919,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     expect(moderatorAnswers["getVersion absent tombstoned private"]).toEqual(
       Option.some("VersionNotFound"),
     );
-    // compare answers each row as getVersion does, whichever side is absent (pulpit#82).
+    // compare answers each row as getVersion does, whichever side is absent.
     expect(curatorAnswers["compare private"]).toEqual(Option.none());
     expect(curatorAnswers["compare absent from private"]).toEqual(Option.some("VersionNotFound"));
     expect(curatorAnswers["compare absent to tombstoned public"]).toEqual(
@@ -2933,7 +2933,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     expect(moderatorAnswers["compare absent from missing"]).toEqual(Option.some("NodeNotFound"));
   });
 
-  it("is not vacuous: a declared followers column opens its followers rows to a following corpus writer, and nothing else (pulpit#92)", async () => {
+  it("is not vacuous: a declared followers column opens its followers rows to a following corpus writer, and nothing else", async () => {
     const answers = async (who: ViewerAccount) =>
       R.fromEntries(
         (
@@ -2965,7 +2965,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     // The account the column names, below the corpus rung, still meets the rung first.
     const memberAnswers = await answers(member);
     expect(memberAnswers["update followers of the member"]).toEqual(Option.some("Forbidden"));
-    // The same writer without the declaration is shut out, as before pulpit#92.
+    // The same writer without the declaration is shut out.
     const undeclared = R.fromEntries(
       (
         await run(probe(splitPolicy, ["name", "visibility", "draft", "curatorId"], as(contributor)))
@@ -3009,7 +3009,7 @@ describe("subtypeHandlers — the handlers seam", () => {
   });
 });
 
-describe("subtypeHandlers — a write that hides the row from its own writer evicts the cached resource (pulpit#107)", () => {
+describe("subtypeHandlers — a write that hides the row from its own writer evicts the cached resource", () => {
   /** A store failure the re-read can hit after the write committed. */
   class StoreDown extends Schema.TaggedError<StoreDown, { readonly brand: unique symbol }>()(
     "StoreDown",
@@ -3141,7 +3141,7 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
     );
     expect(MutableHashMap.has(cached, id)).toBe(true);
     // The writer gets the committed write, without the resource it can no
-    // longer read, not a 404 for a write that committed (pulpit#107).
+    // longer read, not a 404 for a write that committed.
     expect(
       await run(actAs(as(contributor), handlers.update({ id, patch: { visibility: "private" } }))),
     ).toEqual({ id, version: 1n, resource: Option.none() });
@@ -3322,7 +3322,7 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
   });
 });
 
-describe("lifecycle hooks — before and after every write (pulpit#45)", () => {
+describe("lifecycle hooks — before and after every write", () => {
   /** One hook's sight of a write, as the tests record it. */
   type Seen = readonly [hook: string, action: string, detail: string];
   /** The leaf's resource. */
@@ -3551,7 +3551,7 @@ describe("lifecycle hooks — before and after every write (pulpit#45)", () => {
     expect(chain.rows()).toHaveLength(1);
   });
 
-  it("a leaf without hooks reads no version for restoreVersion: the port's own restoreVersion does (pulpit#246)", async () => {
+  it("a leaf without hooks reads no version for restoreVersion: the port's own restoreVersion does", async () => {
     const chain = makeInMemoryVersionChain("pages");
     const snapshots: Array<bigint> = [];
     const leaves = makeInMemoryLeafStore(chain, { columns: ["title"], now: NOW });
@@ -3617,7 +3617,7 @@ describe("lifecycle hooks — before and after every write (pulpit#45)", () => {
   });
 });
 
-describe("the head version on the wire (pulpit#65)", () => {
+describe("the head version on the wire", () => {
   const versionedLeaf = () => {
     const chain = makeInMemoryVersionChain("posts");
     const leaves = makeInMemoryLeafStore(chain, { columns: ["title", "visibility"], now: NOW });
@@ -3741,7 +3741,7 @@ describe("the head version on the wire (pulpit#65)", () => {
   });
 });
 
-describe("subtypeResourceHandlers — effect-jsonapi's ResourceHandlers (pulpit#5)", () => {
+describe("subtypeResourceHandlers — effect-jsonapi's ResourceHandlers", () => {
   const Post = Resource.make("posts", {
     attributes: { title: Schema.String, visibility: Schema.String },
   });
@@ -3850,7 +3850,7 @@ describe("subtypeResourceHandlers — effect-jsonapi's ResourceHandlers (pulpit#
     expect((await run(handlers.get({ params: { id } }))).data.attributes.title).toBe("Hello");
   });
 
-  it("answers a write hidden from its writer with the committed identifier, not a 404, and evicts (pulpit#107)", async () => {
+  it("answers a write hidden from its writer with the committed identifier, not a 404, and evicts", async () => {
     const { handlers, cached, actAs } = jsonapiLeaf({ kind: "reference" });
     // A corpus writer below the view-private rung creating a private row:
     // the create committed, so it answers the row's identifier and version.
@@ -3915,7 +3915,7 @@ describe("subtypeResourceHandlers — effect-jsonapi's ResourceHandlers (pulpit#
   });
 });
 
-describe("search: the projection and gated hydration (pulpit#54)", () => {
+describe("search: the projection and gated hydration", () => {
   const searchLeaf = (search?: Parameters<typeof defineSubtype>[0]["search"]) => {
     const chain = makeInMemoryVersionChain("posts");
     const leaves = makeInMemoryLeafStore(chain, {
@@ -4049,7 +4049,7 @@ describe("search: the projection and gated hydration (pulpit#54)", () => {
   });
 });
 
-describe("the resource cache's compare-on-set (pulpit#121)", () => {
+describe("the resource cache's compare-on-set", () => {
   interface Post {
     readonly id: string;
     readonly title: ColumnValue;
@@ -4105,7 +4105,7 @@ describe("the resource cache's compare-on-set (pulpit#121)", () => {
     return { handlers, rolledBack };
   };
 
-  it("a write nested in an outer transaction caches nothing, so the outer rollback leaves no cached entry (pulpit#124)", async () => {
+  it("a write nested in an outer transaction caches nothing, so the outer rollback leaves no cached entry", async () => {
     const { ops, cache } = racingLeaf();
     const { handlers, rolledBack } = nestableHandlers(ops, cache);
     const outcome = await run(
@@ -4146,7 +4146,7 @@ describe("the resource cache's compare-on-set (pulpit#121)", () => {
     expect(cache.get(outcome.next.id)).toEqual(outcome.next.resource);
   });
 
-  it("a delete nested in an outer transaction evicts as any delete does (pulpit#124)", async () => {
+  it("a delete nested in an outer transaction evicts as any delete does", async () => {
     const { ops, cache } = racingLeaf();
     const { handlers, rolledBack } = nestableHandlers(ops, cache);
     const id = await run(
@@ -4269,7 +4269,7 @@ describe("the resource cache's compare-on-set (pulpit#121)", () => {
   });
 });
 
-describe("defineSubtype — the live pointer (pulpit#46)", () => {
+describe("defineSubtype — the live pointer", () => {
   /** The leaf's resource. */
   interface Post {
     readonly id: string;
@@ -4449,7 +4449,7 @@ describe("defineSubtype — the live pointer (pulpit#46)", () => {
     expect(seen).toEqual({ early: Option.some("v0"), due: Option.some("v1"), wrote: 0 });
   });
 
-  it("scheduled reads the pending schedule per node, in one batch, for the head readers alone (pulpit#220)", async () => {
+  it("scheduled reads the pending schedule per node, in one batch, for the head readers alone", async () => {
     const { ops, actAs, publicationOps, handlers } = gatedPosts();
     const hour = (count: number) =>
       DateTime.toDate(DateTime.makeUnsafe(NOW.getTime() + count * 3_600_000));
@@ -4590,7 +4590,7 @@ describe("defineSubtype — the live pointer (pulpit#46)", () => {
         yield* actAs(as(member), handlers.update({ id, patch: { title: "head 2" } }));
         const cachedAfterEdit = cache.get(id);
         // Publishing the newer head (2) lands: a publication event is stamped at the
-        // head, so the cache's compare-on-set (pulpit#121) orders it after the edits.
+        // head, so the cache's compare-on-set orders it after the edits.
         yield* actAs(as(member), publishing.publish(id));
         const cachedRepublished = cache.get(id);
         yield* actAs(as(member), publishing.unpublish(id));
@@ -4624,8 +4624,7 @@ describe("defineSubtype — the live pointer (pulpit#46)", () => {
 
   /**
    * A publish whose cache write-through is held until released, and an
-   * unpublish on the same head, through one leaf: what pulpit#164's race
-   * needs. `serialised` runs each handler call under one per-node lock, the
+   * unpublish on the same head, through one leaf: the race the cache seam must survive. `serialised` runs each handler call under one per-node lock, the
    * serialisation docs/seams.md asks the application for.
    */
   const publicationRace = (serialised: boolean) =>
@@ -4677,14 +4676,14 @@ describe("defineSubtype — the live pointer (pulpit#46)", () => {
       return { live, cached: cache.get(id), version: cache.versionOf(id) };
     });
 
-  it("a publish and an unpublish on one head, serialised per node, leave the cache as the live state (pulpit#164)", async () => {
+  it("a publish and an unpublish on one head, serialised per node, leave the cache as the live state", async () => {
     const outcome = await atClock(publicationRace(true));
     // The unpublish ran after the publish's write-through: nothing live, nothing cached.
     expect(outcome.live).toEqual(Option.none());
     expect([outcome.cached, outcome.version]).toEqual([Option.none(), Option.some(0n)]);
   });
 
-  it("unserialised, the publish's late write-through re-caches past the unpublish: the gap pulpit#164 accepts", async () => {
+  it("unserialised, the publish's late write-through re-caches past the unpublish: the accepted gap", async () => {
     const outcome = await atClock(publicationRace(false));
     // Both stamp the same head, so compare-on-set admits the late `set`. The
     // docs/seams.md makes serialising publication per node the store's job.

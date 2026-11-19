@@ -1,8 +1,8 @@
 /**
  * @copyright Thomas Foster
  *
- * The kernel's `EdgeStore` (docs/seams.md → `EdgeStore`, pulpit#52) on
- * PostgreSQL (pulpit#356): one table per edge family, each end a node id
+ * The kernel's `EdgeStore` (docs/seams.md → `EdgeStore`) on
+ * PostgreSQL: one table per edge family, each end a node id
  * referencing the tree's identity table. Every read joins each end's
  * current-version view, with the owner joined in, under the end's alias, so
  * an edge whose end has no view row is never read and the family's

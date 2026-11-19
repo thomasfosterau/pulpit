@@ -1,5 +1,5 @@
 /**
- * Translation lineage, staleness and the sweep (pulpit#208), over the
+ * Translation lineage, staleness and the sweep, over the
  * in-memory `VersionChain`.
  *
  * - Lineage reads fail closed: a malformed column set is an original locale.

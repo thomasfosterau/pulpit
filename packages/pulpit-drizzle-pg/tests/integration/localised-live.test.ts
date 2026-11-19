@@ -1,5 +1,5 @@
 /**
- * A publish-gated localised leaf against PostgreSQL (pulpit#343), checked
+ * A publish-gated localised leaf against PostgreSQL, checked
  * against the kernel's `makeInMemoryPublication` over a localised
  * `makeInMemoryLeafStore` with the same writes: the live view's `list`,
  * `distinct` and `listLocalised` over one row per locale of the version

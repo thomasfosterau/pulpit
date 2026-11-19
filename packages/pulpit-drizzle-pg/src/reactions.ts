@@ -2,7 +2,7 @@
  * @copyright Thomas Foster
  *
  * The kernel's `ReactionStore` (docs/seams.md → `ReactionStore`,
- * pulpit#196) on PostgreSQL (pulpit#363): one account's reaction to one
+ *) on PostgreSQL: one account's reaction to one
  * node per row, keyed `(node_id, account_id)`, the node reference
  * cascading. Every call runs in the caller's `CurrentTransaction`.
  *

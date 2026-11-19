@@ -286,7 +286,7 @@ const publications = makePublications({
   CurrentTransaction: database.CurrentTransaction,
 });
 
-// A localised gated leaf names its keyed head and pointer views (pulpit#343).
+// A localised gated leaf names its keyed head and pointer views.
 export type _PublicationsKeyed = Assert<
   Equals<
     Required<Parameters<typeof makePublications>[0]>["keyed"],

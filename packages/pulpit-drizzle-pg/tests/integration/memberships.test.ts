@@ -1,5 +1,5 @@
 /**
- * The membership and group-owner stores against PostgreSQL (pulpit#364),
+ * The membership and group-owner stores against PostgreSQL,
  * checked against the kernel's `makeInMemoryMembershipStore` and
  * `makeInMemoryGroupOwners` over the same calls: active memberships and
  * pending invitations in one table, every membership read and write over

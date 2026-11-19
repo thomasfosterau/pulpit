@@ -1,5 +1,5 @@
 /**
- * Account erasure (pulpit#207) against the in-memory seams.
+ * Account erasure against the in-memory seams.
  *
  * - The owner's dispositions: an owned leaf's nodes are purged, a
  *   reference leaf's contributions reassigned to the tombstone account,
@@ -15,11 +15,11 @@
  *   stays under the tombstone account.
  * - A re-run changes nothing and appends nothing; a run cut short at a
  *   batch boundary resumes to the same end state. A tombstoned node gets no
- *   redacting version until it is restored and erasure runs again (pulpit#303).
- * - Memberships (pulpit#274): more membership rows and invitations than a
+ *   redacting version until it is restored and erasure runs again.
+ * - Memberships: more membership rows and invitations than a
  *   batch go in bounded batches, and an interrupted run resumes to one
  *   uninterrupted run's end state.
- * - Owned groups (pulpit#274, owner decision 2026-11-12): every group the
+ * - Owned groups (owner decision 2026-11-12): every group the
  *   account owns is reassigned to the tombstone account in bounded
  *   batches, before its memberships go, so the other members still read
  *   the group's rows; `disposeGroups` overrides the reassignment.
@@ -463,7 +463,7 @@ describe("defineAccountErasure", () => {
     expect(summary.changed["comments.redact"]).toBeUndefined();
   });
 
-  it("redacts a tombstoned node on restore, when erasure is run again (pulpit#303)", async () => {
+  it("redacts a tombstoned node on restore, when erasure is run again", async () => {
     const world = makeWorld();
     const ids = await run(seed(world));
     await run(world.ops.comments.delete(ids.comment, Option.some(GONE)));
@@ -563,7 +563,7 @@ describe("defineAccountErasure", () => {
     },
   );
 
-  describe("memberships at a batch boundary (pulpit#274)", () => {
+  describe("memberships at a batch boundary", () => {
     const BATCH = 3;
     /** More of `GONE`'s membership rows than a batch: 4 memberships, 2 invitations to it, 2 from it. */
     const seedMemberships = (world: World) => {
@@ -638,7 +638,7 @@ describe("defineAccountErasure", () => {
     );
   });
 
-  describe("owned groups at a batch boundary (pulpit#274)", () => {
+  describe("owned groups at a batch boundary", () => {
     const BATCH = 2;
     const OWNED = ["g-a", "g-b", "g-c", "g-d", "g-e"];
     /** More groups owned by `GONE` than a batch, each with `GONE`'s own membership and `OTHER`'s; and one group `OTHER` owns. */

@@ -1,7 +1,7 @@
 /**
  * **The kernel's value and row orders**: the code-point string order that
  * `./filter`'s comparison arms share with SQL's `COLLATE "C"`, and the list
- * order the in-memory `LeafStore` fake sorts by (pulpit#112), so the fake and
+ * order the in-memory `LeafStore` fake sorts by, so the fake and
  * the filter never compare a string two ways.
  *
  * Internal: not a package entry point (absent from `package.json`

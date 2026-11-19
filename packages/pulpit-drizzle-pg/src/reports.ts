@@ -1,8 +1,8 @@
 /**
  * @copyright Thomas Foster
  *
- * The kernel's `ReportStore` (docs/seams.md → `ReportStore`, pulpit#59) on
- * PostgreSQL (pulpit#360): member reports against a tree's nodes, the
+ * The kernel's `ReportStore` (docs/seams.md → `ReportStore`) on
+ * PostgreSQL: member reports against a tree's nodes, the
  * moderation queue `./moderation`'s `defineReports` files into and resolves
  * from. One report table, its target referencing the identity row and
  * cascading, so purging a node takes its reports with it. Reads join the

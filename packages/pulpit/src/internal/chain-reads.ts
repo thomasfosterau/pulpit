@@ -1,5 +1,5 @@
 /**
- * **Two reads over a leaf's `VersionChain`** (pulpit#246) in the shapes the
+ * **Two reads over a leaf's `VersionChain`** in the shapes the
  * kernel's modules ask them: a version's state as an `Option` (a version the
  * chain cannot reconstruct is none, not a failure) and a chain's entries as
  * a possibly empty list (an unknown node has none). Every other failure of

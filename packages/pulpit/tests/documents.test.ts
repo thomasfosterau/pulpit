@@ -198,7 +198,7 @@ describe("put — idempotent, never rewritten (DOC-001)", () => {
   });
 });
 
-describe("onDocumentInsert — the first-insert event (pulpit#45)", () => {
+describe("onDocumentInsert — the first-insert event", () => {
   const recording = () => {
     const seen: Array<DocumentInserted<Schema.Json>> = [];
     const inner = makeInMemoryDocumentStore();
@@ -330,9 +330,9 @@ describe("version rows that reference documents", () => {
   });
 });
 
-// ── The grammar check (pulpit#264) ────────────────────────────────────
+// ── The grammar check ────────────────────────────────────
 
-describe("the grammar check (pulpit#264)", () => {
+describe("the grammar check", () => {
   type Doc = { readonly type: string };
   /** The allow-list: a paragraph only. */
   const check: DocumentCheck<Doc> = (field, document) =>
