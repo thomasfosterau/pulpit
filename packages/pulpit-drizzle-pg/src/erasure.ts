@@ -16,7 +16,7 @@
  * @since 0.0.0
  */
 
-import { executeRows } from "@thomasfosterau/effect-drizzle-ext/query";
+import { selectRows } from "./internal/query.ts";
 import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import { ContentHash } from "@thomasfosterau/pulpit/blobs";
 import { DocumentHash } from "@thomasfosterau/pulpit/documents";
@@ -73,9 +73,7 @@ export interface NodeDependent {
   readonly id: AnyPgColumn;
 }
 
-const decodeHashes = Schema.decodeUnknownEffect(
-  Schema.Array(Schema.Struct({ hash: Schema.String })),
-);
+const HashRow = Schema.Struct({ hash: Schema.String });
 
 /** The `(VALUES …)` relation of `values`, one `text` column named `hash`. */
 const valuesOf = (values: Arr.NonEmptyReadonlyArray<string>): SQL =>
@@ -165,12 +163,12 @@ export const makePurgeStore = <I, Relations extends AnyRelations>(config: {
     );
     if (!Arr.isReadonlyArrayNonEmpty(arms)) return Effect.succeed<ReadonlyArray<string>>([]);
     return Effect.gen(function* () {
-      const rows = yield* executeRows<{ readonly hash: string }>(
+      const rows = yield* selectRows(
         tx,
         sql`SELECT DISTINCT hash FROM (${sql.join(arms, sql` UNION ALL `)}) carried ORDER BY hash`,
+        HashRow,
       );
-      const decoded = yield* Effect.orDie(decodeHashes(rows));
-      return Arr.map(decoded, ({ hash }) => hash);
+      return Arr.map(rows, ({ hash }) => hash);
     });
   };
 
@@ -201,18 +199,16 @@ export const makePurgeStore = <I, Relations extends AnyRelations>(config: {
         const deleted = yield* Effect.forEach(
           tables,
           (table) =>
-            Effect.flatMap(
-              executeRows<{ readonly hash: string }>(
-                tx,
-                sql`DELETE FROM ${table}
+            selectRows(
+              tx,
+              sql`DELETE FROM ${table}
                   WHERE ${table.hashId} IN (${sql.join(
                     Arr.map(named, (hash) => sql`decode(${hash}, 'hex')`),
                     sql`, `,
                   )})
                   AND ${unreferenced(references, sql`encode(${table.hashId}, 'hex')`)}
                   RETURNING encode(${table.hashId}, 'hex') AS hash`,
-              ),
-              (rows) => Effect.orDie(decodeHashes(rows)),
+              HashRow,
             ),
           { concurrency: 1 },
         );
@@ -230,15 +226,15 @@ export const makePurgeStore = <I, Relations extends AnyRelations>(config: {
       const references = blobConfig.value;
       return Effect.gen(function* () {
         const tx = yield* CurrentTransaction;
-        const rows = yield* executeRows<{ readonly hash: string }>(
+        const rows = yield* selectRows(
           tx,
           sql`SELECT candidate.hash FROM ${valuesOf(named)}
             WHERE ${unreferenced(references, sql`candidate.hash`)}
             ORDER BY candidate.hash`,
+          HashRow,
         );
-        const decoded = yield* Effect.orDie(decodeHashes(rows));
         return Arr.filter(
-          Arr.map(decoded, ({ hash }) => hash),
+          Arr.map(rows, ({ hash }) => hash),
           isContentHash,
         );
       });
@@ -341,7 +337,7 @@ export const makeAccountErasureStore = <I, Relations extends AnyRelations>(confi
               onSome: (column) =>
                 sql`${version.actor} IS NOT DISTINCT FROM ${marker}::text AND ${column} IS NULL`,
             });
-            const rows = yield* executeRows<{ readonly id: string }>(
+            const rows = yield* selectRows(
               tx,
               sql`SELECT ${version.id}::text AS id
                 FROM ${version}
@@ -358,6 +354,7 @@ export const makeAccountErasureStore = <I, Relations extends AnyRelations>(confi
                   > COALESCE(MAX(${version.version}) FILTER (WHERE ${redacting}), -1)
                 ORDER BY ${version.id}
                 LIMIT ${Math.trunc(limit)}`,
+              Schema.Struct({ id: Schema.String }),
             );
             return yield* ids(rows);
           }),

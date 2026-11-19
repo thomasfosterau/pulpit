@@ -158,10 +158,16 @@ const moderation = defineModeration({ target: comments, declaration, viewer, pol
   - The classifier's own flag is never overridden downward.
   - The grade has a priority band (`low | medium | high | urgent`) from the worst breach.
   - Classification runs from an application's after hook; acting on a grade is a `moderate` call.
-- **Member reports**, `defineReports({ target, reports, viewer, policy, budget? })`, are plain rows over a `ReportStore`. An optional [write budget](participation.md#budgets) throttles `file`.
+- **Member reports**, `defineReports({ target, reports, viewer, policy, budget?, moderation? })`, are plain rows over a `ReportStore`. An optional [write budget](participation.md#budgets) throttles `file`.
   - `file` needs a signed-in account that can `get` the target. One that can't gets `NodeNotFound`, never `Forbidden`, and the answer never says whether others reported the node.
   - `get` / `list` are for the reporter and the moderate rung.
-  - `resolve(id, "resolved" | "dismissed", note)` is the moderate rung's alone. A closed report fails `ReportClosed`, and acting on the node is a separate call.
+  - `resolve(id, "resolved" | "dismissed", note)` is the moderate rung's alone. A closed report fails `ReportClosed`.
+- **The report state machine** is `open → resolved | dismissed` (`isReportTransition`): a report is filed `open` and closes once, `resolved` when upheld (the content was acted on) and `dismissed` when not.
+- **Reports and content moderation are linked** when `defineReports` is given the leaf's `moderation` (its `defineModeration` ops), and a decision goes through `withReports({ moderation, reports, viewer })`:
+  - **Upholding a report is a content decision.** `resolve(id, "resolved", note)` moderates the target `rejected` (through its own `moderate`, so the hook stamps it), then closes every open report against it `resolved` with the same note. A target its owner already deleted still closes its reports. Dismissing closes that report alone and leaves the content as it is.
+  - **A content decision settles the reports.** `withReports(...).moderate(id, decision)` is `moderate`, then closes the target's open reports as `reportOutcomeOf(decision)` says: `rejected` upholds them (`resolved`), `approved` dismisses them, and `pending` (a re-review) leaves them open. Its gate and errors are `moderate`'s, and a refused decision closes nothing.
+  - Both writes run in the caller's transaction, so wrap the call in one for the decision and the closes to land together.
+  - Without `moderation`, the two are independent, and acting on the node is a separate call.
 
 Which rows a viewer below the moderate rung may _read_ in each state (gardeneria shows an unapproved comment to its author and the rung only) is still the application's read rule, as `PUB-005` records; `isPubliclyServeable` already refuses every state but `approved` from the cache.
 
@@ -172,3 +178,4 @@ Which rows a viewer below the moderate rung may _read_ in each state (gardeneria
 | `reviewQueueFilter(viewer, policy, column?)` | The queue's leaf half as a list filter. |
 | `gradeScores`, `ModerationScores`, `ModerationGrade`, `ModerationPriority`, `DEFAULT_MODERATION_THRESHOLD` | Threshold grading and its shapes. |
 | `defineReports(definition)`, `ReportOps`, `ReportStore`, `ReportRow`, `ReportResolution`, `ReportStatus`, `ReportNotFound`, `ReportClosed` | Member reports: the operations, the table seam (see [Seams](seams.md#seams)), its row, the closing write, the status vocabulary and the failures (404, 409). |
+| `isReportTransition`, `reportOutcomeOf`, `withReports(definition)` | The report state machine, the report outcome a content decision settles, and the content decision that settles the target's reports. |

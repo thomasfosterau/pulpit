@@ -111,7 +111,9 @@ const PROJECTED = ["id", "version", "action", "timestamp", "createdAt", OWNER_CO
  * the later one: an identity extra `slug` shadowed by a level's `slug`, or a
  * level column named `createdAt` shadowed by the birth timestamp (the trap
  * gardeneria hit in its hand-written current-version view). Refuse such a
- * tree at module load instead, naming both sources.
+ * tree at module load instead, naming both sources. `makeTreeViews` already
+ * refuses a clash among its own sources (effect-drizzle-ext#168), so this
+ * check is what still catches a key the owner join adds (`ownerId`).
  */
 const checkMerge = (
   leaf: string,

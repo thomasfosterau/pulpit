@@ -40,7 +40,10 @@
  * verdict against the application's thresholds. Classification itself runs
  * from an application's after hook. The review queue is the leaf's pending
  * rows ({@link reviewQueueFilter}) plus the open member reports
- * ({@link defineReports}), both the moderate rung's alone.
+ * ({@link defineReports}), both the moderate rung's alone. A report is
+ * `open` until it closes once ({@link isReportTransition}); given the
+ * leaf's moderation, upholding a report rejects its target, and a content
+ * decision through {@link withReports} settles the target's open reports.
  *
  * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/history-and-review.md#moderation.
  *
@@ -499,6 +502,57 @@ export const ReportStatus = Schema.Literals(["open", "resolved", "dismissed"]);
 export type ReportStatus = typeof ReportStatus.Type;
 
 /**
+ * The report state machine: whether a report may move from `from` to `to`.
+ * A report is filed `open` and closes once, as `resolved` (upheld: the
+ * content was acted on) or `dismissed`; a closed report never moves again.
+ *
+ * @example
+ * ```ts
+ * import { strictEqual } from "node:assert";
+ * import { isReportTransition } from "@thomasfosterau/pulpit/moderation";
+ *
+ * strictEqual(isReportTransition("open", "resolved"), true);
+ * strictEqual(isReportTransition("open", "dismissed"), true);
+ * strictEqual(isReportTransition("resolved", "dismissed"), false);
+ * strictEqual(isReportTransition("open", "open"), false);
+ * ```
+ *
+ * @since 0.3.0
+ */
+export const isReportTransition = (from: ReportStatus, to: ReportStatus): boolean =>
+  from === "open" && to !== "open";
+
+/**
+ * The report outcome a content moderation decision settles a target's
+ * open reports with: rejecting the content upholds them (`resolved`),
+ * approving it dismisses them, and `pending` (a re-review) leaves them open.
+ *
+ * @example
+ * ```ts
+ * import { deepStrictEqual } from "node:assert";
+ * import * as Option from "effect/Option";
+ * import { reportOutcomeOf } from "@thomasfosterau/pulpit/moderation";
+ *
+ * deepStrictEqual(reportOutcomeOf("rejected"), Option.some("resolved"));
+ * deepStrictEqual(reportOutcomeOf("approved"), Option.some("dismissed"));
+ * deepStrictEqual(reportOutcomeOf("pending"), Option.none());
+ * ```
+ *
+ * @since 0.3.0
+ */
+export const reportOutcomeOf = (
+  decision: ModerationState,
+): Option.Option<Exclude<ReportStatus, "open">> => REPORT_OUTCOMES[decision];
+
+const REPORT_OUTCOMES: Readonly<
+  Record<ModerationState, Option.Option<Exclude<ReportStatus, "open">>>
+> = {
+  rejected: Option.some("resolved"),
+  approved: Option.some("dismissed"),
+  pending: Option.none(),
+};
+
+/**
  * One member report, filed against a node.
  *
  * @since 0.1.0
@@ -543,6 +597,15 @@ export interface ReportStore<E, R> {
   /** One row, `FOR UPDATE`, so two resolutions serialise. */
   readonly lock: (id: string) => Effect.Effect<Option.Option<ReportRow>, E, R>;
   readonly close: (id: string, resolution: ReportResolution) => Effect.Effect<void, E, R>;
+  /**
+   * Close every `open` report against `targetId` with `resolution` (a
+   * content moderation decision settling the target's queue); a closed
+   * report is left as it is. Returns how many it closed.
+   */
+  readonly closeOpen: (
+    targetId: string,
+    resolution: ReportResolution,
+  ) => Effect.Effect<number, E, R>;
   /**
    * Account erasure (pulpit#207), at most `limit` rows per call
    * (`PERF-DB-001`): delete the reports the account filed, and on any
@@ -624,16 +687,38 @@ export interface ReportOps<E, R> {
     readonly offset: number;
   }) => Effect.Effect<Page<ReportRow>, E, R>;
   /**
-   * Close an open report as `resolved` or `dismissed`. Fails `Unauthorized`
-   * / `Forbidden` below the moderate rung, before the report is read, then
-   * `ReportNotFound` and `ReportClosed`. Acting on the node is the target's
-   * own operation (`moderate`, a delete), called separately.
+   * Close an open report as `resolved` (upheld) or `dismissed`
+   * ({@link isReportTransition}). Fails `Unauthorized` / `Forbidden` below
+   * the moderate rung, before the report is read, then `ReportNotFound` and
+   * `ReportClosed`.
+   *
+   * With the leaf's `moderation` declared, upholding a report is a content
+   * decision: the target is moderated `rejected` (through its own
+   * `moderate`, so the hook stamps it) and every open report against it
+   * closes `resolved` with the same note, so one decision settles the
+   * target's queue. That write fails as `moderate` does (`StaleVersion`,
+   * `VersionConflict`, `WriteRejected`); a target already gone
+   * (`NodeNotFound`, a tombstone) still closes its reports. Dismissing
+   * closes this report alone and leaves the content as it is. Without
+   * `moderation`, acting on the node is the target's own operation, called
+   * separately.
    */
   readonly resolve: (
     id: string,
     outcome: Exclude<ReportStatus, "open">,
     note: Option.Option<string>,
-  ) => Effect.Effect<void, Unauthorized | Forbidden | ReportNotFound | ReportClosed | E, R>;
+  ) => Effect.Effect<
+    void,
+    | Unauthorized
+    | Forbidden
+    | ReportNotFound
+    | ReportClosed
+    | StaleVersion
+    | VersionConflict
+    | WriteRejected
+    | E,
+    R
+  >;
 }
 
 /**
@@ -654,6 +739,13 @@ export const defineReports = <Resource, E, R>(definition: {
    * the report is stored. Omitted, reports are unthrottled.
    */
   readonly budget?: BoundBudget<E, R>;
+  /**
+   * The leaf's moderation decision ({@link defineModeration} over the same
+   * `target`). Declared, upholding a report rejects the target and settles
+   * its open reports (see {@link ReportOps}'s `resolve`). Omitted, reports
+   * and moderation decisions are independent.
+   */
+  readonly moderation?: ModerationOps<E, R>;
 }): ReportOps<E, R> => {
   const { target, reports, policy } = definition;
   const type = target.type;
@@ -732,16 +824,66 @@ export const defineReports = <Resource, E, R>(definition: {
     if (Option.isNone(row) || row.value.targetType !== type) {
       return yield* new ReportNotFound({ id });
     }
-    if (row.value.status !== "open") {
+    if (!isReportTransition(row.value.status, outcome)) {
       return yield* new ReportClosed({ id, status: row.value.status });
     }
-    return yield* reports.close(id, {
+    const resolution: ReportResolution = {
       status: outcome,
       resolvedAt: yield* nowDate,
       resolvedBy: account.id,
       resolutionNote: note,
-    });
+    };
+    const moderation = definition.moderation;
+    if (outcome === "dismissed" || moderation === undefined) {
+      return yield* reports.close(id, resolution);
+    }
+    // Upheld: the content decision, then the target's whole queue (this report included).
+    const { targetId } = row.value;
+    yield* Effect.catchTag(
+      moderation.moderate(targetId, "rejected"),
+      "NodeNotFound",
+      () => Effect.void,
+    );
+    return yield* Effect.asVoid(reports.closeOpen(targetId, resolution));
   });
 
   return { file, get, list, resolve };
 };
+
+/**
+ * A leaf's moderation decision that also settles the member reports
+ * against the target: `moderate(id, decision)` runs `moderation`'s own
+ * decision, then closes every open report against `id` as
+ * {@link reportOutcomeOf} says (`rejected` upholds them as `resolved`,
+ * `approved` dismisses them, `pending` leaves them open), stamped by the
+ * deciding moderator. Use it wherever the moderate rung decides content,
+ * so a decision made from the leaf's review queue clears the report queue
+ * too. Its gate and errors are `moderation`'s; it closes nothing when the
+ * decision fails.
+ *
+ * @since 0.3.0
+ */
+export const withReports = <E, R>(definition: {
+  readonly moderation: ModerationOps<E, R>;
+  readonly reports: ReportStore<E, R>;
+  readonly viewer: Effect.Effect<Viewer, never, R>;
+}): ModerationOps<E, R> => ({
+  moderate: (id, decision, precondition) =>
+    Effect.gen(function* () {
+      const write = yield* definition.moderation.moderate(id, decision, precondition);
+      // `moderate` admitted the viewer, so it is a signed-in moderator here.
+      const settled = Option.zipWith(
+        reportOutcomeOf(decision),
+        yield* definition.viewer,
+        (status, account) => ({ status, resolvedBy: account.id }),
+      );
+      if (Option.isSome(settled)) {
+        yield* definition.reports.closeOpen(id, {
+          ...settled.value,
+          resolvedAt: yield* nowDate,
+          resolutionNote: Option.none(),
+        });
+      }
+      return write;
+    }),
+});

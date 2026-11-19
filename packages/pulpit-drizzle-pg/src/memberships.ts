@@ -14,7 +14,7 @@
  * @since 0.0.0
  */
 
-import { executeRows } from "@thomasfosterau/effect-drizzle-ext/query";
+import { selectRows } from "./internal/query.ts";
 import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import {
   MembershipRole,
@@ -166,9 +166,10 @@ export const makeMembershipStore = <I, Relations extends AnyRelations>(config: {
   const wrote = (statement: SQL) =>
     Effect.gen(function* () {
       const tx = yield* CurrentTransaction;
-      const rows = yield* executeRows<{ readonly n: number }>(
+      const rows = yield* selectRows(
         tx,
         sql`WITH written AS (${statement}) SELECT count(*)::int AS n FROM written`,
+        Schema.Struct({ n: Schema.Int }),
       );
       return yield* countOf(rows);
     });
@@ -361,26 +362,23 @@ export const makeGroupOwners = <I, Relations extends AnyRelations>(config: {
 }): GroupOwnership<StoreQueryError<Relations>, I> &
   GroupOwnerStore<StoreQueryError<Relations>, I> => {
   const { table, id, owner, CurrentTransaction } = config;
-  const decodeOwners = Schema.decodeUnknownEffect(
-    Schema.Array(Schema.Struct({ owner: Schema.String })),
-  );
   return {
     ownerOf: (groupId) =>
       Effect.gen(function* () {
         const tx = yield* CurrentTransaction;
-        const rows = yield* executeRows<{ readonly owner: string }>(
+        const rows = yield* selectRows(
           tx,
           sql`SELECT ${owner}::text AS owner FROM ${table} WHERE ${id}::text = ${groupId} LIMIT 1`,
+          Schema.Struct({ owner: Schema.String }),
         );
-        const owners = yield* Effect.orDie(decodeOwners(rows));
-        return Option.map(Arr.head(owners), (row) => row.owner);
+        return Option.map(Arr.head(rows), (row) => row.owner);
       }),
     reassignOwner: (accountId, to, limit) =>
       limit < 1
         ? Effect.succeed(0)
         : Effect.gen(function* () {
             const tx = yield* CurrentTransaction;
-            const rows = yield* executeRows<{ readonly n: number }>(
+            const rows = yield* selectRows(
               tx,
               sql`WITH moved AS (
                 UPDATE ${table} SET ${sql.identifier(owner.name)} = ${to}
@@ -391,6 +389,7 @@ export const makeGroupOwners = <I, Relations extends AnyRelations>(config: {
                 RETURNING 1
               )
               SELECT count(*)::int AS n FROM moved`,
+              Schema.Struct({ n: Schema.Int }),
             );
             return yield* countOf(rows);
           }),

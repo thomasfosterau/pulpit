@@ -112,7 +112,8 @@ describe("makeLeafStores — the view-merge trap is refused at module load", () 
     });
     const make = storesOver(trapTree, trapTables);
     expect(make).toThrow(DerivationError);
-    expect(make).toThrow(/"slug" from both the identity table and level "page"/u);
+    // effect-drizzle-ext#168 (0.3.0) refuses this in `makeTreeViews` itself, before makeLeafStores runs.
+    expect(make).toThrow(/"slug" from both/u);
   });
 
   it("a level column shadowed by the view's birth timestamp (createdAt)", () => {
@@ -123,7 +124,8 @@ describe("makeLeafStores — the view-merge trap is refused at module load", () 
     });
     const trapTree = defineTree({ page: { leaf: { createdAt } } });
     const make = storesOver(trapTree, makeTreeTables(trapTree, { schema, builders }));
-    expect(make).toThrow(/"createdAt" from both the view's own projection and level "page"/u);
+    expect(make).toThrow(DerivationError);
+    expect(make).toThrow(/"createdAt" from both/u);
   });
 
   it("a level column shadowed by the joined owner (ownerId)", () => {

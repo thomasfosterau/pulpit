@@ -13,6 +13,9 @@
  * - Member reports: filing needs a readable target (`NodeNotFound`, never
  *   `Forbidden`), reading is the reporter's and the rung's, and only the
  *   rung resolves.
+ * - The report state machine, and its link to content moderation: upholding
+ *   a report rejects the target and settles its queue, and a content
+ *   decision through `withReports` closes the target's open reports.
  *
  * @module tests/moderation
  */
@@ -29,10 +32,13 @@ import {
   defineReports,
   gradeScores,
   isModerationTransition,
+  isReportTransition,
   moderatedColumns,
   moderatePatch,
   moderationHook,
+  reportOutcomeOf,
   reviewQueueFilter,
+  withReports,
   type ModerationScores,
 } from "../src/moderation.ts";
 import {
@@ -503,5 +509,134 @@ describe("defineReports — member reports", () => {
       ),
     ).toEqual(Option.some("ReportNotFound"));
     expect(await listed(Option.some(moderator))).toEqual([]);
+  });
+});
+
+describe("the report state machine", () => {
+  it("a report is filed open and closes once", () => {
+    expect(isReportTransition("open", "resolved")).toBe(true);
+    expect(isReportTransition("open", "dismissed")).toBe(true);
+    expect(isReportTransition("open", "open")).toBe(false);
+    expect(isReportTransition("resolved", "dismissed")).toBe(false);
+    expect(isReportTransition("dismissed", "resolved")).toBe(false);
+    expect(isReportTransition("resolved", "open")).toBe(false);
+  });
+
+  it("a content decision settles reports: rejected upholds, approved dismisses, pending leaves", () => {
+    expect(reportOutcomeOf("rejected")).toEqual(Option.some("resolved"));
+    expect(reportOutcomeOf("approved")).toEqual(Option.some("dismissed"));
+    expect(reportOutcomeOf("pending")).toEqual(Option.none());
+  });
+});
+
+describe("reports and content moderation, linked", () => {
+  const linked = () => {
+    const leaf = comments();
+    const store = makeInMemoryReportStore();
+    let viewer: Viewer = Option.none();
+    const viewerOf = Effect.sync(() => viewer);
+    const reports = defineReports({
+      target: leaf.target,
+      reports: store,
+      viewer: viewerOf,
+      policy: gardeneriaPolicy,
+      moderation: leaf.moderation,
+    });
+    const decide = withReports({ moderation: leaf.moderation, reports: store, viewer: viewerOf });
+    const as = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+      leaf.actAs(
+        who,
+        Effect.suspend(() => {
+          viewer = who;
+          return effect;
+        }),
+      );
+    const file = (targetId: string) =>
+      run(
+        as(
+          Option.some(otherMember),
+          reports.file({ targetId, reason: "spam", details: Option.none() }),
+        ),
+      );
+    const stateOfNode = (id: string) =>
+      leaf.chain.rows().findLast((row) => row.id === id)?.state["moderationState"];
+    const statuses = () => store.rows().map((row) => [row.targetId, row.status] as const);
+    return { ...leaf, store, reports, decide, as, file, stateOfNode, statuses };
+  };
+
+  it("upholding a report rejects the target and closes every open report on it", async () => {
+    const { reports, as, post, file, store, stateOfNode, statuses } = linked();
+    const [a, b] = [await post(), await post()];
+    const first = await file(a);
+    await file(a);
+    await file(b);
+    await run(
+      as(Option.some(moderator), reports.resolve(first.id, "resolved", Option.some("spam"))),
+    );
+    expect(stateOfNode(a)).toBe("rejected");
+    expect(stateOfNode(b)).toBe("pending");
+    expect(statuses()).toEqual([
+      [a, "resolved"],
+      [a, "resolved"],
+      [b, "open"],
+    ]);
+    expect(store.rows()[1]).toMatchObject({
+      resolvedBy: Option.some(moderator.id),
+      resolutionNote: Option.some("spam"),
+    });
+  });
+
+  it("dismissing closes one report and leaves the content as it is", async () => {
+    const { reports, as, post, file, stateOfNode, statuses } = linked();
+    const a = await post();
+    const first = await file(a);
+    await file(a);
+    await run(as(Option.some(moderator), reports.resolve(first.id, "dismissed", Option.none())));
+    expect(stateOfNode(a)).toBe("pending");
+    expect(statuses()).toEqual([
+      [a, "dismissed"],
+      [a, "open"],
+    ]);
+  });
+
+  it("upholding a report on content its owner already deleted still closes its reports", async () => {
+    const { reports, as, post, file, target, statuses } = linked();
+    const a = await post();
+    const { id } = await file(a);
+    await run(as(Option.some(member), target.delete(a)));
+    await run(as(Option.some(moderator), reports.resolve(id, "resolved", Option.none())));
+    expect(statuses()).toEqual([[a, "resolved"]]);
+  });
+
+  it("a content decision through withReports settles the target's open reports", async () => {
+    const { decide, as, post, file, stateOfNode, statuses } = linked();
+    const [a, b, c] = [await post(), await post(), await post()];
+    await file(a);
+    await file(b);
+    await file(c);
+    await run(as(Option.some(moderator), decide.moderate(a, "rejected")));
+    await run(as(Option.some(moderator), decide.moderate(b, "approved")));
+    expect(stateOfNode(a)).toBe("rejected");
+    expect(stateOfNode(b)).toBe("approved");
+    // A re-review sends content back to pending and leaves its reports open.
+    await run(as(Option.some(moderator), decide.moderate(b, "pending")));
+    expect(statuses()).toEqual([
+      [a, "resolved"],
+      [b, "dismissed"],
+      [c, "open"],
+    ]);
+  });
+
+  it("withReports keeps moderate's gate: a refused decision closes nothing", async () => {
+    const { decide, as, post, file, statuses } = linked();
+    const a = await post();
+    await file(a);
+    expect(await tagOf(as(Option.some(member), decide.moderate(a, "rejected")))).toEqual(
+      Option.some("Forbidden"),
+    );
+    expect(await tagOf(as(Option.some(moderator), decide.moderate("missing", "rejected")))).toEqual(
+      Option.some("NodeNotFound"),
+    );
+    expect(statuses()).toEqual([[a, "open"]]);
   });
 });

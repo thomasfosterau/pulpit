@@ -16,7 +16,7 @@ pnpm add @thomasfosterau/pulpit-drizzle-pg @thomasfosterau/pulpit \
   drizzle-orm @effect/sql-pg effect
 ```
 
-`@thomasfosterau/pulpit`, `@thomasfosterau/effect-drizzle-ext` (`>=0.2.0`), `@thomasfosterau/effect-drizzle-ext-pg` (`>=0.2.0`), `drizzle-orm` (`>=1.0.0-rc.5`) and `effect` are required peer dependencies, and so are their own peers (`@effect/sql-pg` for `-pg`; the kernel's). Node.js 22.18 or newer is required (effect-drizzle-ext's floor).
+`@thomasfosterau/pulpit`, `@thomasfosterau/effect-drizzle-ext` (`>=0.3.0`), `@thomasfosterau/effect-drizzle-ext-pg` (`>=0.2.0`), `drizzle-orm` (`>=1.0.0-rc.5`) and `effect` are required peer dependencies, and so are their own peers (`@effect/sql-pg` for `-pg`; the kernel's). Node.js 22.18 or newer is required (effect-drizzle-ext's floor).
 
 ## Example
 
@@ -65,6 +65,7 @@ Every module is a namespace on the root export (`import { VersionChain } from "@
 | [`./proposals`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#proposals) | `makeProposalTable` / `makeProposalStore`: the kernel's `ProposalStore` (suggested edits) over one proposal table. |
 | [`./embeddings`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#embeddings) | `makeEmbeddingTables` / `makeEmbeddingStore`: the kernel's `EmbeddingStore`, a queue and a vector table per document family. |
 | [`./reactions`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#reactions) | `makeReactionTable` / `makeReactionStore`: the kernel's `ReactionStore`, one account's reaction to one node per row. |
+| [`./reports`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#reports) | `makeReportTable` / `makeReportStore`: the kernel's `ReportStore`, member reports against a tree's nodes (the moderation queue). |
 | [`./search`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#search) | `makeSearchBranch` / `fullTextRank`: the kernel's `SearchBranch`, one ranked and scoped statement over a view. |
 | [`./edges`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#edges) | `makeEdgeTable` / `makeEdgeStore`: the kernel's `EdgeStore`, one table per edge family, its ends joined to the tree's views. |
 | [`./collections`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#collections) | `makeCollectionTable` / `makeCollectionStore`: the kernel's `CollectionStore`, one membership table per ordered family. |

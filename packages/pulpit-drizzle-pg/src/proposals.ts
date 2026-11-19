@@ -13,7 +13,7 @@
  * @since 0.0.0
  */
 
-import { executeRows } from "@thomasfosterau/effect-drizzle-ext/query";
+import { mintUuid, selectRows } from "./internal/query.ts";
 import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import {
   ProposalStatus,
@@ -259,14 +259,7 @@ export const makeProposalStore = <I, Relations extends AnyRelations>(config: {
     );
 
   return {
-    mintId: Effect.gen(function* () {
-      const tx = yield* CurrentTransaction;
-      const rows = yield* executeRows<{ readonly id: string }>(
-        tx,
-        sql`SELECT gen_random_uuid()::text AS id`,
-      );
-      return yield* Effect.orDie(Effect.fromOption(Option.map(Arr.head(rows), (row) => row.id)));
-    }),
+    mintId: Effect.flatMap(CurrentTransaction, mintUuid),
     insert: (row) =>
       Effect.gen(function* () {
         const tx = yield* CurrentTransaction;
@@ -344,7 +337,7 @@ export const makeProposalStore = <I, Relations extends AnyRelations>(config: {
             // accepted goes, every other one is rewritten. The two conditions
             // are disjoint, so no row is both deleted and updated.
             const doomed = sql`${table.authorId} = ${accountId} AND ${table.status} <> 'accepted'`;
-            const rows = yield* executeRows<{ readonly changed: number }>(
+            const rows = yield* selectRows(
               tx,
               sql`WITH picked AS (
                 SELECT ${table.id} AS id FROM ${table}
@@ -364,6 +357,7 @@ export const makeProposalStore = <I, Relations extends AnyRelations>(config: {
                 RETURNING 1
               )
               SELECT ((SELECT count(*) FROM deleted) + (SELECT count(*) FROM updated))::int AS changed`,
+              Schema.Struct({ changed: Schema.Int }),
             );
             return Option.getOrElse(
               Option.map(Arr.head(rows), (row) => row.changed),
