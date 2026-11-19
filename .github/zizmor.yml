@@ -2,7 +2,7 @@
 rules:
   dependabot-cooldown:
     config:
-      # Matches Dependabot's cooldown; pnpm's minimumReleaseAge is 8 hours.
+      # Matches Dependabot's cooldown; pnpm's minimumReleaseAge is 1 day too.
       days: 1
   unpinned-uses:
     config:
