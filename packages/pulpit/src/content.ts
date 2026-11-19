@@ -34,8 +34,8 @@ import * as Schema from "effect/Schema";
  * - `followers` — the owner, the owner's followers (the follower seam in
  *   `./subtype`), and the privileged rung;
  * - `group` — the owner, the members of the group the row's declared
- *   `groupColumn` names (the audience seam's `isMember`, `./audience`;
- *), and the privileged rung. A row whose group column names no
+ *   `groupColumn` names (the audience seam's `isMember`, `./audience`),
+ *   and the privileged rung. A row whose group column names no
  *   group (the group was deleted) reads as `private`;
  * - `private` — the owner and the privileged rung only.
  *

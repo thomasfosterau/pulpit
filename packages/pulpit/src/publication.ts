@@ -33,8 +33,8 @@
  * options say absence is itself a refusal:
  *
  * - `owned` — an owned family's axes are effect-auth's
- *   (`Cacheability.publiclyServeable` over `OwnedAccess.serveableAxes`,
- *): a `visibility` that is absent refuses, since the projection
+ *   (`Cacheability.publiclyServeable` over `OwnedAccess.serveableAxes`):
+ *   a `visibility` that is absent refuses, since the projection
  *   dropped the one attribute that decides who may see the row and reading
  *   that as public is a fail-open; `draft` and `unapproved`,
  *   when present, must be exactly `false`, a `moderationState` exactly
@@ -47,8 +47,8 @@
  *.
  *
  * What the predicate structurally cannot express is a gate that depends on
- * state outside the cached resource (a comment's inherited target gate,
- *); a family with one closes it on the write path (evict on the
+ * state outside the cached resource (a comment's inherited target gate);
+ * a family with one closes it on the write path (evict on the
  * target's mutation) with the cache TTL floor as the backstop.
  *
  * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/read-model.md#publication.
@@ -234,8 +234,8 @@ export const isPubliclyServeable = (
   // the operation layer's row predicate reads it (SEC-AUTH-ENUM-001).
   const draft = attributes["draft"];
   if (draft !== undefined && draft !== false) return false;
-  // A tombstone is an admin-only read, and emitters omit the key while live
-  //: present at all — `null` included — refuses.
+  // A tombstone is an admin-only read, and emitters omit the key while live:
+  // present at all — `null` included — refuses.
   return attributes["deletedAt"] === undefined;
 };
 

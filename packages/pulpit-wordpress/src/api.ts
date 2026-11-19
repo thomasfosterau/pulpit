@@ -34,7 +34,7 @@
  *   {@link MAX_LIST_PARAMETER} values: a longer list is
  *   `400 rest_invalid_param`, answered before any id is decoded (WordPress
  *   core sets no such cap).
- * - **Conditional reads** (decision). A single-item
+ * - **Conditional reads**. A single-item
  *   response (an item, a term, a user) carries a weak `ETag`, the SHA-256 of
  *   its body, so the tag changes whenever anything the body embeds does,
  *   and holds with `_embed`, `_fields` and `context`. A request whose
@@ -62,8 +62,8 @@
  *   item's `categories` / `tags`, a term's `count`, `?categories=` /
  *   `?tags=` and `post=` all count only edges whose both ends the viewer
  *   can read, so a hidden item or term is never confirmed through one.
- * - **Authors are the accounts owning a readable item** (through the kernel's `readableOwners`). Any other account,
- *   unknown or not, answers `404 rest_user_invalid_id`.
+ * - **Authors are the accounts owning a readable item** (through the
+ *   kernel's `readableOwners`). Any other account, unknown or not, answers `404 rest_user_invalid_id`.
  *
  * ## What it leaves out
  *
@@ -227,8 +227,8 @@ export interface MediaFields {
   readonly mediaDetails: Schema.JsonObject;
   readonly fileSize: Option.Option<number>;
   /**
-   * The file version's bytes are not confirmed yet (`./blobs`' `bytesPending`,
-   *): the item reads as missing (`404 rest_post_invalid_id`), is
+   * The file version's bytes are not confirmed yet (`./blobs`' `bytesPending`):
+   * the item reads as missing (`404 rest_post_invalid_id`), is
    * left out of every list, and is never a `featured_media` or `_embed`
    * target, until the bytes are there. Absent, the item is shown.
    */
@@ -834,7 +834,7 @@ export interface WordPressConfig<R, Following = never> {
   readonly viewer: Effect.Effect<Viewer, never, R>;
   /** The application's role axes, for the `status` parameter's scope check. */
   readonly policy: AccessPolicy;
-  /** Render a response's fields to HTML in one batch, in order (decision 3). */
+  /** Render a response's fields to HTML in one batch, in order. */
   readonly render: (
     requests: ReadonlyArray<RenderRequest>,
   ) => Effect.Effect<ReadonlyArray<string>, unknown, R>;
@@ -1487,7 +1487,7 @@ const statusFilter = (type: PostType, columns: PostColumns, status: string): Lis
 };
 
 /**
- * The `status` parameter's scope check (decision 4): a status
+ * The `status` parameter's scope check: a status
  * other than the default asks for rows only a signed-in viewer may see, so an
  * anonymous caller gets `rest_forbidden_status` (401); `trash` needs the
  * view-deleted rung (403 for a signed-in caller below it). It names no row.
@@ -2408,7 +2408,7 @@ export const defineWordPress = <R, Following = never>(
     });
 
   /**
-   * A single-item response with its weak `ETag` (decision):
+   * A single-item response with its weak `ETag`:
    * the SHA-256 of the body, so it holds with `_embed`, `_fields` and
    * `context`, whatever the item embeds. A request whose `If-None-Match`
    * matches is `304` with the tag and `Cache-Control` alone. An error, and

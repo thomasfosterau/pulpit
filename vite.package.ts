@@ -101,8 +101,8 @@ export const packageConfig = (dir: string, options: PackageOptions = {}) => {
         // patched `tsc`. `rm -rf` first so a renamed module leaves no stale
         // file.
         //
-        // The parentheses keep the clean and the emit ONE cached task
-        //. Vite+ splits a top-level `&&` into sub-tasks cached
+        // The parentheses keep the clean and the emit ONE cached task.
+        // Vite+ splits a top-level `&&` into sub-tasks cached
         // separately, and then each saw the other's change to `dist/` as an
         // input change, so the build never hit; excluding `dist/**` from a
         // split pair would instead let the `rm` hit and be skipped while

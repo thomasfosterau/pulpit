@@ -95,7 +95,7 @@ export const declaresColumns = (
  * string, or none declared, names no group. An owner column holding anything but a
  * non-empty string (a `NULL`, an absent key, a value outside the type, or
  * `""`, which names nobody as in effect-auth) reads as no owner,
- * never as its `String` form (see): its `eq(owner, …)`
+ * never as its `String` form: its `eq(owner, …)`
  * and `in(owner, following)` arms match no `NULL`. Callers check
  * {@link declaresColumns} first. Never throws.
  *

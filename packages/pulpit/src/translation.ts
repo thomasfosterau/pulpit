@@ -61,8 +61,7 @@
  * still goes stale when the source moves on). The segment-preserving
  * translation of a ProseKit document is not the kernel's: the
  * {@link Translator} seam takes the source locale's translatable column
- * values, opaque, and prosekit-utilities fills it for documents (the
- * owner decision on).
+ * values, opaque, and prosekit-utilities fills it for documents.
  *
  * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/participation.md#translation.
  *

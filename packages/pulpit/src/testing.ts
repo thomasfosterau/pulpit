@@ -563,7 +563,7 @@ class ConformanceFailure extends Schema.TaggedError<
 /**
  * The slice of a test runner {@link versionChainConformance} registers its
  * cases through, passed in rather than imported so `./testing` needs no
- * test-runner dependency (owner decision (b)): vitest's (and
+ * test-runner dependency: vitest's (and
  * vite-plus/test's) `describe`, `it` and `expect` fit it as they are.
  *
  * @since 0.2.0

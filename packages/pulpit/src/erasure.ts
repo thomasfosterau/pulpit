@@ -20,8 +20,8 @@
  *   attributed to the tombstone account. The owner's default for reference
  *   contributions.
  * - **`anonymise`**: the content stays and the attribution goes: the owner
- *   record is removed (an owned row with no owner reads as no one's,
- *) and each node it wrote gets a redacting version with no
+ *   record is removed (an owned row with no owner reads as no one's)
+ *   and each node it wrote gets a redacting version with no
  *   actor. The owner's default for comments, so a reply keeps the thread it
  *   answers.
  *
@@ -79,8 +79,7 @@
  * whose head is a tombstone gets none, since no port operation appends
  * over a tombstone without resurrecting it (`VERSION-CHAIN-006`): its
  * versions keep their attribution, as every earlier version does, and the
- * tombstone stays hidden below the view-deleted rung (owner decision on
- *). It is redacted on restore: once an application restores
+ * tombstone stays hidden below the view-deleted rung. It is redacted on restore: once an application restores
  * such a node its head is live again and still matches the marker, so the
  * application re-runs erasure for the account after the restore, and that
  * run appends the redacting version. A family whose history must go is a

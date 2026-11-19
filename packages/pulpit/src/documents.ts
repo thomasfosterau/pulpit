@@ -328,8 +328,8 @@ export class DocumentViolation extends Schema.TaggedError<
  * It succeeds for a conforming document and fails {@link DocumentViolation}
  * otherwise; it reads nothing else and has no other failure. The
  * application fills it, typically with prosekit-utilities' allow-list
- * checkers (one grammar per field: a post body, a comment, an inline title;
- *); the kernel never imports a grammar.
+ * checkers (one grammar per field: a post body, a comment, an inline title);
+ * the kernel never imports a grammar.
  *
  * @since 0.2.0
  */

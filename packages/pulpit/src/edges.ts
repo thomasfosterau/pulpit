@@ -949,8 +949,7 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
 
   /**
    * A unique-key collision, settled by the conflict policy: only ever the id
-   * of an edge the count would admit, readable with every end live (owner
-   * decision on). The view-deleted rung reads an edge to a
+   * of an edge the count would admit, readable with every end live. The view-deleted rung reads an edge to a
    * tombstone but can't link to one, so it can't resolve to one either.
    */
   const resolveCollision = (viewer: Viewer, id: string) =>

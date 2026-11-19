@@ -397,8 +397,7 @@ export class SubtypeDeclarationError extends Schema.TaggedError<
  * - `public` — anonymous: `visibility = 'public'` only;
  * - `member` — a signed-in account: `public`, OR their own rows, OR
  *   `followers` rows whose owner they follow, OR `group` rows shared with a
- *   group they belong to (`groups`, present when the seam answers it,
- *).
+ *   group they belong to (`groups`, present when the seam answers it).
  *
  * @since 0.1.0
  */
@@ -1128,8 +1127,7 @@ export interface LiveView<Row extends LeafRow, Following, E, R> extends Pick<
 }
 
 /**
- * A leaf's opt-in to the live pointer (`publishGated`, owner decision on
- *): its live view, its publication log, and the request's
+ * A leaf's opt-in to the live pointer (`publishGated`): its live view, its publication log, and the request's
  * preview grant. Without it, head and live are one.
  *
  * @since 0.1.0
@@ -1891,8 +1889,8 @@ export interface SubtypeOps<Resource, E, R, Following = never> {
   /**
    * Gated like a write (`READ-009`): the history exposes every state,
    * private and deleted included. Fails as `update` does at the gate (on a
-   * reference leaf, `NodeNotFound` for a row `get` hides from the caller,
-   *), then `VersionNotFound` when the version has no row.
+   * reference leaf, `NodeNotFound` for a row `get` hides from the caller),
+   * then `VersionNotFound` when the version has no row.
    */
   readonly getVersion: (
     id: string,
@@ -2695,9 +2693,7 @@ export const hydrateSearchHits = <Hit extends { readonly id: string }, Resource,
  * The resource cache's write side: `set` writes the resource through — the
  * cache itself refuses (and evicts) a non-serveable one, so a
  * `public → private` flip self-purges — and `delete` evicts. The application
- * fills it with a cache it owns; no library is expected to provide one
- * (effect-web dropped its Cloudflare package, and the planned cache with it,
- * on).
+ * fills it with a cache it owns; no library is expected to provide one.
  *
  * **Compare-on-set**. Both calls carry the version they speak
  * for, and the cache keeps, per id, the highest version it has been given by
@@ -2802,8 +2798,8 @@ export interface CommittedWrite<Resource> extends ChainWrite {
  * answers its {@link CommittedWrite} with no resource, not the
  * `NodeNotFound`: the write committed. Any other re-read failure (a store
  * error, a defect, an interrupt) fails the write with its own cause. The
- * chain write runs inside `transact` (the handler seam's boundary, website
- *); the re-read stays outside it. An interrupt can't separate a
+ * chain write runs inside `transact` (the handler seam's boundary);
+ * the re-read stays outside it. An interrupt can't separate a
  * committed write from its write-through or eviction: a failure of the
  * boundary after the operation itself succeeded (an interrupt included)
  * evicts too, since the write may have committed, while a write the gate
@@ -3230,7 +3226,7 @@ const prefixesOf = (tag: string): ReadonlyArray<string> => {
 
 /**
  * How a localised leaf's JSON:API handlers read the request's locale and
- * report the one they served (the owner decision there: the
+ * report the one they served (the
  * locale travels in `Accept-Language` / `Content-Language`, never a query
  * parameter). effect-jsonapi's handlers see only the decoded params, query
  * and payload, so the application reads the headers from its own request
@@ -3405,8 +3401,8 @@ export interface SubtypeResourceHandlersConfig<
  * A `create` / `update` whose committed write hides the row from its writer
  * (the re-read fails `NodeNotFound`) answers effect-jsonapi's committed
  * identifier document, `{ data: { type, id, meta: { version } } }` at the
- * endpoint's own status, not a 404 (effect-jsonapi's `hiddenWrite`,
- *). Declare the group with `Group.flat({ …, hiddenWrites: true })`
+ * endpoint's own status, not a 404 (effect-jsonapi's `hiddenWrite`).
+ * Declare the group with `Group.flat({ …, hiddenWrites: true })`
  * so its `create` / `update` success admits that document.
  *
  * @since 0.1.0

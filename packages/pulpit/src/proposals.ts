@@ -21,7 +21,7 @@
  *   (`VERSION-CHAIN-001/002`). The version records the proposer as its
  *   `proposedBy` fact beside that actor, so history shows both.
  *
- * ## Classification, in two tiers (decision 2)
+ * ## Classification, in two tiers
  *
  * - {@link classifyProposalBase} — `clean` or `moved`, from two version
  *   numbers in hand: no read, safe for every row of a list page.

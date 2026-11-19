@@ -126,8 +126,8 @@ const PUBLISHED_AT = "publishedAt";
  *   with.
  * - `leaves` is the current-version store with `draft = NOT EXISTS (a live
  *   row)`, the stored draft column ignored.
- * - A leaf in `keyed` (its keyed head view and the pointer's keyed view,
- *) reads one row per locale: `live.list` / `distinct` the
+ * - A leaf in `keyed` (its keyed head view and the pointer's keyed view)
+ * reads one row per locale: `live.list` / `distinct` the
  *   locale rows of the version each node is read at (its head when its
  *   shared head matches `headFor`, else its live version), and
  *   `live.listLocalised` each node's most preferred carried locale of them;

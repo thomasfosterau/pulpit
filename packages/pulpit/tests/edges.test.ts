@@ -15,8 +15,8 @@
  *   endpoint state × viewer, and `list` ≡ `get` end to end over two ends),
  *   the endpoint lifecycle (a tombstoned end hides its edges until the node
  *   is restored, except from the view-deleted rung), the declared
- *   cardinality limits (counting only readable edges with live ends,
- *), what a create discloses (nothing about a
+ *   cardinality limits (counting only readable edges with live ends),
+ *   what a create discloses (nothing about a
  *   hidden edge), and a reference end's followers arm agreeing
  *   with the endpoint leaf's own `get`.
  *

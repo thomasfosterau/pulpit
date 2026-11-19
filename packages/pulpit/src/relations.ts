@@ -123,8 +123,7 @@ const nodeAt = (
 /**
  * What a reshare shows of its target: the target as its own leaf's `get`
  * serves the viewer, or `Unavailable`, the placeholder for a target the
- * viewer can't read, carrying neither its content nor its id (owner
- * decision on).
+ * viewer can't read, carrying neither its content nor its id.
  *
  * @since 0.2.0
  */
