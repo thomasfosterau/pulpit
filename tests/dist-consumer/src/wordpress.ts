@@ -119,7 +119,7 @@ export type _WireIdMode = Assert<
   >
 >;
 
-/* oxlint-disable effect/prefer-option-over-null -- the assertion must spell the emitted option exactly, and the workspace's optional fields are `?: T | undefined` (docs/CONTRIBUTING.md → Coding guidelines) */
+/* oxlint-disable effect/prefer-option-over-null -- the assertion must spell the emitted option exactly, and the workspace's optional fields are `?: T | undefined` */
 export type _StringIds = Assert<
   Equals<typeof stringIds, (options?: StringIdsOptions) => WireIds<string, never, never, never>>
 >;

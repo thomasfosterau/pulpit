@@ -1345,7 +1345,7 @@ export type _EdgeCountBy = Assert<
 export type _EdgeCountByParameters = Assert<
   Equals<
     Parameters<typeof links.countBy>,
-    // oxlint-disable-next-line effect/prefer-option-over-null -- pins the optional `where` parameter's declared `?: T | undefined` (docs/CONTRIBUTING.md → Coding guidelines)
+    // oxlint-disable-next-line effect/prefer-option-over-null -- pins the optional `where` parameter's declared `?: T | undefined`
     [end: string, ids: ReadonlyArray<string>, where?: ListFilter<never> | undefined]
   >
 >;

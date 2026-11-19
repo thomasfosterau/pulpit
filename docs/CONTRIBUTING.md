@@ -13,7 +13,7 @@ A pnpm workspace: the kernel (`packages/pulpit`), its optional packages (`packag
 
 ## Toolchain
 
-[Vite+](https://viteplus.dev) (`vp`) manages Node, pnpm and the tools; use it rather than `npx` or bare `pnpm`. `vp install` installs dependencies and the git hooks (pre-commit formats and lints staged files), and its `prepare` step patches the native `tsc` and oxlint with `@effect/tsgo`.
+[Vite+](https://viteplus.dev) (`vp`) manages Node, pnpm and the tools; use it rather than `npx` or bare `pnpm`. `vp install` installs dependencies and the git hooks (pre-commit runs `vp staged`, then `vp run fallow:audit`), and its `prepare` step patches the native `tsc` and oxlint with `@effect/tsgo`.
 
 | Command | What it does |
 | --- | --- |
@@ -23,11 +23,11 @@ A pnpm workspace: the kernel (`packages/pulpit`), its optional packages (`packag
 | `vp run -r test:coverage` | The suites under each package's coverage thresholds (`vite.package.ts`); never lower one to pass. |
 | `vp run -r build` | Every package's `dist/`. |
 | `vp run -r docgen` | Type-checks and runs every JSDoc `@example`; output under each package's gitignored `docs/`. |
-| `vp run --filter ./packages/pulpit-drizzle-pg test:integration` | The PostgreSQL suite: set the `PG*` variables or `DATABASE_URL_TEST`, or have Docker. |
-| `vp run test:coverage` | One Istanbul map at `coverage/coverage-final.json`, which `fallow audit` reads. |
+| `vp run --filter ./packages/pulpit-drizzle-pg test:integration` | The PostgreSQL suite: set the `PG*` variables (it builds its own database) or `DATABASE_URL_TEST`. |
+| `vp run fallow:audit` | Fallow's change-set audit, after `test:coverage` writes the map it reads. |
 | `vp run ci` | Everything CI runs, in order, stopping at the first failure (needs the PostgreSQL above). |
 
-[Fallow](https://docs.fallow.tools) checks dead code, duplication, complexity and the package boundaries (`.fallowrc.json`, `fallow-rules.json`). Use it to polish your work (`vp run test:coverage`, then `vp exec fallow audit --base origin/trunk`); its findings are guidance, not dogma, and CI doesn't run it.
+[Fallow](https://docs.fallow.tools) checks dead code, duplication, complexity and the package boundaries (`.fallowrc.json`, `fallow-rules.json`). `vp run fallow:audit` (which runs `test:coverage` first, for the CRAP scores) audits your change against `origin/trunk`; the pre-commit hook runs it and blocks on a failing verdict. Its findings are guidance, not dogma, and CI doesn't run it.
 
 ## Coding guidelines
 
@@ -41,7 +41,7 @@ A pnpm workspace: the kernel (`packages/pulpit`), its optional packages (`packag
 
 ## Before pushing
 
-Run `vp run ci` (CI runs exactly that, on Node LTS and latest, with a PostgreSQL service), then the fallow audit above. If a gate can't run where you are, say which and why in the PR body. `uvx zizmor --offline .github` audits the workflows; actions are pinned by exact tag and locked to commits by `.github/workflows/actions.lock` (run `gh actions-lock` after changing a `uses:`).
+Run `vp run ci` (CI runs exactly that, on Node LTS and latest, with a PostgreSQL service), then the fallow audit (the pre-commit hook does). If a gate can't run where you are, say which and why in the PR body. `uvx zizmor --offline .github` audits the workflows; actions are pinned by exact tag and locked to commits by `.github/workflows/actions.lock` (run `gh actions-lock` after changing a `uses:`).
 
 ## Dependencies
 

@@ -175,7 +175,7 @@ export type PostStatus = "publish" | "future" | "draft" | "private" | "trash" | 
  */
 export const MAX_LIST_PARAMETER = 100;
 
-/* oxlint-disable effect/prefer-option-over-null -- optional fields are `?: T | undefined` (docs/CONTRIBUTING.md → Coding guidelines), so a caller can forward its own `undefined`; an absent field is its documented default */
+/* oxlint-disable effect/prefer-option-over-null -- optional fields are `?: T | undefined`, so a caller can forward its own `undefined`; an absent field is its documented default */
 
 /**
  * The fields of one item, read off the application's own resource by its
@@ -455,7 +455,7 @@ export const fileMediaFields = <E, R>(
     readonly caption: ColumnValue;
     readonly description: ColumnValue;
     readonly altText: string;
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (docs/CONTRIBUTING.md → Coding guidelines); the omitted key is `{}`
+    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined`; the omitted key is `{}`
     readonly mediaDetails?: Schema.JsonObject | undefined;
   },
 ): MediaFields => {
@@ -587,7 +587,7 @@ export interface TermFields {
   readonly parent: Option.Option<string>;
 }
 
-/* oxlint-disable effect/prefer-option-over-null -- optional fields are `?: T | undefined` (docs/CONTRIBUTING.md → Coding guidelines); an absent column has its documented default */
+/* oxlint-disable effect/prefer-option-over-null -- optional fields are `?: T | undefined`; an absent column has its documented default */
 
 /**
  * The term leaf's view columns the term parameters filter and sort by.
@@ -817,7 +817,7 @@ export interface Site {
   readonly timezone: string;
 }
 
-/* oxlint-disable effect/prefer-option-over-null -- optional fields are `?: T | undefined` (docs/CONTRIBUTING.md → Coding guidelines); an absent prefix is the default, an absent type has no route */
+/* oxlint-disable effect/prefer-option-over-null -- optional fields are `?: T | undefined`; an absent prefix is the default, an absent type has no route */
 
 /**
  * A `wp/v2` read API's declaration.

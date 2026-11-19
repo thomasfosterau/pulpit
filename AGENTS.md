@@ -19,4 +19,4 @@ Read [README.md](README.md) and [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) fir
 
 ## Fallow
 
-Before committing, run `vp run test:coverage` (the audit reads its map), then `vp exec fallow audit --base origin/trunk`, and fix findings your change introduces. In Claude Code a PreToolUse hook runs the same audit on `git commit` / `git push` and blocks on `fail`.
+The pre-commit hook runs `vp run fallow:audit` and blocks on findings your change introduces; fix them rather than skipping the hook.

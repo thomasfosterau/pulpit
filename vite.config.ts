@@ -1,26 +1,9 @@
-/**
- * @copyright Thomas Foster
- *
- * Root workspace config. Owns the repo-wide format/lint/staged passes (read
- * statically by `vp fmt` / `vp lint` / `vp staged`), the root `check`
- * aggregate and the root `test:coverage` map.
- *
- * Copied from the effect-drizzle-ext library (itself from the gardeneria
- * application's root config): every comment that explains a load-bearing
- * decision is part of the standard and travels with the config.
- */
-
 import { defineConfig } from "vite-plus";
 import { recommended } from "@effect/tsgo/oxlint-presets";
 import effect from "@enfect/oxlint";
 
 export default defineConfig({
-  // Staged-file checks run by `vp staged` (pre-commit): format with fixes,
-  // then lint WITHOUT fixes. With type-aware lint on, `vp check --fix` would
-  // silently apply type-aware autofixes (even of rules at `warn`) to the
-  // staged files at commit time, so the commit would differ from the tree
-  // that was verified. `--no-error-on-unmatched-pattern` keeps a commit that
-  // stages only files the linter skips (Markdown, JSON) from failing.
+  // Lint without fixes, so no type-aware autofix lands unverified.
   staged: {
     "*.{js,ts,css,json,md}": [
       "vp check --fix --no-lint",
@@ -83,11 +66,7 @@ export default defineConfig({
             "The `Buffer` global is typed `any` wherever @cloudflare/workers-types is loaded. Use Uint8Array/DataView.",
         },
       ],
-      // Every former ported-code allowance (the preset rules this workspace
-      // once held at `warn` while ported modules were paid down) is at zero;
-      // a new site is a defect. `unicorn/no-empty-file` is in the
-      // `correctness` category, so it needs no line here; these three are
-      // in no enabled category, so they are raised by name.
+      // In no enabled category, so raised by name.
       "typescript/no-explicit-any": "error",
       "typescript/no-empty-object-type": "error",
       "typescript/ban-ts-comment": "error",
@@ -223,8 +202,6 @@ export default defineConfig({
       // `vite.package.ts`, the config the packages' `vite.config.ts` share).
       {
         files: ["**/vite.config.ts", "**/vitest.config.ts", "vite.package.ts"],
-        // Only the rule with a site (2, `VITEST_MAX_WORKERS` in
-        // vite.package.ts) stays off; the other service rules had none.
         rules: {
           "effect/avoid-process-env": "off",
         },
@@ -251,17 +228,7 @@ export default defineConfig({
   },
   run: {
     tasks: {
-      // The whole of CI, as one task: `.github/workflows/ci.yml` runs
-      // `vp run ci` and nothing else, on every Node version in its matrix.
-      // The gates run in docs/CONTRIBUTING.md → Before pushing's order (steps 1–6, then
-      // step 7's coverage gate), then pulpit-drizzle-pg's integration suite,
-      // which needs a PostgreSQL the `PG*` variables (or `DATABASE_URL_TEST`)
-      // name: CI gives it a `postgres` service container. An array runs its
-      // commands in order, as `&&` would, and stops at the first failure, so
-      // a red gate hides the verdicts of the gates after it. Each nested
-      // `vp run` is inlined as its own tasks, which keep their own cache
-      // settings; this task and its plain commands (`vp check`, the audit,
-      // whose answer moves with the advisory database) are never cached.
+      // Everything CI runs, in order; the integration suite needs a PostgreSQL (`PG*` or `DATABASE_URL_TEST`).
       ci: {
         command: [
           "vp check",
@@ -275,12 +242,7 @@ export default defineConfig({
         ],
         cache: false,
       },
-      // The CI typecheck gate, as one task: each package's `check` (which also
-      // type-checks its type-level tests), plus the dist-consumer check that
-      // type-checks consumer fixtures against the EMITTED declarations of both
-      // packages (the declaration-emit hazard only shows up there). A pure
-      // graph node: a new workspace package's `check` must be added here, or
-      // `vp run check` (and CI) never runs it.
+      // Every package's `check` and the dist-consumer declaration check; list a new package here.
       check: {
         command: "echo 'check: every type gate green'",
         dependsOn: [
@@ -291,15 +253,17 @@ export default defineConfig({
         ],
         cache: false,
       },
-      // Every package's unit suite under one Istanbul coverage map
-      // (`coverage/coverage-final.json`), which `fallow audit` reads for exact
-      // per-function CRAP scores (`health.coverage` in .fallowrc.json).
-      // Without it fallow estimates every function as uncovered, and any
-      // function with cyclomatic complexity ≥ 5 fails the gate on its own.
-      // Run this before `fallow audit` (the PreToolUse fallow gate runs the
-      // audit on `git commit` / `git push` but never refreshes this map). The
-      // per-package thresholds stay on each package's own `test:coverage`.
-      // Each package's `exports` point at `src/`, so no build edge is needed.
+      // The change-set audit, run by the pre-commit hook; fallow reads the coverage map.
+      "fallow:audit": {
+        command: "vp exec fallow audit --base origin/trunk --quiet",
+        dependsOn: ["test:coverage"],
+        cache: false,
+      },
+      fallow: {
+        command: "vp exec fallow --summary",
+        cache: false,
+      },
+      // One Istanbul map at coverage/coverage-final.json for fallow; thresholds are per package.
       "test:coverage": {
         command: "vp test run --coverage",
         cache: false,

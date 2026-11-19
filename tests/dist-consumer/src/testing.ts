@@ -196,7 +196,7 @@ export type _MakeResourceCache = Assert<
     <Resource>(serveable: (resource: Resource) => boolean) => InMemoryResourceCache<Resource>
   >
 >;
-// oxlint-disable effect/prefer-option-over-null -- the assertions must spell the emitted optional parameter exactly, `?: T | undefined` (docs/CONTRIBUTING.md → Coding guidelines)
+// oxlint-disable effect/prefer-option-over-null -- the assertions must spell the emitted optional parameter exactly, `?: T | undefined`
 export type _CacheSet = Assert<
   Equals<
     ResourceCacheSeam<CachedPost, never>["set"],
