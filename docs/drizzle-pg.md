@@ -304,7 +304,7 @@ The kernel's `ReportStore` ([seams.md → `ReportStore`](seams.md#reportstoree-r
   - **`get`, `lock` and `list`** join the identity table for `targetType`.
   - **`list`** renders its filter over `id`, `reporterId`, `targetId`, `targetType` and `status` through [`./filter`](#filter), orders `filed_at DESC, id DESC`, and reads the unpaged total off `count(*) OVER ()`. A page past the end has no row to carry it, so it counts the matching rows again.
   - **`lock`** is the row `FOR UPDATE OF` the report alone, so two resolutions of one report serialise.
-  - **`close`** updates only an `open` row.
+  - **`close`** updates only an `open` row, and **`closeOpen`** every `open` row against one target, in one `UPDATE … RETURNING`, answering how many it closed.
   - **`mintId`** is `gen_random_uuid()`.
   - **`eraseReporter`** is one CTE over at most `limit` of the account's rows (`ORDER BY id`). It deletes the reports the account filed, rewrites `resolved_by` to the replacement on the others it resolved, and answers how many rows changed.
   - An id that is no canonical UUID names no report.

@@ -14,7 +14,12 @@
  */
 
 import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
-import { ReportStatus, type ReportRow, type ReportStore } from "@thomasfosterau/pulpit/moderation";
+import {
+  ReportStatus,
+  type ReportResolution,
+  type ReportRow,
+  type ReportStore,
+} from "@thomasfosterau/pulpit/moderation";
 import { and, desc, eq, sql, type AnyRelations, type SQL } from "drizzle-orm";
 import {
   check,
@@ -225,6 +230,22 @@ export const makeReportStore = <I, Relations extends AnyRelations>(config: {
         })
       : Effect.succeedNone;
 
+  /** Close the open rows `where` picks with `resolution`: the ids it closed. */
+  const closeWhere = (where: SQL, resolution: ReportResolution) =>
+    Effect.gen(function* () {
+      const tx = yield* CurrentTransaction;
+      return yield* tx
+        .update(table)
+        .set({
+          status: resolution.status,
+          resolvedAt: resolution.resolvedAt,
+          resolvedBy: resolution.resolvedBy,
+          resolutionNote: Option.getOrNull(resolution.resolutionNote),
+        })
+        .where(and(where, eq(table.status, "open")))
+        .returning({ id: table.id });
+    });
+
   return {
     mintId: Effect.flatMap(CurrentTransaction, mintUuid),
     insert: (row) =>
@@ -246,20 +267,11 @@ export const makeReportStore = <I, Relations extends AnyRelations>(config: {
     get: (id) => byId(id, false),
     lock: (id) => byId(id, true),
     close: (id, resolution) =>
-      isNodeId(id)
-        ? Effect.gen(function* () {
-            const tx = yield* CurrentTransaction;
-            yield* tx
-              .update(table)
-              .set({
-                status: resolution.status,
-                resolvedAt: resolution.resolvedAt,
-                resolvedBy: resolution.resolvedBy,
-                resolutionNote: Option.getOrNull(resolution.resolutionNote),
-              })
-              .where(and(eq(table.id, id), eq(table.status, "open")));
-          })
-        : Effect.void,
+      isNodeId(id) ? Effect.asVoid(closeWhere(eq(table.id, id), resolution)) : Effect.void,
+    closeOpen: (targetId, resolution) =>
+      isNodeId(targetId)
+        ? Effect.map(closeWhere(eq(table.targetId, targetId), resolution), Arr.length)
+        : Effect.succeed(0),
     eraseReporter: ({ accountId, replacement, limit }) =>
       limit < 1
         ? Effect.succeed(0)

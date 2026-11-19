@@ -109,8 +109,18 @@ describe("makeReportStore over canned rows", () => {
       "update",
       "set",
       "where",
+      "returning",
     ]);
     expect((await runWith([], store.insert(row))).calls).toEqual(["insert", "values"]);
+  });
+
+  it("closeOpen answers how many open rows it closed; a malformed target closes none", async () => {
+    const closed = await runWith([{ id: ID }, { id: ID }], store.closeOpen(TARGET, resolution));
+    expect(closed).toEqual({ value: 2, calls: ["update", "set", "where", "returning"] });
+    expect(await runWith([{ id: ID }], store.closeOpen("x", resolution))).toEqual({
+      value: 0,
+      calls: [],
+    });
   });
 
   it("list pages the decoded rows with the window total", async () => {

@@ -3,9 +3,9 @@
  * kernel's `makeInMemoryReportStore` over the same writes: `get` with the
  * target's type joined in, `list` under every filter column newest first
  * with the unpaged total (a page past the end included), `close` only on an
- * open row, `eraseReporter` in `limit`-sized batches, `lock` holding the row
- * `FOR UPDATE` against a second transaction, the CHECKs on a closed row, and
- * the purge cascade.
+ * open row, `closeOpen` on one target's open rows alone, `eraseReporter` in
+ * `limit`-sized batches, `lock` holding the row `FOR UPDATE` against a
+ * second transaction, the CHECKs on a closed row, and the purge cascade.
  */
 
 import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
@@ -213,6 +213,34 @@ describe("ReportStore over PostgreSQL agrees with the in-memory store", () => {
     const open = await listBoth(eq("status", "open"));
     expect(open.sql).toEqual(open.memory);
     expect(open.sql.total).toBe(4);
+  });
+
+  it("closeOpen closes a target's open reports alone, and counts them", async () => {
+    const settle = {
+      status: "resolved" as const,
+      resolvedAt: at(25),
+      resolvedBy: "u-8",
+      resolutionNote: Option.some("content rejected"),
+    };
+    const targets = [node(3), node(3), node(2), "not-a-uuid"];
+    const counts = {
+      sql: await run(
+        Effect.forEach(targets, (target) => store.closeOpen(target, settle), { concurrency: 1 }),
+      ),
+      memory: await Effect.runPromise(
+        Effect.forEach(targets, (target) => memory.closeOpen(target, settle), {
+          concurrency: 1,
+        }),
+      ),
+    };
+    expect(counts.sql).toEqual(counts.memory);
+    expect(counts.sql).toEqual([2, 0, 1, 0]);
+    const both = await listBoth(always);
+    expect(both.sql).toEqual(both.memory);
+    // The report closed earlier on node 1 keeps its own resolution; node 1's open one stays open.
+    expect(Option.map(await run(store.get(reportId(6))), (row) => row.status)).toEqual(
+      Option.some("open"),
+    );
   });
 
   it("the CHECKs refuse a status outside the three, and a closed row with no resolver", async () => {
