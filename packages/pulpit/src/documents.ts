@@ -30,11 +30,10 @@
  * document type is a parameter; its schema and validation are the
  * application's (prosekit-utilities), and pulpit never imports them.
  *
- * ## The grammar check (pulpit#264)
+ * ## The grammar check
  *
- * Which grammar a document field accepts is the application's too (owner
- * decision on pulpit#202: the allow-lists live in prosekit-utilities,
- * prosekit-utilities#156), so the kernel takes it as a seam, a
+ * Which grammar a document field accepts is the application's too (the
+ * allow-lists live in prosekit-utilities), so the kernel takes it as a seam, a
  * {@link DocumentCheck}, and enforces it at the two places a document
  * enters content:
  *
@@ -325,12 +324,12 @@ export class DocumentViolation extends Schema.TaggedError<
 >()("DocumentViolation", { field: Schema.String, message: Schema.String }) {}
 
 /**
- * The grammar seam (pulpit#264): whether `document` is allowed in `field`.
+ * The grammar seam: whether `document` is allowed in `field`.
  * It succeeds for a conforming document and fails {@link DocumentViolation}
  * otherwise; it reads nothing else and has no other failure. The
  * application fills it, typically with prosekit-utilities' allow-list
- * checkers (one grammar per field: a post body, a comment, an inline title;
- * prosekit-utilities#156); the kernel never imports a grammar.
+ * checkers (one grammar per field: a post body, a comment, an inline title);
+ * the kernel never imports a grammar.
  *
  * @since 0.2.0
  */
@@ -421,7 +420,7 @@ const referencesIn = (
   });
 
 /**
- * The grammar check as a before-write hook (pulpit#264): on a `create`,
+ * The grammar check as a before-write hook: on a `create`,
  * `update` or `restore`, every declared document field the patch (or, on a
  * localised leaf, any locale's patch) sets is read back with one
  * `getMany` and run through the check, and the first that fails refuses the

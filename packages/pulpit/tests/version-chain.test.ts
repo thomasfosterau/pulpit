@@ -271,7 +271,7 @@ describe("compare — two getVersion reads and diffStates", () => {
   });
 });
 
-describe("beforeAppend — the kernel's hook layer over the port (pulpit#45, pulpit#246)", () => {
+describe("beforeAppend — the kernel's hook layer over the port", () => {
   const hookedChain = (
     hook: (event: ChainAppendEvent) => Effect.Effect<ChainPatch, "refused">,
     port: (store: InMemoryVersionChain) => VersionChain<never, never> = (store) => store,

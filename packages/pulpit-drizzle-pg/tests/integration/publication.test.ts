@@ -4,7 +4,7 @@
  * (`effective`, `facts`), the live view (`get` / `getMany`, and `list` /
  * `distinct` choosing the head for `headFor` and the live row for every
  * other node), the gated current-version store (`draft` as "no live
- * row"), and `scheduled` (#325) against the facts' own rule.
+ * row"), and `scheduled` against the facts' own rule.
  */
 
 import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";

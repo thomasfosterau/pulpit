@@ -119,7 +119,7 @@ export type _WireIdMode = Assert<
   >
 >;
 
-/* oxlint-disable effect/prefer-option-over-null -- the assertion must spell the emitted option exactly, and the workspace's optional fields are `?: T | undefined` (AGENTS.md → Conventions) */
+/* oxlint-disable effect/prefer-option-over-null -- the assertion must spell the emitted option exactly, and the workspace's optional fields are `?: T | undefined` */
 export type _StringIds = Assert<
   Equals<typeof stringIds, (options?: StringIdsOptions) => WireIds<string, never, never, never>>
 >;
@@ -156,7 +156,7 @@ export type _InMemoryIdCodecHooks = Assert<
   >
 >;
 
-// ── ./api and ./http (pulpit#86 phase 1) ─────────────────────────────────
+// ── ./api and ./http ─────────────────────────────────
 
 export type _RootApi = Assert<Equals<typeof WordPress.Api.defineWordPress, typeof defineWordPress>>;
 export type _RootHttp = Assert<Equals<typeof WordPress.Http.wordPressHttp, typeof wordPressHttp>>;
@@ -238,6 +238,6 @@ export type _WordPressHttp = Assert<
   >
 >;
 
-// ── phase 3: media from a file leaf (pulpit#221) ────────────────────────
+// ── phase 3: media from a file leaf ────────────────────────
 
 export type _FileMediaFields = Assert<Equals<ReturnType<typeof fileMediaFields>, MediaFields>>;

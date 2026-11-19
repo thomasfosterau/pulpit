@@ -1,54 +1,13 @@
-# Dependabot version updates. The `npm` ecosystem at `/` reads the pnpm
-# workspace, its catalogs and pnpm-lock.yaml.
-#
-# A group exists only where its members must move at the same time (one
-# release train, or a hard compatibility table); everything else, each
-# GitHub Action included, updates on its own PR. Dependabot puts a
-# dependency in the FIRST group that matches it, so `exclude-patterns` keep
-# `@effect/tsgo` out of `effect`. Both groups take every update type, majors
-# included, because a partial move breaks the build:
-# - `toolchain`: vite-plus pins the `vite` core, `vitest`, `oxlint`, `oxfmt`
-#   and `oxlint-tsgolint` it carries to exact versions; `@vitest/coverage-
-#   istanbul` must equal that vitest (vite-plus refuses a coverage run
-#   otherwise, pulpit#119); and `effect-tsgo patch` (the root `prepare`)
-#   matches the native `tsc` (`@typescript/native`) and that oxlint by gitHead
-#   and hard-errors (UnsupportedTargetPackageVersionError) on any pairing its
-#   components table lacks, failing `pnpm install` itself. When this group's
-#   PR goes red on install, pick the @effect/tsgo release whose `components`
-#   table (node_modules/@effect/tsgo/dist/effect-tsgo.cjs) covers the new
-#   oxlint / tsgolint / TypeScript, by hand on the same branch (see the
-#   catalog comments in pnpm-workspace.yaml). The Effect lint plugin
-#   (`@enfect/oxlint`) is not in it: it ranges `@oxlint/plugins` `^1.85.0`,
-#   so no oxlint pins it.
-# - `effect`: the Effect 4 release line is one lockstep-versioned singleton
-#   set (the `effect` override forces one copy). `@effect/docgen` is in it:
-#   it ships on the same version line and depends on `effect` `^<its own
-#   version>`, so it must not run ahead of the pin. `tsx` (docgen's peer)
-#   and `@effect/language-service` update on their own.
-#
-# By hand, because Dependabot cannot move them (AGENTS.md → Common pitfalls):
-# - the npm-alias catalog entries: `vite` (`npm:@voidzero-dev/vite-plus-core@…`,
-#   always the `vite-plus` version), and `typescript` / `@typescript/native`
-#   (a pairing `@effect/tsgo`'s components table supports). Set them on the
-#   toolchain group's branch.
-# - the security floors in pnpm-workspace.yaml's `overrides` (undici,
-#   shell-quote, source-map-js, launch-editor): transitive pins, deleted once
-#   their parents' ranges carry the fix.
-#
-# `cooldown` is 1 day (Dependabot takes whole days only), longer than
-# pnpm-workspace.yaml's `minimumReleaseAge` of 480 minutes (8 hours), so a
-# Dependabot PR never proposes a version pnpm would still refuse. The
-# first-party `@thomasfosterau/*` is exempt from both, as
-# `minimumReleaseAgeExclude` is.
+# Groups only for sets that must move together. By-hand steps: docs/CONTRIBUTING.md.
 version: 2
 updates:
   - package-ecosystem: "npm"
     directory: "/"
-    target-branch: "trunk"
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "daily"
     open-pull-requests-limit: 10
+    assignees:
+      - thomasfosterau
     labels:
       - "dependencies"
     commit-message:
@@ -58,20 +17,14 @@ updates:
       exclude:
         - "@thomasfosterau/*"
     groups:
-      # vite-plus pins vite / vitest / oxlint; the tsgo patch pairs with them.
       toolchain:
         applies-to: version-updates
         patterns:
           - "vite-plus"
-          - "vite"
+          - "@voidzero-dev/*"
           - "vitest"
           - "@vitest/*"
           - "@effect/tsgo"
-          - "@typescript/native"
-          - "typescript"
-          - "@typescript/typescript6"
-        update-types: ["major", "minor", "patch"]
-      # One release train; @effect/docgen depends on `effect` at its version.
       effect:
         applies-to: version-updates
         patterns:
@@ -80,42 +33,34 @@ updates:
         exclude-patterns:
           - "@effect/tsgo"
           - "@effect/language-service"
-        update-types: ["major", "minor", "patch"]
+      drizzle:
+        applies-to: version-updates
+        patterns:
+          - "drizzle-orm"
+          - "drizzle-kit"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
     assignees:
       - thomasfosterau
-  - package-ecosystem: "github-actions"
-    # The workflows pin every action by SHA.
-    directories:
-      - "/"
-    target-branch: "trunk"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-    open-pull-requests-limit: 5
     labels:
       - "dependencies"
     commit-message:
       prefix: "chore"
-    # No groups: each action updates on its own PR.
     cooldown:
       default-days: 1
-    assignees:
-      - thomasfosterau
-  # The Dev Container features in .devcontainer/devcontainer.json. No group:
-  # each feature updates on its own PR. The image tag is a hand move (it
-  # follows the catalog's `vite-plus` pin; see the comment beside it).
+
   - package-ecosystem: "devcontainers"
     directory: "/"
-    target-branch: "trunk"
     schedule:
-      interval: "weekly"
-      day: "monday"
-    open-pull-requests-limit: 5
+      interval: "daily"
+    assignees:
+      - thomasfosterau
     labels:
       - "dependencies"
     commit-message:
       prefix: "chore"
     cooldown:
       default-days: 1
-    assignees:
-      - thomasfosterau

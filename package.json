@@ -3,16 +3,13 @@
   "name": "pulpit-workspace",
   "version": "0.0.0",
   "private": true,
-  "description": "Workspace for @thomasfosterau/pulpit, the versioned-content (CMS) kernel extracted from the website and gardeneria applications, on Effect, and @thomasfosterau/pulpit-wordpress, its WordPress-compatible read API.",
+  "description": "Workspace for @thomasfosterau/pulpit, a headless CMS kernel on Effect, and its optional packages.",
   "license": "MIT",
   "author": "Thomas Foster <me@thomasfoster.au>",
   "type": "module",
   "scripts": {
-    "changeset": "changeset",
     "version": "changeset version && vp fmt && pnpm install --lockfile-only",
     "release": "pnpm -r --filter './packages/*' publish --access public --no-git-checks --ignore-scripts && changeset git-tag",
-    "fallow": "fallow --summary",
-    "fallow:audit": "fallow audit --base origin/trunk",
     "prepare": "vp config && effect-tsgo patch --typescript --oxlint"
   },
   "devDependencies": {
@@ -30,9 +27,11 @@
     "vite-plus": "catalog:",
     "vitest": "catalog:"
   },
-  "engines": {
-    "node": ">=22",
-    "pnpm": ">=11"
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "lts"
+    }
   },
   "packageManager": "pnpm@11.18.0"
 }

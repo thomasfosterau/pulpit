@@ -1,15 +1,11 @@
 ## Summary
 
-Describe what changed and why. If this closes an issue, add `Closes #N` so it auto-closes on merge to `trunk`.
+What changed and why. Add `Closes #N` if this closes an issue.
 
 ## Verification
 
-Run the gates in [AGENTS.md → Verification](https://github.com/thomasfosterau/pulpit/blob/trunk/AGENTS.md#verification), in order, and list each command with its final pass/fail. If a gate couldn't run, say which and why.
+The gates in [docs/CONTRIBUTING.md](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/CONTRIBUTING.md#before-pushing), each with its result. Say which couldn't run and why.
 
 ## Changeset
 
-- [ ] A changeset under `.changeset/` for every change to a published package's behaviour (or: none needed, because …)
-
-## Notes
-
-Anything reviewers should pay special attention to: exported signatures, declaration-emit shape, peer ranges, behaviour ported from an application that must stay byte-compatible.
+- [ ] A changeset for every change to a published package's behaviour (or: none needed, because …)

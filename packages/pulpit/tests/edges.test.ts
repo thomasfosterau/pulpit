@@ -14,11 +14,11 @@
  *   list filter never disagrees with the per-endpoint predicate, for every
  *   endpoint state × viewer, and `list` ≡ `get` end to end over two ends),
  *   the endpoint lifecycle (a tombstoned end hides its edges until the node
- *   is restored, except from the view-deleted rung, pulpit#93), the declared
- *   cardinality limits (counting only readable edges with live ends,
- *   pulpit#77 / pulpit#93), what a create discloses (nothing about a
- *   hidden edge, pulpit#93), and a reference end's followers arm agreeing
- *   with the endpoint leaf's own `get` (pulpit#92).
+ *   is restored, except from the view-deleted rung), the declared
+ *   cardinality limits (counting only readable edges with live ends),
+ *   what a create discloses (nothing about a
+ *   hidden edge), and a reference end's followers arm agreeing
+ *   with the endpoint leaf's own `get`.
  *
  * @module tests/edges
  */
@@ -120,7 +120,7 @@ const anonymous: Viewer = Option.none();
 /**
  * gardeneria's axes with the two read rungs split: a moderator sees
  * tombstones but not `private` rows or drafts, which only an admin sees. The
- * view-deleted rung's reading of a tombstoned end (pulpit#93) is visible only
+ * view-deleted rung's reading of a tombstoned end is visible only
  * when the rungs differ.
  */
 const splitPolicy: AccessPolicy = {
@@ -432,8 +432,8 @@ describe("ported: CMS rows on the moderator rung (gardeneria's page collections 
       actAs(as(moderator), ops.create({ pageId: "page-1", path: "retired" })),
     );
     // The page the stored alias points at is tombstoned. The view-deleted
-    // rung reads its alias (pulpit#93) but can't link to a tombstone, so the
-    // collision doesn't resolve to it (owner decision on pulpit#93).
+    // rung reads its alias but can't link to a tombstone, so the
+    // collision doesn't resolve to it.
     pages.put(node("page-1", { visibility: "public" }, "delete"));
     expect(await run(actAs(as(moderator), ops.get(retired.id)))).toMatchObject({
       pageId: "page-1",
@@ -725,7 +725,7 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
     },
   );
 
-  describe("a reference end whose leaf declares a followers column (pulpit#92)", () => {
+  describe("a reference end whose leaf declares a followers column", () => {
     /** The seam's questions, recorded: a non-string column value must never reach it. */
     const asked: Array<string> = [];
     const recording: FollowerSeam<Following, never> = {
@@ -978,7 +978,7 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
   });
 
   // One case per declared column, so dropping any leg of the shared
-  // declared-column check (owner, visibility, draft) fails here (pulpit#79).
+  // declared-column check (owner, visibility, draft) fails here.
   it.each([
     ["an owner", ["visibility", "draft"]],
     ["a visibility", ["ownerId", "draft"]],
@@ -995,7 +995,7 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
     },
   );
 
-  describe("an owner column holding no string is no owner (pulpit#85)", () => {
+  describe("an owner column holding no string is no owner", () => {
     /** Accounts whose ids are what `String` makes of a `NULL`, an absent key and `42`. */
     const strings = ["null", "undefined", "42"];
     const accounts = strings.map((id): ViewerAccount => ({ id, role: "user" }));
@@ -1068,7 +1068,7 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
     });
   });
 
-  describe("a tombstoned node, by rung (pulpit#93)", () => {
+  describe("a tombstoned node, by rung", () => {
     const tombstones = [
       ...ownedRows.filter((row) => row.action === "delete"),
       // A tombstone the view-private rung alone would hide: another owner's private draft.
@@ -1216,7 +1216,7 @@ describe("EDGE-001: an edge is readable only if every end is", () => {
       "s-public/e-public",
     ]);
     // The rung (both read rungs, under gardeneria's policy) sees private
-    // nodes and tombstoned ones on both ends (pulpit#93).
+    // nodes and tombstoned ones on both ends.
     expect(await pairs(as(moderator))).toEqual(
       Arr.flatMap(["s-gone", "s-private", "s-public"], (subject) =>
         Arr.map(
@@ -1384,7 +1384,7 @@ describe("EDGE-001: a tombstoned end hides its edges below the view-deleted rung
     expect(await tagOf(actAs(as(contributor), ops.delete(id)))).toEqual(
       Option.some("EdgeNotFound"),
     );
-    // … and read by the rung, which reads the tombstone itself (pulpit#93).
+    // … and read by the rung, which reads the tombstone itself.
     const rung = [as(moderator), as(admin)];
     expect(await Promise.all(rung.map(visibleTo))).toEqual(rung.map(() => [id]));
     await run(actAs(as(moderator), entryOps.get(entry.id)));
@@ -1405,7 +1405,7 @@ describe("EDGE-001: a tombstoned end hides its edges below the view-deleted rung
   });
 });
 
-describe("EDGE-001 by rung × end state: the view-deleted rung reads an edge whose only hidden end is tombstoned (pulpit#93)", () => {
+describe("EDGE-001 by rung × end state: the view-deleted rung reads an edge whose only hidden end is tombstoned", () => {
   /** The subject end's states; the part end is always a live public node. */
   const states = {
     live: node("s-live", { visibility: "public" }),
@@ -1478,7 +1478,7 @@ describe("EDGE-001 by rung × end state: the view-deleted rung reads an edge who
   });
 });
 
-describe("what a create discloses: nothing that tells a hidden edge from a readable one, or from none (pulpit#93)", () => {
+describe("what a create discloses: nothing that tells a hidden edge from a readable one, or from none", () => {
   /**
    * `s1` with `hidden` stored edges to private parts, which a contributor
    * can't read and a moderator can, and room for `maxEdges` on its end.
@@ -1682,7 +1682,7 @@ describe("cardinality: an end's maxEdges is declared and enforced", () => {
     expect(await tagOf(link(links, "s1", "p2"))).toEqual(Option.none());
   });
 
-  it("counts only edges whose other end is live, so a tombstoned partner frees its slot (pulpit#77)", async () => {
+  it("counts only edges whose other end is live, so a tombstoned partner frees its slot", async () => {
     const links = bounded({ subject: 1 });
     const { id } = await run(link(links, "s1", "p1"));
     expect(await tagOf(link(links, "s1", "p2"))).toEqual(Option.some("EdgeCardinalityExceeded"));
@@ -1695,7 +1695,7 @@ describe("cardinality: an end's maxEdges is declared and enforced", () => {
     expect(links.edges.rows().map((row) => row.id)).toContain(id);
   });
 
-  it("a restore may bring a node past its limit; the next create still refuses (pulpit#77)", async () => {
+  it("a restore may bring a node past its limit; the next create still refuses", async () => {
     const links = bounded({ subject: 1 });
     const stale = await run(link(links, "s1", "p1"));
     links.parts.put(node("p1", { visibility: "public" }, "delete"));
@@ -1908,7 +1908,7 @@ describe("qualifying a filter with an end's alias renames every node's column", 
   });
 });
 
-// ── Edge membership (pulpit#113) ──────────────────────────────────────
+// ── Edge membership ──────────────────────────────────────
 
 describe("memberFilter and countBy: membership and counts never disagree with EDGE-001's per-edge predicate", () => {
   /** Posts (owned, with drafts) × terms (reference, with a followers column), every pair linked. */
@@ -1948,7 +1948,7 @@ describe("memberFilter and countBy: membership and counts never disagree with ED
 
   const policies = [
     ["gardeneria's rungs", gardeneriaPolicy],
-    ["split rungs (pulpit#93)", splitPolicy],
+    ["split rungs", splitPolicy],
   ] as const;
   const cases = Arr.flatMap(policies, ([policyName, policy]) =>
     Arr.map([...viewers, ["an admin", as(admin)] as const], ([name, viewer]) => ({
@@ -2169,7 +2169,7 @@ describe("memberFilter and countBy: membership and counts never disagree with ED
   });
 });
 
-describe("nonMemberFilter: the complement of memberFilter under EDGE-001 (pulpit#191)", () => {
+describe("nonMemberFilter: the complement of memberFilter under EDGE-001", () => {
   /** Posts (owned, with drafts) × terms (reference): a few chosen edges, so some posts are in no set. */
   const taxonomy = (policy: AccessPolicy = gardeneriaPolicy) => {
     const posts = makeInMemoryNodes(["ownerId", "visibility", "draft"]);
@@ -2213,7 +2213,7 @@ describe("nonMemberFilter: the complement of memberFilter under EDGE-001 (pulpit
 
   const policies = [
     ["gardeneria's rungs", gardeneriaPolicy],
-    ["split rungs (pulpit#93)", splitPolicy],
+    ["split rungs", splitPolicy],
   ] as const;
   const cases = Arr.flatMap(policies, ([policyName, policy]) =>
     Arr.map([...viewers, ["an admin", as(admin)] as const], ([name, viewer]) => ({
@@ -2325,7 +2325,7 @@ describe("nonMemberFilter: the complement of memberFilter under EDGE-001 (pulpit
   });
 });
 
-describe("memberFilter through the member leaf's own list (pulpit#189)", () => {
+describe("memberFilter through the member leaf's own list", () => {
   it.each(viewers)("lists the members %s may read, and only them", async (_, viewer) => {
     const chain = makeInMemoryVersionChain("entries");
     const leaves = makeInMemoryLeafStore(chain, {
@@ -2389,7 +2389,7 @@ describe("memberFilter through the member leaf's own list (pulpit#189)", () => {
           { concurrency: 1 },
         );
         who = viewer;
-        // The member leaf's own list takes the edge family's filter (it type-checks: pulpit#189).
+        // The member leaf's own list takes the edge family's filter (it type-checks:).
         const where = yield* links.memberFilter("post", ["t-public", "t-private"]);
         const page = yield* posts.list({ limit: 100, offset: 0, includeDeleted: false, where });
         // The per-edge reading: a post is a member when the viewer can read it and an edge to a named term.
@@ -2412,7 +2412,7 @@ describe("memberFilter through the member leaf's own list (pulpit#189)", () => {
   });
 
   it.each(viewers)(
-    "memberFilter and nonMemberFilter partition the rows %s may read (pulpit#191)",
+    "memberFilter and nonMemberFilter partition the rows %s may read",
     async (_, viewer) => {
       const chain = makeInMemoryVersionChain("entries");
       const leaves = makeInMemoryLeafStore(chain, {
@@ -2495,7 +2495,7 @@ describe("memberFilter through the member leaf's own list (pulpit#189)", () => {
   );
 });
 
-describe("EDGE-001: a `group` end reads to its group's members, filter and predicate alike (pulpit#194)", () => {
+describe("EDGE-001: a `group` end reads to its group's members, filter and predicate alike", () => {
   /** `follower` is a member of `g-1`; nobody belongs to anything else. */
   const audience: FollowerSeam<Following, never> = {
     ...follows,
@@ -2642,7 +2642,7 @@ describe("EDGE-001: a `group` end reads to its group's members, filter and predi
   });
 });
 
-describe("EDGE-001: a pending group invitation opens no `group` end (pulpit#227)", () => {
+describe("EDGE-001: a pending group invitation opens no `group` end", () => {
   const memberships = makeInMemoryMembershipStore();
   const seam: FollowerSeam<Following, never> = { ...follows, ...audienceSeam(memberships) };
   const end: EdgeEnd<never, never> = {

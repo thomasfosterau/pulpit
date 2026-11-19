@@ -1,5 +1,5 @@
 /**
- * **Audiences** (pulpit#194) — named groups of accounts that a row can be
+ * **Audiences** — named groups of accounts that a row can be
  * shared with, as the `group` visibility state. A membership family with its
  * own gates, and the audience seam built from it, so `group` rows work end to
  * end through `./subtype`, `./edges` and search.
@@ -9,7 +9,7 @@
  * members with the role `member | admin`, admins manage members, members can
  * only leave) and gardeneria's `social.group_memberships`.
  *
- * ## The model (owner decisions on pulpit#194)
+ * ## The model
  *
  * - **A group is the application's**: the kernel never stores one. It reads
  *   a group's owner through {@link GroupOwnership} and keeps its memberships
@@ -18,7 +18,7 @@
  *   member's role. A member may only leave. The owner can't leave or be
  *   removed ({@link GroupOwnerMembership}).
  * - **Members are added directly**, by account id, or **invited**
- *   (pulpit#227): an invitation is a pending membership that the invitee
+ *: an invitation is a pending membership that the invitee
  *   accepts or declines, and the owner or an admin revokes. A pending
  *   invitee is not a member: they read nothing the group's rows expose, a
  *   pending `admin` invitation manages nothing, and neither the member list
@@ -32,8 +32,7 @@
  *   view-private rung, so they read as `private`. The application clears the
  *   rows' group column too (in-the-dark's `ON DELETE SET NULL`); a column
  *   naming no group reads the same way.
- * - **Erasing a group's owner** (`./erasure`, owner decision on pulpit#274,
- *   2026-11-12): every group the erased account owns is reassigned to the
+ * - **Erasing a group's owner** (`./erasure`): every group the erased account owns is reassigned to the
  *   application's tombstone account through a {@link GroupOwnerStore}, so
  *   its members keep reading its rows; then the account's own memberships
  *   go. The tombstone account holds no membership, so it reads nothing.
@@ -89,7 +88,7 @@ export interface Membership {
 }
 
 /**
- * One pending invitation (pulpit#227): `invitedBy` asked `accountId` to join
+ * One pending invitation: `invitedBy` asked `accountId` to join
  * `groupId` with `role`, at `at`. It grants nothing until the invitee
  * accepts it, when it becomes a {@link Membership} with that role.
  *
@@ -175,7 +174,7 @@ export class SelfInvitation extends Schema.TaggedError<
  * The membership table an application supplies (in-the-dark's
  * `group_members`, gardeneria's `social.group_memberships`), keyed
  * `(group_id, account_id)` with a `role` column, a `status`
- * (`active | pending`, pulpit#227) and both foreign keys cascading. A
+ * (`active | pending`) and both foreign keys cascading. A
  * pending row is an invitation: only the invitation methods read or write
  * it, and every membership read (`roleOf`, `list`, `isMember`, `groupsOf`)
  * reads `status = 'active'` rows alone. A store seam: no policy, never
@@ -222,15 +221,15 @@ export interface MembershipStore<Following, E, R> {
    */
   readonly groupsOf: (accountId: string) => Following;
   /**
-   * Delete at most `limit` rows of the account (account erasure, pulpit#207,
-   * in bounded batches: `PERF-DB-001`, pulpit#274): its memberships, its
+   * Delete at most `limit` rows of the account (account erasure,
+   * in bounded batches: `PERF-DB-001`): its memberships, its
    * pending invitations and the pending invitations it sent, all counted
    * against the one `limit`; how many rows went. `./erasure` calls it again
    * until it deletes fewer than `limit`.
    */
   readonly eraseAccount: (accountId: string, limit: number) => Effect.Effect<number, E, R>;
   /**
-   * Insert a pending invitation (pulpit#227); whether a row was written. Any
+   * Insert a pending invitation; whether a row was written. Any
    * row already at the key, active or pending, makes it a no-op
    * (`ON CONFLICT DO NOTHING`).
    */
@@ -273,7 +272,7 @@ export interface GroupOwnership<E, R> {
 
 /**
  * The write half of the application's groups that account erasure needs
- * (pulpit#274): a bounded reassignment of the groups an account owns. The
+ *: a bounded reassignment of the groups an account owns. The
  * same records {@link GroupOwnership} reads, so once a group is reassigned
  * its `ownerOf` answers the new owner. A store seam: no policy, never opens
  * a transaction, fails only with its `E`. See docs/seams.md.
@@ -427,7 +426,7 @@ export interface AudienceOps<E, R> {
   ) => Effect.Effect<Page<Omit<Membership, "groupId">>, Unauthorized | GroupNotFound | E, R>;
   /**
    * Invite `accountId` to the group with `role` (default `member`), as a
-   * pending membership (pulpit#227). Fails {@link SelfInvitation} for the
+   * pending membership. Fails {@link SelfInvitation} for the
    * viewer themselves and {@link AlreadyMember} for an active member;
    * inviting an account already invited changes nothing.
    */

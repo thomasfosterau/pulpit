@@ -1,5 +1,5 @@
 /**
- * **The page recipe** (pulpit#201) — a routable, localised leaf answered by
+ * **The page recipe** — a routable, localised leaf answered by
  * one resolution read: a path and a requested locale resolve to the node in
  * the best locale it carries, to a redirect from an alias, or to not-found.
  *
@@ -9,10 +9,9 @@
  * - **the leaf** — `./subtype`'s `defineSubtype`, usually a reference leaf
  *   (corpus material written at the corpus-write rung), with a locale level
  *   (`defineLocaleLevel`) and, for scheduled and drafted pages, the
- *   publication pointer (`./publication`, pulpit#46);
+ *   publication pointer (`./publication`);
  * - **the path** — `./paths`' `routable` over a shared (untranslated) path
- *   column. A page collection is a root claim in `./paths` (owner decision
- *   on pulpit#201): one `PathStore` per collection, so a path is claimed
+ *   column. A page collection is a root claim in `./paths`: one `PathStore` per collection, so a path is claimed
  *   once per collection and a slug translation is never a claim of its own;
  * - **the read** — {@link resolveLocalised}, here.
  *

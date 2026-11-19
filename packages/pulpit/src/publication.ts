@@ -11,7 +11,7 @@
  * ## Published means stamped AND arrived
  *
  * A publication stamp (`publishedAt`) is a datetime the author controls, so
- * an author may set a FUTURE one, and that is what scheduling is (#1121): the
+ * an author may set a FUTURE one, and that is what scheduling is: the
  * row exists, it is stamped, and it is not out yet. `IS NOT NULL` and "live"
  * are therefore different predicates, and every reader of the axis gets the
  * two-part answer from here. The unpublished predicate is the exact
@@ -33,10 +33,10 @@
  * options say absence is itself a refusal:
  *
  * - `owned` — an owned family's axes are effect-auth's
- *   (`Cacheability.publiclyServeable` over `OwnedAccess.serveableAxes`,
- *   pulpit#5): a `visibility` that is absent refuses, since the projection
+ *   (`Cacheability.publiclyServeable` over `OwnedAccess.serveableAxes`):
+ *   a `visibility` that is absent refuses, since the projection
  *   dropped the one attribute that decides who may see the row and reading
- *   that as public is a fail-open (#1096, #1092); `draft` and `unapproved`,
+ *   that as public is a fail-open; `draft` and `unapproved`,
  *   when present, must be exactly `false`, a `moderationState` exactly
  *   `approved`, and a `deletedAt` key must be absent, even holding
  *   `undefined`;
@@ -44,11 +44,11 @@
  *   unparseable or future `publishedAt`. A leaf that declares `./subtype`'s
  *   live pointer is one: its live view supplies the stamp, and its
  *   handlers write the cache only from the anonymous (live) read
- *   (pulpit#46).
+ *.
  *
  * What the predicate structurally cannot express is a gate that depends on
- * state outside the cached resource (a comment's inherited target gate,
- * #1475); a family with one closes it on the write path (evict on the
+ * state outside the cached resource (a comment's inherited target gate);
+ * a family with one closes it on the write path (evict on the
  * target's mutation) with the cache TTL floor as the backstop.
  *
  * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/read-model.md#publication.
@@ -116,7 +116,7 @@ export const publishedFilter = <Following = never>(
 /**
  * The rows whose publication stamp arrived in the window `(since, now]`:
  * `since < column AND column <= now`, as a list filter for an application's
- * cron to drive a scheduled-publication sweep (pulpit#45). A write fires its
+ * cron to drive a scheduled-publication sweep. A write fires its
  * lifecycle events when it is made, so a version stamped for the future
  * emits nothing when its stamp arrives; a sweep that passes each run's `now`
  * as the next run's `since` sees every such row exactly once, since the
@@ -151,7 +151,7 @@ export const duePublications = <Following = never>(
  * @since 0.1.0
  */
 export interface ServeabilityOptions {
-  /** An owned family: a missing `visibility` refuses (#1096). */
+  /** An owned family: a missing `visibility` refuses. */
   readonly owned?: boolean;
   /** A stamp-gated family: a missing, unparseable or future `publishedAt` refuses. */
   readonly publishGated?: boolean;
@@ -177,7 +177,7 @@ const hasArrivedStamp = (publishedAt: Date | string, options: ServeabilityOption
 };
 
 /**
- * An owned family's axes, as effect-auth decides them (pulpit#5):
+ * An owned family's axes, as effect-auth decides them:
  * `Cacheability.publiclyServeable` over `OwnedAccess.serveableAxes`, the
  * owned-read policy's one anonymous arm restated over the wire attributes.
  */
@@ -234,8 +234,8 @@ export const isPubliclyServeable = (
   // the operation layer's row predicate reads it (SEC-AUTH-ENUM-001).
   const draft = attributes["draft"];
   if (draft !== undefined && draft !== false) return false;
-  // A tombstone is an admin-only read, and emitters omit the key while live
-  // (#691): present at all — `null` included — refuses.
+  // A tombstone is an admin-only read, and emitters omit the key while live:
+  // present at all — `null` included — refuses.
   return attributes["deletedAt"] === undefined;
 };
 
@@ -243,7 +243,7 @@ export const isPubliclyServeable = (
  * The `serveable` hook the application's resource cache takes, bound to a
  * family's posture: `(resource) => boolean`, narrowing an admitted resource
  * as {@link isPubliclyServeable} does. The cache, which the application owns
- * (no library is expected to provide one; effect-web#33), applies it on
+ * (no library is expected to provide one), applies it on
  * both its read and write paths and evicts on a non-serveable write.
  *
  * @since 0.1.0

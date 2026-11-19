@@ -9,7 +9,7 @@
  * (`packages/jobs/src/moderation/thresholds.ts`), with their tests; a
  * `#NNN` here names a gardeneria issue.
  *
- * ## The model (owner decisions on pulpit#51)
+ * ## The model
  *
  * The kernel owns the rules; the transport (a queue, the classifier run, the
  * API-call ledger, moderator notifications) stays the application's.
@@ -607,7 +607,7 @@ export interface ReportStore<E, R> {
     resolution: ReportResolution,
   ) => Effect.Effect<number, E, R>;
   /**
-   * Account erasure (pulpit#207), at most `limit` rows per call
+   * Account erasure, at most `limit` rows per call
    * (`PERF-DB-001`): delete the reports the account filed, and on any
    * report it resolved replace `resolvedBy` with `replacement` (the
    * application's tombstone account). Returns how many rows it deleted or
@@ -734,7 +734,7 @@ export const defineReports = <Resource, E, R>(definition: {
   readonly viewer: Effect.Effect<Viewer, never, R>;
   readonly policy: AccessPolicy;
   /**
-   * A write budget on `file` (pulpit#199, `./budgets`' `bindBudget`), spent
+   * A write budget on `file` (`./budgets`' `bindBudget`), spent
    * as the `file` action once the reporter can read the target and before
    * the report is stored. Omitted, reports are unthrottled.
    */

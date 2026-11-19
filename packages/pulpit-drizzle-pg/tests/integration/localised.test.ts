@@ -1,5 +1,5 @@
 /**
- * The localised leaf store against PostgreSQL (pulpit#56, pulpit#272),
+ * The localised leaf store against PostgreSQL,
  * checked against the kernel's `makeInMemoryLeafStore({ localised: true })`
  * over the same writes: `list` over the `(id, locale)` rows (a node with no
  * locale is one `NULL`-locale row), the `locale` filter arm, `distinct`

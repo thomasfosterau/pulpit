@@ -1,5 +1,5 @@
 /**
- * **Discovery** (pulpit#203) — what a site's feeds and sitemap list: a
+ * **Discovery** — what a site's feeds and sitemap list: a
  * bounded, keyset-paged enumeration of a leaf's discoverable nodes, the
  * per-family metadata projection the feed item, the page head and the
  * JSON-LD builders all read, and the purge hint a write emits for the
@@ -20,7 +20,7 @@
  *   never listed, by the same filters every read uses (`SEC-AUTH-ENUM-001`);
  *   on a publish-gated leaf it reads the **live** version, never the head,
  *   and a node with no live version (or only a future stamp) is not listed
- *   (pulpit#46);
+ *;
  * - its resource is **publicly serveable** ({@link isPubliclyServeable},
  *   `CACHE-AUTH-005`), a second guard over the same facts: whatever a feed
  *   or a sitemap lists, a public cache may hold;
@@ -30,7 +30,7 @@
  * items than its limit, but the next page starts after the last row read,
  * so paging is stable and never skips or repeats a node.
  *
- * ## A localised leaf (pulpit#265)
+ * ## A localised leaf
  *
  * A localised view lists one row per `(node, locale)` (`./subtype`'s
  * {@link LOCALE_COLUMN}), so each discoverable pair is an item carrying its
@@ -50,7 +50,7 @@
  *   even past the limit), so each item's `alternates`, the node's other
  *   listed locales, is complete: a sitemap's `hreflang` alternates.
  *
- * The canonical path stays per node (pulpit#57: the locale is chosen when
+ * The canonical path stays per node (the locale is chosen when
  * the node is read, not by the path), read once per node; an alternate's
  * URL is the application's to build from the path and the locale.
  *
@@ -178,7 +178,7 @@ export class DiscoveryDeclarationError extends Schema.TaggedError<
 export interface DiscoveryCursor {
   readonly id: string;
   readonly key: Option.Option<Comparable>;
-  /** The locale of the row the page ended on (pulpit#265); absent: none, or a leaf without a locale level. */
+  /** The locale of the row the page ended on; absent: none, or a leaf without a locale level. */
   readonly locale?: string;
 }
 
@@ -193,7 +193,7 @@ export interface DiscoveryCursor {
 export interface DiscoveryRequest {
   readonly limit: number;
   readonly after?: DiscoveryCursor;
-  /** One locale's items only (pulpit#265). */
+  /** One locale's items only. */
   readonly locale?: string;
 }
 
@@ -213,9 +213,9 @@ export interface DiscoveryItem<Resource> {
   readonly path: string;
   readonly resource: Resource;
   readonly metadata: DiscoveryMetadata;
-  /** The item's locale (pulpit#265). */
+  /** The item's locale. */
   readonly locale: Option.Option<string>;
-  /** In the sitemap, the node's other listed locales (pulpit#265). */
+  /** In the sitemap, the node's other listed locales. */
   readonly alternates: ReadonlyArray<string>;
 }
 
@@ -238,7 +238,7 @@ export interface DiscoveryDefinition<Row extends LeafRow, Resource, Following, E
   /**
    * The leaf, exactly as its own operations declare it. Its `viewer` is
    * ignored: the enumeration always reads as the anonymous do. A localised
-   * leaf lists one item per `(node, locale)` (pulpit#265).
+   * leaf lists one item per `(node, locale)`.
    */
   readonly leaf: SubtypeDefinition<Row, Resource, Following, E, R>;
   /** The family's path table, for each item's canonical path. */

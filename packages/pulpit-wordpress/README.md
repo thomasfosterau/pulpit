@@ -4,7 +4,7 @@ A WordPress-compatible (`wp/v2`), read-only REST API over the chains of [`@thoma
 
 **Disclaimer:** This repository and package have been created using Claude Code. The package's API and functionality is in flux, so expect churn and breaking changes.
 
-**Not published.** The package is `"private": true` ([pulpit#115](https://github.com/thomasfosterau/pulpit/issues/115)). The API is specified on [pulpit#86](https://github.com/thomasfosterau/pulpit/issues/86) and lands in phases; what has landed is in [docs/wordpress.md → Status](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/wordpress.md#status).
+**Not published.** The package is `"private": true`. What has landed is in [docs/wordpress.md → Status](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/wordpress.md#status).
 
 ## Install
 
@@ -67,7 +67,6 @@ Every module is a namespace on the root export (`import { Ids } from "@thomasfos
 - [docs/wordpress.md](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/wordpress.md): the module guide (the id modes, routes, parameters, `_embed`, `_fields`, headers and errors) and the [seams](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/wordpress.md#seams) an application fills, with the `IdCodec`'s suggested storage.
 - The API reference is each export's TSDoc.
 - The kernel: [`@thomasfosterau/pulpit`](https://github.com/thomasfosterau/pulpit/blob/trunk/packages/pulpit/README.md), and its [seams](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/seams.md).
-- The spec and the owner's decisions: [pulpit#86](https://github.com/thomasfosterau/pulpit/issues/86).
 
 ## License
 

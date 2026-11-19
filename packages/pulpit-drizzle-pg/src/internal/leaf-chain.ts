@@ -2,7 +2,7 @@
  * @copyright Thomas Foster
  *
  * One `-pg/chain` `LeafChain` as the kernel's `VersionChain` port
- * (pulpit#246, pulpit#247): the kernel's inputs mapped onto the chain's, and
+ *: the kernel's inputs mapped onto the chain's, and
  * the chain's tagged errors mapped one to one onto the kernel's. Off the
  * public surface: `makeVersionChains` (`../version-chain.ts`) builds every
  * leaf's port through it, and the unit suite drives it over a fake chain.

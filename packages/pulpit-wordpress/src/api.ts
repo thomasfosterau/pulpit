@@ -2,14 +2,13 @@
  * **The `wp/v2` read API** — posts, pages and media, categories and tags,
  * and their authors, as WordPress's REST API serves them, over the leaves
  * an application binds to those types and taxonomies, plus the discovery
- * index (pulpit#86, phases 1 and 2).
+ * index (phases 1 and 2).
  *
  * The behavioural spec is WordPress core's REST API
  * (`WordPress/wordpress-develop` trunk at `9063498`:
  * `class-wp-rest-posts-controller.php`, `class-wp-rest-attachments-controller.php`,
  * `class-wp-rest-server.php`), and the response shapes are pinned to the
  * fixture core generates from it (`tests/qunit/fixtures/wp-api-generated.js`).
- * The spec and the owner's decisions on it are on pulpit#86.
  *
  * ## How the kernel's invariants hold here
  *
@@ -35,21 +34,21 @@
  *   {@link MAX_LIST_PARAMETER} values: a longer list is
  *   `400 rest_invalid_param`, answered before any id is decoded (WordPress
  *   core sets no such cap).
- * - **Conditional reads** (pulpit#86, decision on #65). A single-item
+ * - **Conditional reads**. A single-item
  *   response (an item, a term, a user) carries a weak `ETag`, the SHA-256 of
  *   its body, so the tag changes whenever anything the body embeds does,
  *   and holds with `_embed`, `_fields` and `context`. A request whose
  *   `If-None-Match` matches (weak comparison, `*` included) is `304`, with the
  *   `ETag` and `Cache-Control` and no body. Collections carry none.
- * - **`search`** (pulpit#224). One capped ranked read per request (the
+ * - **`search`**. One capped ranked read per request (the
  *   binding's `search`, under the viewer's search scope), hydrated through
  *   `getMany`, so a hit the viewer's gate hides is dropped and never counted.
  *   `X-WP-Total` counts the hydrated hits, capped at `MAX_PAGE_LIMIT`.
- * - **A scheduled publication is `future`** (pulpit#220). For the items of a
+ * - **A scheduled publication is `future`**. For the items of a
  *   page that a writer reads with no live version of a publish-gated leaf, one
  *   batched `PublicationOps.scheduled` read supplies the pending instant,
  *   which becomes the item's `date` and its status `future`.
- * - **`lang`** (pulpit#223). A localised leaf bound with a `defaultLocale`
+ * - **`lang`**. A localised leaf bound with a `defaultLocale`
  *   is read in the fallback order of the requested BCP 47 tag
  *   (`localePreferences`): a single item through `getLocalised`, a
  *   collection through `listLocalised`, a row per node.
@@ -63,9 +62,8 @@
  *   item's `categories` / `tags`, a term's `count`, `?categories=` /
  *   `?tags=` and `post=` all count only edges whose both ends the viewer
  *   can read, so a hidden item or term is never confirmed through one.
- * - **Authors are the accounts owning a readable item** (pulpit#86,
- *   decision 5, through the kernel's `readableOwners`). Any other account,
- *   unknown or not, answers `404 rest_user_invalid_id`.
+ * - **Authors are the accounts owning a readable item** (through the
+ *   kernel's `readableOwners`). Any other account, unknown or not, answers `404 rest_user_invalid_id`.
  *
  * ## What it leaves out
  *
@@ -171,13 +169,13 @@ export type PostStatus = "publish" | "future" | "draft" | "private" | "trash" | 
  * core sets no `maxItems` on `include` and its siblings; this bound is the
  * adapter's, at or below the kernel's `MAX_SET_VALUES`, so a list past it is
  * refused (`400 rest_invalid_param`) before the id codec is read, and never
- * decodes to an all-none batch that would exclude nothing (pulpit#86).
+ * decodes to an all-none batch that would exclude nothing.
  *
  * @since 0.1.0
  */
 export const MAX_LIST_PARAMETER = 100;
 
-/* oxlint-disable effect/prefer-option-over-null -- optional fields are `?: T | undefined` (AGENTS.md → Conventions), so a caller can forward its own `undefined`; an absent field is its documented default */
+/* oxlint-disable effect/prefer-option-over-null -- optional fields are `?: T | undefined`, so a caller can forward its own `undefined`; an absent field is its documented default */
 
 /**
  * The fields of one item, read off the application's own resource by its
@@ -209,7 +207,7 @@ export interface PostFields {
   readonly draft: boolean;
   readonly visibility: Visibility;
   readonly deleted: boolean;
-  /** An attachment's media fields (`fileMediaFields` maps a file leaf's, pulpit#221); absent for a post or page. */
+  /** An attachment's media fields (`fileMediaFields` maps a file leaf's); absent for a post or page. */
   readonly media?: MediaFields | undefined;
 }
 
@@ -229,8 +227,8 @@ export interface MediaFields {
   readonly mediaDetails: Schema.JsonObject;
   readonly fileSize: Option.Option<number>;
   /**
-   * The file version's bytes are not confirmed yet (`./blobs`' `bytesPending`,
-   * pulpit#221): the item reads as missing (`404 rest_post_invalid_id`), is
+   * The file version's bytes are not confirmed yet (`./blobs`' `bytesPending`):
+   * the item reads as missing (`404 rest_post_invalid_id`), is
    * left out of every list, and is never a `featured_media` or `_embed`
    * target, until the bytes are there. Absent, the item is shown.
    */
@@ -260,7 +258,7 @@ export interface PostColumns {
   readonly mimeType?: string | undefined;
   readonly mediaType?: string | undefined;
   /**
-   * A file leaf's `bytesPending` column (pulpit#221): when declared, a list
+   * A file leaf's `bytesPending` column: when declared, a list
    * reads only the rows whose bytes are confirmed (`bytesPending = false`),
    * so its total never counts a pending item.
    */
@@ -288,13 +286,13 @@ export interface PostTypeBinding<Resource, E, R, Following = never> {
   readonly serveable: (resource: Resource) => boolean;
   /**
    * The default locale of a localised leaf (the one its `defineSubtype`
-   * declares a `locales` level for, pulpit#56): the last resort of the
+   * declares a `locales` level for): the last resort of the
    * fallback order `?lang=` reads in. Absent, the leaf is not localised and
    * `?lang=` is `400 rest_invalid_param` for its type.
    */
   readonly defaultLocale?: string;
   /**
-   * The leaf's ranked search (pulpit#224), typically the kernel's
+   * The leaf's ranked search, typically the kernel's
    * `hybridSearch` over its branches, run under
    * `searchScopeFilter(leaf, viewer, { includeDeleted, where })` for the
    * viewer: it returns at most `limit` hits, best first. Absent, `search` is
@@ -331,7 +329,7 @@ export interface ShownItem {
   readonly serveable: boolean;
   /**
    * The instant a pending scheduled publication takes effect, for an item
-   * with no live version that a writer reads (pulpit#220): it reads
+   * with no live version that a writer reads: it reads
    * `status: "future"` and its `date` is this instant. None otherwise.
    */
   readonly scheduled: Option.Option<Date>;
@@ -366,7 +364,7 @@ export interface LocalisedReads<R, Following = never> {
   ) => Effect.Effect<Option.Option<LocalisedItem>, unknown, R>;
   /**
    * One page of the list, a row per node in the first of `locales` it
-   * carries (`SubtypeOps.listLocalised`, pulpit#272), and the count of nodes.
+   * carries (`SubtypeOps.listLocalised`), and the count of nodes.
    */
   readonly list: (
     request: ListRequest<Following> & { readonly locales: ReadonlyArray<string> },
@@ -386,7 +384,7 @@ export interface LocalisedReads<R, Following = never> {
  */
 export interface BoundPostType<R, Following = never> {
   readonly columns: PostColumns;
-  /** The ranked search, none for a leaf that binds none; its ids are best first (pulpit#224). */
+  /** The ranked search, none for a leaf that binds none; its ids are best first. */
   readonly search: Option.Option<
     (request: SearchRequest<Following>) => Effect.Effect<ReadonlyArray<string>, unknown, R>
   >;
@@ -409,7 +407,7 @@ export interface BoundPostType<R, Following = never> {
   readonly owners: (request: OwnersRequest) => Effect.Effect<Page<string>, unknown, R>;
   /**
    * The instants the pending scheduled publications of `ids` take effect,
-   * by node id, in one read (`PublicationOps.scheduled`, pulpit#220); empty
+   * by node id, in one read (`PublicationOps.scheduled`); empty
    * for a leaf with no live pointer.
    */
   readonly scheduled: (
@@ -419,7 +417,7 @@ export interface BoundPostType<R, Following = never> {
 
 /**
  * An attachment's {@link MediaFields} from a `./blobs` file version
- * (pulpit#221): `mime_type` from its `mediaType`, `media_type` from that
+ *: `mime_type` from its `mediaType`, `media_type` from that
  * type's top level (`application` for one WordPress doesn't name),
  * `filesize` from `byteSize`, `source_url` from `fileUrl`
  * (empty while the bytes are pending or the store serves no URL), and
@@ -457,7 +455,7 @@ export const fileMediaFields = <E, R>(
     readonly caption: ColumnValue;
     readonly description: ColumnValue;
     readonly altText: string;
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined` (AGENTS.md → Conventions); the omitted key is `{}`
+    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined`; the omitted key is `{}`
     readonly mediaDetails?: Schema.JsonObject | undefined;
   },
 ): MediaFields => {
@@ -475,7 +473,7 @@ export const fileMediaFields = <E, R>(
   };
 };
 
-/** Whether an item's bytes, if it has any, are confirmed (pulpit#221). */
+/** Whether an item's bytes, if it has any, are confirmed. */
 const isConfirmed = (item: ShownItem): boolean => item.fields.media?.bytesPending !== true;
 
 /**
@@ -493,7 +491,7 @@ export const bind = <Resource, E, R, Following = never>(
     serveable: binding.serveable(resource),
     scheduled: Option.none(),
   });
-  // A pending file is missing to every reader until its bytes are confirmed (pulpit#221).
+  // A pending file is missing to every reader until its bytes are confirmed.
   const confirmed = Option.match(Option.fromUndefinedOr(binding.columns.bytesPending), {
     onNone: (): ListFilter<Following> => always,
     onSome: (column): ListFilter<Following> => eq(column, false),
@@ -589,7 +587,7 @@ export interface TermFields {
   readonly parent: Option.Option<string>;
 }
 
-/* oxlint-disable effect/prefer-option-over-null -- optional fields are `?: T | undefined` (AGENTS.md → Conventions); an absent column has its documented default */
+/* oxlint-disable effect/prefer-option-over-null -- optional fields are `?: T | undefined`; an absent column has its documented default */
 
 /**
  * The term leaf's view columns the term parameters filter and sort by.
@@ -690,7 +688,7 @@ export interface BoundTaxonomy<R, Following = never> {
   readonly members: (
     termIds: ReadonlyArray<string>,
   ) => Effect.Effect<ListFilter<Following>, unknown, R>;
-  /** The items holding no readable assignment to any of `termIds`: the complement of `members` (pulpit#191). */
+  /** The items holding no readable assignment to any of `termIds`: the complement of `members`. */
   readonly nonMembers: (
     termIds: ReadonlyArray<string>,
   ) => Effect.Effect<ListFilter<Following>, unknown, R>;
@@ -819,7 +817,7 @@ export interface Site {
   readonly timezone: string;
 }
 
-/* oxlint-disable effect/prefer-option-over-null -- optional fields are `?: T | undefined` (AGENTS.md → Conventions); an absent prefix is the default, an absent type has no route */
+/* oxlint-disable effect/prefer-option-over-null -- optional fields are `?: T | undefined`; an absent prefix is the default, an absent type has no route */
 
 /**
  * A `wp/v2` read API's declaration.
@@ -836,7 +834,7 @@ export interface WordPressConfig<R, Following = never> {
   readonly viewer: Effect.Effect<Viewer, never, R>;
   /** The application's role axes, for the `status` parameter's scope check. */
   readonly policy: AccessPolicy;
-  /** Render a response's fields to HTML in one batch, in order (pulpit#86, decision 3). */
+  /** Render a response's fields to HTML in one batch, in order. */
   readonly render: (
     requests: ReadonlyArray<RenderRequest>,
   ) => Effect.Effect<ReadonlyArray<string>, unknown, R>;
@@ -968,13 +966,13 @@ interface CollectionParams {
   readonly modifiedBefore: Option.Option<Date>;
   /**
    * Each taxonomy's term lists as given: `categories` / `tags` include,
-   * `categories_exclude` / `tags_exclude` exclude (pulpit#215).
+   * `categories_exclude` / `tags_exclude` exclude.
    */
   readonly terms: ReadonlyArray<readonly [Taxonomy, "include" | "exclude", ReadonlyArray<string>]>;
   readonly taxRelation: "AND" | "OR";
   /** The `search` text, when asked and not blank (core ignores an empty one). */
   readonly search: Option.Option<string>;
-  /** The `lang` tag, when asked (the adapter's own parameter, pulpit#223). */
+  /** The `lang` tag, when asked (the adapter's own parameter). */
   readonly lang: Option.Option<string>;
 }
 
@@ -1143,7 +1141,7 @@ const checked = <P extends { readonly orderby: string; readonly include: Option.
 
 /**
  * The order a `search` result is re-sorted in, from the hydrated items
- * (pulpit#224): none for `relevance`, which keeps the search's own ranking.
+ *: none for `relevance`, which keeps the search's own ranking.
  * `order` flips a column's direction; ties keep their relevance order.
  */
 const searchOrder = (
@@ -1296,7 +1294,7 @@ const collectionParams = (
       lang: Option.filter(query.scalar("lang"), (tag) => {
         const valid = LANG_TAG.test(tag);
         if (!valid) refuse("lang", LANG_MESSAGE);
-        // A search ranks rows in the leaf's own view, not per locale (pulpit#326).
+        // A search ranks rows in the leaf's own view, not per locale.
         if (valid && Option.isSome(search)) {
           refuse("lang", "lang cannot be combined with search.");
         }
@@ -1329,7 +1327,7 @@ const UNSUPPORTED_TERM_ORDERS = ["include_slugs", "term_group", "description"] a
 /**
  * Parse and check a taxonomy's collection parameters, as core's terms
  * controller registers them: `parent` only on a hierarchical taxonomy, and
- * `search` refused (no search yet, pulpit#54).
+ * `search` refused (no search yet).
  */
 const termParams = (
   taxonomy: Taxonomy,
@@ -1489,7 +1487,7 @@ const statusFilter = (type: PostType, columns: PostColumns, status: string): Lis
 };
 
 /**
- * The `status` parameter's scope check (pulpit#86, decision 4): a status
+ * The `status` parameter's scope check: a status
  * other than the default asks for rows only a signed-in viewer may see, so an
  * anonymous caller gets `rest_forbidden_status` (401); `trash` needs the
  * view-deleted rung (403 for a signed-in caller below it). It names no row.
@@ -1664,7 +1662,7 @@ export const defineWordPress = <R, Following = never>(
   /**
    * The `categories` / `tags` filter: each taxonomy's readable members
    * (`EDGE-001`, through `memberFilter`), and for `categories_exclude` /
-   * `tags_exclude` its non-members (`nonMemberFilter`, pulpit#191), every
+   * `tags_exclude` its non-members (`nonMemberFilter`), every
    * clause joined by `tax_relation` as core's `tax_query` joins them. An
    * include list whose ids all decode to none fails closed, as
    * `memberFilter` does; an exclude list excludes nothing, as
@@ -2322,7 +2320,7 @@ export const defineWordPress = <R, Following = never>(
 
   /**
    * The items a writer reads with no live version, shown as scheduled when
-   * a publication is pending (pulpit#220): one batched `scheduled` read per
+   * a publication is pending: one batched `scheduled` read per
    * page, over the rows whose `draft` the viewer is shown, so a reader of
    * the live version is never asked. The pending instant is the item's
    * `date`, and its status `future`.
@@ -2410,7 +2408,7 @@ export const defineWordPress = <R, Following = never>(
     });
 
   /**
-   * A single-item response with its weak `ETag` (pulpit#86, decision on #65):
+   * A single-item response with its weak `ETag`:
    * the SHA-256 of the body, so it holds with `_embed`, `_fields` and
    * `context`, whatever the item embeds. A request whose `If-None-Match`
    * matches is `304` with the tag and `Cache-Control` alone. An error, and
@@ -2510,7 +2508,7 @@ export const defineWordPress = <R, Following = never>(
       /**
        * `column NOT IN values` as WordPress reads it: an unset column is core's
        * `0` (a top-level page's `post_parent`), which no exclusion names, so the
-       * row stays; a bare `noneOf` drops it, as SQL's `NULL <> ALL(…)` does (pulpit#170).
+       * row stays; a bare `noneOf` drops it, as SQL's `NULL <> ALL(…)` does.
        */
       const excluding = (column: string, values: ReadonlyArray<string>) =>
         or<never>(isNull(column), noneOf(column, values));
@@ -2596,7 +2594,7 @@ export const defineWordPress = <R, Following = never>(
           total: page.total,
         };
       });
-      // `search`: one capped ranked read, hydrated through the viewer's own gate, ordered and paged here (pulpit#224).
+      // `search`: one capped ranked read, hydrated through the viewer's own gate, ordered and paged here.
       const searched = Effect.fn("wordpress.listSearched")(function* (text: string) {
         const search = yield* Effect.fromOption(binding.search).pipe(
           Effect.mapError(() =>

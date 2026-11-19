@@ -1,5 +1,5 @@
 /**
- * External reference import (pulpit#209) over the in-memory chain, leaf and
+ * External reference import over the in-memory chain, leaf and
  * external-id stores: the declaration checks, the upsert (create, update,
  * no-op), each merge mode, a pre-attached id, the per-authority uniqueness,
  * the batch summary and every conflict reason, after preferenceflow's

@@ -1,14 +1,14 @@
 /**
- * **Ordered link lists** (pulpit#266) — an ordered, localised list of
+ * **Ordered link lists** — an ordered, localised list of
  * links under a parent node, read for one viewer, with nested lists
- * (pulpit#313): a site's navigation and its sub-menus, a
+ *: a site's navigation and its sub-menus, a
  * footer's links, a "related reading" strip. A menu is the usual example,
  * but the kernel names no application type, so this is the generic shape an
  * application binds (see docs/structure.md → `./links`).
  *
  * It adds one read over the existing modules and no store of its own:
  *
- * - **the list** — a `./collections` collection (pulpit#193) of entry
+ * - **the list** — a `./collections` collection of entry
  *   nodes under the parent node. Its order, its size bound and its parent
  *   gate are the collection's;
  * - **the entry leaf** — a `defineSubtype` leaf with a locale level
@@ -34,7 +34,7 @@
  * targets' own gates give, so they see the entries others can't. A parent
  * the viewer can't read is `NodeNotFound`, as for any collection.
  *
- * ## Nesting (pulpit#313)
+ * ## Nesting
  *
  * A nested list is an entry whose target is another parent node of the same
  * collection, so it needs no storage of its own. The read recurses into it

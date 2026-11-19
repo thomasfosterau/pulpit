@@ -112,7 +112,7 @@ describe("makeLeafStores — the view-merge trap is refused at module load", () 
     });
     const make = storesOver(trapTree, trapTables);
     expect(make).toThrow(DerivationError);
-    // effect-drizzle-ext#168 (0.3.0) refuses this in `makeTreeViews` itself, before makeLeafStores runs.
+    // effect-drizzle-ext (>=0.3.0) refuses this in `makeTreeViews` itself, before makeLeafStores runs.
     expect(make).toThrow(/"slug" from both/u);
   });
 

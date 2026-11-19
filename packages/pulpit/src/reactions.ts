@@ -1,5 +1,5 @@
 /**
- * **Reactions** (pulpit#196) — one reaction per account per node, a kind
+ * **Reactions** — one reaction per account per node, a kind
  * from the family's own vocabulary, behind the target's read gate, with a
  * tally per kind for a page of nodes in one grouped read.
  *
@@ -8,7 +8,7 @@
  * (`packages/models/src/models/reactions.ts`) and its operations
  * (`apps/api/src/operations/reactions.ts`), with their tests.
  *
- * ## The model (owner decision on pulpit#196)
+ * ## The model
  *
  * - **A reaction is a fact beside the node**, like an edge: no version
  *   chain and no history. The store keys it `(node, account)`, so an
@@ -23,11 +23,11 @@
  *   viewer can't read fails `NodeNotFound`, never `Forbidden`; a tally
  *   counts only nodes the viewer can read; and the viewer's own list omits
  *   a reaction whose node has since been hidden from them.
- * - **Account erasure** (pulpit#207) deletes a member's reactions through
+ * - **Account erasure** deletes a member's reactions through
  *   {@link ReactionStore.eraseAccount}, which the erasure operation calls;
  *   no reaction operation exposes it.
  *
- * Mute and block (pulpit#195) suppress interaction only, which a family
+ * Mute and block suppress interaction only, which a family
  * enforces with its own gate around `react` once the social graph lands;
  * a tally counts every account's reactions.
  *
@@ -163,7 +163,7 @@ export interface ReactionStore<E, R> {
   }) => Effect.Effect<ReadonlyArray<ReactionRow>, E, R>;
   /**
    * Delete at most `limit` of the reactions the account made (account
-   * erasure, pulpit#207, in bounded batches: `PERF-DB-001`); how many went.
+   * erasure, in bounded batches: `PERF-DB-001`); how many went.
    * `./erasure` calls it again until it deletes fewer than `limit`.
    */
   readonly eraseAccount: (accountId: string, limit: number) => Effect.Effect<number, E, R>;

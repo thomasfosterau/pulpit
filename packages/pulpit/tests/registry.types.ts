@@ -93,7 +93,7 @@ export const notInBranch: Assignable<ContentBranch["type"], "gardens"> = false;
 // The workspace compiles with `exactOptionalPropertyTypes`, and an optional
 // `RegistryEntry` member is plain `?: T` (a flag `?: true`), so an explicit
 // `undefined` is rejected: a caller holding `undefined` omits the key
-// (AGENTS.md → Conventions).
+// (docs/CONTRIBUTING.md → Coding guidelines).
 
 export const marker: RegistryEntry = { key: "node", parent: root };
 /** A registry entry whose `Key` member holds exactly `Value`. */

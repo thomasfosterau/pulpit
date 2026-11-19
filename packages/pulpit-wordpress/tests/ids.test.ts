@@ -1,7 +1,7 @@
 /**
- * The id modes over the `IdCodec` seam (pulpit#114): batching, input order,
+ * The id modes over the `IdCodec` seam: batching, input order,
  * duplicates, unknown and malformed wire ids, the codec's contract failures,
- * and the string-id passthrough. The adapter's endpoints (pulpit#86 phase 1)
+ * and the string-id passthrough. The adapter's endpoints
  * pin the 404 for an unknown id against a hidden row; here the codec's half
  * is pinned: every id that names no node decodes to the same `none`, without
  * a failure.

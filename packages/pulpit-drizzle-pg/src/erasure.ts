@@ -1,7 +1,7 @@
 /**
  * @copyright Thomas Foster
  *
- * The kernel's erasure seams on PostgreSQL (pulpit#361): the `PurgeStore`
+ * The kernel's erasure seams on PostgreSQL: the `PurgeStore`
  * `./purge`'s `definePurge` runs (docs/seams.md → `PurgeStore`), over the
  * version tables whose columns carry document and content hashes, the
  * document tables and the rows the other seams keep for a node; and the

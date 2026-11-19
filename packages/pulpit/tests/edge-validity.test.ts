@@ -1,7 +1,7 @@
 /**
- * Edge validity intervals (pulpit#210): a family declares `validity`
+ * Edge validity intervals: a family declares `validity`
  * columns, a create checks `from ≤ to`, `maxEdges` counts only the edges
- * valid at the same time (owner decision), `validAt` lists the edges valid
+ * valid at the same time, `validAt` lists the edges valid
  * at an instant, and `closeValidity` is the one update an edge takes: it
  * sets only the interval's end, and only narrows it (`EDGE-002`).
  *

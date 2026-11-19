@@ -1,5 +1,5 @@
 /**
- * Distinct readable owners (pulpit#186): `SubtypeOps.owners` agrees with the
+ * Distinct readable owners: `SubtypeOps.owners` agrees with the
  * owners of `list`'s rows for every viewer, gated and ungated, and
  * `readableOwners` is their exact union across leaves.
  */

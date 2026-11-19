@@ -1,6 +1,6 @@
 /**
  * The kernel's access seams against effect-auth's published spelling of the
- * same rules (pulpit#5): two implementations of one policy that must never
+ * same rules: two implementations of one policy that must never
  * disagree.
  *
  * - The row predicate: `canViewOwned` over a policy and follower seam built
@@ -18,13 +18,13 @@
  *   each of the four role axes exactly as the kit's own `decideRole` does,
  *   and fails closed off the ladder; `viewerFromGuards` is the kit's viewer.
  *
- * effect-auth is a required peer of the kernel (pulpit#5, option (c)), and
+ * effect-auth is a required peer of the kernel (option (c)), and
  * the kernel's read predicates, read scope and owned serveability axes now
  * delegate to it (`src/internal/delegated-access.ts`, `./publication`).
  * These matrices are the parity acceptance tests of that bridge: with an
  * audience seam (`IsMember` / `groups`) as well as without, for the
  * reference reading (`ReferenceAccess`) as well as the owned one, and for the
- * answers delegation changed (an empty id names nobody, effect-auth#661; the
+ * answers delegation changed (an empty id names nobody; the
  * stricter owned serveability axes).
  *
  * @module tests/effect-auth
@@ -83,7 +83,7 @@ const axes = {
   writeCorpus: "contributor",
 } as const;
 
-/** The kernel's `AccessPolicy` from the guards, through the exported helper (pulpit#5). */
+/** The kernel's `AccessPolicy` from the guards, through the exported helper. */
 const policy = accessPolicyFromGuards(guards, axes);
 
 /** The same four questions asked of the guard kit's own role gate, `decideRole`. */
@@ -283,7 +283,7 @@ describe("accessPolicyFromGuards ≡ the guard kit's decideRole", () => {
 });
 
 /**
- * The audience seam (pulpit#194): the kernel's `FollowerSeam` with its
+ * The audience seam: the kernel's `FollowerSeam` with its
  * `isMember` / `groups` pair, and the same answers as effect-auth's
  * `IsFollower` and `IsMember` services.
  */
@@ -462,7 +462,7 @@ describe("a NULL visibility reaches effect-auth as private, never as no axis (PU
   });
 });
 
-describe("an empty id names nobody (effect-auth#661)", () => {
+describe("an empty id names nobody", () => {
   const seam: FollowerSeam<OwnedAccess.FollowingSet, never> = {
     isFollower: () => Effect.succeed(true),
     following: () => OwnedAccess.nobody,

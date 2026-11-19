@@ -181,7 +181,7 @@ const contextAt = (now: Date): EvaluationContext<InMemoryFollowing> => ({
 });
 
 /**
- * A node's rows in a localised view (pulpit#56): one per locale its version
+ * A node's rows in a localised view: one per locale its version
  * carries, the locale's columns over the shared row and the tag in
  * {@link LOCALE_COLUMN}; a version carrying none is its shared row alone,
  * the `NULL`-locale row a left join gives.
@@ -248,7 +248,7 @@ const viewPage = (
 };
 
 /**
- * A localised list page (pulpit#272): of the rows matching `where` whose
+ * A localised list page: of the rows matching `where` whose
  * locale is one of `locales`, per node the one whose locale comes first in
  * `locales`, then ordered and paged as {@link viewPage} does, `total`
  * counting nodes. `LeafStore.listLocalised`'s contract.
@@ -335,7 +335,7 @@ const nextContent = (
 };
 
 /**
- * An in-memory {@link VersionChain} for leaf `type` (pulpit#246): the port's
+ * An in-memory {@link VersionChain} for leaf `type`: the port's
  * contract (docs/seams.md → `VersionChain`) over an append log, holding
  * every invariant `./version-chain`'s module doc states, as
  * `versionChainConformance` checks. The log's `(id, version)` pair is
@@ -563,7 +563,7 @@ class ConformanceFailure extends Schema.TaggedError<
 /**
  * The slice of a test runner {@link versionChainConformance} registers its
  * cases through, passed in rather than imported so `./testing` needs no
- * test-runner dependency (pulpit#246, owner decision (b)): vitest's (and
+ * test-runner dependency: vitest's (and
  * vite-plus/test's) `describe`, `it` and `expect` fit it as they are.
  *
  * @since 0.2.0
@@ -610,7 +610,7 @@ export interface ConformanceHarness<E, R> {
 }
 
 /**
- * The version chain's conformance suite (pulpit#246): every invariant
+ * The version chain's conformance suite: every invariant
  * `./version-chain`'s module doc states, as cases registered through
  * `runner`, against whatever `harness` makes. The kernel's unit suite runs
  * it against {@link makeInMemoryVersionChain}, and pulpit-drizzle-pg's
@@ -1014,7 +1014,7 @@ export const versionChainConformance = <E, R>(
       });
     });
 
-    describe("locales — the keyed level (pulpit#56)", () => {
+    describe("locales — the keyed level", () => {
       // A translated column is never a shared one (a tree rejects a key both
       // levels of one path declare), so the locale level writes `heading`.
       it("a version carries its locale level: set, drop (null) and carry forward, restored together", async () => {
@@ -1044,7 +1044,7 @@ export const versionChainConformance = <E, R>(
       });
     });
 
-    describe("purge — the erasure's whole-chain delete (pulpit#58)", () => {
+    describe("purge — the erasure's whole-chain delete", () => {
       it("deletes the node's whole chain and nothing else; an unknown id is a no-op", async () => {
         const { chain } = await created();
         await value(chain.create({ id: Option.some(OTHER), state: initial, actorId: ACTOR }));
@@ -1129,7 +1129,7 @@ export interface InMemoryLeafStoreOptions {
   /** The view's leaf columns; `id`, `action` and `ownerId` are always in its `columns`. */
   readonly columns: ReadonlyArray<string>;
   /**
-   * A localised leaf's view (pulpit#56): its `columns` gain
+   * A localised leaf's view: its `columns` gain
    * {@link LOCALE_COLUMN}, and `list` reads one row per `(id, locale)`.
    * `get` / `getMany` read the shared row either way.
    */
@@ -1292,13 +1292,13 @@ const NO_LOCALE = "";
 
 /**
  * An in-memory {@link ResourceCacheSeam}: the seam's compare-on-set contract
- * (docs/seams.md → the resource cache, pulpit#121). It keeps, per id, the
+ * (docs/seams.md → the resource cache). It keeps, per id, the
  * highest version either call has given it: a `set` below it is a no-op, a
  * `set` at or above it stores the resource when `serveable` admits it and
  * evicts it otherwise, and a `delete` evicts and raises the version. Each
  * call compares and writes in one step, as the real cache's conditional write
  * must. A localised leaf's entries are keyed by locale under the one
- * per-id version (pulpit#184): a `set` above the held version drops the id's
+ * per-id version: a `set` above the held version drops the id's
  * other locales, and a `delete` evicts them all. In memory only; not for
  * production.
  *
@@ -2318,7 +2318,7 @@ export const makeInMemoryPurgeStore = (
   };
 };
 
-// ── Account erasure (pulpit#207) ──────────────────────────────────────
+// ── Account erasure ──────────────────────────────────────
 
 /**
  * One leaf an {@link makeInMemoryAccountErasureStore} reads: its wire
@@ -2425,7 +2425,7 @@ const needsRedaction = (
   );
 };
 
-// ── Search (pulpit#204) ───────────────────────────────────────────────
+// ── Search ───────────────────────────────────────────────
 
 /** A scored row, as the in-memory branch ranks it. */
 interface ScoredRow {
@@ -2649,7 +2649,7 @@ export const makeInMemoryWriteCountStore = (): InMemoryWriteCountStore => {
   };
 };
 
-// ── Reactions (pulpit#196) ────────────────────────────────────────────
+// ── Reactions ────────────────────────────────────────────
 
 /**
  * {@link makeInMemoryReactionStore}'s fake: the seam plus a test hook.
@@ -2723,7 +2723,7 @@ export const makeInMemoryReactionStore = (): InMemoryReactionStore => {
   };
 };
 
-// ── The versioned KV (pulpit#205) ─────────────────────────────────────
+// ── The versioned KV ─────────────────────────────────────
 
 /**
  * {@link makeInMemoryVersionedKv}'s fake: the seam plus test hooks.
@@ -2766,7 +2766,7 @@ export const makeInMemoryVersionedKv = (): InMemoryVersionedKv => {
   };
 };
 
-// ── Ordered collections (pulpit#193) ─────────────────────────────────
+// ── Ordered collections ─────────────────────────────────
 
 /**
  * {@link makeInMemoryCollectionStore}'s fake: the seam plus a test hook.
@@ -2807,7 +2807,7 @@ export const makeInMemoryCollectionStore = (): InMemoryCollectionStore => {
   };
 };
 
-// ── The social graph (pulpit#195) ─────────────────────────────────────
+// ── The social graph ─────────────────────────────────────
 
 /**
  * {@link makeInMemorySocialStore}'s fake: the seam plus a test hook.
@@ -2920,14 +2920,14 @@ export const makeInMemorySocialStore = (): InMemorySocialStore => {
 export interface InMemoryMembershipStore extends MembershipStore<InMemoryFollowing, never, never> {
   /** Every stored active membership, in insertion order. */
   readonly rows: () => ReadonlyArray<Membership>;
-  /** Every pending invitation, in insertion order (pulpit#227). */
+  /** Every pending invitation, in insertion order. */
   readonly pending: () => ReadonlyArray<Invitation>;
 }
 
 /**
  * An in-memory {@link MembershipStore}: the seam's contract (docs/seams.md
  * → the membership store) over an array of active memberships and one of
- * pending invitations (pulpit#227), sharing the key `(groupId, accountId)`:
+ * pending invitations, sharing the key `(groupId, accountId)`:
  * every membership read sees the active rows alone. `groupsOf` returns {@link InMemoryFollowing}, the
  * set the list filter's `in` node takes in memory. In memory only; not for
  * production.
@@ -3022,7 +3022,7 @@ export const makeInMemoryMembershipStore = (): InMemoryMembershipStore => {
     eraseAccount: (accountId, limit) =>
       Effect.sync(() => {
         // One `limit` across both statuses: the active rows first, then the
-        // pending invitations to or from the account (pulpit#274).
+        // pending invitations to or from the account.
         const active = Arr.take(
           Arr.filter(rows, (row) => row.accountId === accountId),
           limit,

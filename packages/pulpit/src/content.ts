@@ -34,8 +34,8 @@ import * as Schema from "effect/Schema";
  * - `followers` — the owner, the owner's followers (the follower seam in
  *   `./subtype`), and the privileged rung;
  * - `group` — the owner, the members of the group the row's declared
- *   `groupColumn` names (the audience seam's `isMember`, `./audience`;
- *   pulpit#194), and the privileged rung. A row whose group column names no
+ *   `groupColumn` names (the audience seam's `isMember`, `./audience`),
+ *   and the privileged rung. A row whose group column names no
  *   group (the group was deleted) reads as `private`;
  * - `private` — the owner and the privileged rung only.
  *
@@ -113,7 +113,7 @@ export const nodeTimestampResourceFields = {
 
 /**
  * The soft-delete tombstone: `deletedAt` is present only on a tombstoned row
- * (`resource: "optional"` — emitters omit the key entirely while live, #691)
+ * (`resource: "optional"` — emitters omit the key entirely while live)
  * and is in no write projection. A tombstone is written by the chain's
  * `delete` operation (`./version-chain`), never by an input.
  *
@@ -153,7 +153,7 @@ export const referenceLeafResourceFields = {
  * every other owned Content leaf's wire contract. A leaf gated by a
  * publication *stamp* (`publishedAt`, the axis `./publication` reads) carries
  * that on its own row instead — a different axis from `draft`'s hard gate
- * (#1118).
+ *.
  *
  * @since 0.1.0
  */
@@ -181,8 +181,7 @@ export const ownedContentLeafResourceFields = {
  * Note that effect-jsonapi lists a `one` relationship as **required** in
  * the generated `createPayload`; an application serving the generated payload
  * strips the linkage at its handler seam. effect-jsonapi has no read-only
- * linkage descriptor (effect-jsonapi#172 closed without one; 0.17.0 has
- * none), and `tests/content.test.ts` pins the required linkage so the day one
+ * linkage descriptor, and `tests/content.test.ts` pins the required linkage so the day one
  * ships is visible.
  *
  * @since 0.1.0

@@ -6,7 +6,7 @@
  *
  * Each module is exported here as a namespace, and as a subpath of its own,
  * following the kernel's convention: the `VersionChain` port over
- * `-pg/chain` (`VersionChain`, `./version-chain`, pulpit#247), the
+ * `-pg/chain` (`VersionChain`, `./version-chain`), the
  * `LeafStore` over the tree's leaf views (`LeafStore`, `./leaf-store`) and
  * the `ListFilter` → SQL renderer it reads through (`Filter`, `./filter`),
  * the live pointer, `PublicationStore` / `LiveView` over the tree's

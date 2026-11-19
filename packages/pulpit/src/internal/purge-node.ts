@@ -1,7 +1,7 @@
 /**
- * **The purge itself, ungated** (pulpit#58), shared by `./purge`'s
+ * **The purge itself, ungated**, shared by `./purge`'s
  * `definePurge` (behind the purge rung) and `./erasure`'s account erasure
- * (behind the erasure rung, pulpit#207), so a node is erased one way.
+ * (behind the erasure rung), so a node is erased one way.
  *
  * Internal: not a package entry point (absent from `package.json`
  * `exports`) and excluded from the generated API docs (`docgen.json`).

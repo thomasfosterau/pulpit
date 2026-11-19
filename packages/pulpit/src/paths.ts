@@ -8,11 +8,11 @@
  * path, old slugs kept in `page_slugs` and answered with a 301). A `#NNN`
  * here names a gardeneria issue.
  *
- * ## The model (owner decision on pulpit#57)
+ * ## The model
  *
  * - **A claim lives on the root node**: one path per content item. The
  *   locale is chosen when the resolved node is read, never by the path, so a
- *   slug translation is not a claim of its own (pulpit#56's model (b)).
+ *   slug translation is not a claim of its own.
  * - **Claims follow the node's lifecycle.** A write that leaves the node
  *   live claims the path its new state holds in the leaf's path column; a
  *   tombstone, or a state with no path, frees the claim; a restore re-claims
@@ -154,7 +154,7 @@ export interface RoutableConfig<E, R> {
 }
 
 /**
- * Make a leaf routable (pulpit#57): its writes keep the node's path claim in
+ * Make a leaf routable: its writes keep the node's path claim in
  * step with its chain, and {@link RoutableOps.resolve} answers a path through
  * the leaf's own read gate. After each write's append, in the same
  * transaction, the claim follows the state the write landed at: a live state

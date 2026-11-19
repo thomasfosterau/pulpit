@@ -1,5 +1,5 @@
 /**
- * The external-identifier store against PostgreSQL (pulpit#359), checked
+ * The external-identifier store against PostgreSQL, checked
  * against the kernel's `makeInMemoryExternalIdStore` over the same calls:
  * `link`'s `"linked"` / `"present"` / `"taken"` on either unique key,
  * `lookup` as one bounded read, and `recordBaseline` replacing a baseline.

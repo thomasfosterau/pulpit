@@ -2,8 +2,8 @@
  * The publication axis and the cache serveability policy. The
  * `isPubliclyServeable` cases are gardeneria's
  * `apps/api/tests/resource-cache-readthrough.test.ts`, unchanged in
- * semantics: all four axes, the owned inversion (#1096), the publication axis
- * (#1096 / #1121), malformed values, and AND composition.
+ * semantics: all four axes, the owned inversion, the publication axis
+ *, malformed values, and AND composition.
  *
  * @module tests/publication
  */
@@ -176,7 +176,7 @@ describe("isPubliclyServeable — the tombstone and draft axes", () => {
   });
 });
 
-describe("isPubliclyServeable — the owned-family posture (#1096)", () => {
+describe("isPubliclyServeable — the owned-family posture", () => {
   const owned = { owned: true } as const;
 
   it("serves a public owned row", () => {
@@ -213,7 +213,7 @@ describe("isPubliclyServeable — the owned-family posture (#1096)", () => {
   });
 });
 
-describe("isPubliclyServeable — the publication axis (#1096)", () => {
+describe("isPubliclyServeable — the publication axis", () => {
   const gated = { publishGated: true, now: NOW } as const;
 
   it("serves a row whose stamp has arrived", () => {
@@ -224,7 +224,7 @@ describe("isPubliclyServeable — the publication axis (#1096)", () => {
     expect(isPubliclyServeable({ attributes: { title: "Draft" } }, gated)).toBe(false);
   });
 
-  it("REFUSES a row scheduled for the future (#1121)", () => {
+  it("REFUSES a row scheduled for the future", () => {
     expect(isPubliclyServeable({ attributes: { publishedAt: iso(hourMs) } }, gated)).toBe(false);
   });
 
@@ -267,7 +267,7 @@ describe("serveablePolicy — the hook the application's resource cache takes", 
   });
 });
 
-describe("duePublications — the scheduled-publication sweep window (pulpit#45)", () => {
+describe("duePublications — the scheduled-publication sweep window", () => {
   const context = { now: NOW, contains: () => false };
   const due = (since: Date, until: Date, stamp: Option.Option<Date>) =>
     evaluate(

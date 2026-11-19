@@ -1,20 +1,9 @@
 # pulpit
 
-A general-purpose headless content management system built on [Effect](https://effect.website): versioned content of any shape (an application's articles, pages, media, member posts, reference records), the people who write and react to it, the structure that ties it together, and the rules for who may read it. Persistence, transports and models sit behind seams the application fills; the kernel holds the policy.
+A headless content management system on [Effect](https://effect.website): versioned content of any shape, its review and publication, structure, participation, search, media, localisation and erasure. Persistence, transports and models sit behind seams the application fills; the kernel holds the policy and names no application type.
 
-What the kernel covers, by capability:
-
-- **Content model:** the Content axes (visibility, draft, tombstone), a resource registry with owned and reference-data access rules, content-addressed documents, and the subtype factory that serves any leaf an application declares.
-- **History and review:** an append-only version chain with field-level compare and restore, autosaved working copies, suggested edits (proposals) and moderation.
-- **Publication:** publish, unpublish and scheduling with a live-version pointer, and the cache-serveability policy.
-- **Structure and routing:** edges between nodes (taxonomies, relations) and routable paths with aliases.
-- **Participation and user-generated content:** threaded comments, member reports and the moderation queue.
-- **Discovery and search:** a searchable projection, the read scope a search runs under, and gated hydration of its hits.
-- **Media:** file leaves over a content-addressed byte store.
-- **Localisation:** a locale level in the version chain, with fallback reads.
-- **Erasure:** purging a node's whole history.
-
-The kernel names no application type: a `page`, a `post` or an `album` is a leaf the application binds, with the capabilities it opts into. Extracted from the `thomasfosterau/website` and `thomasfosterau/gardeneria` applications; the plans are the epics [pulpit#1](https://github.com/thomasfosterau/pulpit/issues/1) (the kernel) and [pulpit#212](https://github.com/thomasfosterau/pulpit/issues/212) (the content systems the applications still build by hand: social interactions, pages and menus, media, discovery). The API is in flux: expect breaking changes before 1.0.
+> [!CAUTION]
+> Experimental and pre-1.0, largely written with Claude Code. The API may change in any release.
 
 ## Install
 
@@ -22,11 +11,9 @@ The kernel names no application type: a `page`, a `post` or an `album` is a leaf
 pnpm add @thomasfosterau/pulpit effect @thomasfosterau/effect-jsonapi @thomasfosterau/effect-auth
 ```
 
-Node.js 22 or newer. Each module is also a subpath (`@thomasfosterau/pulpit/version-chain`, `…/subtype`, `…/edges`, …); the [package README](packages/pulpit/README.md) lists them, each export's TSDoc is its reference, and [docs/](docs/README.md) holds the module guides and the seams' expected shapes.
+Node.js 22 or newer.
 
 ## Example
-
-A version chain over the in-memory chain from `./testing`; an application binds the same operations to its own `VersionChain` (pulpit-drizzle-pg's, once it publishes).
 
 ```ts
 import * as Effect from "effect/Effect";
@@ -40,35 +27,24 @@ const actorId = Option.none<string>();
 const program = Effect.gen(function* () {
   const { id } = yield* chain.create({ id: Option.none(), state: { title: "Hello" }, actorId });
   yield* chain.update({ id, patch: { title: "Hi" }, actorId }); // appends version 1
-  yield* chain.delete(id, actorId); // a tombstone, version 2
-  yield* chain.restoreVersion(id, 0n, actorId); // version 3, with version 0's state
   return yield* chain.compare(id, 0n, 1n); // changes: { title: "Hello" → "Hi" }
 });
-
-Effect.runPromise(program).then(({ changes }) => console.log(changes));
 ```
 
-## Entry points
+## Packages
 
-The kernel depends on `effect`, `@thomasfosterau/effect-jsonapi` and `@thomasfosterau/effect-auth` alone, all peers (effect-auth since [pulpit#5](https://github.com/thomasfosterau/pulpit/issues/5): its role ladder, guard errors and owned-access rules are the kernel's). Anything tied to a protocol, an editor or a framework is an optional package with its own boundary, which peers on the kernel and which the kernel never imports.
+| Package | What it is |
+| --- | --- |
+| [`@thomasfosterau/pulpit`](packages/pulpit/README.md) | The kernel: one subpath module per capability, with in-memory fakes of every seam (`./testing`). |
+| [`@thomasfosterau/pulpit-drizzle-pg`](packages/pulpit-drizzle-pg/README.md) | The kernel's tree-bound seams on PostgreSQL, over `@thomasfosterau/effect-drizzle-ext`. Not yet published. |
+| [`@thomasfosterau/pulpit-wordpress`](packages/pulpit-wordpress/README.md) | A read-only, WordPress-compatible (`wp/v2`) REST API over the kernel's leaves. Not yet published. |
 
-| Package | What it is | Peers |
-| --- | --- | --- |
-| [`@thomasfosterau/pulpit`](packages/pulpit/README.md) | The kernel: every capability above, as one subpath module each, behind seams, with the in-memory fakes of every seam (`./testing`). | `effect`, `@thomasfosterau/effect-jsonapi`, `@thomasfosterau/effect-auth` |
-| [`@thomasfosterau/pulpit-drizzle-pg`](packages/pulpit-drizzle-pg/README.md) | The kernel's tree-bound seams on PostgreSQL: the `VersionChain` port (and, as they land, the leaf store, the live pointer and search) over the tables and views `@thomasfosterau/effect-drizzle-ext` derives from an application's tree ([pulpit#247](https://github.com/thomasfosterau/pulpit/issues/247)). Not yet published. | `@thomasfosterau/pulpit`, `@thomasfosterau/effect-drizzle-ext`, `@thomasfosterau/effect-drizzle-ext-pg`, `drizzle-orm`, `effect` |
-| [`@thomasfosterau/pulpit-wordpress`](packages/pulpit-wordpress/README.md) | An optional protocol adapter: a WordPress-compatible (`wp/v2`), read-only REST API over the kernel's leaves, so a headless WordPress frontend reads a pulpit application unchanged ([pulpit#86](https://github.com/thomasfosterau/pulpit/issues/86)). Not yet published ([pulpit#115](https://github.com/thomasfosterau/pulpit/issues/115)). | `@thomasfosterau/pulpit`, `effect` |
+## Documentation
 
-Further optional packages are proposed under [pulpit#212](https://github.com/thomasfosterau/pulpit/issues/212): a document-grammar package (allow-lists, serialisers and reference extractors for ProseKit documents, [pulpit#202](https://github.com/thomasfosterau/pulpit/issues/202)) and a UI package for the editorial surfaces ([pulpit#211](https://github.com/thomasfosterau/pulpit/issues/211)). Each is an owner decision still open on its issue.
-
-The workspace (these packages plus `tests/dist-consumer`, a private check of every package's emitted declarations), where the kernel comes from, and its toolchain are described in [docs/README.md → The repository](docs/README.md#the-repository).
-
-## Links
-
-- [docs/](docs/README.md): the module guides, every seam's expected shape and SQL sketch ([docs/seams.md](docs/seams.md)), the read model, and the adapters' wiring.
-- [Contributing](CONTRIBUTING.md): setup, commands, CI, branches and pull requests. The conventions and the gates are in [AGENTS.md](AGENTS.md); Claude Code's session notes in [.claude/CLAUDE.md](.claude/CLAUDE.md).
-- [Publishing](PUBLISHING.md): the changesets release pipeline.
-- [Security](SECURITY.md): reporting a vulnerability, the supply-chain posture and the invariant IDs.
+- [docs/](docs/README.md): the module guides and every seam's expected shape. Each export's TSDoc is its reference.
+- [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md): workflow, toolchain, coding guidelines, gates.
+- [docs/PUBLISHING.md](docs/PUBLISHING.md) and [docs/SECURITY.md](docs/SECURITY.md): releases, vulnerability reports, invariant IDs.
 
 ## License
 
-MIT
+[MIT](LICENSE.md)

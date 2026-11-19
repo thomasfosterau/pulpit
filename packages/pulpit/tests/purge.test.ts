@@ -1,5 +1,5 @@
 /**
- * Purge (pulpit#58): erasure as a hard delete.
+ * Purge: erasure as a hard delete.
  *
  * - The purge rung is checked before anything is read: anonymous is
  *   `Unauthorized`, below the rung `Forbidden`, for every id alike.

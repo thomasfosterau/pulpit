@@ -81,7 +81,7 @@ export type _ChainDrop = Assert<
 export type _ChainRace = Assert<
   Equals<InMemoryVersionChain["raceNextAppend"], (id: string) => void>
 >;
-// The conformance suite takes its runner as a parameter (pulpit#246): no test-runner peer.
+// The conformance suite takes its runner as a parameter: no test-runner peer.
 export type _Conformance = Assert<
   Equals<
     Parameters<typeof versionChainConformance<never, never>>,
@@ -107,7 +107,7 @@ export type _LeafSeam = Assert<
 export type _LeafFollowing = Assert<
   Equals<Parameters<InMemoryLeafStore["list"]>[0]["where"], ListFilter<InMemoryFollowing>>
 >;
-/** The order arrives checked, so the fake's `orderBy` is required (pulpit#112). */
+/** The order arrives checked, so the fake's `orderBy` is required. */
 export type _LeafOrder = Assert<
   Equals<Parameters<InMemoryLeafStore["list"]>[0]["orderBy"], ReadonlyArray<ListOrder>>
 >;
@@ -182,7 +182,7 @@ export type _EdgeRace = Assert<
   Equals<InMemoryEdgeStore["raceNextInsert"], (winner: EdgeValues) => void>
 >;
 
-// ── the resource cache (pulpit#121) ──────────────────────────────────────
+// ── the resource cache ──────────────────────────────────────
 
 interface CachedPost {
   readonly id: string;
@@ -196,7 +196,7 @@ export type _MakeResourceCache = Assert<
     <Resource>(serveable: (resource: Resource) => boolean) => InMemoryResourceCache<Resource>
   >
 >;
-// oxlint-disable effect/prefer-option-over-null -- the assertions must spell the emitted optional parameter exactly, `?: T | undefined` (AGENTS.md → Conventions)
+// oxlint-disable effect/prefer-option-over-null -- the assertions must spell the emitted optional parameter exactly, `?: T | undefined`
 export type _CacheSet = Assert<
   Equals<
     ResourceCacheSeam<CachedPost, never>["set"],
@@ -220,7 +220,7 @@ export type _CacheVersionOf = Assert<
   Equals<InMemoryResourceCache<CachedPost>["versionOf"], (id: string) => Option.Option<bigint>>
 >;
 
-// ── the mention extractor (pulpit#198) ───────────────────────────────────
+// ── the mention extractor ───────────────────────────────────
 
 export type _JsonMentionExtractor = Assert<
   Equals<typeof jsonMentionExtractor, MentionExtractor<Schema.Json>>

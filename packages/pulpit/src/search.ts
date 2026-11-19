@@ -1,5 +1,5 @@
 /**
- * **Hybrid search** (pulpit#204) — the parts of the apps' search pipeline
+ * **Hybrid search** — the parts of the apps' search pipeline
  * that are not SQL: reciprocal rank fusion over ranked branches, a reranker
  * seam, the branch seam a ranked query fills under the leaf's read scope,
  * and the embedding pipeline as seams.
@@ -269,7 +269,7 @@ export interface BranchRequest<Following> {
   /**
    * On a publish-gated leaf, the heads the viewer reads: the leaf's
    * `searchHeadFor` for the viewer (`./subtype`), exactly the `headFor` its
-   * `list` hands `LiveView.list` (pulpit#346). A branch over a gated leaf
+   * `list` hands `LiveView.list`. A branch over a gated leaf
    * ranks, per node, its head when it matches this and its live row
    * otherwise, so a reader's search never scores a head's unpublished text
    * and an owner's finds their own. A branch over an ungated leaf ignores it.

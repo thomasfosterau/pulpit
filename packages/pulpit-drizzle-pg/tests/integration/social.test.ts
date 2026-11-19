@@ -1,5 +1,5 @@
 /**
- * The social store against PostgreSQL (pulpit#364), checked against the
+ * The social store against PostgreSQL, checked against the
  * kernel's `makeInMemorySocialStore` over the same calls: `add`,
  * `addFollow`'s `added` / `present` / `blocked`, `addBlock` dropping both
  * follows, `remove`, `has`, `isFollowing`, `list` by either side with its

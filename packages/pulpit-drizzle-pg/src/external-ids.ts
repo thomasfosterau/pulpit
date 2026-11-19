@@ -1,8 +1,8 @@
 /**
  * @copyright Thomas Foster
  *
- * The kernel's `ExternalIdStore` (docs/seams.md → `ExternalIdStore`,
- * pulpit#209) on PostgreSQL (pulpit#359): the links `./reference-import`
+ * The kernel's `ExternalIdStore` (docs/seams.md → `ExternalIdStore`)
+ * on PostgreSQL: the links `./reference-import`
  * keeps between an authority's identifiers (a Wikidata QID, a DOI, an ISBN)
  * and a tree's nodes, one table keyed `(authority, external_id)` with a
  * second unique key on `(authority, node_id)`, the node reference cascading.

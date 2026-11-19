@@ -128,7 +128,7 @@ The document type is a parameter: its schema and validation are the application'
 | `DocumentHash` | A SHA-256 document hash as 64 lowercase hex characters. |
 | `documentRef(key)` | The attribute spread for a version row's document reference: the hash, required on the resource and at create, carried forward at update, never cleared. |
 | `canonicalText(json)` | The canonical text the hash contract takes SHA-256 over (Postgres's `jsonb` text output), for a store that doesn't run on Postgres. |
-| `DocumentCheck<Document, R>`, `DocumentViolation` | The grammar seam (pulpit#264): `(field, document)` succeeds for a document the field's grammar allows and fails `DocumentViolation { field, message }` otherwise (see [Seams](seams.md#seams)). |
+| `DocumentCheck<Document, R>`, `DocumentViolation` | The grammar seam: `(field, document)` succeeds for a document the field's grammar allows and fails `DocumentViolation { field, message }` otherwise (see [Seams](seams.md#seams)). |
 | `checkedDocumentStore(store, field, check)` | The store with the field's grammar check before `put`: an off-grammar document fails `DocumentViolation` and is never stored (`DOC-001`). One per document field. |
 | `documentCheckHook({ type, fields, documents, check })`, `DocumentCheckDeclaration`, `DOCUMENT_VIOLATION` | The grammar check as a before-write hook: a `create`, `update` or `restore` whose patch (or any locale's) sets a declared document field is refused with `WriteRejected` (reason `DOCUMENT_VIOLATION <field>: <message>`) when the referenced document fails its check or isn't stored; one `getMany` per write. `restoreVersion` is exempt (it re-applies a checked version). |
 
@@ -141,12 +141,12 @@ The kernel's read predicates as data: a store renders a `ListFilter` to SQL, and
 | `ListFilter<Following>` | The predicate tree. `Following` is whatever the follower seam hands the `in` node: a subquery for SQL, a set in memory. |
 | `always`, `never` | No predicate; a predicate no row satisfies (fail closed). |
 | `eq`, `ne`, `isIn` | `col = v`, `col <> v`, `col IN (<seam subquery>)`: the follower seam's followed accounts, or an edge family's members (`EdgeOps.memberFilter`). |
-| `isNotIn` | `(col IS NULL OR col NOT IN (<seam subquery>))`: the exact complement of `isIn` over the same seam set, a `NULL` column included; an edge family's non-members (`EdgeOps.nonMemberFilter`, [#191](https://github.com/thomasfosterau/pulpit/issues/191)). |
+| `isNotIn` | `(col IS NULL OR col NOT IN (<seam subquery>))`: the exact complement of `isIn` over the same seam set, a `NULL` column included; an edge family's non-members (`EdgeOps.nonMemberFilter`). |
 | `gt`, `gte`, `lt`, `lte`, `Comparable` | `col > v`, `col >= v`, `col < v`, `col <= v`, over a `Comparable` (`string`, `number` or `Date`). |
 | `anyOf`, `noneOf`, `MAX_SET_VALUES` | `col = ANY(values)`, `col <> ALL(values)` over a literal set of `Scalar`s; an empty `anyOf` is `never`, an empty `noneOf` is `always`, and a set of more than `MAX_SET_VALUES` (1000) values, duplicates counted, is `never` (`SEC-INPUT-003`). |
 | `isNull` | `col IS NULL`: the one node a `NULL` column satisfies on its own, so `or(isNull(col), noneOf(col, values))` is an exclusion that keeps an unset column. |
 | `published`, `notPublished` | Stamped and arrived; its exact complement (unstamped, or stamped in the future). |
-| `locale(locales)`, `LOCALE_COLUMN` | The locale arm (pulpit#56): a localised view's rows in one of `locales`. Empty, or more than `MAX_SET_VALUES`, is `never`. |
+| `locale(locales)`, `LOCALE_COLUMN` | The locale arm: a localised view's rows in one of `locales`. Empty, or more than `MAX_SET_VALUES`, is `never`. |
 | `and`, `or` | Combinators that drop identity parts, short-circuit on the absorbing part, and return a single part bare. |
 | `evaluate(filter, row, context)` | The in-memory reading, against `context.now` and `context.contains`. |
 

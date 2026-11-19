@@ -8,7 +8,7 @@
  * id brand and their capability flags. Everything else — the branch unions,
  * the per-flag families, the wire-type lists a subtype factory checks its
  * `access` declaration against — derives from that one list. Ported from
- * gardeneria's `packages/models/src/registry.ts` (Website #1011, carried
+ * gardeneria's `packages/models/src/registry.ts` (carried
  * over); the entries there are the app's, the vocabulary and the checks are
  * this module's. A `#NNN` here names a gardeneria issue.
  *
@@ -24,7 +24,7 @@
  *   rung, proposed by anyone signed in, publicly readable;
  * - `searchable` — a search plane emits it;
  * - `routable` — addressed by a path claim on its root node (`./paths`);
- * - `localised` — carries a locale level in its chain (pulpit#56): its
+ * - `localised` — carries a locale level in its chain: its
  *   translated columns per locale, declared beside the entry with
  *   `./subtype`'s `defineLocaleLevel`.
  *
@@ -96,7 +96,7 @@ export type RegistryFlag = (typeof RESOURCE_FLAGS)[number];
 /**
  * One node in an application's registry tree. Marker levels carry no
  * `resource`; concrete leaves carry the `Resource.make` definition. A
- * declaration member is plain optional (AGENTS.md → Conventions): a marker
+ * declaration member is plain optional (docs/CONTRIBUTING.md → Coding guidelines): a marker
  * level omits `resource` and `id` rather than passing `undefined`. The
  * capability flags are the
  * membership predicates the families / unions filter on; they must be literal
@@ -126,7 +126,7 @@ export interface RegistryEntry {
   readonly searchable?: true;
   /** Routable: addressed by a path claim on its root node (`./paths`). */
   readonly routable?: true;
-  /** Localised: a locale level in its chain, its translated columns per locale (pulpit#56). */
+  /** Localised: a locale level in its chain, its translated columns per locale. */
   readonly localised?: true;
 }
 

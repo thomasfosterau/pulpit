@@ -1,5 +1,5 @@
 /**
- * The media library (pulpit#206).
+ * The media library.
  *
  * - The media fields: editorial fields writable and clearable, extracted
  *   fields read-only, EXIF decoding.

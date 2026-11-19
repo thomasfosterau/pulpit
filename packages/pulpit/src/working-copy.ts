@@ -3,7 +3,7 @@
  * version chain and overwritten freely, which an explicit save appends as
  * one ordinary `update` version.
  *
- * ## The model (owner decisions on pulpit#46)
+ * ## The model
  *
  * - **Nothing in a working copy is a version**: saving it writes only the
  *   {@link WorkingCopyStore}, so `VERSION-CHAIN-001` is untouched and a
@@ -78,7 +78,7 @@ export interface WorkingCopyStore<E, R> {
   readonly discard: (key: WorkingCopyKey) => Effect.Effect<void, E, R>;
   /**
    * Delete at most `limit` of the account's copies, of any node (account
-   * erasure, pulpit#207, in bounded batches: `PERF-DB-001`); how many went.
+   * erasure, in bounded batches: `PERF-DB-001`); how many went.
    */
   readonly eraseAccount: (userId: string, limit: number) => Effect.Effect<number, E, R>;
 }

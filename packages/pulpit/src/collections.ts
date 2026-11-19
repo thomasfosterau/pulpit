@@ -1,5 +1,5 @@
 /**
- * **Ordered collections** (pulpit#193) — positioned members of a parent
+ * **Ordered collections** — positioned members of a parent
  * node: a list's items, an album's media, a byline's authors, a menu's
  * entries.
  *
@@ -7,7 +7,7 @@
  * a parent version) and in-the-dark's list entries (an updatable position
  * beside the chain), with their tests.
  *
- * ## The model (owner decision on pulpit#193)
+ * ## The model
  *
  * Both models, opt-in per family, over **one store seam**
  * ({@link CollectionStore}), which holds each member's position:

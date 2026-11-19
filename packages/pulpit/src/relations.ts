@@ -1,5 +1,5 @@
 /**
- * **UGC relation patterns** (pulpit#200): reshares (and quotes), accepted
+ * **UGC relation patterns**: reshares (and quotes), accepted
  * answers and multi-author bylines, as small helpers over `./edges`,
  * `./collections` and `./subtype`. None of them adds a read rule: every
  * node is read through its own leaf's gate.
@@ -8,7 +8,7 @@
  * answers, and its ordered `blog_post_authors`, with their tests. A `#NNN`
  * here names a gardeneria issue.
  *
- * ## Reshares (owner decision on pulpit#200)
+ * ## Reshares
  *
  * A reshare is an edge family `{ sharer, target }` with `maxEdges: 1` at
  * the sharing end, declared with {@link nodeWriteGate} on the sharer (only
@@ -38,7 +38,7 @@
  * ## Bylines
  *
  * An ordered collection (`./collections`) of the node's credited accounts.
- * Credit only (owner decision on pulpit#200): a byline grants no write
+ * Credit only: a byline grants no write
  * right, because the node's write gate (`requireWriter`, owner or the
  * moderate rung) never reads it, and the collection's own writes pass the
  * node's write gate. See docs/structure.md → `./relations`.
@@ -123,8 +123,7 @@ const nodeAt = (
 /**
  * What a reshare shows of its target: the target as its own leaf's `get`
  * serves the viewer, or `Unavailable`, the placeholder for a target the
- * viewer can't read, carrying neither its content nor its id (owner
- * decision on pulpit#200).
+ * viewer can't read, carrying neither its content nor its id.
  *
  * @since 0.2.0
  */

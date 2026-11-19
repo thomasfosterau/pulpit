@@ -26,7 +26,7 @@
  * - **An edge is readable only if the viewer can read every end**
  *   (`EDGE-001`). Each end's node is checked against its own leaf's access
  *   declaration, as that leaf's own `get` and list filter read it (a
- *   reference leaf's followers arm included, pulpit#92). `get` answers a
+ *   reference leaf's followers arm included). `get` answers a
  *   hidden edge as {@link EdgeNotFound} and `list` omits it, never `Forbidden`
  *   (`SEC-AUTH-ENUM-001`); a related list (the edges at one node) is a `list`
  *   filtered on that end, so it omits every edge whose other end is hidden.
@@ -36,7 +36,7 @@
  *   endpoint state × viewer.
  * - **A tombstoned end hides its edges** from every viewer below the
  *   view-deleted rung. That rung reads a tombstoned end as the leaf's own
- *   `get` reads the tombstone, by its access rule (pulpit#93), so it can
+ *   `get` reads the tombstone, by its access rule, so it can
  *   list, read and delete an edge whose only hidden end is tombstoned; an
  *   end hidden for any other reason (a `private` node below the
  *   view-private rung, say) still hides the edge from it. Nothing is
@@ -48,7 +48,7 @@
  * - **Cardinality is declared, and a create past it fails**
  *   ({@link EdgeCardinalityExceeded}). An end's `maxEdges` bounds how many
  *   edges may share one node at that end, counting only the edges the
- *   caller can read whose every end is live (pulpit#77, pulpit#93). A
+ *   caller can read whose every end is live. A
  *   hidden edge never counts, so a refusal discloses nothing the caller
  *   can't read; the cost is a limit that holds only over what each caller
  *   sees, and a restore that can bring a node past it (see
@@ -151,7 +151,7 @@ export class EdgeNotFound extends Schema.TaggedError<
  * edge it collided with is one the viewer may not read or has a tombstoned
  * end. The wire's 409. It carries only the family's type, so under `"fail"`
  * a collision with a hidden edge is the same answer as one with a readable
- * edge (`SEC-AUTH-ENUM-001`, pulpit#93); under `"ignore"` only a readable,
+ * edge (`SEC-AUTH-ENUM-001`); under `"ignore"` only a readable,
  * live edge resolves, and any other collision is this error. It says the
  * key is taken, never by which edge.
  *
@@ -238,8 +238,7 @@ export interface EdgeEnd<E, R> {
    * {@link EdgeCardinalityExceeded}.
    *
    * A create counts only the edges at the node that the caller can read
-   * (`EDGE-001`) and whose every end is live (owner decisions on pulpit#77
-   * and pulpit#93), which has three consequences:
+   * (`EDGE-001`) and whose every end is live, which has three consequences:
    *
    * - **No disclosure.** A hidden edge never counts, so a refusal depends
    *   only on edges the caller can read: it can't tell a node holding hidden
@@ -295,12 +294,12 @@ const liveFilter = <Following>(): ListFilter<Following> =>
 /**
  * Whether the viewer may read the node at one end (`EDGE-001`): it exists,
  * it is live or the viewer holds the view-deleted rung (a tombstone is read
- * as the leaf's own `get` reads it, pulpit#93), and its leaf's access admits
+ * as the leaf's own `get` reads it), and its leaf's access admits
  * the viewer, a tombstone's included. A reference node is
  * readable when its view has no `visibility` column, the viewer holds the
  * view-private rung, it is `public`, or it is `followers` and the viewer is,
  * or follows, the account its leaf's declared `followersOfColumn` names (the
- * predicate `defineSubtype`'s `get` runs, pulpit#92); an owned node through
+ * predicate `defineSubtype`'s `get` runs); an owned node through
  * `canViewOwned`'s predicate, where an owner column holding no string reads
  * as no owner, matching no viewer and never asked of the follower seam. An
  * owned declaration naming a column the view lacks reads nothing. Never
@@ -334,7 +333,7 @@ export const canViewEndpoint = <E, R>(
  * {@link endpointColumn} names. The same facts as {@link canViewEndpoint},
  * rendered as a `ListFilter` — the owned arm is `ownedListFilter`, the
  * reference arm `referencePrivacyFilter`'s, followers arm included
- * (pulpit#92) — so the two never disagree. A
+ * — so the two never disagree. A
  * family with no ends gets `always`.
  *
  * @since 0.1.0
@@ -464,7 +463,7 @@ export interface EdgeStore<Row extends EdgeRow, Following, E, R> {
    * under the end's alias, so `alias.column` names that view's column and a
    * bare column the edge table's; an edge whose end has no row in its view
    * is never listed. Ordered by `createdAt`, then `id` (a total order, so a
-   * page cursor cannot skip or repeat a row, #1231). The total is a window
+   * page cursor cannot skip or repeat a row). The total is a window
    * column (`count(*) OVER ()`): exact whenever the page has a row, and `0`
    * for an empty page, a page past the end included.
    */
@@ -478,7 +477,7 @@ export interface EdgeStore<Row extends EdgeRow, Following, E, R> {
    * over the same joins as {@link EdgeStore.list} (so `where` reads
    * `alias.column` exactly as a list's does). The factory passes the
    * viewer's `EDGE-001` filter and every end's liveness, so only edges the
-   * caller can read with live ends are counted (pulpit#77, pulpit#93).
+   * caller can read with live ends are counted.
    * Called inside the create's transaction, for the cardinality check, once
    * per bounded end in ascending `nodeId` order. A SQL store locks the node
    * first (`FOR NO KEY UPDATE`, under READ COMMITTED), so two creates at one
@@ -498,7 +497,7 @@ export interface EdgeStore<Row extends EdgeRow, Following, E, R> {
   readonly delete: (id: string) => Effect.Effect<boolean, E, R>;
   /**
    * Set the edge's validity end column to `to` and update nothing else
-   * (pulpit#210, `EDGE-002`): `UPDATE … SET <column> = $to WHERE id = $id
+   * (`EDGE-002`): `UPDATE … SET <column> = $to WHERE id = $id
    * RETURNING id`; whether a row was updated. Required only by a family that
    * declares {@link EdgeDefinition.validity}.
    */
@@ -506,7 +505,7 @@ export interface EdgeStore<Row extends EdgeRow, Following, E, R> {
   /**
    * The node ids at `column` of the stored edges whose `otherColumn` is one
    * of `ids` and that satisfy `where`, over the same joins as
-   * {@link EdgeStore.list}, as the follower seam's `Following` (pulpit#113):
+   * {@link EdgeStore.list}, as the follower seam's `Following`:
    * the subquery `SELECT e.<column> FROM <edge> e JOIN <each end's view> …
    * WHERE e.<otherColumn> = ANY($ids) AND <where>` in SQL, never a
    * materialised array, and the set itself in memory. `ids` is never empty
@@ -521,7 +520,7 @@ export interface EdgeStore<Row extends EdgeRow, Following, E, R> {
   }) => Effect.Effect<Following, E, R>;
   /**
    * How many stored edges hold each of `ids` in `column` and satisfy
-   * `where`, over the same joins as {@link EdgeStore.list} (pulpit#185): one
+   * `where`, over the same joins as {@link EdgeStore.list}: one
    * `SELECT e.<column>, count(*) FROM <edge> e JOIN <each end's view> …
    * WHERE e.<column> = ANY($ids) AND <where> GROUP BY e.<column>`, never a
    * read per id. A node with no such edge has no key. `ids` is never empty,
@@ -570,7 +569,7 @@ export interface EdgeDefinition<Create, Row extends EdgeRow, Resource, Following
   /** The write gate; {@link corpusWriteGate} when absent. */
   readonly writeGate?: EdgeWriteGate<E, R>;
   /**
-   * The family's validity interval (pulpit#210): the edge columns holding
+   * The family's validity interval: the edge columns holding
    * when it starts and ends to hold (each a `Date`, or `NULL` for open).
    * With it, a create checks `from ≤ to`, `maxEdges` counts only the edges
    * valid at the same time as the new one, and `closeValidity` may end an
@@ -592,7 +591,7 @@ export type CloseValidity<E, R> = (
 ) => Effect.Effect<boolean, E, R>;
 
 /**
- * An edge family's validity interval columns (pulpit#210). An edge holds
+ * An edge family's validity interval columns. An edge holds
  * over `[from, to)`: from its `from` instant (or always, when `NULL`) until
  * its `to` instant (or forever, when `NULL`).
  *
@@ -619,7 +618,7 @@ export class InvalidValidity extends Schema.TaggedError<
 }) {}
 
 /**
- * The edges valid at `at` (pulpit#210), as a list filter over a family's
+ * The edges valid at `at`, as a list filter over a family's
  * {@link EdgeValidity} columns: `from` is `NULL` or at or before `at`, and
  * `to` is `NULL` or after it. Pass it as a list's `where`, so "who held
  * the office on that day" is one gated read.
@@ -734,7 +733,7 @@ export interface EdgeOps<Create, Resource, E, R, Following = never> {
    * end live. Under `"fail"` a collision with a hidden edge answers exactly
    * as one with a readable edge; under `"ignore"` only a readable, live edge
    * resolves (to `{ created: false, id }`), and any other collision is
-   * `EdgeConflict` (`SEC-AUTH-ENUM-001`, pulpit#93). The count reads no
+   * `EdgeConflict` (`SEC-AUTH-ENUM-001`). The count reads no
    * hidden edge ({@link EdgeEnd.maxEdges}). An `EdgeConflict` still says the
    * key is taken, which only a family whose unique key leaves an end out
    * can say about a hidden edge (docs/structure.md → `./edges`).
@@ -753,7 +752,7 @@ export interface EdgeOps<Create, Resource, E, R, Following = never> {
     R
   >;
   /**
-   * End the edge's validity interval at `at` (pulpit#210): the one update an
+   * End the edge's validity interval at `at`: the one update an
    * edge takes (`EDGE-002`), which sets only the interval's `to` column and
    * only narrows it: `at` must not be after a closed interval's end, nor
    * before its start. Fails `EdgeNotFound` for a missing or hidden edge
@@ -782,7 +781,7 @@ export interface EdgeOps<Create, Resource, E, R, Following = never> {
     R
   >;
   /**
-   * Edge membership as a list filter for the leaf at `end` (pulpit#113):
+   * Edge membership as a list filter for the leaf at `end`:
    * `id IN (<the end's node ids of the edges whose other end is one of
    * otherIds>)`, so `?categories=1,2` lists the posts holding a
    * `post_category` edge to one of those terms. Only edges the viewer can
@@ -803,7 +802,7 @@ export interface EdgeOps<Create, Resource, E, R, Following = never> {
     otherIds: ReadonlyArray<string>,
   ) => Effect.Effect<ListFilter<Following>, E, R>;
   /**
-   * Edge non-membership as a list filter for the leaf at `end` (pulpit#191):
+   * Edge non-membership as a list filter for the leaf at `end`:
    * the complement of {@link EdgeOps.memberFilter} over the same store
    * `members` subquery, `(id IS NULL OR id NOT IN (…))` under `./filter`'s
    * `notIn` node, so `?categories_exclude=1,2` lists the posts holding no
@@ -825,7 +824,7 @@ export interface EdgeOps<Create, Resource, E, R, Following = never> {
   ) => Effect.Effect<ListFilter<Following>, E, R>;
   /**
    * The number of edges the viewer can read at each node of `ids` at end
-   * `end` (pulpit#185), in one grouped store read: a taxonomy term's post
+   * `end`, in one grouped store read: a taxonomy term's post
    * count, for every term on a page. Only edges {@link list} would show
    * count (`EDGE-001`, the same `endpointFilter`, and `where`, the family's
    * own predicate, as {@link EdgeListRequest.where}): an edge with a hidden
@@ -880,7 +879,7 @@ const byNodeId = Order.mapInput(Order.String, (at: { readonly nodeId: string }) 
 /**
  * Bind an edge family's operations. Every produced operation is traced as
  * `${type}.<operation>`; the writes run in the caller's transaction (the
- * boundary is the caller's, website #1883), and a create's cardinality
+ * boundary is the caller's), and a create's cardinality
  * count and insert share it (docs/seams.md).
  *
  * Throws {@link EdgeDeclarationError}, when the family is declared, for an
@@ -950,8 +949,7 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
 
   /**
    * A unique-key collision, settled by the conflict policy: only ever the id
-   * of an edge the count would admit, readable with every end live (owner
-   * decision on pulpit#93). The view-deleted rung reads an edge to a
+   * of an edge the count would admit, readable with every end live. The view-deleted rung reads an edge to a
    * tombstone but can't link to one, so it can't resolve to one either.
    */
   const resolveCollision = (viewer: Viewer, id: string) =>
@@ -1025,7 +1023,7 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     // The interval is the input's own shape: checked first, it reads nothing.
     const interval = yield* intervalOf(values);
     // Every end first, before the gate: a node the viewer cannot read is
-    // `NodeNotFound` whoever asks, so a gate's 403 never confirms it (#1306).
+    // `NodeNotFound` whoever asks, so a gate's 403 never confirms it.
     // An end must be live as well as readable: the view-deleted rung reads a
     // tombstone, and still can't link to one.
     const nodes = yield* Effect.forEach(
@@ -1048,9 +1046,8 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     // Each bounded end's count locks its node (docs/seams.md), so the nodes
     // are visited in one global order: a self-referential family's two
     // bounded ends cannot deadlock two creates naming the pair both ways.
-    // Only edges the viewer can read with every end live count (pulpit#77,
-    // pulpit#93): a hidden edge must not shape the answer.
-    // With an interval, only the edges valid at the same time count (owner decision on pulpit#210).
+    // Only edges the viewer can read with every end live count (//): a hidden edge must not shape the answer.
+    // With an interval, only the edges valid at the same time count.
     const counted = and<Following>(
       endpointFilter(ends, viewer, policy, followers),
       liveEndsFilter<Following, E, R>(ends),

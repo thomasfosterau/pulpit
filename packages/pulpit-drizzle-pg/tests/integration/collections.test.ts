@@ -1,5 +1,5 @@
 /**
- * The collection store against PostgreSQL (pulpit#358), checked against
+ * The collection store against PostgreSQL, checked against
  * the kernel's `makeInMemoryCollectionStore` over the same calls: `replace`
  * rewriting a parent's whole order (a reorder, an append, a removal, an
  * emptying), `entries` by position then member id and at most `limit`, and

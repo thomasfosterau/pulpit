@@ -20,7 +20,7 @@ export default defineConfig({
             // `tsc` probes for `packages/*/node_modules` while resolving
             // the emitted declarations' imports; vitest creates it (`.vite`),
             // so without this exact-path exclusion the check missed once after
-            // every `test:unit` (pulpit#66). Only the directory entry is
+            // every `test:unit`. Only the directory entry is
             // dropped, and when the cache was recorded without that directory
             // the entry was the only signal of a package appearing in it, so
             // the exclusion relies on the lockfile input below to catch a

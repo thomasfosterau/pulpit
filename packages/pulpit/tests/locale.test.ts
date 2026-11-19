@@ -1,5 +1,5 @@
 /**
- * Content localisation (pulpit#56, model (b)): the locale is a level in the
+ * Content localisation (model (b)): the locale is a level in the
  * version chain. One node per item; its locales share its history, draft,
  * visibility and publication; the shared (untranslated) columns live once in
  * the chain state and the translated ones per locale.
@@ -372,7 +372,7 @@ describe("a localised leaf's list", () => {
   });
 });
 
-describe("a localised leaf's fallback list (pulpit#272)", () => {
+describe("a localised leaf's fallback list", () => {
   const request = { limit: 10, offset: 0, includeDeleted: false, where: always };
   /** Three public nodes: en + fr, fr only, de only. */
   const seeded = (ops: ReturnType<typeof pages>["ops"]) =>
@@ -625,7 +625,7 @@ describe("defineLocaleLevel", () => {
   });
 });
 
-describe("a localised leaf's before hooks (pulpit#56)", () => {
+describe("a localised leaf's before hooks", () => {
   const shout: LifecycleHooks<Page, never, never>["before"][number] = {
     name: "shout",
     run: (event) => Effect.succeed(event.patch),
@@ -675,7 +675,7 @@ describe("a localised leaf's before hooks (pulpit#56)", () => {
   });
 });
 
-describe("a localised leaf's read gate (pulpit#56)", () => {
+describe("a localised leaf's read gate", () => {
   it("refuses a translated column the read gate reads", () => {
     const chain = makeInMemoryVersionChain("pages");
     const declare = (columns: ReadonlyArray<string>, gated: boolean) => () => {

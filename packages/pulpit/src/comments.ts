@@ -8,7 +8,7 @@
  * (`comment-visibility.test.ts`, `comment-target-visibility-flip.test.ts`);
  * a `#NNN` here names a gardeneria issue.
  *
- * ## The model (owner decisions on pulpit#50)
+ * ## The model
  *
  * - **A comment is a versioned owned leaf**, built with `./subtype`'s
  *   `defineSubtype`: edits append versions, a delete tombstones, and its

@@ -1,5 +1,5 @@
 /**
- * **The reference resource cache** (pulpit#205) — `./subtype`'s
+ * **The reference resource cache** — `./subtype`'s
  * {@link ResourceCacheSeam}, with a read-through `get`, over a minimal
  * versioned key-value seam ({@link VersionedKv}).
  *
@@ -7,7 +7,7 @@
  * preferenceflow's and in-the-dark's `apps/api/src/cache.ts`), which this
  * replaces: one implementation of the contract the kernel already states.
  *
- * - **Compare-on-set** (pulpit#121). Every entry carries the version it
+ * - **Compare-on-set**. Every entry carries the version it
  *   speaks for, and the KV seam's one conditional write keeps the highest:
  *   a `set` or `delete` below the stored version changes nothing, and an
  *   eviction raises the version, so a racing writer's late write-through can
@@ -31,8 +31,8 @@
  *   read as a miss.
  * - **A TTL backstop.** Every write carries the configured TTL, so an entry
  *   no write ever evicted still expires.
- * - **Locale keys under one generation** (pulpit#271). A localised leaf's
- *   entry (a `set` or `get` that names a locale, pulpit#184) lives at its own
+ * - **Locale keys under one generation**. A localised leaf's
+ *   entry (a `set` or `get` that names a locale) lives at its own
  *   `(id, locale)` key, and the id's own key holds the **generation**: the
  *   rank of the newest write the id has seen. A locale `set` raises the
  *   generation first, with the same conditional write, and writes its entry
@@ -144,7 +144,7 @@ export interface ResourceCache<Resource, R> extends ResourceCacheSeam<Resource, 
    * The cached resource for `id`: none on a miss, an eviction, a value that
    * no longer decodes (evicted at its version) or one the policy no longer
    * serves (evicted likewise). On a localised leaf `locale` names the entry
-   * (since 0.2.0, pulpit#271), served only while it speaks for the id's
+   * (since 0.2.0), served only while it speaks for the id's
    * newest version. Never fails.
    */
   readonly get: (id: string, locale?: string) => Effect.Effect<Option.Option<Resource>, never, R>;

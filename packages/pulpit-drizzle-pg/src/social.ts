@@ -1,8 +1,8 @@
 /**
  * @copyright Thomas Foster
  *
- * The kernel's `SocialStore` (docs/seams.md → `SocialStore`, pulpit#195)
- * on PostgreSQL (pulpit#364): follows, mutes and blocks between accounts,
+ * The kernel's `SocialStore` (docs/seams.md → `SocialStore`)
+ * on PostgreSQL: follows, mutes and blocks between accounts,
  * one relationship table keyed `(kind, from_id, to_id)`. `followingOf` and
  * `silencedBy` are SQL subqueries, the list filter's `in` sets, never
  * materialised. Every call runs in the caller's `CurrentTransaction`.

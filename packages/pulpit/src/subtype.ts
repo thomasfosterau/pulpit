@@ -18,9 +18,9 @@
  *   show only `public` rows below the view-private rung, apart from the
  *   soft-delete axis, and the `followers` rows whose declared
  *   `followersOfColumn` names the viewer or an account they follow
- *   (pulpit#92). A
+ *. A
  *   write or history read to an existing row also needs the row to be one
- *   `get` would serve the caller (pulpit#101).
+ *   `get` would serve the caller.
  * - `owned` — a member's own row. Create gates on any signed-in account and
  *   stamps the owner; every other write loads the owner and gates on
  *   owner-or-moderator (a missing owner is `NotFound`, never an open gate);
@@ -35,16 +35,15 @@
  *   (`SEC-AUTH-ENUM-001`): a 403 would confirm the row exists. The write and
  *   history gate ({@link requireWriter}) does answer `Forbidden` for an
  *   existing owned row the caller doesn't own, whatever its visibility, so
- *   it deliberately confirms existence to a signed-in caller (pulpit#24;
- *   SECURITY.md → "Existence disclosure by the write gates"). On a reference
+ *   it deliberately confirms existence to a signed-in caller (docs/SECURITY.md → "Existence disclosure by the write gates"). On a reference
  *   leaf, a corpus writer's write or history read to a row `get` hides from
  *   them fails `NodeNotFound`, as `get` does, before the chain is reached
- *   (pulpit#101, `PUB-009`).
+ *   (`PUB-009`).
  * - A list's order ({@link ListOrder}) only places the rows its filters
  *   chose: it never changes membership or the total, and a column that is
  *   not sortable (outside the leaf's `sortable` allow-list or, without one,
  *   the view's declared `columns`) fails {@link InvalidListOrder} before
- *   anything is read, never reaching the store (pulpit#112).
+ *   anything is read, never reaching the store.
  * - Soft-deleted rows are visible only to the view-deleted rung, and a list
  *   includes them only when the caller also asked (`includeDeleted`).
  * - A declaration naming columns the view lacks fails closed — nothing lists,
@@ -55,7 +54,7 @@
  *
  * ## Lifecycle hooks
  *
- * A leaf's write side effects compose as {@link LifecycleHooks} (pulpit#45):
+ * A leaf's write side effects compose as {@link LifecycleHooks}:
  * before hooks run inside each write, after its gate and before the append,
  * and may transform the patch or refuse the write ({@link WriteRejected});
  * after hooks run in {@link subtypeHandlers} once the write's transaction
@@ -74,14 +73,14 @@
  *   and the **follower** answer — effect-auth's session context, role ladder
  *   and `IsFollower` / `IsMember`. The row predicates and the read scope's
  *   kind are decided by effect-auth's `OwnedAccess` / `ReferenceAccess`
- *   (pulpit#5), through an internal bridge that keeps these seams as the
+ *, through an internal bridge that keeps these seams as the
  *   kernel's signatures;
  * - the **current-version view** ({@link LeafStore}) — a Drizzle store over
  *   effect-drizzle-ext's `makeCurrentVersionView`;
  * - the **handlers config** the factory's operations plug into
  *   ({@link subtypeHandlers}) — the record a JSON:API server's resource
  *   handlers are expected to accept (effect-jsonapi's `ResourceHandlers`,
- *   exported since 0.15.0 but not yet wired here; pulpit#5), with the
+ *   exported since 0.15.0 but not yet wired here), with the
  *   write-through to the resource cache the application fills.
  *
  * The module guide: https://github.com/thomasfosterau/pulpit/blob/trunk/docs/read-model.md#subtype.
@@ -221,7 +220,7 @@ export interface AccessAxes<Rung extends string> {
 
 /**
  * The kernel's {@link AccessPolicy} from effect-auth's guard kit
- * (`Guard.make`, pulpit#5): each axis is the kit's ladder
+ * (`Guard.make`): each axis is the kit's ladder
  * (`ladder.hasAtLeast(account, rung)`), the rank comparison its role gates
  * make, which fails closed on a role outside the ladder. Never fails.
  *
@@ -269,7 +268,7 @@ export const accessPolicyFromGuards = <Id, User extends ViewerAccount, Rung exte
 
 /**
  * The request's {@link Viewer}, read from effect-auth's guard kit: its
- * `viewer` effect, the session context `Guard.make` was given (pulpit#5).
+ * `viewer` effect, the session context `Guard.make` was given.
  *
  * @since 0.2.0
  */
@@ -280,9 +279,9 @@ export const viewerFromGuards = <Id, User extends ViewerAccount, Rung extends st
 /**
  * The follower seam — the `followers` visibility state's one external fact.
  * `isFollower` answers one row's question; `following` answers a list's, as
- * whatever the list filter's `in` node takes (a subquery in SQL, #1107).
+ * whatever the list filter's `in` node takes (a subquery in SQL).
  *
- * It is also the **audience seam** (pulpit#194): the optional `isMember` /
+ * It is also the **audience seam**: the optional `isMember` /
  * `groups` pair answers the `group` visibility state's question, whether an
  * account is a member of the group a row names, in the same two readings.
  * A seam without them opens no `group` row to anyone but its owner and the
@@ -329,13 +328,12 @@ export const nobodyFollows = <Following>(nobody: Following): FollowerSeam<Follow
 
 // ── Errors ────────────────────────────────────────────────────────────
 
-// The two gate failures are effect-auth's own `Guard` errors (pulpit#5,
-// option (c)), so an application's error mapping encodes one class each,
+// The two gate failures are effect-auth's own `Guard` errors, so an application's error mapping encodes one class each,
 // whichever library raised it.
 export {
   /**
    * No signed-in viewer where one is required: the wire's 401. effect-auth's
-   * `Guard.Unauthorized`, re-exported (pulpit#5): it carries a `message` and
+   * `Guard.Unauthorized`, re-exported: it carries a `message` and
    * an optional `code`.
    *
    * @since 0.1.0
@@ -344,7 +342,7 @@ export {
   /**
    * A signed-in viewer below the rung a write needs: the wire's 403. Never
    * used to hide a row. effect-auth's `Guard.Forbidden`, re-exported
-   * (pulpit#5): it carries a `message` and an optional `code`.
+   *: it carries a `message` and an optional `code`.
    *
    * @since 0.1.0
    */
@@ -362,7 +360,7 @@ export {
  * are sortable**: without a `sortable` allow-list, that a name is (or is
  * not) one of the view's columns. `column` is the caller's own key, never
  * passed to the store, or `""` when the key carries no string column
- * (pulpit#112).
+ *.
  *
  * @since 0.1.0
  */
@@ -379,7 +377,7 @@ export class InvalidListOrder extends Schema.TaggedError<
  * its view's `LeafStore.columns`. Thrown by {@link defineSubtype} when the
  * leaf is declared, never an Effect failure, like `./edges`'
  * `EdgeDeclarationError`: a misspelt allow-list entry must stop its module
- * loading rather than silently leave a column unsortable (pulpit#112).
+ * loading rather than silently leave a column unsortable.
  *
  * @since 0.1.0
  */
@@ -399,8 +397,7 @@ export class SubtypeDeclarationError extends Schema.TaggedError<
  * - `public` — anonymous: `visibility = 'public'` only;
  * - `member` — a signed-in account: `public`, OR their own rows, OR
  *   `followers` rows whose owner they follow, OR `group` rows shared with a
- *   group they belong to (`groups`, present when the seam answers it,
- *   pulpit#194).
+ *   group they belong to (`groups`, present when the seam answers it).
  *
  * @since 0.1.0
  */
@@ -433,8 +430,8 @@ const memberScope = <Following>(
 
 /**
  * Resolve a viewer's {@link ReadScope}. The scope's kind is effect-auth's
- * `OwnedAccess.readScope` (pulpit#5): `public` for an anonymous viewer, and
- * for one whose id is empty (effect-auth#661); `all` for the view-private
+ * `OwnedAccess.readScope`: `public` for an anonymous viewer, and
+ * for one whose id is empty; `all` for the view-private
  * rung; `member` otherwise, carrying the follower seam's own `following` and
  * (when it answers them) `groups` sets.
  *
@@ -459,12 +456,12 @@ export interface OwnedFacts {
   readonly visibility: Visibility;
   readonly draft: boolean;
   /**
-   * A moderated row whose state is not exactly `approved` (pulpit#154);
+   * A moderated row whose state is not exactly `approved`;
    * `false` for a leaf without the axis.
    */
   readonly unapproved: boolean;
   /**
-   * The group a `group` row is shared with (pulpit#194); absent, the row
+   * The group a `group` row is shared with; absent, the row
    * names no group and reads as `private`.
    *
    * @since 0.2.0
@@ -474,7 +471,7 @@ export interface OwnedFacts {
 
 /**
  * The owned-material read predicate — the single interpretation of the
- * three-state visibility axis plus the orthogonal `draft` axis (#1118):
+ * three-state visibility axis plus the orthogonal `draft` axis:
  *
  * | visibility  | who may view                                                   |
  * | ----------- | -------------------------------------------------------------- |
@@ -486,7 +483,7 @@ export interface OwnedFacts {
  * `draft: true` narrows whatever `visibility` allows down to the owner and
  * the rung — a `public` draft is exactly as hidden as a `private` one — and
  * so does `unapproved: true` on a moderated leaf (a `pending` or `rejected`
- * row reads only to its author and the rung, pulpit#154). Never
+ * row reads only to its author and the rung). Never
  * fails; callers turn `false` into {@link NodeNotFound}.
  *
  * `defineSubtype`'s `get` / `getMany` and `./edges`' `canViewEndpoint`
@@ -496,8 +493,8 @@ export interface OwnedFacts {
  * when `public`, not a draft and not unapproved, or to the rung, as {@link ownedListFilter}
  * lists it (`SEC-AUTH-ENUM-001`).
  *
- * The decision is effect-auth's `OwnedAccess.canView` (pulpit#5). As there
- * (effect-auth#661), an empty `ownerId` names nobody, and a viewer whose id
+ * The decision is effect-auth's `OwnedAccess.canView`. As there
+ *, an empty `ownerId` names nobody, and a viewer whose id
  * is empty reads as anonymous.
  *
  * @since 0.1.0
@@ -521,9 +518,9 @@ export const canViewOwned = <R>(
  * flags: an `owned` leaf names the VIEW columns its read paths consult,
  * `draftColumn` only when the leaf actually writes the flag, and
  * `moderationColumn` only when it is a moderated family (`./moderation`)
- * whose unapproved rows its readers must not see (pulpit#154). A `reference`
+ * whose unapproved rows its readers must not see. A `reference`
  * leaf names `followersOfColumn` only when its rows may be `followers`-visible
- * (pulpit#92).
+ *.
  *
  * @since 0.1.0
  */
@@ -546,7 +543,7 @@ export type LeafAccess =
       readonly followersOfColumn?: string;
       /**
        * The view column naming the group a `group` row is shared with
-       * (pulpit#194): the members of that group, as the audience seam's
+       *: the members of that group, as the audience seam's
        * `isMember` answers, read the row. Absent, naming a column the view
        * lacks, or holding a value that is not a string, a `group` row is
        * hidden below the view-private rung.
@@ -572,7 +569,7 @@ export type LeafAccess =
       readonly moderationColumn: Option.Option<string>;
       /**
        * The view column naming the group a `group` row is shared with
-       * (pulpit#194). Declared, the members of that group read the row when
+       *. Declared, the members of that group read the row when
        * it is not a draft and approved; a value that is not a string (the
        * group was deleted and the column cleared) names no group, so the row
        * reads as `private`. A declared column the view lacks fails closed
@@ -593,7 +590,7 @@ export const ownedAccess = (
   options: {
     readonly draft?: boolean;
     readonly moderation?: boolean;
-    /** Declare the `groupId` group column (pulpit#194). */
+    /** Declare the `groupId` group column. */
     readonly group?: boolean;
   } = {},
 ): Extract<LeafAccess, { kind: "owned" }> => {
@@ -613,7 +610,7 @@ export const ownedAccess = (
  * declared view columns. When the leaf carries a draft column, every
  * non-owner arm additionally requires `draft = false`, and when it carries a
  * moderation column, `moderation = 'approved'`; a `group` row lists for the
- * members of the group its declared `groupColumn` names (pulpit#194); the owner's own arm never
+ * members of the group its declared `groupColumn` names; the owner's own arm never
  * does, so a member lists their own drafts and unapproved rows. Columns the view lacks
  * fail closed.
  *
@@ -680,7 +677,7 @@ export const softDeleteFilter = <Following>(
  * column (an Entity leaf rides no such axis). Given a followers arm (the
  * leaf's `access`, declaring `followersOfColumn` over a view that carries
  * it, and the follower seam), a signed-in viewer also lists the `followers`
- * rows whose column names them or an account they follow (pulpit#92):
+ * rows whose column names them or an account they follow:
  * `visibility = 'followers' AND (<followersOfColumn> = <viewer> OR
  * <followersOfColumn> IN (<following>))`. Without one (the default,
  * `Option.none()`), a `followers` row is the view-private rung's alone.
@@ -749,13 +746,13 @@ export const requireCreator = (
  * On an owned leaf it never reads the row's visibility, draft or delete state:
  * a signed-in caller who is neither the owner nor at the moderate rung gets
  * {@link Forbidden} for any row with an owner record,
- * hidden or not, so the gate deliberately confirms existence (pulpit#24, an
- * exception to `SEC-AUTH-ENUM-001`; SECURITY.md → "Existence disclosure by the
+ * hidden or not, so the gate deliberately confirms existence (an
+ * exception to `SEC-AUTH-ENUM-001`; docs/SECURITY.md → "Existence disclosure by the
  * write gates"). An anonymous caller gets `Unauthorized` for every id.
  *
  * On a reference leaf this is the rung check alone: it reads no row, so it
  * answers `Unauthorized` / `Forbidden` alike for every id. `defineSubtype`
- * follows it with the read rung the row demands (pulpit#101): a row its `get`
+ * follows it with the read rung the row demands: a row its `get`
  * hides from the caller fails {@link NodeNotFound}, as `get` does
  * (`PUB-009`, `SEC-AUTH-ENUM-001`). A caller using this gate directly on a
  * reference row must apply that check too.
@@ -786,7 +783,7 @@ export const requireWriter = <E, R>(
 /**
  * A current-version view row: its node id, its head `version` and `action`,
  * and the leaf's columns. The view projects `version` from the head row
- * (pulpit#65), so a read carries the version an `If-Match` must name: a
+ *, so a read carries the version an `If-Match` must name: a
  * mapper stamps it on the wire with {@link versionMeta}, and a
  * single-resource response's `ETag` is {@link versionEtag}. `id`, `version`
  * and `action` are the view's own, so no leaf column may take those names.
@@ -908,7 +905,7 @@ export const MAX_PAGE_LIMIT = 1000;
  * order is total and an offset page never skips or repeats a row. A string
  * sorts by code point (SQL's `COLLATE "C"`), a number or `bigint` by value, a
  * boolean `false` first and a `Date` by its instant; `id` closes in byte
- * order too (pulpit#112).
+ * order too.
  *
  * **Only scalar orderable columns.** A sort key's column must hold one
  * scalar orderable type: text, numeric, boolean, timestamp or bigint. A
@@ -946,7 +943,7 @@ export interface DistinctQuery<Following> {
 }
 
 /**
- * What a localised list reads (pulpit#272): a `LeafStore.list` query plus
+ * What a localised list reads: a `LeafStore.list` query plus
  * the negotiated locale preferences, most preferred first. Over a
  * localised view's `(id, locale)` rows it is **one row per node**: of the
  * node's rows matching `where` whose locale is one of `locales`, the one
@@ -1003,7 +1000,7 @@ export interface LeafStore<Row extends LeafRow, Following, E, R> {
     readonly offset: number;
   }) => Effect.Effect<Page<Row>, E, R>;
   /**
-   * The localised list read (pulpit#272): one row per node, in the node's
+   * The localised list read: one row per node, in the node's
    * most preferred locale it carries (see {@link LocalisedListQuery} for
    * the contract and its SQL shape). Applies no visibility policy. A view
    * without a locale level has no locale rows, so it reads none.
@@ -1013,7 +1010,7 @@ export interface LeafStore<Row extends LeafRow, Following, E, R> {
   readonly listLocalised: (query: LocalisedListQuery<Following>) => Effect.Effect<Page<Row>, E, R>;
   /**
    * The distinct values of `column` among the view rows matching `where`
-   * (pulpit#186): `SELECT DISTINCT <column> … WHERE <where> AND <column> IS
+   *: `SELECT DISTINCT <column> … WHERE <where> AND <column> IS
    * NOT NULL ORDER BY <column> COLLATE "C" LIMIT … OFFSET …`, with the
    * unpaged distinct count as `total`. Only string values are distinct
    * values; a `NULL` or non-string one is none. Applies no visibility
@@ -1099,7 +1096,7 @@ export interface LiveView<Row extends LeafRow, Following, E, R> extends Pick<
 > {
   /**
    * `LeafStore.distinct` over the rows {@link LiveView.list} chooses for
-   * the same `headFor` (pulpit#186): a node counts with the row the viewer
+   * the same `headFor`: a node counts with the row the viewer
    * reads, its head or its live version, or not at all.
    */
   readonly distinct: (
@@ -1119,7 +1116,7 @@ export interface LiveView<Row extends LeafRow, Following, E, R> extends Pick<
   ) => Effect.Effect<Page<Row>, E, R>;
   /**
    * `LeafStore.listLocalised` over the rows {@link LiveView.list} chooses
-   * for the same `headFor` (pulpit#272): per node its head (for `headFor`)
+   * for the same `headFor`: per node its head (for `headFor`)
    * or its live version, then that version's most preferred locale row.
    *
    * @since 0.2.0
@@ -1130,8 +1127,7 @@ export interface LiveView<Row extends LeafRow, Following, E, R> extends Pick<
 }
 
 /**
- * A leaf's opt-in to the live pointer (`publishGated`, owner decision on
- * pulpit#46): its live view, its publication log, and the request's
+ * A leaf's opt-in to the live pointer (`publishGated`): its live view, its publication log, and the request's
  * preview grant. Without it, head and live are one.
  *
  * @since 0.1.0
@@ -1244,7 +1240,7 @@ export interface PublicationOps<E, R> {
     id: string,
   ) => Effect.Effect<ReadonlyArray<PublicationFact>, Gate | NodeNotFound | E, R>;
   /**
-   * The pending scheduled publication of each of `ids` (pulpit#220): per
+   * The pending scheduled publication of each of `ids`: per
    * node, the most recently recorded `publish` whose `at` is still ahead of
    * the `Clock`, which no later record overtakes (see
    * {@link PublicationStore.scheduled}), in one batched read
@@ -1310,7 +1306,7 @@ export interface BeforeWriteHook<E, R> {
   readonly name: string;
   readonly run: (event: BeforeWriteEvent) => Effect.Effect<ChainPatch, WriteRejected | E, R>;
   /**
-   * The hook's locale-level pass on a localised leaf (pulpit#56): shown the
+   * The hook's locale-level pass on a localised leaf: shown the
    * same event, it returns the {@link LocalePatch} the write applies (the
    * event's `locales`, or a transformed one), or fails the write as `run`
    * does. **Fails closed:** a write carrying a locale patch through a hook
@@ -1336,7 +1332,7 @@ export interface AfterWriteEvent<Resource> {
   /**
    * The version the write landed at; for a `publish` or `unpublish`, which
    * append no version, the node's head, so the resource cache's
-   * compare-on-set orders it after the writes before it (pulpit#121). The
+   * compare-on-set orders it after the writes before it. The
    * version a `publish` made live is the fact's.
    */
   readonly write: ChainWrite;
@@ -1451,7 +1447,7 @@ const runBefore = <E, R>(
 /**
  * Run the before hooks' locale passes in order, each shown the previous
  * one's locale patch. A hook with no `locales` pass refuses a write that
- * carries any locale change (fail closed, pulpit#56) and passes `{}` on.
+ * carries any locale change (fail closed) and passes `{}` on.
  */
 const runBeforeLocales = <E, R>(
   hooks: ReadonlyArray<BeforeWriteHook<E, R>>,
@@ -1576,7 +1572,7 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
   readonly type: string;
   /** How the leaf is gated: `reference` corpus material or `owned` per-member rows. */
   readonly access: LeafAccess;
-  /** The leaf's version chain, which every write appends through and every history read reads (pulpit#246). */
+  /** The leaf's version chain, which every write appends through and every history read reads. */
   readonly chain: VersionChain<E, R>;
   /** The current-version view the reads and lists go through, plus the owner stamp. */
   readonly leaves: LeafStore<Row, Following, E, R>;
@@ -1604,7 +1600,7 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
    * column (a `rank` or a moderation score it can't read), and, through
    * {@link InvalidListOrder}'s 400, which names are view columns. It never
    * reveals a hidden row nor changes a total (`SEC-AUTH-ENUM-001`). Declare
-   * the list to sort only by what the resource exposes (pulpit#112).
+   * the list to sort only by what the resource exposes.
    */
   readonly sortable?: ReadonlyArray<string>;
   /**
@@ -1624,7 +1620,7 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
    */
   readonly search?: SearchProjection;
   /**
-   * The leaf's locale level ({@link defineLocaleLevel}, pulpit#56): which of
+   * The leaf's locale level ({@link defineLocaleLevel}): which of
    * its columns are translated, written and read per locale, while the rest
    * are shared by every locale of the node. Each column, and
    * {@link LOCALE_COLUMN}, must be a column of the view, or
@@ -1633,7 +1629,7 @@ export interface SubtypeDefinition<Row extends LeafRow, Resource, Following, E, 
    */
   readonly locales?: LocaleLevel;
   /**
-   * The live pointer, opt-in (pulpit#46). With it, the view-private rung,
+   * The live pointer, opt-in. With it, the view-private rung,
    * the corpus-write rung on a reference leaf and a row's own owner read
    * the head; everyone else reads the live version (a node with none is
    * hidden from them, which is what `draft` means on such a leaf).
@@ -1654,7 +1650,7 @@ export interface ListRequest<Following = never> {
   /**
    * The family's own extra predicate (a `?filter[published]=`), or `always`.
    * It may read the follower seam's `Following`, as an edge family's
-   * `memberFilter` does (pulpit#189), when the leaf's `SubtypeOps` carries it.
+   * `memberFilter` does, when the leaf's `SubtypeOps` carries it.
    */
   readonly where: ListFilter<Following>;
   /**
@@ -1710,7 +1706,7 @@ export interface UpdateRequest extends RestoreRequest {
 export interface RestoreRequest extends Precondition {
   readonly id: string;
   readonly patch: ChainPatch;
-  /** A localised leaf's per-locale patch (pulpit#56); absent, every locale carries forward. */
+  /** A localised leaf's per-locale patch; absent, every locale carries forward. */
   readonly locales?: LocalePatch;
 }
 
@@ -1723,7 +1719,7 @@ export interface RestoreRequest extends Precondition {
 export interface CreateRequest {
   readonly id: Option.Option<string>;
   readonly state: ChainState;
-  /** A localised leaf's locale level at version 0 (pulpit#56); absent, none. */
+  /** A localised leaf's locale level at version 0; absent, none. */
   readonly locales?: LocaleStates;
 }
 
@@ -1773,11 +1769,11 @@ export interface SubtypeOps<Resource, E, R, Following = never> {
    * `Forbidden` below the write rung (the corpus-write rung for reference
    * data, owner-or-moderator for an owned row), `NodeNotFound` when an
    * owned row has no owner, when a reference row is one `get` hides from the
-   * caller (`PUB-009`; pulpit#101), or when the node is unknown or
+   * caller (`PUB-009`), or when the node is unknown or
    * tombstoned, and `StaleVersion` when `input.expectedVersion` is not the
    * head (checked after the gate, so only a writer learns the head).
    *
-   * On a localised leaf (pulpit#56) `input.locales` patches the locale
+   * On a localised leaf `input.locales` patches the locale
    * level; the write appends one version of the whole node, however few
    * locales it touches. Fails `WriteRejected`, after the gate and with
    * nothing appended, when the shared patch names a translated column, a
@@ -1810,7 +1806,7 @@ export interface SubtypeOps<Resource, E, R, Following = never> {
    * Fails `Unauthorized` when anonymous, `Forbidden` below the write rung,
    * `NodeNotFound` when an owned row has no owner, when a reference row
    * (an already tombstoned one included) is one `get` hides from the caller
-   * (`PUB-009`; pulpit#101), or when the node is unknown, and
+   * (`PUB-009`), or when the node is unknown, and
    * `StaleVersion` when a live node's head is not
    * `precondition.expectedVersion`.
    */
@@ -1828,7 +1824,7 @@ export interface SubtypeOps<Resource, E, R, Following = never> {
    */
   readonly get: (id: string) => Effect.Effect<Resource, NodeNotFound | E, R>;
   /**
-   * The locale-fallback read (pulpit#56): the node's row in the first of
+   * The locale-fallback read: the node's row in the first of
    * `locales`, in the caller's order, that the version the viewer reads
    * carries (the head, or on a publish-gated leaf the live version for a
    * viewer who doesn't read the head), with the shared columns joined in.
@@ -1841,7 +1837,7 @@ export interface SubtypeOps<Resource, E, R, Following = never> {
    */
   /**
    * The accounts that own at least one row the viewer may list
-   * (pulpit#186): the distinct owner column values of exactly the rows
+   *: the distinct owner column values of exactly the rows
    * {@link SubtypeOps.list} would show for `request` (the same scope, and on
    * a publish-gated leaf the same head-or-live choice), in code-point order,
    * with the distinct total. `among`, when given, narrows to those account
@@ -1874,7 +1870,7 @@ export interface SubtypeOps<Resource, E, R, Following = never> {
   ) => Effect.Effect<Page<Resource>, InvalidListOrder | E, R>;
   /**
    * {@link SubtypeOps.list} for a localised leaf, falling back per node
-   * (pulpit#272): one item per node the viewer may list, in the first of
+   *: one item per node the viewer may list, in the first of
    * `locales` the node carries, each with the locale it was served in. A
    * node carrying none of them is omitted, and `total` counts nodes. It
    * reads under exactly `list`'s scope (the same filter, the same
@@ -1893,8 +1889,8 @@ export interface SubtypeOps<Resource, E, R, Following = never> {
   /**
    * Gated like a write (`READ-009`): the history exposes every state,
    * private and deleted included. Fails as `update` does at the gate (on a
-   * reference leaf, `NodeNotFound` for a row `get` hides from the caller,
-   * pulpit#101), then `VersionNotFound` when the version has no row.
+   * reference leaf, `NodeNotFound` for a row `get` hides from the caller),
+   * then `VersionNotFound` when the version has no row.
    */
   readonly getVersion: (
     id: string,
@@ -1907,9 +1903,9 @@ export interface SubtypeOps<Resource, E, R, Following = never> {
    * gate (`READ-009`), which both run through, so nothing is read before it
    * passes. Fails as `getVersion` does: `Unauthorized` when anonymous;
    * `Forbidden` below the write rung (owner-or-moderator on an owned row,
-   * whatever its visibility, pulpit#24; the corpus-write rung on a reference
+   * whatever its visibility; the corpus-write rung on a reference
    * leaf); `NodeNotFound` when an owned row has no owner or a reference row
-   * is missing or one `get` hides from the caller (pulpit#101), whichever
+   * is missing or one `get` hides from the caller, whichever
    * version is asked for; then `VersionNotFound` for whichever version
    * (`from` first) has no row.
    */
@@ -1921,7 +1917,7 @@ export interface SubtypeOps<Resource, E, R, Following = never> {
   /**
    * Re-apply the state at `version` as a new version, gated like a write
    * (on a reference leaf, `NodeNotFound` for a row `get` hides from the
-   * caller, pulpit#101). Fails `VersionNotFound`, before writing anything,
+   * caller). Fails `VersionNotFound`, before writing anything,
    * when that version
    * cannot be fully reconstructed, and `StaleVersion` when the head is not
    * `precondition.expectedVersion`.
@@ -1940,7 +1936,7 @@ export interface SubtypeOps<Resource, E, R, Following = never> {
 /**
  * Bind a leaf's operations. Every produced operation is traced as
  * `${type}.<operation>`; the write operations run in the caller's
- * transaction (the boundary is the handler seam's, website #1883).
+ * transaction (the boundary is the handler seam's).
  *
  * Throws {@link SubtypeDeclarationError}, when the leaf is declared, for a
  * `sortable` entry that is not a column of the view.
@@ -1998,7 +1994,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   }
 
   /**
-   * The write's locale level checked against the declaration (pulpit#56):
+   * The write's locale level checked against the declaration:
    * shared columns in `state`, translated ones per locale, every locale tag
    * non-empty; a leaf with none takes no locale. Runs after the gate.
    */
@@ -2029,7 +2025,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
    * has no `visibility` column, the viewer holds the view-private rung, its
    * visibility is exactly `public`, or it is exactly `followers` and the
    * viewer is, or follows, the account its declared `followersOfColumn` names, as
-   * `referencePrivacyFilter` lists (pulpit#92). The reference arm is one
+   * `referencePrivacyFilter` lists. The reference arm is one
    * shared predicate with `./edges`' `canViewEndpoint`.
    */
   const rowVisible = (viewer: Viewer, row: Row): Effect.Effect<boolean, never, R> => {
@@ -2074,7 +2070,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   /**
    * The row `get` serves the viewer: a missing or hidden row is the same
    * {@link NodeNotFound} (SEC-AUTH-ENUM-001). `get` and the reference write
-   * gate both read through it, so they can never disagree (pulpit#101).
+   * gate both read through it, so they can never disagree.
    */
   const visibleRow = (viewer: Viewer, id: string): Effect.Effect<Row, NodeNotFound | E, R> =>
     Effect.gen(function* () {
@@ -2098,10 +2094,9 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
    * The gate for a write or history read to an existing row. On a reference
    * leaf, the corpus-write rung and then the read rung the row demands: a
    * corpus writer who can't `get` the row learns `NodeNotFound`, exactly as
-   * from `get`, before any content is read or written (pulpit#101,
-   * `PUB-009`). The rung check runs first and reads no row, so a caller below
+   * from `get`, before any content is read or written (`PUB-009`). The rung check runs first and reads no row, so a caller below
    * it gets `Unauthorized` / `Forbidden` for every id alike. An owned leaf's
-   * gate is unchanged (pulpit#24).
+   * gate is unchanged.
    */
   const writer = (viewer: Viewer, id: string) =>
     Effect.tap(requireWriter(access, viewer, policy, { type, id }, leaves.ownerOf(id)), () =>
@@ -2491,7 +2486,7 @@ export interface SearchField {
 }
 
 /**
- * A leaf's searchable projection (pulpit#54): which view columns its search
+ * A leaf's searchable projection: which view columns its search
  * view indexes, at what weight, and the column naming each row's text
  * search configuration (its language), if any. Declared once, beside the
  * leaf's registry entry, so the application's search-view generator and
@@ -2630,7 +2625,7 @@ const ownHeadsOf = <Following>(access: LeafAccess, viewer: Viewer): ListFilter<F
 
 /**
  * The heads a search over one publish-gated leaf ranks for the viewer
- * (pulpit#346): the `headFor` {@link defineSubtype}'s `list` hands
+ *: the `headFor` {@link defineSubtype}'s `list` hands
  * {@link LiveView}'s `list`, for a search's `BranchRequest.headFor`
  * (`./search`). Every head (`always`) for a viewer on a head-reading rung
  * (the view-private rung, or a reference leaf's corpus writers), the
@@ -2698,11 +2693,9 @@ export const hydrateSearchHits = <Hit extends { readonly id: string }, Resource,
  * The resource cache's write side: `set` writes the resource through — the
  * cache itself refuses (and evicts) a non-serveable one, so a
  * `public → private` flip self-purges — and `delete` evicts. The application
- * fills it with a cache it owns; no library is expected to provide one
- * (effect-web dropped its Cloudflare package, and the planned cache with it,
- * on effect-web#33).
+ * fills it with a cache it owns; no library is expected to provide one.
  *
- * **Compare-on-set** (pulpit#121). Both calls carry the version they speak
+ * **Compare-on-set**. Both calls carry the version they speak
  * for, and the cache keeps, per id, the highest version it has been given by
  * either. A `set` below that version is a no-op, and a `delete` (or a refused
  * `set`) raises it, outliving the entry it evicted. So a racing writer's
@@ -2713,7 +2706,7 @@ export const hydrateSearchHits = <Hit extends { readonly id: string }, Resource,
  * cannot honour the seam. A read-through fill passes the version its read
  * saw, and goes through `set` like any other.
  *
- * **A localised leaf's cache is keyed by locale** (pulpit#184): one entry
+ * **A localised leaf's cache is keyed by locale**: one entry
  * per `(id, locale)` a reader was served, so `Accept-Language` can never
  * answer one locale from another's entry. A version covers all of a node's
  * locales, so the compare-on-set version is still kept per id: a `set` of
@@ -2772,7 +2765,7 @@ export const cacheWriteThrough = <Resource, R>(
  * the resource as its writer re-read it after the commit. `resource` is
  * none when the write hid the row from its own writer (the re-read failed
  * `NodeNotFound`): the write still committed, so it answers the write
- * rather than a 404 that would invite a duplicating retry (pulpit#107).
+ * rather than a 404 that would invite a duplicating retry.
  *
  * @since 0.1.0
  */
@@ -2789,7 +2782,7 @@ export interface CommittedWrite<Resource> extends ChainWrite {
  * JSON:API endpoint and is run SSR-direct.
  *
  * {@link subtypeResourceHandlers} turns the record into effect-jsonapi's
- * `ResourceHandlers.make` CRUD handlers (pulpit#5).
+ * `ResourceHandlers.make` CRUD handlers.
  *
  * Every write re-reads the row after the chain write and hands it to the
  * leaf's after hooks ({@link LifecycleHooks}), the cache write-through
@@ -2801,12 +2794,12 @@ export interface CommittedWrite<Resource> extends ChainWrite {
  * so a write that hides the row from its own writer fails it
  * (`NodeNotFound`) after the write committed; the handler then evicts the
  * entry, as it does for any re-read failure, so the cache never keeps the
- * superseded resource (`CACHE-AUTH-005`, pulpit#107). A hidden write
+ * superseded resource (`CACHE-AUTH-005`). A hidden write
  * answers its {@link CommittedWrite} with no resource, not the
  * `NodeNotFound`: the write committed. Any other re-read failure (a store
  * error, a defect, an interrupt) fails the write with its own cause. The
- * chain write runs inside `transact` (the handler seam's boundary, website
- * #1883); the re-read stays outside it. An interrupt can't separate a
+ * chain write runs inside `transact` (the handler seam's boundary);
+ * the re-read stays outside it. An interrupt can't separate a
  * committed write from its write-through or eviction: a failure of the
  * boundary after the operation itself succeeded (an interrupt included)
  * evicts too, since the write may have committed, while a write the gate
@@ -2828,7 +2821,7 @@ export interface SubtypeHandlers<Resource, E, R> {
   /**
    * The operations' locale fallback read, unchanged: what
    * {@link subtypeResourceHandlers} serves `get` through on a localised
-   * leaf (pulpit#184).
+   * leaf.
    *
    * @since 0.2.0
    */
@@ -2836,7 +2829,7 @@ export interface SubtypeHandlers<Resource, E, R> {
   /**
    * The operations' per-node locale fallback list, unchanged: what
    * {@link subtypeResourceHandlers} serves `list` through on a localised
-   * leaf (pulpit#272).
+   * leaf.
    *
    * @since 0.2.0
    */
@@ -2883,7 +2876,7 @@ export interface SubtypeHandlers<Resource, E, R> {
    * or `restoreVersion` for `discardDraft`) and the cache refresh. Their
    * cache stamps are the node's head, so two of them on one node compare
    * equal: the application runs them one at a time per node, the whole
-   * call under one lock (docs/seams.md → the live pointer, pulpit#164).
+   * call under one lock (docs/seams.md → the live pointer).
    */
   readonly publication: Option.Option<PublicationOps<E, R>>;
 }
@@ -2894,21 +2887,21 @@ export interface SubtypeHandlers<Resource, E, R> {
  * @since 0.1.0
  */
 export interface SubtypeHandlersConfig<Resource, R> {
-  /** The write boundary — always-open: a nested call is a SAVEPOINT (website #1883). */
+  /** The write boundary — always-open: a nested call is a SAVEPOINT. */
   readonly transact: <A, E2>(effect: Effect.Effect<A, E2, R>) => Effect.Effect<A, E2, R>;
   /**
    * Whether the caller is already inside a transaction, read once a write's
    * `transact` has returned. When it is, that `transact` was a SAVEPOINT and
    * nothing has committed yet, so the write refuses its cache write-through
    * and evicts instead: a resource that may still roll back is never
-   * cached (`CACHE-AUTH-005`, pulpit#124). Over `effect/sql`, it is whether
+   * cached (`CACHE-AUTH-005`). Over `effect/sql`, it is whether
    * the fiber's context holds the client's `TransactionConnection`.
    */
   readonly inTransaction: Effect.Effect<boolean, never, R>;
   /** The leaf's cache, when it has one. */
   readonly cache: Option.Option<ResourceCacheSeam<Resource, R>>;
   /**
-   * Whether the leaf is localised (it declares a locale level, pulpit#184).
+   * Whether the leaf is localised (it declares a locale level).
    * When it is, every write evicts the node's cache entries, every locale's,
    * at its version instead of writing a resource through: the writer's
    * re-read is the node's shared row, which is no locale's representation,
@@ -2997,9 +2990,9 @@ export const subtypeHandlers = <Resource, E, R>(
 
   /**
    * The cache step inside an outer transaction: the write hasn't committed,
-   * so evict at its version and cache nothing (pulpit#124). A localised
+   * so evict at its version and cache nothing. A localised
    * leaf's every write takes it too: its entries are per locale, and the
-   * writer's re-read is no locale's (pulpit#184).
+   * writer's re-read is no locale's.
    */
   const evictHook = (
     cache: ResourceCacheSeam<Resource, R>,
@@ -3057,7 +3050,7 @@ export const subtypeHandlers = <Resource, E, R>(
   // rung making a reference row `private`; a store error; an interrupt),
   // the resource is none and the cache hook evicts: the cache must never go
   // on serving the superseded resource, whatever the writer may read now
-  // (`CACHE-AUTH-005`, pulpit#107). A `NodeNotFound` re-read is a write
+  // (`CACHE-AUTH-005`). A `NodeNotFound` re-read is a write
   // hidden from its writer: it answers the committed write with no resource,
   // not a 404 for a write that committed. Any other failure fails the
   // handler with the re-read's own cause.
@@ -3202,7 +3195,7 @@ const languageOrder = Order.combine(
  * followed by its shorter prefixes (`fr-CH` → `fr`), then the leaf's
  * default, each tag once, empty tags dropped. What
  * {@link subtypeResourceHandlers} hands `getLocalised` for a request's
- * `Accept-Language` (pulpit#184). Never throws.
+ * `Accept-Language`. Never throws.
  *
  * @example
  * ```ts
@@ -3233,7 +3226,7 @@ const prefixesOf = (tag: string): ReadonlyArray<string> => {
 
 /**
  * How a localised leaf's JSON:API handlers read the request's locale and
- * report the one they served (pulpit#184; the owner decision there: the
+ * report the one they served (the
  * locale travels in `Accept-Language` / `Content-Language`, never a query
  * parameter). effect-jsonapi's handlers see only the decoded params, query
  * and payload, so the application reads the headers from its own request
@@ -3260,7 +3253,7 @@ export interface LocaleWire<R> {
   /**
    * Called instead of `served` when a response carries no single locale (a
    * localised list whose items fell back to different locales, or an empty
-   * one, pulpit#272): the application sets `Vary: Accept-Language` alone,
+   * one): the application sets `Vary: Accept-Language` alone,
    * so no cache answers another preference with this body.
    *
    * @since 0.2.0
@@ -3314,7 +3307,7 @@ const localisedGet =
     });
 
 /**
- * `list` over the per-node locale fallback (pulpit#272): the request's
+ * `list` over the per-node locale fallback: the request's
  * `Accept-Language` preferences, then the default. A page whose items all
  * share a locale reports it through {@link LocaleWire.served}; any other
  * reports {@link LocaleWire.varied}.
@@ -3394,7 +3387,7 @@ export interface SubtypeResourceHandlersConfig<
 /**
  * A leaf's {@link SubtypeHandlers} as effect-jsonapi's CRUD handlers
  * (`ResourceHandlers.make`), keyed by the endpoint names `Group.flat`
- * declares (pulpit#5). Each write goes through the record, so it keeps the
+ * declares. Each write goes through the record, so it keeps the
  * record's `transact` boundary, writer re-read, lifecycle hooks and cache
  * write-through (`CACHE-AUTH-005`); effect-jsonapi is given no `cache` and no
  * `transact` of its own, and its mutation tail re-reads the row once more
@@ -3408,8 +3401,8 @@ export interface SubtypeResourceHandlersConfig<
  * A `create` / `update` whose committed write hides the row from its writer
  * (the re-read fails `NodeNotFound`) answers effect-jsonapi's committed
  * identifier document, `{ data: { type, id, meta: { version } } }` at the
- * endpoint's own status, not a 404 (effect-jsonapi's `hiddenWrite`,
- * pulpit#107). Declare the group with `Group.flat({ …, hiddenWrites: true })`
+ * endpoint's own status, not a 404 (effect-jsonapi's `hiddenWrite`).
+ * Declare the group with `Group.flat({ …, hiddenWrites: true })`
  * so its `create` / `update` success admits that document.
  *
  * @since 0.1.0
@@ -3514,7 +3507,7 @@ export const subtypeResourceHandlers = <
         })),
       get,
       // The committed version rides along: a write hidden from its writer
-      // answers it as `data.meta.version` (pulpit#107).
+      // answers it as `data.meta.version`.
       create: (payload) =>
         Effect.map(Effect.flatMap(createRequest(payload), handlers.create), ({ id, version }) => ({
           id,
@@ -3533,7 +3526,7 @@ export const subtypeResourceHandlers = <
 // ── Localisation ──────────────────────────────────────────────────────
 
 /**
- * A leaf's locale level (pulpit#56, model (b)): the columns translated per
+ * A leaf's locale level (model (b)): the columns translated per
  * locale. Every other column of the leaf is shared by all of a node's
  * locales, so one value serves the whole node; history, draft, visibility and
  * publication are the node's, never a locale's. Declared once, beside the
@@ -3563,7 +3556,7 @@ export interface LocalisedResource<Resource> {
 const RESERVED_COLUMNS = HashSet.make("id", "version", "action", LOCALE_COLUMN);
 
 /**
- * The columns a leaf's read gate reads (pulpit#56): none of them may be
+ * The columns a leaf's read gate reads: none of them may be
  * translated, so every locale row carries the node's one owner, visibility,
  * draft and moderation state.
  */
@@ -3699,7 +3692,7 @@ export class OwnerSetTooLarge extends Schema.TaggedError<
 
 /**
  * The accounts that own at least one row the viewer may list in any of
- * `leaves` (pulpit#186): the union of each leaf's
+ * `leaves`: the union of each leaf's
  * {@link SubtypeOps.owners}, deduplicated in code-point order, paged by
  * `request`, with the exact union size as `total`. One read per leaf, each
  * for every owner it has (up to {@link MAX_PAGE_LIMIT}): a leaf with more

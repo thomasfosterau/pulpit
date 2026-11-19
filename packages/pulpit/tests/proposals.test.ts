@@ -1,5 +1,5 @@
 /**
- * Suggested edits (pulpit#49).
+ * Suggested edits.
  *
  * - The two-tier classification: gardeneria's
  *   `apps/api/tests/proposal-conflict.test.ts`, over pulpit's snapshots
@@ -543,7 +543,7 @@ describe("defineProposals — the operations", () => {
   });
 });
 
-describe("over a localised leaf (pulpit#184)", () => {
+describe("over a localised leaf", () => {
   const atLocales = (version: bigint, locales: LocaleStates): VersionSnapshot => ({
     ...snapshot(version, { colour: "red" }),
     locales,
