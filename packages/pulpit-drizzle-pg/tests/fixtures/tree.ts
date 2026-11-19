@@ -19,6 +19,7 @@ import { makeEmbeddingTables } from "@thomasfosterau/pulpit-drizzle-pg/embedding
 import { makeExternalIdTable } from "@thomasfosterau/pulpit-drizzle-pg/external-ids";
 import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
 import { makeReactionTable } from "@thomasfosterau/pulpit-drizzle-pg/reactions";
+import { makeReportTable } from "@thomasfosterau/pulpit-drizzle-pg/reports";
 import { makeRelationshipTable } from "@thomasfosterau/pulpit-drizzle-pg/social";
 import { makeMembershipTable } from "@thomasfosterau/pulpit-drizzle-pg/memberships";
 import { makeProposalTable } from "@thomasfosterau/pulpit-drizzle-pg/proposals";
@@ -148,6 +149,9 @@ export const reactions = makeReactionTable({
   accounts: accounts.id,
 });
 
+/** The member report table, over the identity table. */
+export const reports = makeReportTable({ schema, identity: tables.root.identity });
+
 /** The block documents' embedding queue and vectors: `double precision[]`, so no extension is needed. */
 export const embeddings = makeEmbeddingTables({
   schema,
@@ -201,6 +205,7 @@ export const fixtureSchema = {
   groups,
   memberships,
   reactions,
+  reports,
   proposals,
   notesView: views.leaves.notes,
   linksView: views.leaves.links,

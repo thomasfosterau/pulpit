@@ -7,9 +7,11 @@
  */
 
 import { executeRows } from "@thomasfosterau/effect-drizzle-ext/query";
-import type { SQLWrapper } from "drizzle-orm";
+import { sql, type SQLWrapper } from "drizzle-orm";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
-import type * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 /** The rows `query` reads, each decoded with `row`; a row that fails `row` is a defect. */
 export const selectRows = <S extends Schema.Decoder<unknown>>(
@@ -17,3 +19,10 @@ export const selectRows = <S extends Schema.Decoder<unknown>>(
   query: SQLWrapper | string,
   row: S,
 ) => Effect.catchTag(executeRows(db, query, row), "SchemaError", Effect.die);
+
+/** A fresh row id, `gen_random_uuid()` as text: what a store's `mintId` answers. */
+export const mintUuid = (db: Parameters<typeof executeRows>[0]) =>
+  Effect.flatMap(
+    selectRows(db, sql`SELECT gen_random_uuid()::text AS id`, Schema.Struct({ id: Schema.String })),
+    (rows) => Effect.orDie(Effect.fromOption(Option.map(Arr.head(rows), (row) => row.id))),
+  );

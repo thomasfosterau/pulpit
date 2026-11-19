@@ -114,7 +114,7 @@ import type { MediaReferences, NodeRef } from "./media.ts";
 import type { ExternalIdLink, ExternalIdStore } from "./reference-import.ts";
 import type { Relationship, SocialStore } from "./social.ts";
 import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
-import type { ReportRow, ReportStore } from "./moderation.ts";
+import type { ReportResolution, ReportRow, ReportStore } from "./moderation.ts";
 import type { ProposalListing, ProposalRow, ProposalStore } from "./proposals.ts";
 import type { WorkingCopy, WorkingCopyKey, WorkingCopyStore } from "./working-copy.ts";
 import type {
@@ -1684,6 +1684,14 @@ const plainRowTable = <Row extends PlainRow>(options: {
           row.id === id && row.status === options.open ? closed(row) : row,
         );
       }),
+    /** Close every open row `which` picks; how many it closed. */
+    closeWhere: (which: (row: Row) => boolean, closed: (row: Row) => Row) =>
+      Effect.sync(() => {
+        const picked = (row: Row) => row.status === options.open && which(row);
+        const count = Arr.filter(rows, picked).length;
+        rows = Arr.map(rows, (row) => (picked(row) ? closed(row) : row));
+        return count;
+      }),
     /**
      * Account erasure: apply `erase` to at most `limit` rows it touches (a
      * row it answers `"delete"` for goes, one it returns a new row for is
@@ -1817,6 +1825,17 @@ export interface InMemoryReportStore extends ReportStore<never, never> {
   readonly rows: () => ReadonlyArray<ReportRow>;
 }
 
+/** A report row closed by `resolution`. */
+const resolved =
+  (resolution: ReportResolution) =>
+  (row: ReportRow): ReportRow => ({
+    ...row,
+    status: resolution.status,
+    resolvedAt: Option.some(resolution.resolvedAt),
+    resolvedBy: Option.some(resolution.resolvedBy),
+    resolutionNote: resolution.resolutionNote,
+  });
+
 /**
  * An in-memory {@link ReportStore}: the seam's contract (docs/seams.md →
  * `ReportStore`). `list` evaluates the filter in memory, newest first with
@@ -1844,14 +1863,9 @@ export const makeInMemoryReportStore = (): InMemoryReportStore => {
     insert: table.insert,
     get: (id) => Effect.sync(() => table.find(id)),
     lock: table.lock,
-    close: (id, resolution) =>
-      table.close(id, (row) => ({
-        ...row,
-        status: resolution.status,
-        resolvedAt: Option.some(resolution.resolvedAt),
-        resolvedBy: Option.some(resolution.resolvedBy),
-        resolutionNote: resolution.resolutionNote,
-      })),
+    close: (id, resolution) => table.close(id, resolved(resolution)),
+    closeOpen: (targetId, resolution) =>
+      table.closeWhere((row) => row.targetId === targetId, resolved(resolution)),
     eraseReporter: ({ accountId, replacement, limit }) =>
       table.erase(limit, (row) => {
         if (row.reporterId === accountId) return "delete";

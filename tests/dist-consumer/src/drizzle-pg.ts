@@ -99,6 +99,12 @@ import {
   makeReactionTable,
   type ReactionTable,
 } from "@thomasfosterau/pulpit-drizzle-pg/reactions";
+import type { ReportStore } from "@thomasfosterau/pulpit/moderation";
+import {
+  makeReportStore,
+  makeReportTable,
+  type ReportTable,
+} from "@thomasfosterau/pulpit-drizzle-pg/reports";
 import type {
   GroupOwnerStore,
   GroupOwnership,
@@ -162,6 +168,7 @@ export type _Root = Assert<
     | "Erasure"
     | "Collections"
     | "Reactions"
+    | "Reports"
     | "Memberships"
   >
 >;
@@ -476,6 +483,20 @@ const reactionStore = makeReactionStore({
 export type _ReactionTable = Assert<Equals<typeof reactionTable, ReactionTable>>;
 export type _ReactionStore = Assert<
   Equals<typeof reactionStore, ReactionStore<EffectDrizzleQueryError, Key>>
+>;
+
+// ── ./reports ────────────────────────────────────────────────────────────
+
+const reportTable = makeReportTable({ schema, identity: tables.root.identity });
+const reportStore = makeReportStore({
+  table: reportTable,
+  identity: tables.root.identity,
+  CurrentTransaction: database.CurrentTransaction,
+});
+
+export type _ReportTable = Assert<Equals<typeof reportTable, ReportTable>>;
+export type _ReportStore = Assert<
+  Equals<typeof reportStore, ReportStore<EffectDrizzleQueryError, Key>>
 >;
 
 // ── ./social ─────────────────────────────────────────────────────────────

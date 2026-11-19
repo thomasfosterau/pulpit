@@ -13,7 +13,7 @@
  * @since 0.0.0
  */
 
-import { selectRows } from "./internal/query.ts";
+import { mintUuid, selectRows } from "./internal/query.ts";
 import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import {
   ProposalStatus,
@@ -259,15 +259,7 @@ export const makeProposalStore = <I, Relations extends AnyRelations>(config: {
     );
 
   return {
-    mintId: Effect.gen(function* () {
-      const tx = yield* CurrentTransaction;
-      const rows = yield* selectRows(
-        tx,
-        sql`SELECT gen_random_uuid()::text AS id`,
-        Schema.Struct({ id: Schema.String }),
-      );
-      return yield* Effect.orDie(Effect.fromOption(Option.map(Arr.head(rows), (row) => row.id)));
-    }),
+    mintId: Effect.flatMap(CurrentTransaction, mintUuid),
     insert: (row) =>
       Effect.gen(function* () {
         const tx = yield* CurrentTransaction;
