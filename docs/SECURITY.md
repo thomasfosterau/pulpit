@@ -11,7 +11,7 @@ You can expect an initial response within a few days. Please include a descripti
 - Publishing is npm trusted publishing (OIDC) from the protected `release` environment, which needs the owner's approval; only that job holds `id-token: write`. See [PUBLISHING.md](PUBLISHING.md).
 - Release jobs install with `--ignore-scripts` and run only the workspace's own `prepare`; CI runs only the install scripts `allowBuilds` names.
 - Actions are pinned by exact tag and locked to commits by `.github/workflows/actions.lock`. Workflows default to `permissions: {}`, and CI holds no secret, so Dependabot PRs run it safely.
-- `minimumReleaseAge` holds new third-party versions for 8 hours; Dependabot's cooldown is 1 day.
+- `minimumReleaseAge` holds new third-party versions for 24 hours; Dependabot's cooldown is 1 day.
 
 ## Invariant IDs
 

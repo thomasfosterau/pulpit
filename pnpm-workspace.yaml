@@ -70,6 +70,6 @@ peerDependencyRules:
     vite: "*"
     vitest: "*"
 # Supply-chain delay, in minutes.
-minimumReleaseAge: 480
+minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - "@thomasfosterau/*"
