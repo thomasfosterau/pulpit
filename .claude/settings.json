@@ -15,6 +15,7 @@
     ]
   },
   "enabledPlugins": {
+    "mattpocock-skills@claude-plugins-official": true,
     "typescript-lsp@claude-plugins-official": true,
     "code-review@claude-plugins-official": true,
     "github@claude-plugins-official": true,
