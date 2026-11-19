@@ -1,9 +1,6 @@
 {
   "name": "pulpit",
-  // The Vite+ base image (Node + pnpm + the vp CLI), tagged at the catalog's
-  // `vite-plus` pin in pnpm-workspace.yaml (1.5.1). Dependabot's `devcontainers`
-  // updates move only the features below, so bump this tag by hand on the
-  // toolchain PR that moves `vite-plus`.
+  // Tag = the catalog's `vite-plus` pin; moved by hand with it.
   "image": "ghcr.io/voidzero-dev/vite-plus:1.5.1",
   "features": {
     "ghcr.io/devcontainers/features/github-cli:1": {},
@@ -11,11 +8,7 @@
     "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {},
     "ghcr.io/devcontainer-community/devcontainer-features/jq:1": {}
   },
-  // Provisioning is .claude/hooks/session-start.sh, the same file the Claude
-  // Code SessionStart hook runs, so a container shell and an agent session are
-  // provisioned identically: the pinned Vite+ CLI, its `vp` / `vpx` links for
-  // non-interactive shells, and a frozen-lockfile install (see the file's header).
-  "postCreateCommand": "bash .claude/hooks/session-start.sh",
+  "postCreateCommand": "vp install --frozen-lockfile",
   "customizations": {
     "vscode": {
       "extensions": ["Anthropic.claude-code", "oxc.oxc-vscode"]

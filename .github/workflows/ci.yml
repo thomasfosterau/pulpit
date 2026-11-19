@@ -1,12 +1,5 @@
 name: CI
 
-# One workflow, one command: each matrix job installs and runs `vp run ci`,
-# the root task in vite.config.ts that chains every gate in AGENTS.md →
-# Verification's order and then pulpit-drizzle-pg's integration suite. The
-# pipeline lives in that task, not in GitHub Actions steps or `needs:`; this
-# file only provides Node.js, the dependencies and a PostgreSQL. Each matrix
-# leg is its own required check: `ci (node lts)` and `ci (node latest)`.
-
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
@@ -14,13 +7,10 @@ on:
     branches: [trunk]
   workflow_dispatch:
 
-# A newer push to a pull request cancels its superseded run; runs on `trunk`
-# are never cancelled.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# No permissions by default; each job grants only read access.
 permissions: {}
 
 jobs:
@@ -33,21 +23,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `lts` is the newest LTS release and `latest` the newest stable
-        # release, LTS or not: the Vite+ pinned in pnpm-workspace.yaml, which
-        # resolves both, skips pre-releases such as a `27.0.0-alpha`. Every
-        # package's `engines.node` (`>=22`, `>=22.18`) covers both.
         node: [lts, latest]
     env:
-      # A modest ceiling for every Node process in the pipeline. NODE_OPTIONS
-      # is inherited by every child, including each vitest fork.
       NODE_OPTIONS: --max-old-space-size=2048
       VITEST_MAX_WORKERS: 2
       VP_RUN_CONCURRENCY_LIMIT: 2
-      # The `postgres` service below, which pulpit-drizzle-pg's integration
-      # suite resolves through `-pg/testing`'s `provisionTestDatabase`: it
-      # drops, recreates and builds its own database there. A throwaway
-      # container's fixed test password, not a secret.
+      # The `postgres` service, for pulpit-drizzle-pg's integration suite.
       PGHOST: 127.0.0.1
       PGPORT: "5432"
       PGUSER: postgres
@@ -65,23 +46,19 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      # Vite+ at the catalog's `vite-plus` pin, the matrix's Node.js and
-      # Vite+'s managed pnpm; the pnpm store is cached on pnpm-lock.yaml
-      # (pulpit#280).
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@0072dab61af1caed438a55cb90c8d6dc0dfa09ce # v1.22.0
+        uses: voidzero-dev/setup-vp@v1.22.0
         with:
           version-file: pnpm-workspace.yaml
-          node-version: ${{ matrix.node }}
+          # `*` is the newest stable release; Vite+'s `latest` can resolve to a pre-release.
+          node-version: ${{ matrix.node == 'latest' && '*' || matrix.node }}
           cache: true
-          run-install: false
-      - name: Install dependencies
-        run: vp install --frozen-lockfile
+          run-install: true
       - name: Restore the Vite+ task cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache@v6.1.0
         with:
           path: node_modules/.vite/task-cache
           key: vp-task-v2-${{ runner.os }}-node-${{ matrix.node }}-${{ github.sha }}
