@@ -48,6 +48,7 @@
     "./proposals": "./src/proposals.ts",
     "./publication": "./src/publication.ts",
     "./reactions": "./src/reactions.ts",
+    "./reports": "./src/reports.ts",
     "./memberships": "./src/memberships.ts",
     "./paths": "./src/paths.ts",
     "./search": "./src/search.ts",
@@ -103,6 +104,10 @@
       "./reactions": {
         "types": "./dist/reactions.d.ts",
         "default": "./dist/reactions.js"
+      },
+      "./reports": {
+        "types": "./dist/reports.d.ts",
+        "default": "./dist/reports.js"
       },
       "./memberships": {
         "types": "./dist/memberships.d.ts",

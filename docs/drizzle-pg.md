@@ -22,7 +22,8 @@ The module guide for [`@thomasfosterau/pulpit-drizzle-pg`](../packages/pulpit-dr
 - **Landed:** the `SocialStore` ([`./social`](#social), pulpit#364), checked against the kernel's in-memory store on PostgreSQL, a block racing a follow in two transactions.
 - **Landed:** the `MembershipStore` and `GroupOwnerStore` ([`./memberships`](#memberships), pulpit#364), checked against the kernel's in-memory stores on PostgreSQL.
 - **Landed:** the erasure seams, `PurgeStore` and `AccountErasureStore` ([`./erasure`](#erasure), pulpit#361), checked against the kernel's in-memory stores on PostgreSQL, the purge as the whole chain or nothing and the redaction marker.
-- **Next:** the other stores that aren't tree-bound (the `ReportStore`, [pulpit#360](https://github.com/thomasfosterau/pulpit/issues/360), waiting on the moderation state machine; budgets, working copies and the notification tables, unranked), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
+- **Landed:** the `ReportStore` ([`./reports`](#reports), pulpit#360), checked against the kernel's in-memory store on PostgreSQL, its lock against a second transaction and the purge cascade.
+- **Next:** the other stores that aren't tree-bound (budgets, working copies and the notification tables, unranked), tracked in [pulpit#353](https://github.com/thomasfosterau/pulpit/issues/353); dropping the local guards once effect-drizzle-ext ships them ([pulpit#342](https://github.com/thomasfosterau/pulpit/issues/342)).
 
 ## End to end
 
@@ -290,6 +291,25 @@ The kernel's `ProposalStore` ([seams.md → `ProposalStore`](seams.md), pulpit#3
   - An id that is no canonical UUID names no proposal.
 
 The integration suite checks every method against the kernel's `makeInMemoryProposalStore` over the same writes, the composite foreign key, and the lock against a second transaction's `FOR UPDATE NOWAIT`.
+
+## `./reports`
+
+The kernel's `ReportStore` ([seams.md → `ReportStore`](seams.md#reportstoree-r-the-member-report-table), pulpit#360): member reports against a tree's nodes, the moderation queue `./moderation`'s `defineReports` files into and resolves from.
+
+- **`makeReportTable({ schema, identity: tables.root.identity, name? })`** is the seam's schema (`report` by default).
+  - `target_node_id` references the identity row and cascades, so `purge` takes a node's reports with it.
+  - `status` is CHECKed to `open`, `resolved` and `dismissed`, and a second CHECK holds `resolved_at` and `resolved_by` `NULL` exactly on an open row. `filed_at` defaults to `now()`.
+  - `reporter_id`, `target_node_id` and the open rows (`filed_at DESC, id DESC WHERE status = 'open'`, the queue's order) are indexed.
+- **`makeReportStore({ table, identity, CurrentTransaction })`** binds the store, every call in the caller's transaction.
+  - **`get`, `lock` and `list`** join the identity table for `targetType`.
+  - **`list`** renders its filter over `id`, `reporterId`, `targetId`, `targetType` and `status` through [`./filter`](#filter), orders `filed_at DESC, id DESC`, and reads the unpaged total off `count(*) OVER ()`. A page past the end has no row to carry it, so it counts the matching rows again.
+  - **`lock`** is the row `FOR UPDATE OF` the report alone, so two resolutions of one report serialise.
+  - **`close`** updates only an `open` row.
+  - **`mintId`** is `gen_random_uuid()`.
+  - **`eraseReporter`** is one CTE over at most `limit` of the account's rows (`ORDER BY id`). It deletes the reports the account filed, rewrites `resolved_by` to the replacement on the others it resolved, and answers how many rows changed.
+  - An id that is no canonical UUID names no report.
+
+The integration suite checks every method against the kernel's `makeInMemoryReportStore` over the same writes, the CHECKs, the lock against a second transaction's `FOR UPDATE NOWAIT`, and the purge cascade.
 
 ## `./edges`
 
