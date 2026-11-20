@@ -341,8 +341,8 @@ export {
   Unauthorized,
   /**
    * A signed-in viewer below the rung a write needs: the wire's 403. Never
-   * used to hide a row. effect-auth's `Guard.Forbidden`, re-exported
-   *: it carries a `message` and an optional `code`.
+   * used to hide a row. effect-auth's `Guard.Forbidden`, re-exported: it
+   * carries a `message` and an optional `code`.
    *
    * @since 0.1.0
    */
@@ -373,11 +373,14 @@ export class InvalidListOrder extends Schema.TaggedError<
 }) {}
 
 /**
- * A leaf declared against the rules: a `sortable` entry that is not one of
- * its view's `LeafStore.columns`. Thrown by {@link defineSubtype} when the
- * leaf is declared, never an Effect failure, like `./Edges`'
- * `EdgeDeclarationError`: a misspelt allow-list entry must stop its module
- * loading rather than silently leave a column unsortable.
+ * A leaf declared against the rules: a `sortable`, `search` or `locales`
+ * entry that is not one of its view's `LeafStore.columns`, or a translated
+ * column the read gate reads. Thrown by {@link defineSubtype} when the leaf
+ * is declared, and by {@link defineSearchProjection} and
+ * {@link defineLocaleLevel} for a malformed declaration; never an Effect
+ * failure, like `./Edges`' `EdgeDeclarationError`: a misspelt allow-list
+ * entry must stop its module loading rather than silently leave a column
+ * unsortable.
  *
  * @since 0.1.0
  */

@@ -198,8 +198,8 @@ export interface PubliclyServeableResource {
 }
 
 /**
- * Whether a cached resource may be served from the cache to a viewer who
- * reaches the cache at all (a viewer who bypasses it for freshness reads the
+ * The KV cache's security gate (`CACHE-AUTH-005`): whether a cached resource
+ * may be served from the cache to a viewer who reaches the cache at all (a viewer who bypasses it for freshness reads the
  * database directly). See the module doc for the rule. It is the cache's
  * parser as well as its gate: the resource is whatever the KV hands back,
  * so anything that is not an object with an `attributes` object refuses,

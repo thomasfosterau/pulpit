@@ -187,7 +187,9 @@ export class EdgeCardinalityExceeded extends Schema.TaggedError<
 
 /**
  * An edge family declared against the rules: an end's alias contains a `.`,
- * or its `maxEdges` is not a positive safe integer. Thrown by
+ * its `maxEdges` is not a positive safe integer, its `validity` names one
+ * column twice, or it declares a `validity` over a store without
+ * `closeValidity`. Thrown by
  * {@link defineEdgeOps} when the family is declared, never an Effect failure,
  * like `RegistryDeclarationError`: a malformed family must stop its module
  * loading rather than fail open (a `NaN` limit admits every create) or

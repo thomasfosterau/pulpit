@@ -28,18 +28,7 @@ export const PostResource = Resource.make("posts", {
 });
 ```
 
-| Export | What it is |
-| --- | --- |
-| `Visibility` | `"public" \| "followers" \| "private"` — the access axis. Only `public` is ever cache-serveable. |
-| `contentVisibilityResourceFields` | `visibility` + `draft`: required on the resource, optional at create and update, never cleared. |
-| `contentVisibilityCreateFields` | The same pair as `Schema.optional` keys, for a hand-written create struct. |
-| `ownedVisibilityResourceFields` | `visibility` alone, for owned Entity / File leaves (no `draft`). |
-| `nodeTimestampResourceFields` | `createdAt` / `updatedAt`, read-only. |
-| `tombstoneResourceFields` | `deletedAt`, an optional key on the resource and in no write projection. |
-| `referenceLeafResourceFields` | Timestamps + tombstone: every reference-data leaf. |
-| `ownedContentLeafResourceFields` | Timestamps + tombstone + `visibility`: every owned Content leaf. |
-| `ownerRef(() => Owner)` | The `owner` to-one linkage every owned leaf carries. The operation layer stamps it from the viewer. |
-| `ContentResource`, `ContentRef`, `makeContentResource(id)` | The base `content` resource, with the auto-derived id or the application's own brand. |
+**Entry points:** `contentVisibilityResourceFields` and `ownedContentLeafResourceFields`, over the `Visibility` axis. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Registry`
 
@@ -76,16 +65,7 @@ validateRegistry(REGISTRY); // throws RegistryDeclarationError at import on a ma
 registryWireTypes(REGISTRY, ["content"]).owned; // ["posts"]
 ```
 
-| Export | What it is |
-| --- | --- |
-| `RegistryEntry`, `RESOURCE_FLAGS` | The entry shape and its flags: `pageable`, `agent`, `owned`, `referenceData`, `searchable`, `routable`, `localised` (a locale level in its chain; see [Localisation](read-model.md#subtype)). `owned` and `referenceData` are mutually exclusive. A marker level omits `resource` and `id`; a flag is literal `true` or omitted (never `undefined`). |
-| `resourceOf(entry)` | The entry's resource as an `Option`: `Option.none()` for a marker level, which omits `resource`. |
-| `parent(key)`, `root` | Declare an entry's parent with its key literal preserved (`Option.some` widens it to `string`, which empties every typed derivation). |
-| `validateRegistry(entries, checks?)` | Unique keys, parents resolve, a flag implies a resource, the trust axis, id / wire-type lockstep; then the application's own `RegistryCheck`s. |
-| `branchOf(entry, byKey, roots)` | The branch root an entry sits under, walking marker levels. |
-| `flaggedMembers(entries, flag)`, `branchMembers(entries, root, roots, parents?)` | The resources themselves, typed as the precise member tuple, ready for `Schema.Union`. |
-| `identifiersOf(members)` | The members' `identifier` schemas, for a linkage-ref union. |
-| `registryWireTypes(entries, roots)` | The wire types of every flag family and branch — what a wire-identity test pins and a subtype factory checks its `access` against. |
+**Entry points:** `RegistryEntry`, its `RESOURCE_FLAGS`, and `validateRegistry`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Documents`
 
@@ -121,16 +101,7 @@ const program = <Document, E, R>(
 
 The document type is a parameter: its schema and validation are the application's, and pulpit never imports them. The hash is the store's to derive; the algorithm and the bytes it is taken over are in [Seams](seams.md#seams), and `canonicalText` produces those bytes for a store that doesn't run on Postgres.
 
-| Export | What it is |
-| --- | --- |
-| `DocumentStore<Document, E, R>`, `DocumentPut` | The store seam: `put` (idempotent, returns `{ hash, inserted }`, `inserted` only when it wrote the row), `get`, `getMany` (see [Seams](seams.md#seams)). |
-| `onDocumentInsert(store, hook)`, `DocumentInserted` | The store with a first-insert hook (both apps enqueue an embedding job): it runs after a `put` that inserted, never after one that found the document stored, inside the `put`'s transaction, and its failure fails the `put`. |
-| `DocumentHash` | A SHA-256 document hash as 64 lowercase hex characters. |
-| `documentRef(key)` | The attribute spread for a version row's document reference: the hash, required on the resource and at create, carried forward at update, never cleared. |
-| `canonicalText(json)` | The canonical text the hash contract takes SHA-256 over (Postgres's `jsonb` text output), for a store that doesn't run on Postgres. |
-| `DocumentCheck<Document, R>`, `DocumentViolation` | The grammar seam: `(field, document)` succeeds for a document the field's grammar allows and fails `DocumentViolation { field, message }` otherwise (see [Seams](seams.md#seams)). |
-| `checkedDocumentStore(store, field, check)` | The store with the field's grammar check before `put`: an off-grammar document fails `DocumentViolation` and is never stored (`DOC-001`). One per document field. |
-| `documentCheckHook({ type, fields, documents, check })`, `DocumentCheckDeclaration`, `DOCUMENT_VIOLATION` | The grammar check as a before-write hook: a `create`, `update` or `restore` whose patch (or any locale's) sets a declared document field is refused with `WriteRejected` (reason `DOCUMENT_VIOLATION <field>: <message>`) when the referenced document fails its check or isn't stored; one `getMany` per write. `restoreVersion` is exempt (it re-applies a checked version). |
+**Entry points:** the `DocumentStore` seam, `canonicalText` for the hash contract, and the grammar check's `checkedDocumentStore` and `documentCheckHook`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Filter`
 
