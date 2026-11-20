@@ -136,6 +136,22 @@ Method contract: `put` is `INSERT … ON CONFLICT DO NOTHING RETURNING hash_id`,
 
 `(field, document) => Effect<void, DocumentViolation, R>`: whether `document` is allowed in `field`, failing `DocumentViolation { field, message }` (the message is the wire's 422 detail) and nothing else. It reads only the document; `R` is whatever the checker needs (usually nothing). The application fills it, one grammar per document field, with prosekit-utilities' allow-list checkers (`PostBody`, `CommentBody`, `InlineTitle`, …). The kernel imports no grammar. It must be total over the stored document type: a document it can't parse is a violation, not a defect.
 
+With prosekit-utilities, the check is its allow-list with the error renamed. `checkAllowList(grammar)(doc)` fails its own `DocumentViolation { kind, typeName, message }`, which carries no field, so map it onto the kernel's, keeping the message as the 422 detail:
+
+```ts
+import { checkAllowList, PostBody } from "prosekit-utilities";
+import { DocumentViolation, type DocumentCheck } from "@thomasfosterau/pulpit/documents";
+import * as Effect from "effect/Effect";
+
+const postBodyCheck: DocumentCheck<unknown> = (field, document) =>
+  checkAllowList(PostBody)(document).pipe(
+    Effect.asVoid,
+    Effect.mapError((violation) => new DocumentViolation({ field, message: violation.message })),
+  );
+```
+
+Pass the same `postBodyCheck` to `checkedDocumentStore` and `documentCheckHook` (above). A mention index fed from the same document is `MentionExtractor`'s job, not the check's ([below](#mentionextractordocument-the-mention-extractor)).
+
 ## `EdgeStore<Row, Following, E, R>`: the edge table
 
 Filled by the application over each edge family's own table; no library is expected to provide one. Expected schema: `id` (a UUID primary key), `created_at` (`timestamptz NOT NULL DEFAULT now()`), one column per end holding the node id (a foreign key to the node identity table, `core.node`) with an index each, the family's qualifier columns, and, for a family that resolves re-assertions, a unique index on its natural key (`NULLS NOT DISTINCT` when a key column is nullable).
