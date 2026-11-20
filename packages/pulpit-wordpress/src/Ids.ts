@@ -317,8 +317,7 @@ export interface StringIdsOptions {
    * rather than a database error: an application whose node ids are a `uuid`
    * column passes a UUID test. Defaults to accepting any non-empty string.
    */
-  // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined`, so a caller can forward its own `undefined` under `exactOptionalPropertyTypes`; absent is the default test
-  readonly isNodeId?: ((wireId: string) => boolean) | undefined;
+  readonly isNodeId?: (wireId: string) => boolean;
 }
 
 /**

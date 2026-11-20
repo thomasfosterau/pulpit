@@ -305,13 +305,4 @@ describe("stringIds", () => {
       expect(yield* dies(decoded)).toBe(true);
     });
   });
-
-  it.effect("takes an explicit undefined as the default", () =>
-    Effect.gen(function* () {
-      expect(yield* stringIds({ isNodeId: undefined }).decode(["", "a"])).toEqual([
-        none,
-        some("a"),
-      ]);
-    }),
-  );
 });

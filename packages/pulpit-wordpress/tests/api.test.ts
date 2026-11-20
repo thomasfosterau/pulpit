@@ -60,6 +60,7 @@ import {
   type PostType,
   type RenderRequest,
   type SearchRequest,
+  type WordPressConfig,
   type Taxonomy,
   type TermFields,
   type WordPressResponse,
@@ -114,35 +115,41 @@ const stringOf = (row: LeafRow, column: string) =>
   Option.filter(Option.fromNullishOr(row[column]), P.isString);
 const textOf = (row: LeafRow, column: string) => Option.getOrElse(stringOf(row, column), () => "");
 
-const fieldsOf = (row: LeafRow): PostFields => ({
-  id: row.id,
-  slug: textOf(row, "slug"),
-  date: Option.liftPredicate(row["publishedAt"], P.isDate),
-  modified: P.isDate(row["updatedAt"]) ? row["updatedAt"] : PAST,
-  title: textOf(row, "title"),
-  content: textOf(row, "content"),
-  excerpt: textOf(row, "excerpt"),
-  author: stringOf(row, "ownerId"),
-  featuredMedia: stringOf(row, "featuredMediaId"),
-  parent: stringOf(row, "parentId"),
-  menuOrder: P.isNumber(row["menuOrder"]) ? row["menuOrder"] : 0,
-  draft: row["draft"] !== false,
-  visibility: Schema.is(Visibility)(row["visibility"]) ? row["visibility"] : "private",
-  deleted: row.action === "delete",
-  media: P.isString(row["mimeType"])
+const fieldsOf = (row: LeafRow): PostFields => {
+  const fields: PostFields = {
+    id: row.id,
+    slug: textOf(row, "slug"),
+    date: Option.liftPredicate(row["publishedAt"], P.isDate),
+    modified: P.isDate(row["updatedAt"]) ? row["updatedAt"] : PAST,
+    title: textOf(row, "title"),
+    content: textOf(row, "content"),
+    excerpt: textOf(row, "excerpt"),
+    author: stringOf(row, "ownerId"),
+    featuredMedia: stringOf(row, "featuredMediaId"),
+    parent: stringOf(row, "parentId"),
+    menuOrder: P.isNumber(row["menuOrder"]) ? row["menuOrder"] : 0,
+    draft: row["draft"] !== false,
+    visibility: Schema.is(Visibility)(row["visibility"]) ? row["visibility"] : "private",
+    deleted: row.action === "delete",
+  };
+  const mimeType = row["mimeType"];
+  return P.isString(mimeType)
     ? {
-        caption: "",
-        description: "",
-        altText: "",
-        mediaType: "image",
-        mimeType: row["mimeType"],
-        sourceUrl: `https://cdn.example.org/${textOf(row, "slug")}.jpg`,
-        mediaDetails: {},
-        fileSize: Option.none(),
-        bytesPending: row["bytesPending"] === true,
+        ...fields,
+        media: {
+          caption: "",
+          description: "",
+          altText: "",
+          mediaType: "image",
+          mimeType,
+          sourceUrl: `https://cdn.example.org/${textOf(row, "slug")}.jpg`,
+          mediaDetails: {},
+          fileSize: Option.none(),
+          bytesPending: row["bytesPending"] === true,
+        },
       }
-    : undefined,
-});
+    : fields;
+};
 
 const serveable = (row: LeafRow) =>
   row["visibility"] === "public" && row["draft"] === false && row.action !== "delete";
@@ -392,7 +399,7 @@ const site = (options: SiteOptions = {}) => {
       ? bind({ ...postBinding, defaultLocale: "en", search: searchPosts })
       : bind({ ...postBinding, search: searchPosts });
   };
-  const api = defineWordPress({
+  const config: WordPressConfig<never, InMemoryFollowing> = {
     site: {
       url: "https://example.org",
       name: "Example",
@@ -432,10 +439,6 @@ const site = (options: SiteOptions = {}) => {
       },
       (_, type) => options.bound === undefined || Arr.contains(options.bound, type),
     ),
-    taxonomies:
-      options.terms === true
-        ? { category: bindTerms("category"), post_tag: bindTerms("post_tag") }
-        : undefined,
     authors: {
       ids: integerIds(accounts),
       getMany: (accountIds) =>
@@ -455,7 +458,15 @@ const site = (options: SiteOptions = {}) => {
           );
         }),
     },
-  });
+  };
+  const api = defineWordPress(
+    options.terms === true
+      ? {
+          ...config,
+          taxonomies: { category: bindTerms("category"), post_tag: bindTerms("post_tag") },
+        }
+      : config,
+  );
   const as = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
     Effect.ensuring(
       Effect.suspend(() => {
