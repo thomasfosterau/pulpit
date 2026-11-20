@@ -83,6 +83,7 @@ jobs:
         uses: voidzero-dev/setup-vp@v1.22.0
         with:
           version-file: pnpm-workspace.yaml
+          node-version: lts
           # The container installs into the mounted checkout itself.
           run-install: false
       - name: Build and start the container
