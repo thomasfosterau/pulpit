@@ -36,14 +36,7 @@ fileUrl(row, r2); // none while the row's bytesPending is anything but false
 - **The writes bypass `subtypeHandlers`.** They go through the leaf's operations, so its gates, preconditions and before hooks apply, but not the handlers' cache write-through and after hooks.
 - **Stays in the app:** the adapters, image transforms, EXIF extraction and video streaming.
 
-| Export | What it is |
-| --- | --- |
-| `BlobStore`, `BlobHead` | The byte-store seam (see [Seams](seams.md#seams)) and what it knows of one object. |
-| `ContentHash`, `sha256Hex(bytes)`, `blobKey(hash)` | The content hash (SHA-256, 64 lowercase hex characters), its Web Crypto derivation, and the store key it gives. |
-| `fileResourceFields`, `FileColumns` | The file version's attribute spread (all read-only) and its columns. |
-| `defineFileWrites(definition)`, `FileWriteOps`, `ReplaceInput`, `Upload`, `FileWrite` | The commit-ordered writes (`create`, `replace`, `confirmBytes`; `replace` also takes a `patch` of other columns for the same version), an upload, and what a write reports. |
-| `fileUrl(file, blobs)` | A version's URL, or none while its bytes are pending. |
-| `fileUsageEnds({ user, file })` | The usage index's edge ends (`userId`, `fileId`). |
+**Entry points:** `defineFileWrites` for the commit-ordered writes, `fileUrl` for a version's URL, `fileResourceFields` for the attribute spread, and the `BlobStore` seam ([Seams](seams.md#seams)). Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Media`
 
@@ -106,12 +99,4 @@ const program = Effect.gen(function* () {
 
 - **Albums.** `defineAlbum({ type, parent, media, store, mode? })` is `./Collections`' `defineCollection` with its members drawn from the declared media leaves: each id is looked up through every media leaf's own `getMany`, and a member reads as `{ type, resource }`. A node of any other leaf is one the album can't find (`append` fails `NodeNotFound`, confirming nothing), and a member the viewer can't read is omitted from `list` and its total. Declaring a leaf twice throws `MediaDeclarationError`.
 
-| Export | What it is |
-| --- | --- |
-| `mediaResourceFields`, `MediaKind`, `MediaExif`, `GeoLocation` | The media field spread and its vocabulary. |
-| `MetadataExtractor`, `MediaMetadata`, `mediaColumns(metadata, { stripLocation })` | The extractor seam (see [Seams](seams.md#seams)), what it reads, and the columns a version records for it. |
-| `defineMediaUploads(definition)`, `MediaUploadOps` | The upload pipeline over `./Blobs`' file writes (`create`, `replace`). |
-| `defineRenditions(definition)`, `RenditionOps`, `RenditionPolicy`, `RenditionRequest`, `RenditionTransform`, `MediaReferences`, `MediaLeaf`, `MediaFile`, `NodeRef` | The gated renditions (`readable`, `serve`), the policy, the request, and the transform and reference-index seams. |
-| `renditionWidth(widths, requested)`, `renditionFormat(formats, accept)` | The width bucket and the negotiated format. |
-| `defineAlbum(definition)`, `AlbumDefinition`, `MediaItem` | Albums over `./Collections`, and an album member. |
-| `RenditionNotFound`, `MediaDeclarationError` | The failures: 404, and a declaration against the rules (thrown). |
+**Entry points:** `mediaResourceFields`, `defineMediaUploads`, `defineRenditions` and `defineAlbum`, with the `MetadataExtractor`, `RenditionTransform` and `MediaReferences` seams ([Seams](seams.md#seams)). Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
