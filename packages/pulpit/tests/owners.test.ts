@@ -8,7 +8,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
 import * as TestClock from "effect/testing/TestClock";
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import { MAX_SET_VALUES } from "../src/Filter.ts";
 import { byCodePoint } from "../src/internal/list-order.ts";
 import {
@@ -50,11 +51,7 @@ const viewers: ReadonlyArray<readonly [string, Viewer]> = [
 ];
 
 const run = <A, E>(effect: Effect.Effect<A, E>) =>
-  Effect.runPromise(
-    Effect.andThen(TestClock.setTime(NOW.getTime()), effect).pipe(
-      Effect.provide(TestClock.layer()),
-    ),
-  );
+  Effect.andThen(TestClock.setTime(NOW.getTime()), effect);
 
 /** An owned leaf, gated or not, seeded with every visibility × draft × owner, and one tombstone. */
 const seeded = (gated: boolean) => {
@@ -124,11 +121,10 @@ describe("SubtypeOps.owners", () => {
     ),
   );
 
-  it.each(cases)(
-    "agrees with list's rows for $label",
-    async ({ gated, viewer, includeDeleted }) => {
+  it.effect.each(cases)("agrees with list's rows for $label", ({ gated, viewer, includeDeleted }) =>
+    Effect.gen(function* () {
       const { ops, actAs, seed } = seeded(gated);
-      const [owners, listed] = await run(
+      const [owners, listed] = yield* run(
         Effect.andThen(
           seed,
           actAs(
@@ -158,73 +154,79 @@ describe("SubtypeOps.owners", () => {
         byCodePoint,
       );
       expect(owners).toEqual({ rows: expected, total: expected.length });
-    },
+    }),
   );
 
-  it("is not vacuous: anonymous sees each owner's public rows, and no one else's", async () => {
-    const { ops, actAs, seed } = seeded(false);
-    const owners = await run(
-      Effect.andThen(
-        seed,
-        actAs(anonymous, ops.owners({ limit: 10, offset: 0, includeDeleted: false })),
-      ),
-    );
-    expect(owners.rows).toEqual(Arr.sort([member.id, otherMember.id, follower.id], byCodePoint));
-  });
+  it.effect("is not vacuous: anonymous sees each owner's public rows, and no one else's", () =>
+    Effect.gen(function* () {
+      const { ops, actAs, seed } = seeded(false);
+      const owners = yield* run(
+        Effect.andThen(
+          seed,
+          actAs(anonymous, ops.owners({ limit: 10, offset: 0, includeDeleted: false })),
+        ),
+      );
+      expect(owners.rows).toEqual(Arr.sort([member.id, otherMember.id, follower.id], byCodePoint));
+    }),
+  );
 
-  it("narrows to among, pages, and fails closed past MAX_SET_VALUES", async () => {
-    const { ops, actAs, seed } = seeded(false);
-    const [among, paged, over] = await run(
-      Effect.andThen(
-        seed,
-        actAs(
-          as(admin),
-          Effect.all(
-            [
-              ops.owners({
-                limit: 10,
-                offset: 0,
-                includeDeleted: false,
-                among: [member.id, "nobody"],
-              }),
-              ops.owners({ limit: 1, offset: 1, includeDeleted: false }),
-              ops.owners({
-                limit: 10,
-                offset: 0,
-                includeDeleted: false,
-                among: Arr.makeBy(MAX_SET_VALUES + 1, (i) => `u-${i}`),
-              }),
-            ],
-            { concurrency: 1 },
+  it.effect("narrows to among, pages, and fails closed past MAX_SET_VALUES", () =>
+    Effect.gen(function* () {
+      const { ops, actAs, seed } = seeded(false);
+      const [among, paged, over] = yield* run(
+        Effect.andThen(
+          seed,
+          actAs(
+            as(admin),
+            Effect.all(
+              [
+                ops.owners({
+                  limit: 10,
+                  offset: 0,
+                  includeDeleted: false,
+                  among: [member.id, "nobody"],
+                }),
+                ops.owners({ limit: 1, offset: 1, includeDeleted: false }),
+                ops.owners({
+                  limit: 10,
+                  offset: 0,
+                  includeDeleted: false,
+                  among: Arr.makeBy(MAX_SET_VALUES + 1, (i) => `u-${i}`),
+                }),
+              ],
+              { concurrency: 1 },
+            ),
           ),
         ),
-      ),
-    );
-    expect(among).toEqual({ rows: [member.id], total: 1 });
-    expect(paged.rows).toHaveLength(1);
-    // The admin's only row is a tombstone, which `includeDeleted: false` leaves out.
-    expect(paged.total).toBe(3);
-    expect(over).toEqual({ rows: [], total: 0 });
-  });
+      );
+      expect(among).toEqual({ rows: [member.id], total: 1 });
+      expect(paged.rows).toHaveLength(1);
+      // The admin's only row is a tombstone, which `includeDeleted: false` leaves out.
+      expect(paged.total).toBe(3);
+      expect(over).toEqual({ rows: [], total: 0 });
+    }),
+  );
 
-  it("is empty on a reference leaf, which has no owner", async () => {
-    const chain = makeInMemoryVersionChain("terms");
-    const ops = defineSubtype({
-      type: "terms",
-      access: { kind: "reference" },
-      chain,
-      leaves: makeInMemoryLeafStore(chain, { columns: ["name"] }),
-      viewer: Effect.succeed(as(admin)),
-      policy: gardeneriaPolicy,
-      followers: follows,
-      toResource: (row: LeafRow) => row,
-    });
-    await run(ops.create({ id: Option.none(), state: { name: "n" } }));
-    expect(await run(ops.owners({ limit: 10, offset: 0, includeDeleted: false }))).toEqual({
-      rows: [],
-      total: 0,
-    });
-  });
+  it.effect("is empty on a reference leaf, which has no owner", () =>
+    Effect.gen(function* () {
+      const chain = makeInMemoryVersionChain("terms");
+      const ops = defineSubtype({
+        type: "terms",
+        access: { kind: "reference" },
+        chain,
+        leaves: makeInMemoryLeafStore(chain, { columns: ["name"] }),
+        viewer: Effect.succeed(as(admin)),
+        policy: gardeneriaPolicy,
+        followers: follows,
+        toResource: (row: LeafRow) => row,
+      });
+      yield* run(ops.create({ id: Option.none(), state: { name: "n" } }));
+      expect(yield* run(ops.owners({ limit: 10, offset: 0, includeDeleted: false }))).toEqual({
+        rows: [],
+        total: 0,
+      });
+    }),
+  );
 });
 
 describe("readableOwners", () => {
@@ -233,42 +235,52 @@ describe("readableOwners", () => {
     owners: () => Effect.succeed({ rows: owners, total }),
   });
 
-  it("is the exact, ordered union of each leaf's owners, paged", async () => {
-    const leaves = [leaf("posts", ["bo", "ana"]), leaf("pages", ["cy", "bo"]), leaf("media", [])];
-    expect(
-      await run(readableOwners(leaves, { limit: 2, offset: 1, includeDeleted: false })),
-    ).toEqual({ rows: ["bo", "cy"], total: 3 });
-  });
+  it.effect("is the exact, ordered union of each leaf's owners, paged", () =>
+    Effect.gen(function* () {
+      const leaves = [leaf("posts", ["bo", "ana"]), leaf("pages", ["cy", "bo"]), leaf("media", [])];
+      expect(
+        yield* run(readableOwners(leaves, { limit: 2, offset: 1, includeDeleted: false })),
+      ).toEqual({ rows: ["bo", "cy"], total: 3 });
+    }),
+  );
 
-  it("refuses a union it can't make exact", async () => {
-    const error = await run(
-      Effect.flip(
-        readableOwners([leaf("posts", ["ana"]), leaf("pages", ["bo"], MAX_PAGE_LIMIT + 1)], {
-          limit: 10,
-          offset: 0,
-          includeDeleted: false,
-        }),
-      ),
-    );
-    expect(error).toEqual(new OwnerSetTooLarge({ type: "pages" }));
-  });
+  it.effect("refuses a union it can't make exact", () =>
+    Effect.gen(function* () {
+      const error = yield* run(
+        Effect.flip(
+          readableOwners([leaf("posts", ["ana"]), leaf("pages", ["bo"], MAX_PAGE_LIMIT + 1)], {
+            limit: 10,
+            offset: 0,
+            includeDeleted: false,
+          }),
+        ),
+      );
+      expect(error).toEqual(new OwnerSetTooLarge({ type: "pages" }));
+    }),
+  );
 
-  it("reads real leaves through their own gates", async () => {
-    const posts = seeded(false);
-    const pages = seeded(true);
-    const union = await run(
-      Effect.gen(function* () {
-        yield* posts.seed;
-        yield* pages.seed;
-        return yield* posts.actAs(
-          as(otherMember),
-          pages.actAs(
+  it.effect("reads real leaves through their own gates", () =>
+    Effect.gen(function* () {
+      const posts = seeded(false);
+      const pages = seeded(true);
+      const union = yield* run(
+        Effect.gen(function* () {
+          yield* posts.seed;
+          yield* pages.seed;
+          return yield* posts.actAs(
             as(otherMember),
-            readableOwners([posts.ops, pages.ops], { limit: 10, offset: 0, includeDeleted: false }),
-          ),
-        );
-      }),
-    );
-    expect(union.rows).toEqual(Arr.sort([member.id, otherMember.id, follower.id], byCodePoint));
-  });
+            pages.actAs(
+              as(otherMember),
+              readableOwners([posts.ops, pages.ops], {
+                limit: 10,
+                offset: 0,
+                includeDeleted: false,
+              }),
+            ),
+          );
+        }),
+      );
+      expect(union.rows).toEqual(Arr.sort([member.id, otherMember.id, follower.id], byCodePoint));
+    }),
+  );
 });

@@ -3,7 +3,8 @@
  * query reach the API, and its answer comes back as the response.
  */
 
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Formatter from "effect/Formatter";
 import * as HashMap from "effect/HashMap";
@@ -41,49 +42,57 @@ const api = {
 };
 
 const serve = (url: string, method = "GET", headers: Record<string, string> = {}) =>
-  Effect.runPromise(
-    Effect.provideService(
-      wordPressHttp(api),
-      HttpServerRequest.HttpServerRequest,
-      HttpServerRequest.fromWeb(new Request(url, { method, headers })),
-    ),
+  Effect.provideService(
+    wordPressHttp(api),
+    HttpServerRequest.HttpServerRequest,
+    HttpServerRequest.fromWeb(new Request(url, { method, headers })),
   );
 
 describe("wordPressHttp", () => {
-  it("hands the API the method, the path and the query pairs in order", async () => {
-    await serve("https://example.org/wp-json/wp/v2/posts?include[]=1&include[]=2&page=2");
-    expect(seen.at(-1)).toEqual({
-      method: "GET",
-      path: "/wp-json/wp/v2/posts",
-      query: [
-        ["include[]", "1"],
-        ["include[]", "2"],
-        ["page", "2"],
-      ],
-    });
-  });
+  it.effect("hands the API the method, the path and the query pairs in order", () =>
+    Effect.gen(function* () {
+      yield* serve("https://example.org/wp-json/wp/v2/posts?include[]=1&include[]=2&page=2");
+      expect(seen.at(-1)).toEqual({
+        method: "GET",
+        path: "/wp-json/wp/v2/posts",
+        query: [
+          ["include[]", "1"],
+          ["include[]", "2"],
+          ["page", "2"],
+        ],
+      });
+    }),
+  );
 
-  it("hands the API the If-None-Match header when the request has one", async () => {
-    await serve("https://example.org/wp-json/", "GET", { "if-none-match": 'W/"abc"' });
-    expect(seen.at(-1)?.ifNoneMatch).toBe('W/"abc"');
-    await serve("https://example.org/wp-json/");
-    expect(seen.at(-1)).not.toHaveProperty("ifNoneMatch");
-  });
+  it.effect("hands the API the If-None-Match header when the request has one", () =>
+    Effect.gen(function* () {
+      yield* serve("https://example.org/wp-json/", "GET", { "if-none-match": 'W/"abc"' });
+      expect(seen.at(-1)?.ifNoneMatch).toBe('W/"abc"');
+      yield* serve("https://example.org/wp-json/");
+      expect(seen.at(-1)).not.toHaveProperty("ifNoneMatch");
+    }),
+  );
 
-  it("answers with the API's status and headers", async () => {
-    const index = await serve("https://example.org/wp-json/");
-    expect(index.status).toBe(200);
-    expect(index.headers["link"]).toBe('<https://example.org/wp-json/>; rel="https://api.w.org/"');
-    const missing = await serve("https://example.org/wp-json/wp/v2/posts", "POST");
-    expect(missing.status).toBe(404);
-  });
+  it.effect("answers with the API's status and headers", () =>
+    Effect.gen(function* () {
+      const index = yield* serve("https://example.org/wp-json/");
+      expect(index.status).toBe(200);
+      expect(index.headers["link"]).toBe(
+        '<https://example.org/wp-json/>; rel="https://api.w.org/"',
+      );
+      const missing = yield* serve("https://example.org/wp-json/wp/v2/posts", "POST");
+      expect(missing.status).toBe(404);
+    }),
+  );
 
-  it("answers HEAD with the status and headers and an empty body", async () => {
-    const head = await serve("https://example.org/wp-json/", "HEAD");
-    expect([head.status, head.headers["link"], head.body._tag]).toEqual([
-      200,
-      '<https://example.org/wp-json/>; rel="https://api.w.org/"',
-      "Empty",
-    ]);
-  });
+  it.effect("answers HEAD with the status and headers and an empty body", () =>
+    Effect.gen(function* () {
+      const head = yield* serve("https://example.org/wp-json/", "HEAD");
+      expect([head.status, head.headers["link"], head.body._tag]).toEqual([
+        200,
+        '<https://example.org/wp-json/>; rel="https://api.w.org/"',
+        "Empty",
+      ]);
+    }),
+  );
 });

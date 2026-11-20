@@ -29,7 +29,8 @@ import * as Order from "effect/Order";
 import * as P from "effect/Predicate";
 import * as R from "effect/Record";
 import * as TestClock from "effect/testing/TestClock";
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import {
   defineDiscovery,
   type DiscoveryItem,
@@ -64,11 +65,7 @@ import { follower, gardeneriaPolicy, member, NOW } from "./fixtures.ts";
 const as = (account: ViewerAccount): Viewer => Option.some(account);
 
 const run = <A, E>(effect: Effect.Effect<A, E>) =>
-  Effect.runPromise(
-    Effect.andThen(TestClock.setTime(NOW.getTime()), effect).pipe(
-      Effect.provide(TestClock.layer()),
-    ),
-  );
+  Effect.andThen(TestClock.setTime(NOW.getTime()), effect);
 
 /** The JSON:API shape the serveability guard reads. */
 interface Resource {
@@ -221,211 +218,236 @@ describe("what is discoverable (an owned leaf)", () => {
     return defineDiscovery({ leaf, paths, feedColumn: "createdAt", project });
   });
 
-  it("the feed lists exactly the public, published, approved, live, routable rows, newest first", async () => {
-    const ids = await run(Effect.flatMap(seed(), (discovery) => walk(discovery.feed, 1000)));
-    // Seeded oldest-last, so newest first is seed order.
-    expect(ids).toEqual(expected);
-  });
+  it.effect(
+    "the feed lists exactly the public, published, approved, live, routable rows, newest first",
+    () =>
+      Effect.gen(function* () {
+        const ids = yield* run(Effect.flatMap(seed(), (discovery) => walk(discovery.feed, 1000)));
+        // Seeded oldest-last, so newest first is seed order.
+        expect(ids).toEqual(expected);
+      }),
+  );
 
-  it("the sitemap lists the same rows, by id", async () => {
-    const ids = await run(Effect.flatMap(seed(), (discovery) => walk(discovery.sitemap, 1000)));
-    expect(ids).toEqual(Arr.sort(expected, (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)));
-  });
+  it.effect("the sitemap lists the same rows, by id", () =>
+    Effect.gen(function* () {
+      const ids = yield* run(Effect.flatMap(seed(), (discovery) => walk(discovery.sitemap, 1000)));
+      expect(ids).toEqual(
+        Arr.sort(expected, (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)),
+      );
+    }),
+  );
 
-  it.each([1, 2, 3, 7])("every page size walks the same nodes (limit %i)", async (limit) => {
-    const [feed, sitemap] = await run(
-      Effect.flatMap(seed(), (discovery) =>
-        Effect.all([walk(discovery.feed, limit), walk(discovery.sitemap, limit)], {
-          concurrency: 1,
-        }),
-      ),
-    );
-    expect(feed).toEqual(expected);
-    expect(Arr.dedupe(sitemap)).toEqual(sitemap);
-    expect(Arr.sort(sitemap, (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0))).toEqual(
-      sitemap,
-    );
-    expect(sitemap.length).toBe(expected.length);
-  });
+  it.effect.each([1, 2, 3, 7])("every page size walks the same nodes (limit %i)", (limit) =>
+    Effect.gen(function* () {
+      const [feed, sitemap] = yield* run(
+        Effect.flatMap(seed(), (discovery) =>
+          Effect.all([walk(discovery.feed, limit), walk(discovery.sitemap, limit)], {
+            concurrency: 1,
+          }),
+        ),
+      );
+      expect(feed).toEqual(expected);
+      expect(Arr.dedupe(sitemap)).toEqual(sitemap);
+      expect(Arr.sort(sitemap, (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0))).toEqual(
+        sitemap,
+      );
+      expect(sitemap.length).toBe(expected.length);
+    }),
+  );
 
-  it("an item carries its canonical path and projected metadata", async () => {
-    const page = await run(Effect.flatMap(seed(), (discovery) => discovery.feed({ limit: 1000 })));
-    const [item] = page.items;
-    expect(item?.path).toBe(`/${expected[0]}`);
-    expect(item?.metadata.title).toBe(expected[0]);
-    expect(item?.type).toBe("posts");
-  });
+  it.effect("an item carries its canonical path and projected metadata", () =>
+    Effect.gen(function* () {
+      const page = yield* run(
+        Effect.flatMap(seed(), (discovery) => discovery.feed({ limit: 1000 })),
+      );
+      const [item] = page.items;
+      expect(item?.path).toBe(`/${expected[0]}`);
+      expect(item?.metadata.title).toBe(expected[0]);
+      expect(item?.type).toBe("posts");
+    }),
+  );
 });
 
 describe("keyset paging", () => {
-  it.each([1, 2, 3, 5])(
+  it.effect.each([1, 2, 3, 5])(
     "ties and NULL keys never skip or repeat a node (limit %i)",
-    async (limit) => {
-      const ids = await run(
-        Effect.gen(function* () {
-          const { leaf, paths, create } = fixture({ gated: false, sortable: Option.none() });
-          const keys = [at(1), at(1), null, at(2), at(1), null, at(3)];
-          yield* Effect.forEach(
-            keys,
-            (createdAt, index) =>
-              create(`k-${String(index)}`, {
-                title: "t",
-                visibility: "public",
-                draft: false,
-                moderationState: "approved",
-                createdAt,
-              }),
-            { concurrency: 1 },
-          );
-          return yield* walk(
-            defineDiscovery({ leaf, paths, feedColumn: "createdAt", project }).feed,
-            limit,
-          );
-        }),
-      );
-      // Newest first, `id` ascending among ties, NULLs last.
-      expect(ids).toEqual(["k-0", "k-1", "k-4", "k-3", "k-6", "k-2", "k-5"]);
-    },
+    (limit) =>
+      Effect.gen(function* () {
+        const ids = yield* run(
+          Effect.gen(function* () {
+            const { leaf, paths, create } = fixture({ gated: false, sortable: Option.none() });
+            const keys = [at(1), at(1), null, at(2), at(1), null, at(3)];
+            yield* Effect.forEach(
+              keys,
+              (createdAt, index) =>
+                create(`k-${String(index)}`, {
+                  title: "t",
+                  visibility: "public",
+                  draft: false,
+                  moderationState: "approved",
+                  createdAt,
+                }),
+              { concurrency: 1 },
+            );
+            return yield* walk(
+              defineDiscovery({ leaf, paths, feedColumn: "createdAt", project }).feed,
+              limit,
+            );
+          }),
+        );
+        // Newest first, `id` ascending among ties, NULLs last.
+        expect(ids).toEqual(["k-0", "k-1", "k-4", "k-3", "k-6", "k-2", "k-5"]);
+      }),
   );
 
-  it("a page the guards thin still carries the cursor on", async () => {
-    const pages = await run(
-      Effect.gen(function* () {
-        const { leaf, paths, create } = fixture({ gated: false, sortable: Option.none() });
-        yield* Effect.forEach(
-          [0, 1, 2],
-          (index) =>
-            create(
-              `g-${String(index)}`,
-              {
-                title: "t",
-                visibility: "public",
-                draft: false,
-                moderationState: "approved",
-                createdAt: at(index),
-              },
-              index === 0 ? Option.none() : Option.some(`/g-${String(index)}`),
-            ),
-          { concurrency: 1 },
-        );
-        const discovery = defineDiscovery({ leaf, paths, feedColumn: "createdAt", project });
-        const first = yield* discovery.feed({ limit: 1 });
-        const second = yield* discovery.feed(afterCursor({ limit: 1 }, first.next));
-        return { first, second };
-      }),
-    );
-    expect(pages.first.items).toEqual([]);
-    expect(Option.isSome(pages.first.next)).toBe(true);
-    expect(Arr.map(pages.second.items, (item) => item.id)).toEqual(["g-1"]);
-  });
+  it.effect("a page the guards thin still carries the cursor on", () =>
+    Effect.gen(function* () {
+      const pages = yield* run(
+        Effect.gen(function* () {
+          const { leaf, paths, create } = fixture({ gated: false, sortable: Option.none() });
+          yield* Effect.forEach(
+            [0, 1, 2],
+            (index) =>
+              create(
+                `g-${String(index)}`,
+                {
+                  title: "t",
+                  visibility: "public",
+                  draft: false,
+                  moderationState: "approved",
+                  createdAt: at(index),
+                },
+                index === 0 ? Option.none() : Option.some(`/g-${String(index)}`),
+              ),
+            { concurrency: 1 },
+          );
+          const discovery = defineDiscovery({ leaf, paths, feedColumn: "createdAt", project });
+          const first = yield* discovery.feed({ limit: 1 });
+          const second = yield* discovery.feed(afterCursor({ limit: 1 }, first.next));
+          return { first, second };
+        }),
+      );
+      expect(pages.first.items).toEqual([]);
+      expect(Option.isSome(pages.first.next)).toBe(true);
+      expect(Arr.map(pages.second.items, (item) => item.id)).toEqual(["g-1"]);
+    }),
+  );
 });
 
 describe("a publish-gated leaf", () => {
-  it("lists the live version, never the head, and nothing unpublished or scheduled", async () => {
-    const page = await run(
-      Effect.gen(function* () {
-        const { leaf, ops, paths, create } = fixture({ gated: true, sortable: Option.none() });
-        const lifecycle = yield* Effect.fromOption(ops.publication);
-        const state = (title: string) => ({
-          title,
-          visibility: "public",
-          draft: false,
-          moderationState: "approved",
-        });
-        yield* create("live", state("live v0"));
-        yield* lifecycle.publish("live", { at: at(10) });
-        yield* ops.update({ id: "live", patch: { title: "unpublished head" } });
-        yield* create("never", state("never"));
-        yield* create("scheduled", state("scheduled"));
-        yield* lifecycle.publish("scheduled", { at: at(-1) });
-        yield* create("withdrawn", state("withdrawn"));
-        yield* lifecycle.publish("withdrawn", { at: at(5) });
-        yield* lifecycle.unpublish("withdrawn");
-        return yield* defineDiscovery({ leaf, paths, feedColumn: "publishedAt", project }).feed({
-          limit: 10,
-        });
-      }),
-    );
-    expect(Arr.map(page.items, (item) => item.id)).toEqual(["live"]);
-    expect(page.items[0]?.metadata.title).toBe("live v0");
-    expect(
-      Option.getOrUndefined(
-        Option.flatMap(Arr.head(page.items), (item) => lastModified(item.metadata)),
-      )?.getTime(),
-    ).toBe(at(10).getTime());
-  });
+  it.effect("lists the live version, never the head, and nothing unpublished or scheduled", () =>
+    Effect.gen(function* () {
+      const page = yield* run(
+        Effect.gen(function* () {
+          const { leaf, ops, paths, create } = fixture({ gated: true, sortable: Option.none() });
+          const lifecycle = yield* Effect.fromOption(ops.publication);
+          const state = (title: string) => ({
+            title,
+            visibility: "public",
+            draft: false,
+            moderationState: "approved",
+          });
+          yield* create("live", state("live v0"));
+          yield* lifecycle.publish("live", { at: at(10) });
+          yield* ops.update({ id: "live", patch: { title: "unpublished head" } });
+          yield* create("never", state("never"));
+          yield* create("scheduled", state("scheduled"));
+          yield* lifecycle.publish("scheduled", { at: at(-1) });
+          yield* create("withdrawn", state("withdrawn"));
+          yield* lifecycle.publish("withdrawn", { at: at(5) });
+          yield* lifecycle.unpublish("withdrawn");
+          return yield* defineDiscovery({ leaf, paths, feedColumn: "publishedAt", project }).feed({
+            limit: 10,
+          });
+        }),
+      );
+      expect(Arr.map(page.items, (item) => item.id)).toEqual(["live"]);
+      expect(page.items[0]?.metadata.title).toBe("live v0");
+      expect(
+        Option.getOrUndefined(
+          Option.flatMap(Arr.head(page.items), (item) => lastModified(item.metadata)),
+        )?.getTime(),
+      ).toBe(at(10).getTime());
+    }),
+  );
 });
 
 describe("the declaration", () => {
-  it("a feed column the leaf can't sort by is a defect", async () => {
-    const exit = await run(
-      Effect.exit(
-        Effect.suspend(() => {
-          const { leaf, paths } = fixture({ gated: false, sortable: Option.some([]) });
-          return defineDiscovery({ leaf, paths, feedColumn: "createdAt", project }).feed({
-            limit: 1,
-          });
-        }),
-      ),
-    );
-    expect(exit._tag).toBe("Failure");
-  });
+  it.effect("a feed column the leaf can't sort by is a defect", () =>
+    Effect.gen(function* () {
+      const exit = yield* run(
+        Effect.exit(
+          Effect.suspend(() => {
+            const { leaf, paths } = fixture({ gated: false, sortable: Option.some([]) });
+            return defineDiscovery({ leaf, paths, feedColumn: "createdAt", project }).feed({
+              limit: 1,
+            });
+          }),
+        ),
+      );
+      expect(exit._tag).toBe("Failure");
+    }),
+  );
 
-  it("a feed column holding a value that doesn't order is a defect", async () => {
-    const exit = await run(
-      Effect.exit(
+  it.effect("a feed column holding a value that doesn't order is a defect", () =>
+    Effect.gen(function* () {
+      const exit = yield* run(
+        Effect.exit(
+          Effect.gen(function* () {
+            const { leaf, paths, create } = fixture({ gated: false, sortable: Option.none() });
+            yield* Effect.forEach(
+              ["a", "b"],
+              (id) =>
+                create(id, {
+                  title: "t",
+                  visibility: "public",
+                  draft: false,
+                  moderationState: "approved",
+                  createdAt: at(1),
+                }),
+              { concurrency: 1 },
+            );
+            return yield* defineDiscovery({ leaf, paths, feedColumn: "draft", project }).feed({
+              limit: 1,
+            });
+          }),
+        ),
+      );
+      expect(exit._tag).toBe("Failure");
+    }),
+  );
+
+  it.effect("a declared serveable guard replaces the leaf's posture", () =>
+    Effect.gen(function* () {
+      const page = yield* run(
         Effect.gen(function* () {
           const { leaf, paths, create } = fixture({ gated: false, sortable: Option.none() });
-          yield* Effect.forEach(
-            ["a", "b"],
-            (id) =>
-              create(id, {
-                title: "t",
-                visibility: "public",
-                draft: false,
-                moderationState: "approved",
-                createdAt: at(1),
-              }),
-            { concurrency: 1 },
-          );
-          return yield* defineDiscovery({ leaf, paths, feedColumn: "draft", project }).feed({
-            limit: 1,
+          yield* create("a", {
+            title: "keep",
+            visibility: "public",
+            draft: false,
+            moderationState: "approved",
+            createdAt: at(1),
           });
+          yield* create("b", {
+            title: "drop",
+            visibility: "public",
+            draft: false,
+            moderationState: "approved",
+            createdAt: at(2),
+          });
+          return yield* defineDiscovery({
+            leaf,
+            paths,
+            feedColumn: "createdAt",
+            project,
+            serveable: (resource) => resource.attributes["title"] === "keep",
+          }).sitemap({ limit: 10 });
         }),
-      ),
-    );
-    expect(exit._tag).toBe("Failure");
-  });
-
-  it("a declared serveable guard replaces the leaf's posture", async () => {
-    const page = await run(
-      Effect.gen(function* () {
-        const { leaf, paths, create } = fixture({ gated: false, sortable: Option.none() });
-        yield* create("a", {
-          title: "keep",
-          visibility: "public",
-          draft: false,
-          moderationState: "approved",
-          createdAt: at(1),
-        });
-        yield* create("b", {
-          title: "drop",
-          visibility: "public",
-          draft: false,
-          moderationState: "approved",
-          createdAt: at(2),
-        });
-        return yield* defineDiscovery({
-          leaf,
-          paths,
-          feedColumn: "createdAt",
-          project,
-          serveable: (resource) => resource.attributes["title"] === "keep",
-        }).sitemap({ limit: 10 });
-      }),
-    );
-    expect(Arr.map(page.items, (item) => item.id)).toEqual(["a"]);
-  });
+      );
+      expect(Arr.map(page.items, (item) => item.id)).toEqual(["a"]);
+    }),
+  );
 });
 
 describe("purgeHintHook", () => {
@@ -447,29 +469,31 @@ describe("purgeHintHook", () => {
     })),
   );
 
-  it.each(cases)("$label", async ({ publishGated, action, purges }) => {
-    const emitted = await run(
-      Effect.gen(function* () {
-        const hints = yield* Effect.sync(() => Arr.empty<PurgeHint>());
-        const collected: Array<PurgeHint> = [...hints];
-        const hook = purgeHintHook<Resource>({
-          publishGated,
-          emit: (hint) => Effect.sync(() => void collected.push(hint)),
-        });
-        yield* hook.run({
-          type: "posts",
-          action,
-          write: { id: "p-1", version: 2n },
-          resource: Option.none(),
-          publication: Option.none(),
-        });
-        return collected;
-      }),
-    );
-    expect(emitted).toEqual(
-      purges ? [{ type: "posts", id: "p-1", tags: ["discovery:posts", "node:posts:p-1"] }] : [],
-    );
-  });
+  it.effect.each(cases)("$label", ({ publishGated, action, purges }) =>
+    Effect.gen(function* () {
+      const emitted = yield* run(
+        Effect.gen(function* () {
+          const hints = yield* Effect.sync(() => Arr.empty<PurgeHint>());
+          const collected: Array<PurgeHint> = [...hints];
+          const hook = purgeHintHook<Resource>({
+            publishGated,
+            emit: (hint) => Effect.sync(() => void collected.push(hint)),
+          });
+          yield* hook.run({
+            type: "posts",
+            action,
+            write: { id: "p-1", version: 2n },
+            resource: Option.none(),
+            publication: Option.none(),
+          });
+          return collected;
+        }),
+      );
+      expect(emitted).toEqual(
+        purges ? [{ type: "posts", id: "p-1", tags: ["discovery:posts", "node:posts:p-1"] }] : [],
+      );
+    }),
+  );
 });
 
 // ── A localised leaf ─────────────────────────────────────
@@ -551,35 +575,44 @@ describe("a localised leaf", () => {
   // Newest first by createdAt (d, e, b, then the a / c tie), the tie by locale, then node.
   const feedOrder = ["d:-", "e:en", "b:en", "c:de", "a:en", "c:en", "a:fr", "c:fr"];
 
-  it.each([1, 2, 3, 1000])(
+  it.effect.each([1, 2, 3, 1000])(
     "the feed lists every live (node, locale) once, %i at a time",
-    async (limit) => {
-      const items = await run(
-        Effect.flatMap(site(), (discovery) => walkItems(discovery.feed, { limit })),
-      );
-      // A page may end inside a node's locales, and on a tie, without a skip or a repeat.
-      expect(Arr.map(items, pair)).toEqual(feedOrder);
-      expect(Arr.every(items, (item) => Arr.isReadonlyArrayEmpty(item.alternates))).toBe(true);
-    },
+    (limit) =>
+      Effect.gen(function* () {
+        const items = yield* run(
+          Effect.flatMap(site(), (discovery) => walkItems(discovery.feed, { limit })),
+        );
+        // A page may end inside a node's locales, and on a tie, without a skip or a repeat.
+        expect(Arr.map(items, pair)).toEqual(feedOrder);
+        expect(Arr.every(items, (item) => Arr.isReadonlyArrayEmpty(item.alternates))).toBe(true);
+      }),
   );
 
-  it("a locale only the unpublished head carries is not listed, nor a private or scheduled node", async () => {
-    const items = await run(
-      Effect.flatMap(site(), (discovery) => walkItems(discovery.feed, { limit: 1000 })),
-    );
-    const listed = Arr.map(items, pair);
-    expect(listed).not.toContain("e:fr");
-    expect(Arr.filter(listed, (value) => value.startsWith("f:") || value.startsWith("g:"))).toEqual(
-      [],
-    );
-  });
+  it.effect(
+    "a locale only the unpublished head carries is not listed, nor a private or scheduled node",
+    () =>
+      Effect.gen(function* () {
+        const items = yield* run(
+          Effect.flatMap(site(), (discovery) => walkItems(discovery.feed, { limit: 1000 })),
+        );
+        const listed = Arr.map(items, pair);
+        expect(listed).not.toContain("e:fr");
+        expect(
+          Arr.filter(listed, (value) => value.startsWith("f:") || value.startsWith("g:")),
+        ).toEqual([]);
+      }),
+  );
 
-  it("the per-locale feed lists one language", async () => {
-    const items = await run(
-      Effect.flatMap(site(), (discovery) => walkItems(discovery.feed, { limit: 1, locale: "fr" })),
-    );
-    expect(Arr.map(items, pair)).toEqual(["a:fr", "c:fr"]);
-  });
+  it.effect("the per-locale feed lists one language", () =>
+    Effect.gen(function* () {
+      const items = yield* run(
+        Effect.flatMap(site(), (discovery) =>
+          walkItems(discovery.feed, { limit: 1, locale: "fr" }),
+        ),
+      );
+      expect(Arr.map(items, pair)).toEqual(["a:fr", "c:fr"]);
+    }),
+  );
 
   const sitemapAlternates = {
     "a:en": ["fr"],
@@ -592,30 +625,39 @@ describe("a localised leaf", () => {
     "e:en": [],
   };
 
-  it.each([1, 2, 3, 4, 1000])(
+  it.effect.each([1, 2, 3, 4, 1000])(
     "the sitemap lists each node's locales once with complete alternates, %i at a time",
-    async (limit) => {
-      const items = await run(
-        Effect.flatMap(site(), (discovery) => walkItems(discovery.sitemap, { limit })),
-      );
-      expect(Arr.sort(Arr.map(items, pair), Order.String)).toEqual(R.keys(sitemapAlternates));
-      expect(R.fromEntries(Arr.map(items, (item) => [pair(item), item.alternates]))).toEqual(
-        sitemapAlternates,
-      );
-      expect(Arr.every(items, (item) => item.path === `/${item.id}`)).toBe(true);
-    },
+    (limit) =>
+      Effect.gen(function* () {
+        const items = yield* run(
+          Effect.flatMap(site(), (discovery) => walkItems(discovery.sitemap, { limit })),
+        );
+        expect(Arr.sort(Arr.map(items, pair), Order.String)).toEqual(R.keys(sitemapAlternates));
+        expect(R.fromEntries(Arr.map(items, (item) => [pair(item), item.alternates]))).toEqual(
+          sitemapAlternates,
+        );
+        expect(Arr.every(items, (item) => item.path === `/${item.id}`)).toBe(true);
+      }),
   );
 
-  it("a sitemap page never splits a node's locales", async () => {
-    const two = await run(Effect.flatMap(site(), (discovery) => discovery.sitemap({ limit: 2 })));
-    // a's two locales fill the page; the next page starts after a.
-    expect(Arr.map(two.items, pair)).toEqual(["a:en", "a:fr"]);
-    expect(Option.map(two.next, (cursor) => cursor.id)).toEqual(Option.some("a"));
-    const three = await run(Effect.flatMap(site(), (discovery) => discovery.sitemap({ limit: 4 })));
-    // a, b and part of c fit four rows: the page ends before c, which the next page holds whole.
-    expect(Arr.map(three.items, pair)).toEqual(["a:en", "a:fr", "b:en"]);
-    const one = await run(Effect.flatMap(site(), (discovery) => discovery.sitemap({ limit: 1 })));
-    // A page holding only one node holds all of its locales, past the limit.
-    expect(Arr.sort(Arr.map(one.items, pair), Order.String)).toEqual(["a:en", "a:fr"]);
-  });
+  it.effect("a sitemap page never splits a node's locales", () =>
+    Effect.gen(function* () {
+      const two = yield* run(
+        Effect.flatMap(site(), (discovery) => discovery.sitemap({ limit: 2 })),
+      );
+      // a's two locales fill the page; the next page starts after a.
+      expect(Arr.map(two.items, pair)).toEqual(["a:en", "a:fr"]);
+      expect(Option.map(two.next, (cursor) => cursor.id)).toEqual(Option.some("a"));
+      const three = yield* run(
+        Effect.flatMap(site(), (discovery) => discovery.sitemap({ limit: 4 })),
+      );
+      // a, b and part of c fit four rows: the page ends before c, which the next page holds whole.
+      expect(Arr.map(three.items, pair)).toEqual(["a:en", "a:fr", "b:en"]);
+      const one = yield* run(
+        Effect.flatMap(site(), (discovery) => discovery.sitemap({ limit: 1 })),
+      );
+      // A page holding only one node holds all of its locales, past the limit.
+      expect(Arr.sort(Arr.map(one.items, pair), Order.String)).toEqual(["a:en", "a:fr"]);
+    }),
+  );
 });

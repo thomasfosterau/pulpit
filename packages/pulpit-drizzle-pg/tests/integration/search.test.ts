@@ -43,7 +43,8 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { beforeAll, it } from "@effect/vitest";
+import { afterAll, describe, expect } from "vite-plus/test";
 import { makeLeafStores } from "../../src/LeafStore.ts";
 import { makePublications } from "../../src/Publication.ts";
 import { fullTextRank, makeSearchBranch, type SearchRank } from "../../src/Search.ts";
@@ -67,7 +68,7 @@ const runtime = ManagedRuntime.make(
 afterAll(() => runtime.dispose());
 
 const run = <A, E>(effect: Effect.Effect<A, E, typeof CurrentTransaction.Identifier>) =>
-  runtime.runPromise(transact(effect));
+  Effect.flatMap(runtime.contextEffect, (context) => Effect.provide(transact(effect), context));
 
 const chains = makeVersionChains({ tree, tables, CurrentTransaction });
 const stores = makeLeafStores({ tree, tables, views, owners, CurrentTransaction });
@@ -152,79 +153,80 @@ describe("a leaf view's branch agrees with the in-memory branch under the read s
     ["admin", Option.some({ id: "u-9", role: "admin" })],
   ];
 
-  beforeAll(async () => {
-    await run(truncate());
-    await run(
-      Effect.gen(function* () {
-        const tx = yield* CurrentTransaction;
-        yield* tx.execute(
-          sql`INSERT INTO pulpit_test.follows (follower_id, owner_id) VALUES ('u-1', 'u-2')`,
-        );
-        yield* Effect.forEach(
-          seeds,
-          ([n, owner, columns, deleted]) =>
-            Effect.gen(function* () {
-              const input = {
-                id: Option.some(id(n)),
-                state: {
-                  title: null,
-                  visibility: null,
-                  draft: false,
-                  groupId: null,
-                  rank: null,
-                  score: null,
-                  publishedAt: PAST,
-                  ...columns,
-                },
-                actorId: Option.some(owner),
-              };
-              yield* chains.posts.create(input);
-              yield* memoryChain.create(input);
-              yield* stores.posts.stampOwner(id(n), owner);
-              yield* memory.stampOwner(id(n), owner);
-              if (deleted) {
-                yield* chains.posts.delete(id(n), Option.some(owner));
-                yield* memoryChain.delete(id(n), Option.some(owner));
-              }
-            }),
-          { concurrency: 1 },
-        );
-      }),
-    );
-  });
+  beforeAll(() =>
+    Effect.gen(function* () {
+      yield* run(truncate());
+      yield* run(
+        Effect.gen(function* () {
+          const tx = yield* CurrentTransaction;
+          yield* tx.execute(
+            sql`INSERT INTO pulpit_test.follows (follower_id, owner_id) VALUES ('u-1', 'u-2')`,
+          );
+          yield* Effect.forEach(
+            seeds,
+            ([n, owner, columns, deleted]) =>
+              Effect.gen(function* () {
+                const input = {
+                  id: Option.some(id(n)),
+                  state: {
+                    title: null,
+                    visibility: null,
+                    draft: false,
+                    groupId: null,
+                    rank: null,
+                    score: null,
+                    publishedAt: PAST,
+                    ...columns,
+                  },
+                  actorId: Option.some(owner),
+                };
+                yield* chains.posts.create(input);
+                yield* memoryChain.create(input);
+                yield* stores.posts.stampOwner(id(n), owner);
+                yield* memory.stampOwner(id(n), owner);
+                if (deleted) {
+                  yield* chains.posts.delete(id(n), Option.some(owner));
+                  yield* memoryChain.delete(id(n), Option.some(owner));
+                }
+              }),
+            { concurrency: 1 },
+          );
+        }),
+      );
+    }),
+  );
 
   const matrix = Arr.flatMap(viewers, ([name, viewer]) =>
     Arr.flatMap([false, true], (includeDeleted) =>
       Arr.map(queries, (query) => [name, includeDeleted, query, viewer] as const),
     ),
   );
-  it.each(matrix)(
+  it.live.each(matrix)(
     "%s, includeDeleted %s, query %j",
-    async (_name, includeDeleted, query, viewer) => {
-      const request = { includeDeleted, where: always };
-      const rows = (
-        await Effect.runPromise(memory.list({ where: always, orderBy: [], limit: 1000, offset: 0 }))
-      ).rows;
-      const reference = makeInMemorySearchBranch({
-        name: "substring",
-        rows: () => rows,
-        score: substringScore,
-        now: NOW,
-      });
-      const fromSql = await run(
-        branch.search({
-          query,
-          scope: searchScopeFilter(
-            { access, columns: stores.posts.columns, policy, followers },
-            viewer,
-            request,
-          ),
-          headFor: never,
-          limit: 100,
-        }),
-      );
-      const fromMemory = await Effect.runPromise(
-        reference.search({
+    ([_name, includeDeleted, query, viewer]) =>
+      Effect.gen(function* () {
+        const request = { includeDeleted, where: always };
+        const rows = (yield* memory.list({ where: always, orderBy: [], limit: 1000, offset: 0 }))
+          .rows;
+        const reference = makeInMemorySearchBranch({
+          name: "substring",
+          rows: () => rows,
+          score: substringScore,
+          now: NOW,
+        });
+        const fromSql = yield* run(
+          branch.search({
+            query,
+            scope: searchScopeFilter(
+              { access, columns: stores.posts.columns, policy, followers },
+              viewer,
+              request,
+            ),
+            headFor: never,
+            limit: 100,
+          }),
+        );
+        const fromMemory = yield* reference.search({
           query,
           scope: searchScopeFilter(
             { access, columns: memory.columns, policy, followers: memoryFollowers },
@@ -233,35 +235,38 @@ describe("a leaf view's branch agrees with the in-memory branch under the read s
           ),
           headFor: never,
           limit: 100,
-        }),
-      );
-      expect(fromSql).toEqual(fromMemory);
-    },
+        });
+        expect(fromSql).toEqual(fromMemory);
+      }),
   );
 
-  it("ranks the expected hits, best first, and honours the limit (so agreement is not vacuous)", async () => {
-    const admin = searchScopeFilter(
-      { access, columns: stores.posts.columns, policy, followers },
-      Option.some({ id: "u-9", role: "admin" }),
-      { includeDeleted: false, where: always },
-    );
-    expect(
-      await run(branch.search({ query: "a", scope: admin, headFor: never, limit: 100 })),
-    ).toEqual(Arr.map([5, 2, 3, 1, 4, 8, 9, 7], (n) => ({ id: id(n) })));
-    expect(
-      await run(branch.search({ query: "a", scope: admin, headFor: never, limit: 2 })),
-    ).toEqual([{ id: id(5) }, { id: id(2) }]);
-    // The scope narrows the ranking, never the ranked page: the anonymous
-    // reader's top hit is the best hit they can read.
-    const anonymous = searchScopeFilter(
-      { access, columns: stores.posts.columns, policy, followers },
-      Option.none(),
-      { includeDeleted: false, where: always },
-    );
-    expect(
-      await run(branch.search({ query: "a", scope: anonymous, headFor: never, limit: 1 })),
-    ).toEqual([{ id: id(1) }]);
-  });
+  it.live(
+    "ranks the expected hits, best first, and honours the limit (so agreement is not vacuous)",
+    () =>
+      Effect.gen(function* () {
+        const admin = searchScopeFilter(
+          { access, columns: stores.posts.columns, policy, followers },
+          Option.some({ id: "u-9", role: "admin" }),
+          { includeDeleted: false, where: always },
+        );
+        expect(
+          yield* run(branch.search({ query: "a", scope: admin, headFor: never, limit: 100 })),
+        ).toEqual(Arr.map([5, 2, 3, 1, 4, 8, 9, 7], (n) => ({ id: id(n) })));
+        expect(
+          yield* run(branch.search({ query: "a", scope: admin, headFor: never, limit: 2 })),
+        ).toEqual([{ id: id(5) }, { id: id(2) }]);
+        // The scope narrows the ranking, never the ranked page: the anonymous
+        // reader's top hit is the best hit they can read.
+        const anonymous = searchScopeFilter(
+          { access, columns: stores.posts.columns, policy, followers },
+          Option.none(),
+          { includeDeleted: false, where: always },
+        );
+        expect(
+          yield* run(branch.search({ query: "a", scope: anonymous, headFor: never, limit: 1 })),
+        ).toEqual([{ id: id(1) }]);
+      }),
+  );
 });
 
 describe("a gated leaf's branch agrees with the in-memory branch over the live rows", () => {
@@ -291,67 +296,69 @@ describe("a gated leaf's branch agrees with the in-memory branch over the live r
     [5, "u-3", ["plum"], Option.some(0n)],
   ];
 
-  beforeAll(async () => {
-    await run(truncate());
-    await run(
-      Effect.forEach(
-        stories,
-        ([n, owner, titles, live]) =>
-          Effect.gen(function* () {
-            const state = (title: string): ChainState => ({
-              title,
-              visibility: "public",
-              draft: false,
-              groupId: null,
-              rank: null,
-              score: null,
-              publishedAt: null,
-            });
-            const create = {
-              id: Option.some(id(n)),
-              state: state(titles[0] ?? ""),
-              actorId: Option.some(owner),
-            };
-            yield* chains.posts.create(create);
-            yield* memoryChain.create(create);
-            yield* gated.leaves.stampOwner(id(n), owner);
-            yield* memoryLeaves.stampOwner(id(n), owner);
-            yield* Effect.forEach(
-              Arr.drop(titles, 1),
-              (title) => {
-                const update = { id: id(n), patch: { title }, actorId: Option.some(owner) };
-                return Effect.andThen(chains.posts.update(update), memoryChain.update(update));
-              },
-              { concurrency: 1 },
-            );
-            if (Option.isSome(live)) {
-              const fact = {
-                id: id(n),
-                version: live,
-                at: PAST,
+  beforeAll(() =>
+    Effect.gen(function* () {
+      yield* run(truncate());
+      yield* run(
+        Effect.forEach(
+          stories,
+          ([n, owner, titles, live]) =>
+            Effect.gen(function* () {
+              const state = (title: string): ChainState => ({
+                title,
+                visibility: "public",
+                draft: false,
+                groupId: null,
+                rank: null,
+                score: null,
+                publishedAt: null,
+              });
+              const create = {
+                id: Option.some(id(n)),
+                state: state(titles[0] ?? ""),
                 actorId: Option.some(owner),
+              };
+              yield* chains.posts.create(create);
+              yield* memoryChain.create(create);
+              yield* gated.leaves.stampOwner(id(n), owner);
+              yield* memoryLeaves.stampOwner(id(n), owner);
+              yield* Effect.forEach(
+                Arr.drop(titles, 1),
+                (title) => {
+                  const update = { id: id(n), patch: { title }, actorId: Option.some(owner) };
+                  return Effect.andThen(chains.posts.update(update), memoryChain.update(update));
+                },
+                { concurrency: 1 },
+              );
+              if (Option.isSome(live)) {
+                const fact = {
+                  id: id(n),
+                  version: live,
+                  at: PAST,
+                  actorId: Option.some(owner),
+                  recordedAt: RECORDED,
+                };
+                yield* gated.facts.record(fact);
+                yield* memory.facts.record(fact);
+              }
+              // A schedule that is not live yet: never searched as live.
+              const pending = {
+                id: id(n),
+                version: Option.some(0n),
+                at: FUTURE,
+                actorId: Option.none(),
                 recordedAt: RECORDED,
               };
-              yield* gated.facts.record(fact);
-              yield* memory.facts.record(fact);
-            }
-            // A schedule that is not live yet: never searched as live.
-            const pending = {
-              id: id(n),
-              version: Option.some(0n),
-              at: FUTURE,
-              actorId: Option.none(),
-              recordedAt: RECORDED,
-            };
-            if (n === 3) {
-              yield* gated.facts.record(pending);
-              yield* memory.facts.record(pending);
-            }
-          }),
-        { concurrency: 1 },
-      ),
-    );
-  });
+              if (n === 3) {
+                yield* gated.facts.record(pending);
+                yield* memory.facts.record(pending);
+              }
+            }),
+          { concurrency: 1 },
+        ),
+      );
+    }),
+  );
 
   const heads: ReadonlyArray<readonly [string, ListFilter<never>]> = [
     ["no heads (a reader)", never],
@@ -361,34 +368,45 @@ describe("a gated leaf's branch agrees with the in-memory branch over the live r
   const matrix = Arr.flatMap(heads, ([name, headFor]) =>
     Arr.map(["a", "p", "e"] as const, (query) => [name, query, headFor] as const),
   );
-  it.each(matrix)("%s, query %j", async (_name, query, headFor) => {
-    const rows = (
-      await Effect.runPromise(
-        memory.live.list({ headFor, where: always, orderBy: [], limit: 1000, offset: 0 }),
-      )
-    ).rows;
-    const reference = makeInMemorySearchBranch({
-      name: "substring",
-      rows: () => rows,
-      score: substringScore,
-      now: NOW,
-    });
-    const fromSql = await run(liveBranch.search({ query, scope: always, headFor, limit: 100 }));
-    expect(fromSql).toEqual(
-      await Effect.runPromise(reference.search({ query, scope: always, headFor, limit: 100 })),
-    );
-  });
+  it.live.each(matrix)("%s, query %j", ([_name, query, headFor]) =>
+    Effect.gen(function* () {
+      const rows = (yield* memory.live.list({
+        headFor,
+        where: always,
+        orderBy: [],
+        limit: 1000,
+        offset: 0,
+      })).rows;
+      const reference = makeInMemorySearchBranch({
+        name: "substring",
+        rows: () => rows,
+        score: substringScore,
+        now: NOW,
+      });
+      const fromSql = yield* run(liveBranch.search({ query, scope: always, headFor, limit: 100 }));
+      expect(fromSql).toEqual(
+        yield* reference.search({ query, scope: always, headFor, limit: 100 }),
+      );
+    }),
+  );
 
-  it("matches the live text for a reader and the head for its owner", async () => {
-    // Node 1 is live at "apple" and headed at "pear"; node 2 the reverse.
-    const reader = await run(
-      liveBranch.search({ query: "pear", scope: always, headFor: never, limit: 10 }),
-    );
-    const owner = await run(
-      liveBranch.search({ query: "pear", scope: always, headFor: eq("ownerId", "u-1"), limit: 10 }),
-    );
-    expect({ reader, owner }).toEqual({ reader: [], owner: [{ id: id(1) }] });
-  });
+  it.live("matches the live text for a reader and the head for its owner", () =>
+    Effect.gen(function* () {
+      // Node 1 is live at "apple" and headed at "pear"; node 2 the reverse.
+      const reader = yield* run(
+        liveBranch.search({ query: "pear", scope: always, headFor: never, limit: 10 }),
+      );
+      const owner = yield* run(
+        liveBranch.search({
+          query: "pear",
+          scope: always,
+          headFor: eq("ownerId", "u-1"),
+          limit: 10,
+        }),
+      );
+      expect({ reader, owner }).toEqual({ reader: [], owner: [{ id: id(1) }] });
+    }),
+  );
 });
 
 describe("the full-text rank over the entry branch view", () => {
@@ -400,57 +418,68 @@ describe("the full-text rank over the entry branch view", () => {
     CurrentTransaction,
   });
 
-  beforeAll(async () => {
-    await run(truncate());
-    const create = (leaf: "notes" | "links" | "posts", n: number, state: ChainState) =>
-      chains[leaf].create({ id: Option.some(id(n)), state, actorId: Option.none() });
-    await run(
-      Effect.all(
-        [
-          create("notes", 1, { title: "tomato soup recipe", body: null, summary: null }),
-          create("links", 2, { title: "tomato", href: null }),
-          create("posts", 3, {
-            title: "potato salad",
-            visibility: "public",
-            draft: false,
-            groupId: null,
-            rank: null,
-            score: null,
-            publishedAt: null,
+  beforeAll(() =>
+    Effect.gen(function* () {
+      yield* run(truncate());
+      const create = (leaf: "notes" | "links" | "posts", n: number, state: ChainState) =>
+        chains[leaf].create({ id: Option.some(id(n)), state, actorId: Option.none() });
+      yield* run(
+        Effect.all(
+          [
+            create("notes", 1, { title: "tomato soup recipe", body: null, summary: null }),
+            create("links", 2, { title: "tomato", href: null }),
+            create("posts", 3, {
+              title: "potato salad",
+              visibility: "public",
+              draft: false,
+              groupId: null,
+              rank: null,
+              score: null,
+              publishedAt: null,
+            }),
+          ],
+          { concurrency: 1 },
+        ),
+      );
+    }),
+  );
+
+  it.live("ranks every leaf of the union by ts_rank_cd, ties by id", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* run(fullText.search({ query: "tomato", scope: always, headFor: never, limit: 10 })),
+      ).toEqual([{ id: id(1) }, { id: id(2) }]);
+      expect(
+        yield* run(fullText.search({ query: "salad", scope: always, headFor: never, limit: 10 })),
+      ).toEqual([{ id: id(3) }]);
+      expect(
+        yield* run(fullText.search({ query: "   ", scope: always, headFor: never, limit: 10 })),
+      ).toEqual([]);
+    }),
+  );
+
+  it.live("narrows by the identity's type and fails closed over a column the union lacks", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* run(
+          fullText.search({
+            query: "tomato",
+            scope: eq("type", "links"),
+            headFor: never,
+            limit: 10,
           }),
-        ],
-        { concurrency: 1 },
-      ),
-    );
-  });
-
-  it("ranks every leaf of the union by ts_rank_cd, ties by id", async () => {
-    expect(
-      await run(fullText.search({ query: "tomato", scope: always, headFor: never, limit: 10 })),
-    ).toEqual([{ id: id(1) }, { id: id(2) }]);
-    expect(
-      await run(fullText.search({ query: "salad", scope: always, headFor: never, limit: 10 })),
-    ).toEqual([{ id: id(3) }]);
-    expect(
-      await run(fullText.search({ query: "   ", scope: always, headFor: never, limit: 10 })),
-    ).toEqual([]);
-  });
-
-  it("narrows by the identity's type and fails closed over a column the union lacks", async () => {
-    expect(
-      await run(
-        fullText.search({ query: "tomato", scope: eq("type", "links"), headFor: never, limit: 10 }),
-      ),
-    ).toEqual([{ id: id(2) }]);
-    expect(
-      await run(
-        fullText.search({
-          query: "tomato",
-          scope: eq("visibility", "public"),
-          headFor: never,
-          limit: 10,
-        }),
-      ),
-    ).toEqual([]);
-  });
+        ),
+      ).toEqual([{ id: id(2) }]);
+      expect(
+        yield* run(
+          fullText.search({
+            query: "tomato",
+            scope: eq("visibility", "public"),
+            headFor: never,
+            limit: 10,
+          }),
+        ),
+      ).toEqual([]);
+    }),
+  );
 });

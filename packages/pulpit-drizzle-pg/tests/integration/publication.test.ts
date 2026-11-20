@@ -26,7 +26,8 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Str from "effect/String";
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { beforeAll, it } from "@effect/vitest";
+import { afterAll, describe, expect } from "vite-plus/test";
 import { makeLeafStores } from "../../src/LeafStore.ts";
 import { makePublications } from "../../src/Publication.ts";
 import { makeVersionChains } from "../../src/VersionChain.ts";
@@ -49,7 +50,7 @@ const runtime = ManagedRuntime.make(
 afterAll(() => runtime.dispose());
 
 const run = <A, E>(effect: Effect.Effect<A, E, typeof CurrentTransaction.Identifier>) =>
-  runtime.runPromise(transact(effect));
+  Effect.flatMap(runtime.contextEffect, (context) => Effect.provide(transact(effect), context));
 
 const chains = makeVersionChains({ tree, tables, CurrentTransaction });
 const stores = makeLeafStores({ tree, tables, views, owners, CurrentTransaction });
@@ -149,8 +150,8 @@ const stateOf = (title: string): ChainState => ({
   publishedAt: null,
 });
 
-beforeAll(async () => {
-  await run(
+beforeAll(() =>
+  run(
     Effect.gen(function* () {
       const tx = yield* CurrentTransaction;
       yield* tx.execute(
@@ -197,8 +198,8 @@ beforeAll(async () => {
         { concurrency: 1 },
       );
     }),
-  );
-});
+  ),
+);
 
 const ids = Arr.map(stories, (node) => id(node.n));
 
@@ -214,60 +215,68 @@ const agreed = (row: LeafRow) => ({
 });
 
 describe("the publication log", () => {
-  it.each(ids)("effective and facts agree for %s", async (node) => {
-    expect(await run(gated.facts.effective(node))).toEqual(
-      await Effect.runPromise(memory.facts.effective(node)),
-    );
-    expect(await run(gated.facts.facts(node, 100))).toEqual(
-      await Effect.runPromise(memory.facts.facts(node, 100)),
-    );
-  });
+  it.live.each(ids)("effective and facts agree for %s", (node) =>
+    Effect.gen(function* () {
+      expect(yield* run(gated.facts.effective(node))).toEqual(yield* memory.facts.effective(node));
+      expect(yield* run(gated.facts.facts(node, 100))).toEqual(
+        yield* memory.facts.facts(node, 100),
+      );
+    }),
+  );
 
-  it("an id that is no UUID has no facts", async () => {
-    expect(await run(gated.facts.effective("x"))).toEqual(Option.none());
-    expect(await run(gated.facts.facts("x", 10))).toEqual([]);
-  });
+  it.live("an id that is no UUID has no facts", () =>
+    Effect.gen(function* () {
+      expect(yield* run(gated.facts.effective("x"))).toEqual(Option.none());
+      expect(yield* run(gated.facts.facts("x", 10))).toEqual([]);
+    }),
+  );
 
-  it("scheduled is the latest pending publish no later record overtakes, in one read", async () => {
-    const pending = await run(gated.facts.scheduled([...ids, ids[0] ?? "", "x"]));
-    expect(
-      Arr.map(
-        Arr.sort(
-          pending,
-          Order.mapInput(Str.Order, (fact: PublicationFact) => fact.id),
+  it.live("scheduled is the latest pending publish no later record overtakes, in one read", () =>
+    Effect.gen(function* () {
+      const pending = yield* run(gated.facts.scheduled([...ids, ids[0] ?? "", "x"]));
+      expect(
+        Arr.map(
+          Arr.sort(
+            pending,
+            Order.mapInput(Str.Order, (fact: PublicationFact) => fact.id),
+          ),
+          (fact) => [fact.id, fact.version, fact.at],
         ),
-        (fact) => [fact.id, fact.version, fact.at],
-      ),
-    ).toEqual([
-      [id(3), v(0n), FUTURE],
-      [id(4), v(1n), FUTURE],
-    ]);
-    expect(await run(gated.facts.scheduled([]))).toEqual([]);
-  });
+      ).toEqual([
+        [id(3), v(0n), FUTURE],
+        [id(4), v(1n), FUTURE],
+      ]);
+      expect(yield* run(gated.facts.scheduled([]))).toEqual([]);
+    }),
+  );
 });
 
 describe("the live view agrees with the in-memory one", () => {
-  it("get / getMany read each node's live row, if it has one", async () => {
-    const fromSql = await run(
-      Effect.forEach(ids, (node) => Effect.map(gated.live.get(node), Option.map(agreed)), {
-        concurrency: 1,
-      }),
-    );
-    const fromMemory = await Effect.runPromise(
-      Effect.forEach(ids, (node) => Effect.map(memory.live.get(node), Option.map(agreed)), {
-        concurrency: 1,
-      }),
-    );
-    expect(fromSql).toEqual(fromMemory);
-    const many = await run(gated.live.getMany([...ids, "x"]));
-    const memoryMany = await Effect.runPromise(memory.live.getMany(ids));
-    const byId = (rows: ReadonlyArray<{ readonly id: string }>) =>
-      Arr.sort(
-        Arr.map(rows, (row) => row.id),
-        Str.Order,
+  it.live("get / getMany read each node's live row, if it has one", () =>
+    Effect.gen(function* () {
+      const fromSql = yield* run(
+        Effect.forEach(ids, (node) => Effect.map(gated.live.get(node), Option.map(agreed)), {
+          concurrency: 1,
+        }),
       );
-    expect(byId(many)).toEqual(byId(memoryMany));
-  });
+      const fromMemory = yield* Effect.forEach(
+        ids,
+        (node) => Effect.map(memory.live.get(node), Option.map(agreed)),
+        {
+          concurrency: 1,
+        },
+      );
+      expect(fromSql).toEqual(fromMemory);
+      const many = yield* run(gated.live.getMany([...ids, "x"]));
+      const memoryMany = yield* memory.live.getMany(ids);
+      const byId = (rows: ReadonlyArray<{ readonly id: string }>) =>
+        Arr.sort(
+          Arr.map(rows, (row) => row.id),
+          Str.Order,
+        );
+      expect(byId(many)).toEqual(byId(memoryMany));
+    }),
+  );
 
   const cases: ReadonlyArray<
     readonly [string, ListFilter<never>, ListFilter<never>, ReadonlyArray<ListOrder>]
@@ -285,44 +294,50 @@ describe("the live view agrees with the in-memory one", () => {
     ],
     ["the unpublished heads by stamp", always, isNull("publishedAt"), []],
   ];
-  it.each(cases)("list: %s", async (_name, headFor, where, orderBy) => {
-    const query = { headFor, where, orderBy, limit: 100, offset: 0 };
-    const fromSql = await run(gated.live.list(query));
-    const fromMemory = await Effect.runPromise(memory.live.list(query));
-    expect({ total: fromSql.total, rows: Arr.map(fromSql.rows, agreed) }).toEqual({
-      total: fromMemory.total,
-      rows: Arr.map(fromMemory.rows, agreed),
-    });
-  });
+  it.live.each(cases)("list: %s", ([_name, headFor, where, orderBy]) =>
+    Effect.gen(function* () {
+      const query = { headFor, where, orderBy, limit: 100, offset: 0 };
+      const fromSql = yield* run(gated.live.list(query));
+      const fromMemory = yield* memory.live.list(query);
+      expect({ total: fromSql.total, rows: Arr.map(fromSql.rows, agreed) }).toEqual({
+        total: fromMemory.total,
+        rows: Arr.map(fromMemory.rows, agreed),
+      });
+    }),
+  );
 
-  it.each([
+  it.live.each([
     ["the anonymous", never],
     ["u-1", eq("ownerId", "u-1")],
-  ] as const)("distinct counts a node through the row %s would list", async (_name, headFor) => {
-    const query = { column: "title", where: always, limit: 100, offset: 0, headFor };
-    expect(await run(gated.live.distinct(query))).toEqual(
-      await Effect.runPromise(memory.live.distinct(query)),
-    );
-  });
+  ] as const)("distinct counts a node through the row %s would list", ([_name, headFor]) =>
+    Effect.gen(function* () {
+      const query = { column: "title", where: always, limit: 100, offset: 0, headFor };
+      expect(yield* run(gated.live.distinct(query))).toEqual(yield* memory.live.distinct(query));
+    }),
+  );
 });
 
 describe("the gated current-version store", () => {
-  it("computes draft as 'no live row', ignoring the stored column", async () => {
-    const query = { where: always, orderBy: [], limit: 100, offset: 0 };
-    const fromSql = await run(gated.leaves.list(query));
-    const fromMemory = await Effect.runPromise(memory.leaves.list(query));
-    expect(Arr.map(fromSql.rows, agreed)).toEqual(Arr.map(fromMemory.rows, agreed));
-    expect(
-      Arr.map(
-        Arr.filter(fromSql.rows, (row) => row["draft"] === false),
-        (row) => row.id,
-      ),
-    ).toEqual([id(1), id(4), id(6), id(7)]);
-  });
+  it.live("computes draft as 'no live row', ignoring the stored column", () =>
+    Effect.gen(function* () {
+      const query = { where: always, orderBy: [], limit: 100, offset: 0 };
+      const fromSql = yield* run(gated.leaves.list(query));
+      const fromMemory = yield* memory.leaves.list(query);
+      expect(Arr.map(fromSql.rows, agreed)).toEqual(Arr.map(fromMemory.rows, agreed));
+      expect(
+        Arr.map(
+          Arr.filter(fromSql.rows, (row) => row["draft"] === false),
+          (row) => row.id,
+        ),
+      ).toEqual([id(1), id(4), id(6), id(7)]);
+    }),
+  );
 
-  it("get reads the head with the computed draft", async () => {
-    expect(Option.map(await run(gated.leaves.get(id(3))), agreed)).toEqual(
-      Option.map(await Effect.runPromise(memory.leaves.get(id(3))), agreed),
-    );
-  });
+  it.live("get reads the head with the computed draft", () =>
+    Effect.gen(function* () {
+      expect(Option.map(yield* run(gated.leaves.get(id(3))), agreed)).toEqual(
+        Option.map(yield* memory.leaves.get(id(3)), agreed),
+      );
+    }),
+  );
 });

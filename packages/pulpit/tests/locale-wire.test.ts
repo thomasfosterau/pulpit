@@ -24,7 +24,8 @@ import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import { makeResourceCache } from "../src/Cache.ts";
 import { always } from "../src/Filter.ts";
 import {
@@ -48,9 +49,8 @@ import {
 } from "../src/testing.ts";
 import { gardeneriaPolicy, member } from "./fixtures.ts";
 
-const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 const tagOf = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
-  run(Effect.map(Effect.flip(effect), (error) => error._tag));
+  Effect.map(Effect.flip(effect), (error) => error._tag);
 
 describe("acceptLanguage", () => {
   it.each([
@@ -190,7 +190,7 @@ const localisedPages = () => {
 };
 
 describe("a localised leaf's get, through Accept-Language", () => {
-  it.each([
+  it.effect.each([
     { accept: "fr", headers: accepting("fr"), locale: "fr", title: "Bonjour" },
     {
       accept: "fr-CH, en;q=0.5",
@@ -206,80 +206,90 @@ describe("a localised leaf's get, through Accept-Language", () => {
     },
     { accept: "de", headers: accepting("de"), locale: "en", title: "Hello" },
     { accept: "(none)", headers: {}, locale: "en", title: "Hello" },
-  ])("Accept-Language $accept → $locale", async ({ headers, locale, title }) => {
-    const { handlers, request, served, seed } = localisedPages();
-    const document = await run(
-      Effect.flatMap(seed, ({ id }) => request(headers, handlers.get({ params: { id } }))),
-    );
-    expect(document.data.attributes).toEqual({ title, colour: "red" });
-    expect(served).toEqual([locale]);
-  });
+  ])("Accept-Language $accept → $locale", ({ headers, locale, title }) =>
+    Effect.gen(function* () {
+      const { handlers, request, served, seed } = localisedPages();
+      const document = yield* Effect.flatMap(seed, ({ id }) =>
+        request(headers, handlers.get({ params: { id } })),
+      );
+      expect(document.data.attributes).toEqual({ title, colour: "red" });
+      expect(served).toEqual([locale]);
+    }),
+  );
 
-  it("answers a node in none of the preferences, the default included, as NodeNotFound", async () => {
-    const { ops, handlers, request, served } = localisedPages();
-    const outcome = await tagOf(
-      Effect.flatMap(
-        ops.create({
-          id: Option.none(),
-          state: { colour: "red", visibility: "public" },
-          locales: { fr: { title: "Bonjour" } },
-        }),
-        ({ id }) => request(accepting("de"), handlers.get({ params: { id } })),
-      ),
-    );
-    expect(outcome).toBe("NodeNotFound");
-    expect(served).toEqual([]);
-  });
+  it.effect(
+    "answers a node in none of the preferences, the default included, as NodeNotFound",
+    () =>
+      Effect.gen(function* () {
+        const { ops, handlers, request, served } = localisedPages();
+        const outcome = yield* tagOf(
+          Effect.flatMap(
+            ops.create({
+              id: Option.none(),
+              state: { colour: "red", visibility: "public" },
+              locales: { fr: { title: "Bonjour" } },
+            }),
+            ({ id }) => request(accepting("de"), handlers.get({ params: { id } })),
+          ),
+        );
+        expect(outcome).toBe("NodeNotFound");
+        expect(served).toEqual([]);
+      }),
+  );
 });
 
 describe("a localised leaf's list, through Accept-Language", () => {
-  it("serves one item per node in its preferred locale and reports a shared one as Content-Language", async () => {
-    const { handlers, request, served, seed } = localisedPages();
-    const document = await run(
-      Effect.andThen(
-        seed,
-        request(accepting("fr"), handlers.list({ query: { offset: 0, limit: 10 } })),
-      ),
-    );
-    expect(Arr.map(document.data, (item) => item.attributes)).toEqual([
-      { title: "Bonjour", colour: "red" },
-    ]);
-    expect(served).toEqual(["fr"]);
-  });
-
-  it("reports Vary alone when the items fell back to different locales, or there are none", async () => {
-    const { ops, handlers, request, served, seed } = localisedPages();
-    const [mixed, empty] = await run(
+  it.effect(
+    "serves one item per node in its preferred locale and reports a shared one as Content-Language",
+    () =>
       Effect.gen(function* () {
-        yield* seed;
-        yield* ops.create({
-          id: Option.none(),
-          state: { colour: "blue", visibility: "public" },
-          locales: { de: { title: "Hallo" } },
-        });
-        const query = { query: { offset: 0, limit: 10 } };
-        return [
-          yield* request(accepting("de, fr;q=0.5"), handlers.list(query)),
-          yield* request(accepting("it"), handlers.list({ query: { offset: 5, limit: 10 } })),
-        ] as const;
+        const { handlers, request, served, seed } = localisedPages();
+        const document = yield* Effect.andThen(
+          seed,
+          request(accepting("fr"), handlers.list({ query: { offset: 0, limit: 10 } })),
+        );
+        expect(Arr.map(document.data, (item) => item.attributes)).toEqual([
+          { title: "Bonjour", colour: "red" },
+        ]);
+        expect(served).toEqual(["fr"]);
       }),
-    );
-    expect(
-      Arr.sort(
-        Arr.map(mixed.data, (item) => String(item.attributes.title)),
-        Order.String,
-      ),
-    ).toEqual(["Bonjour", "Hallo"]);
-    expect(empty.data).toEqual([]);
-    expect(served).toEqual(["*", "*"]);
-  });
+  );
+
+  it.effect(
+    "reports Vary alone when the items fell back to different locales, or there are none",
+    () =>
+      Effect.gen(function* () {
+        const { ops, handlers, request, served, seed } = localisedPages();
+        const [mixed, empty] = yield* Effect.gen(function* () {
+          yield* seed;
+          yield* ops.create({
+            id: Option.none(),
+            state: { colour: "blue", visibility: "public" },
+            locales: { de: { title: "Hallo" } },
+          });
+          const query = { query: { offset: 0, limit: 10 } };
+          return [
+            yield* request(accepting("de, fr;q=0.5"), handlers.list(query)),
+            yield* request(accepting("it"), handlers.list({ query: { offset: 5, limit: 10 } })),
+          ] as const;
+        });
+        expect(
+          Arr.sort(
+            Arr.map(mixed.data, (item) => String(item.attributes.title)),
+            Order.String,
+          ),
+        ).toEqual(["Bonjour", "Hallo"]);
+        expect(empty.data).toEqual([]);
+        expect(served).toEqual(["*", "*"]);
+      }),
+  );
 });
 
 describe("a localised leaf's writes, through Content-Language", () => {
-  it("lands the translated columns in the Content-Language locale and answers in it", async () => {
-    const { ops, handlers, request, served } = localisedPages();
-    const [created, german, english] = await run(
-      Effect.gen(function* () {
+  it.effect("lands the translated columns in the Content-Language locale and answers in it", () =>
+    Effect.gen(function* () {
+      const { ops, handlers, request, served } = localisedPages();
+      const [created, german, english] = yield* Effect.gen(function* () {
         const response = yield* request(
           { "content-language": "de", "accept-language": "fr" },
           handlers.create({ payload: { title: "Hallo", colour: "red" } }),
@@ -289,59 +299,66 @@ describe("a localised leaf's writes, through Content-Language", () => {
           yield* ops.getLocalised(response.data.id, ["de"]),
           yield* Effect.flip(ops.getLocalised(response.data.id, ["en"])),
         ] as const;
-      }),
-    );
-    expect(created.data).toHaveProperty("attributes", { title: "Hallo", colour: "red" });
-    expect(served).toEqual(["de"]);
-    expect(german.resource.attributes).toEqual({ title: "Hallo", colour: "red" });
-    expect(english._tag).toBe("NodeNotFound");
-  });
+      });
+      expect(created.data).toHaveProperty("attributes", { title: "Hallo", colour: "red" });
+      expect(served).toEqual(["de"]);
+      expect(german.resource.attributes).toEqual({ title: "Hallo", colour: "red" });
+      expect(english._tag).toBe("NodeNotFound");
+    }),
+  );
 
-  it("patches one locale, carries the others forward, and keeps a shared-only patch shared", async () => {
-    const { ops, handlers, request, seed } = localisedPages();
-    const [french, english] = await run(
+  it.effect(
+    "patches one locale, carries the others forward, and keeps a shared-only patch shared",
+    () =>
       Effect.gen(function* () {
-        const { id } = yield* seed;
-        yield* request(
-          { "content-language": "fr" },
-          handlers.update({ params: { id }, payload: { id, title: "Salut" } }),
-        );
-        yield* request({}, handlers.update({ params: { id }, payload: { id, colour: "blue" } }));
-        return [yield* ops.getLocalised(id, ["fr"]), yield* ops.getLocalised(id, ["en"])] as const;
+        const { ops, handlers, request, seed } = localisedPages();
+        const [french, english] = yield* Effect.gen(function* () {
+          const { id } = yield* seed;
+          yield* request(
+            { "content-language": "fr" },
+            handlers.update({ params: { id }, payload: { id, title: "Salut" } }),
+          );
+          yield* request({}, handlers.update({ params: { id }, payload: { id, colour: "blue" } }));
+          return [
+            yield* ops.getLocalised(id, ["fr"]),
+            yield* ops.getLocalised(id, ["en"]),
+          ] as const;
+        });
+        expect(french.resource.attributes).toEqual({ title: "Salut", colour: "blue" });
+        expect(english.resource.attributes).toEqual({ title: "Hello", colour: "blue" });
       }),
-    );
-    expect(french.resource.attributes).toEqual({ title: "Salut", colour: "blue" });
-    expect(english.resource.attributes).toEqual({ title: "Hello", colour: "blue" });
-  });
+  );
 
-  it("lands a write without Content-Language in the default locale, first tag of a list otherwise", async () => {
-    const { ops, handlers, request } = localisedPages();
-    const [plain, listed] = await run(
+  it.effect(
+    "lands a write without Content-Language in the default locale, first tag of a list otherwise",
+    () =>
       Effect.gen(function* () {
-        const plainWrite = yield* request(
-          {},
-          handlers.create({ payload: { title: "Hi", colour: "red" } }),
-        );
-        const listedWrite = yield* request(
-          { "content-language": " it , de" },
-          handlers.create({ payload: { title: "Ciao", colour: "red" } }),
-        );
-        return [
-          yield* ops.getLocalised(plainWrite.data.id, ["en"]),
-          yield* ops.getLocalised(listedWrite.data.id, ["it"]),
-        ] as const;
+        const { ops, handlers, request } = localisedPages();
+        const [plain, listed] = yield* Effect.gen(function* () {
+          const plainWrite = yield* request(
+            {},
+            handlers.create({ payload: { title: "Hi", colour: "red" } }),
+          );
+          const listedWrite = yield* request(
+            { "content-language": " it , de" },
+            handlers.create({ payload: { title: "Ciao", colour: "red" } }),
+          );
+          return [
+            yield* ops.getLocalised(plainWrite.data.id, ["en"]),
+            yield* ops.getLocalised(listedWrite.data.id, ["it"]),
+          ] as const;
+        });
+        expect(plain.locale).toBe("en");
+        expect(listed.locale).toBe("it");
       }),
-    );
-    expect(plain.locale).toBe("en");
-    expect(listed.locale).toBe("it");
-  });
+  );
 });
 
 describe("a localised leaf's cache, keyed by locale", () => {
-  it("evicts every locale's entry on a write, raising the id's version", async () => {
-    const { cache, handlers, request, seed } = localisedPages();
-    const [before, after] = await run(
-      Effect.gen(function* () {
+  it.effect("evicts every locale's entry on a write, raising the id's version", () =>
+    Effect.gen(function* () {
+      const { cache, handlers, request, seed } = localisedPages();
+      const [before, after] = yield* Effect.gen(function* () {
         const { id, version } = yield* seed;
         const page = (title: string): PageResource => ({
           type: "pages",
@@ -356,13 +373,13 @@ describe("a localised leaf's cache, keyed by locale", () => {
           handlers.update({ params: { id }, payload: { id, title: "Salut" } }),
         );
         return [cached, { id, written }] as const;
-      }),
-    );
-    expect(Arr.map(before, Option.isSome)).toEqual([true, true]);
-    expect(cache.get(after.id, "en")).toEqual(Option.none());
-    expect(cache.get(after.id, "fr")).toEqual(Option.none());
-    expect(cache.versionOf(after.id)).toEqual(Option.some(1n));
-  });
+      });
+      expect(Arr.map(before, Option.isSome)).toEqual([true, true]);
+      expect(cache.get(after.id, "en")).toEqual(Option.none());
+      expect(cache.get(after.id, "fr")).toEqual(Option.none());
+      expect(cache.versionOf(after.id)).toEqual(Option.some(1n));
+    }),
+  );
 
   /** The two caches the locale rules are checked on: the fake and `./Cache`'s reference cache. */
   const caches = [
@@ -390,47 +407,42 @@ describe("a localised leaf's cache, keyed by locale", () => {
     },
   ] as const;
 
-  it.each(caches)(
+  it.effect.each(caches)(
     "keeps one compare-on-set version per id across its locales — $label",
-    ({ make }) => {
-      const cache = make();
-      /** Each locale's read, `Option.none()` for the id's unlocalised entry. */
-      const read = (locales: ReadonlyArray<Option.Option<string>>) =>
-        Effect.runSync(
+    ({ make }) =>
+      Effect.gen(function* () {
+        const cache = make();
+        /** Each locale's read, `Option.none()` for the id's unlocalised entry. */
+        const read = (locales: ReadonlyArray<Option.Option<string>>) =>
           Effect.forEach(locales, (locale) => cache.get("p", Option.getOrUndefined(locale)), {
             concurrency: 1,
-          }),
-        );
-      const tags = (...locales: ReadonlyArray<string>) => Arr.map(locales, Option.some);
-      Effect.runSync(
-        Effect.gen(function* () {
+          });
+        const tags = (...locales: ReadonlyArray<string>) => Arr.map(locales, Option.some);
+        yield* Effect.gen(function* () {
           yield* cache.set("p", "hello", 1n, "en");
           yield* cache.set("p", "bonjour", 1n, "fr");
           yield* cache.set("p", "secret", 1n, "de");
-        }),
-      );
-      expect(read(tags("en", "fr", "de"))).toEqual([
-        Option.some("hello"),
-        Option.some("bonjour"),
-        Option.none(),
-      ]);
-      Effect.runSync(
-        Effect.gen(function* () {
+        });
+        expect(yield* read(tags("en", "fr", "de"))).toEqual([
+          Option.some("hello"),
+          Option.some("bonjour"),
+          Option.none(),
+        ]);
+        yield* Effect.gen(function* () {
           yield* cache.set("p", "hi", 2n, "en");
           // A fill that read version 1 is behind the id's version now, in any locale.
           yield* cache.set("p", "bonjour", 1n, "fr");
-        }),
-      );
-      expect(read([...tags("en", "fr"), Option.none()])).toEqual([
-        Option.some("hi"),
-        Option.none(),
-        Option.none(),
-      ]);
-      Effect.runSync(cache.delete("p", 3n));
-      expect(read(tags("en", "fr"))).toEqual([Option.none(), Option.none()]);
-      // A write at the evicted id's next version caches again, in its own locale only.
-      Effect.runSync(cache.set("p", "salut", 4n, "fr"));
-      expect(read(tags("fr", "en"))).toEqual([Option.some("salut"), Option.none()]);
-    },
+        });
+        expect(yield* read([...tags("en", "fr"), Option.none()])).toEqual([
+          Option.some("hi"),
+          Option.none(),
+          Option.none(),
+        ]);
+        yield* cache.delete("p", 3n);
+        expect(yield* read(tags("en", "fr"))).toEqual([Option.none(), Option.none()]);
+        // A write at the evicted id's next version caches again, in its own locale only.
+        yield* cache.set("p", "salut", 4n, "fr");
+        expect(yield* read(tags("fr", "en"))).toEqual([Option.some("salut"), Option.none()]);
+      }),
   );
 });

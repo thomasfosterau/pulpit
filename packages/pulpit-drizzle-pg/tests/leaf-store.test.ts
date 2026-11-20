@@ -19,7 +19,8 @@ import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 import * as Str from "effect/String";
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import { makeLeafStores, makeNodeOwnerTable, OWNER_COLUMN } from "../src/LeafStore.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
 import { database, owners, tables, tree, views } from "./fixtures/tree.ts";
@@ -160,88 +161,100 @@ describe("makeLeafStores — what a store makes of a query's rows", () => {
     effect: Effect.Effect<A, E, typeof database.CurrentTransaction.Identifier>,
   ) => {
     const { tx, calls } = cannedTransaction(rows);
-    return Effect.runPromise(
-      Effect.map(Effect.provideService(effect, database.CurrentTransaction, tx), (value) => ({
-        value,
-        calls,
-      })),
-    );
+    return Effect.map(Effect.provideService(effect, database.CurrentTransaction, tx), (value) => ({
+      value,
+      calls,
+    }));
   };
 
-  it("get and getMany decode the rows; a malformed id reads nothing", async () => {
-    expect((await runWith([row], stores.posts.get(ID))).value).toEqual(Option.some(row));
-    expect((await runWith([row], stores.posts.get("nope"))).calls).toEqual([]);
-    expect((await runWith([row], stores.posts.getMany([ID, ID, "x"]))).value).toEqual([row]);
-    expect((await runWith([], stores.posts.getMany(["x"]))).calls).toEqual([]);
-  });
+  it.effect("get and getMany decode the rows; a malformed id reads nothing", () =>
+    Effect.gen(function* () {
+      expect((yield* runWith([row], stores.posts.get(ID))).value).toEqual(Option.some(row));
+      expect((yield* runWith([row], stores.posts.get("nope"))).calls).toEqual([]);
+      expect((yield* runWith([row], stores.posts.getMany([ID, ID, "x"]))).value).toEqual([row]);
+      expect((yield* runWith([], stores.posts.getMany(["x"]))).calls).toEqual([]);
+    }),
+  );
 
-  it("list strips the window total off each row and reads it off the first", async () => {
-    const { value, calls } = await runWith(
-      [{ ...row, pageTotal: 7 }],
-      stores.posts.list({
-        where: always,
-        orderBy: [{ column: "title", direction: "asc" }],
-        limit: 1,
+  it.effect("list strips the window total off each row and reads it off the first", () =>
+    Effect.gen(function* () {
+      const { value, calls } = yield* runWith(
+        [{ ...row, pageTotal: 7 }],
+        stores.posts.list({
+          where: always,
+          orderBy: [{ column: "title", direction: "asc" }],
+          limit: 1,
+          offset: 0,
+        }),
+      );
+      expect(value).toEqual({ rows: [row], total: 7 });
+      expect(calls).toEqual(["select", "from", "where", "orderBy", "limit", "offset"]);
+      expect(
+        (yield* runWith([], stores.posts.list({ where: always, orderBy: [], limit: 1, offset: 9 })))
+          .value,
+      ).toEqual({
+        rows: [],
+        total: 0,
+      });
+    }),
+  );
+
+  it.effect("a row outside the kernel's LeafRow is a defect", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        Effect.provideService(
+          stores.posts.get(ID),
+          database.CurrentTransaction,
+          cannedTransaction([{ id: ID }]).tx,
+        ),
+      );
+      expect(Exit.isFailure(exit) && Exit.hasDies(exit)).toBe(true);
+    }),
+  );
+
+  it.effect("distinct reads the values and the distinct count; a non-string column has none", () =>
+    Effect.gen(function* () {
+      const query = {
+        column: "title",
+        where: eq("action", "update"),
+        limit: 10,
         offset: 0,
-      }),
-    );
-    expect(value).toEqual({ rows: [row], total: 7 });
-    expect(calls).toEqual(["select", "from", "where", "orderBy", "limit", "offset"]);
-    expect(
-      (await runWith([], stores.posts.list({ where: always, orderBy: [], limit: 1, offset: 9 })))
-        .value,
-    ).toEqual({
-      rows: [],
-      total: 0,
-    });
-  });
-
-  it("a row outside the kernel's LeafRow is a defect", async () => {
-    const exit = await Effect.runPromiseExit(
-      Effect.provideService(
-        stores.posts.get(ID),
-        database.CurrentTransaction,
-        cannedTransaction([{ id: ID }]).tx,
-      ),
-    );
-    expect(Exit.isFailure(exit) && Exit.hasDies(exit)).toBe(true);
-  });
-
-  it("distinct reads the values and the distinct count; a non-string column has none", async () => {
-    const query = { column: "title", where: eq("action", "update"), limit: 10, offset: 0 } as const;
-    expect(
-      (
-        await runWith(
+      } as const;
+      expect(
+        (yield* runWith(
           [
             { value: "a", total: 2 },
             { value: "b", total: 2 },
           ],
           stores.posts.distinct(query),
-        )
-      ).value,
-    ).toEqual({
-      rows: ["a", "b"],
-      total: 2,
-    });
-    expect((await runWith([], stores.posts.distinct(query))).value).toEqual({ rows: [], total: 0 });
-    expect((await runWith([], stores.posts.distinct({ ...query, column: "rank" }))).calls).toEqual(
-      [],
-    );
-  });
+        )).value,
+      ).toEqual({
+        rows: ["a", "b"],
+        total: 2,
+      });
+      expect((yield* runWith([], stores.posts.distinct(query))).value).toEqual({
+        rows: [],
+        total: 0,
+      });
+      expect(
+        (yield* runWith([], stores.posts.distinct({ ...query, column: "rank" }))).calls,
+      ).toEqual([]);
+    }),
+  );
 
-  it("ownerOf reads the stamp; stampOwner inserts it; listLocalised reads none", async () => {
-    expect((await runWith([{ ownerId: "u-1" }], stores.posts.ownerOf(ID))).value).toEqual(
-      Option.some("u-1"),
-    );
-    expect((await runWith([], stores.posts.ownerOf(ID))).value).toEqual(Option.none());
-    expect((await runWith([], stores.posts.ownerOf("x"))).calls).toEqual([]);
-    expect((await runWith([], stores.posts.stampOwner(ID, "u-1"))).calls).toEqual([
-      "insert",
-      "values",
-    ]);
-    expect(
-      (
-        await runWith(
+  it.effect("ownerOf reads the stamp; stampOwner inserts it; listLocalised reads none", () =>
+    Effect.gen(function* () {
+      expect((yield* runWith([{ ownerId: "u-1" }], stores.posts.ownerOf(ID))).value).toEqual(
+        Option.some("u-1"),
+      );
+      expect((yield* runWith([], stores.posts.ownerOf(ID))).value).toEqual(Option.none());
+      expect((yield* runWith([], stores.posts.ownerOf("x"))).calls).toEqual([]);
+      expect((yield* runWith([], stores.posts.stampOwner(ID, "u-1"))).calls).toEqual([
+        "insert",
+        "values",
+      ]);
+      expect(
+        (yield* runWith(
           [],
           stores.posts.listLocalised({
             where: always,
@@ -250,8 +263,8 @@ describe("makeLeafStores — what a store makes of a query's rows", () => {
             offset: 0,
             locales: ["en"],
           }),
-        )
-      ).value,
-    ).toEqual({ rows: [], total: 0 });
-  });
+        )).value,
+      ).toEqual({ rows: [], total: 0 });
+    }),
+  );
 });

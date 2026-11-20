@@ -23,7 +23,8 @@ import * as HashMap from "effect/HashMap";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { beforeAll, it } from "@effect/vitest";
+import { afterAll, describe, expect } from "vite-plus/test";
 import { makeDocumentStore } from "../../src/Documents.ts";
 import { makeEmbeddingStore } from "../../src/Embeddings.ts";
 import { documents, embeddings } from "../fixtures/tree.ts";
@@ -45,7 +46,7 @@ const runtime = ManagedRuntime.make(
 afterAll(() => runtime.dispose());
 
 const run = <A, E>(effect: Effect.Effect<A, E, typeof CurrentTransaction.Identifier>) =>
-  runtime.runPromise(transact(effect));
+  Effect.flatMap(runtime.contextEffect, (context) => Effect.provide(transact(effect), context));
 
 const docs = makeDocumentStore({
   table: documents,
@@ -57,106 +58,123 @@ const memory = makeInMemoryEmbeddingStore();
 
 let hashes: ReadonlyArray<DocumentHash> = [];
 
-beforeAll(async () => {
-  await run(
-    Effect.gen(function* () {
-      const tx = yield* CurrentTransaction;
-      yield* tx.execute(sql.raw(`TRUNCATE pulpit_test.${getTableName(documents)} CASCADE`));
-    }),
-  );
-  hashes = await run(
-    Effect.forEach(
-      ["alpha", "beta", "gamma"],
-      (text) => Effect.map(docs.put({ text }), ({ hash }) => hash),
-      { concurrency: 1 },
-    ),
-  );
-});
+beforeAll(() =>
+  Effect.gen(function* () {
+    yield* run(
+      Effect.gen(function* () {
+        const tx = yield* CurrentTransaction;
+        yield* tx.execute(sql.raw(`TRUNCATE pulpit_test.${getTableName(documents)} CASCADE`));
+      }),
+    );
+    hashes = yield* run(
+      Effect.forEach(
+        ["alpha", "beta", "gamma"],
+        (text) => Effect.map(docs.put({ text }), ({ hash }) => hash),
+        { concurrency: 1 },
+      ),
+    );
+  }),
+);
 
 /** Run one call against both stores: the SQL one in a transaction of its own, so each `queued_at` is later than the last. */
-const both = async <A, E>(
+const both = <A, E>(
   fromSql: Effect.Effect<A, E, typeof CurrentTransaction.Identifier>,
   fromMemory: Effect.Effect<A>,
-) => ({ sql: await run(fromSql), memory: await Effect.runPromise(fromMemory) });
+) =>
+  Effect.gen(function* () {
+    return { sql: yield* run(fromSql), memory: yield* fromMemory };
+  });
 
 const enqueueBoth = (hash: string) => both(store.enqueue(hash), memory.enqueue(hash));
 const pendingBoth = (limit: number) => both(store.pending(limit), memory.pending(limit));
 
 describe("EmbeddingStore over PostgreSQL agrees with the in-memory store", () => {
-  it("enqueue is idempotent, and pending is the queue oldest first, at most limit", async () => {
-    const [a = "", b = "", c = ""] = hashes;
-    await Arr.reduce([a, b, a, c], Promise.resolve(), (previous, hash) =>
-      previous.then(() => enqueueBoth(hash)).then(() => undefined),
-    );
-    const pending = await pendingBoth(10);
-    expect(pending.sql).toEqual(pending.memory);
-    expect(pending.sql).toEqual([a, b, c]);
-    const two = await pendingBoth(2);
-    expect(two.sql).toEqual(two.memory);
-    expect(two.sql).toEqual([a, b]);
-  });
+  it.live("enqueue is idempotent, and pending is the queue oldest first, at most limit", () =>
+    Effect.gen(function* () {
+      const [a = "", b = "", c = ""] = hashes;
+      yield* Effect.forEach([a, b, a, c], enqueueBoth, { concurrency: 1, discard: true });
+      const pending = yield* pendingBoth(10);
+      expect(pending.sql).toEqual(pending.memory);
+      expect(pending.sql).toEqual([a, b, c]);
+      const two = yield* pendingBoth(2);
+      expect(two.sql).toEqual(two.memory);
+      expect(two.sql).toEqual([a, b]);
+    }),
+  );
 
-  it("write stores the vectors and dequeues them; a written document is never queued again", async () => {
-    const [a = "", b = ""] = hashes;
-    const written = [{ hash: a, vector: [0.5, -1, 2e-3] }];
-    await both(store.write(written), memory.write(written));
-    await enqueueBoth(a);
-    const pending = await pendingBoth(10);
-    expect(pending.sql).toEqual(pending.memory);
-    const stored = await run(
+  it.live(
+    "write stores the vectors and dequeues them; a written document is never queued again",
+    () =>
       Effect.gen(function* () {
-        const tx = yield* CurrentTransaction;
-        return yield* tx
-          .select({ embedding: embeddings.vectors.embedding })
-          .from(embeddings.vectors);
+        const [a = "", b = ""] = hashes;
+        const written = [{ hash: a, vector: [0.5, -1, 2e-3] }];
+        yield* both(store.write(written), memory.write(written));
+        yield* enqueueBoth(a);
+        const pending = yield* pendingBoth(10);
+        expect(pending.sql).toEqual(pending.memory);
+        const stored = yield* run(
+          Effect.gen(function* () {
+            const tx = yield* CurrentTransaction;
+            return yield* tx
+              .select({ embedding: embeddings.vectors.embedding })
+              .from(embeddings.vectors);
+          }),
+        );
+        expect(Arr.map(stored, (row) => row.embedding)).toEqual(
+          Arr.map(HashMap.toValues(memory.vectors()), (v) => [...v]),
+        );
+        expect(pending.sql).not.toContain(a);
+        expect(pending.sql).toContain(b);
       }),
-    );
-    expect(Arr.map(stored, (row) => row.embedding)).toEqual(
-      Arr.map(HashMap.toValues(memory.vectors()), (v) => [...v]),
-    );
-    expect(pending.sql).not.toContain(a);
-    expect(pending.sql).toContain(b);
-  });
+  );
 
-  it("discard dequeues; the queue then agrees again", async () => {
-    const [, b = ""] = hashes;
-    await both(store.discard([b]), memory.discard([b]));
-    const pending = await pendingBoth(10);
-    expect(pending.sql).toEqual(pending.memory);
-  });
+  it.live("discard dequeues; the queue then agrees again", () =>
+    Effect.gen(function* () {
+      const [, b = ""] = hashes;
+      yield* both(store.discard([b]), memory.discard([b]));
+      const pending = yield* pendingBoth(10);
+      expect(pending.sql).toEqual(pending.memory);
+    }),
+  );
 });
 
 describe("the sweep (beyond the in-memory fake)", () => {
-  it("pending hands out a stored document with no vector and no queue row, after the queue", async () => {
-    const [, b = "", c = ""] = hashes;
-    // c is queued, b was discarded, and d is stored but never enqueued.
-    const { hash: d } = await run(docs.put({ text: "delta" }));
-    expect(await run(store.pending(10))).toEqual([c, d]);
-    await run(store.discard([d]));
-    expect(await run(store.pending(10))).toEqual([c]);
-    // Enqueued anew, a discarded document is pending again.
-    await run(store.enqueue(b));
-    expect(await run(store.pending(10))).toEqual([c, b]);
-    expect(await run(store.pending(0))).toEqual([]);
-  });
+  it.live(
+    "pending hands out a stored document with no vector and no queue row, after the queue",
+    () =>
+      Effect.gen(function* () {
+        const [, b = "", c = ""] = hashes;
+        // c is queued, b was discarded, and d is stored but never enqueued.
+        const { hash: d } = yield* run(docs.put({ text: "delta" }));
+        expect(yield* run(store.pending(10))).toEqual([c, d]);
+        yield* run(store.discard([d]));
+        expect(yield* run(store.pending(10))).toEqual([c]);
+        // Enqueued anew, a discarded document is pending again.
+        yield* run(store.enqueue(b));
+        expect(yield* run(store.pending(10))).toEqual([c, b]);
+        expect(yield* run(store.pending(0))).toEqual([]);
+      }),
+  );
 
-  it("purging the document takes its queue row and vector (the foreign keys cascade)", async () => {
-    const [a = "", , c = ""] = hashes;
-    await run(
-      Effect.gen(function* () {
-        const tx = yield* CurrentTransaction;
-        yield* tx.execute(
-          sql`DELETE FROM ${documents} WHERE ${documents.hashId} IN (decode(${a}, 'hex'), decode(${c}, 'hex'))`,
-        );
-      }),
-    );
-    expect(await run(store.pending(10))).not.toContain(c);
-    const vectors = await run(
-      Effect.gen(function* () {
-        const tx = yield* CurrentTransaction;
-        return yield* tx.select({ hash: embeddings.vectors.hashId }).from(embeddings.vectors);
-      }),
-    );
-    expect(vectors).toEqual([]);
-  });
+  it.live("purging the document takes its queue row and vector (the foreign keys cascade)", () =>
+    Effect.gen(function* () {
+      const [a = "", , c = ""] = hashes;
+      yield* run(
+        Effect.gen(function* () {
+          const tx = yield* CurrentTransaction;
+          yield* tx.execute(
+            sql`DELETE FROM ${documents} WHERE ${documents.hashId} IN (decode(${a}, 'hex'), decode(${c}, 'hex'))`,
+          );
+        }),
+      );
+      expect(yield* run(store.pending(10))).not.toContain(c);
+      const vectors = yield* run(
+        Effect.gen(function* () {
+          const tx = yield* CurrentTransaction;
+          return yield* tx.select({ hash: embeddings.vectors.hashId }).from(embeddings.vectors);
+        }),
+      );
+      expect(vectors).toEqual([]);
+    }),
+  );
 });

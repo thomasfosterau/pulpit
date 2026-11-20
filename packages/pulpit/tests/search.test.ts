@@ -12,7 +12,8 @@
  * @module tests/search
  */
 
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import * as TestClock from "effect/testing/TestClock";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
@@ -56,7 +57,6 @@ import {
 } from "../src/testing.ts";
 import { gardeneriaPolicy, member, moderator, NOW } from "./fixtures.ts";
 
-const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 const ids = (hits: ReadonlyArray<{ readonly id: string }>) => hits.map((hit) => hit.id);
 const hitsOf = (...names: ReadonlyArray<string>) => names.map((id) => ({ id }));
 
@@ -162,118 +162,122 @@ describe("hybridSearch", () => {
   });
   const publicOnly: ListFilter<InMemoryFollowing> = eq("visibility", "public");
 
-  it("hands every branch the same scope, so no branch ranks a hidden row", async () => {
-    const asked: Array<unknown> = [];
-    const spy = (branch: SearchBranch<InMemoryFollowing, never, never>) => ({
-      ...branch,
-      search: (request: Parameters<typeof branch.search>[0]) => {
-        asked.push(request.scope);
-        return branch.search(request);
-      },
-    });
-    const search = hybridSearch({ branches: [spy(text), spy(tags)] });
-    const hits = await run(
-      search({ query: "tomato", scope: publicOnly, headFor: never, limit: 10 }),
-    );
-    expect(asked).toEqual([publicOnly, publicOnly]);
-    expect(ids(hits)).toEqual(["p-public", "p-other"]);
-    expect(
-      ids(await run(search({ query: "tomato", scope: always, headFor: never, limit: 10 }))),
-    ).toContain("p-private");
-    expect(await run(search({ query: "tomato", scope: never, headFor: never, limit: 10 }))).toEqual(
-      [],
-    );
-  });
+  it.effect("hands every branch the same scope, so no branch ranks a hidden row", () =>
+    Effect.gen(function* () {
+      const asked: Array<unknown> = [];
+      const spy = (branch: SearchBranch<InMemoryFollowing, never, never>) => ({
+        ...branch,
+        search: (request: Parameters<typeof branch.search>[0]) => {
+          asked.push(request.scope);
+          return branch.search(request);
+        },
+      });
+      const search = hybridSearch({ branches: [spy(text), spy(tags)] });
+      const hits = yield* search({ query: "tomato", scope: publicOnly, headFor: never, limit: 10 });
+      expect(asked).toEqual([publicOnly, publicOnly]);
+      expect(ids(hits)).toEqual(["p-public", "p-other"]);
+      expect(
+        ids(yield* search({ query: "tomato", scope: always, headFor: never, limit: 10 })),
+      ).toContain("p-private");
+      expect(yield* search({ query: "tomato", scope: never, headFor: never, limit: 10 })).toEqual(
+        [],
+      );
+    }),
+  );
 
-  it("asks no branch for an empty query, and caps the result at the limit", async () => {
-    let called = 0;
-    const counting: SearchBranch<InMemoryFollowing, never, never> = {
-      ...text,
-      search: (request) => Effect.suspend(() => ((called += 1), text.search(request))),
-    };
-    const search = hybridSearch({ branches: [counting, tags] });
-    expect(await run(search({ query: "  ", scope: always, headFor: never, limit: 10 }))).toEqual(
-      [],
-    );
-    expect(called).toBe(0);
-    expect(
-      await run(search({ query: "tomato", scope: always, headFor: never, limit: 1 })),
-    ).toHaveLength(1);
-  });
+  it.effect("asks no branch for an empty query, and caps the result at the limit", () =>
+    Effect.gen(function* () {
+      let called = 0;
+      const counting: SearchBranch<InMemoryFollowing, never, never> = {
+        ...text,
+        search: (request) => Effect.suspend(() => ((called += 1), text.search(request))),
+      };
+      const search = hybridSearch({ branches: [counting, tags] });
+      expect(yield* search({ query: "  ", scope: always, headFor: never, limit: 10 })).toEqual([]);
+      expect(called).toBe(0);
+      expect(
+        yield* search({ query: "tomato", scope: always, headFor: never, limit: 1 }),
+      ).toHaveLength(1);
+    }),
+  );
 
-  it("lets a reranker reorder the fused candidates and nothing more", async () => {
-    let shown: ReadonlyArray<string> = [];
-    const search = hybridSearch({
-      branches: [text, tags],
-      reranker: {
-        rerank: (_, candidates) =>
-          Effect.sync(() => {
-            shown = ids(candidates);
-            return ["p-other", "p-intruder"];
-          }),
-      },
-    });
-    const hits = await run(
-      search({ query: "tomato", scope: publicOnly, headFor: never, limit: 10 }),
-    );
-    expect(shown).toEqual(["p-public", "p-other"]);
-    expect(ids(hits)).toEqual(["p-other", "p-public"]);
-  });
+  it.effect("lets a reranker reorder the fused candidates and nothing more", () =>
+    Effect.gen(function* () {
+      let shown: ReadonlyArray<string> = [];
+      const search = hybridSearch({
+        branches: [text, tags],
+        reranker: {
+          rerank: (_, candidates) =>
+            Effect.sync(() => {
+              shown = ids(candidates);
+              return ["p-other", "p-intruder"];
+            }),
+        },
+      });
+      const hits = yield* search({ query: "tomato", scope: publicOnly, headFor: never, limit: 10 });
+      expect(shown).toEqual(["p-public", "p-other"]);
+      expect(ids(hits)).toEqual(["p-other", "p-public"]);
+    }),
+  );
 
-  it("scopeCheckedBranch fails a branch that ranks a row outside its scope", async () => {
-    const leaky: SearchBranch<InMemoryFollowing, never, never> = {
-      name: "leaky",
-      search: () => Effect.succeed(hitsOf("p-private")),
-    };
-    const checked = scopeCheckedBranch(leaky, { rows: () => rows, now: NOW });
-    const exit = await Effect.runPromiseExit(
-      hybridSearch({ branches: [checked] })({
-        query: "tomato",
-        scope: publicOnly,
-        headFor: never,
-        limit: 10,
-      }),
-    );
-    expect(Exit.isFailure(exit) && Option.getOrUndefined(Exit.findErrorOption(exit))).toMatchObject(
-      { _tag: "SearchScopeLeak", branch: "leaky", id: "p-private" },
-    );
-    // An unknown id fails too; an honest branch passes.
-    const unknown = scopeCheckedBranch(
-      { name: "ghost", search: () => Effect.succeed(hitsOf("nope")) },
-      { rows: () => rows, now: NOW },
-    );
-    expect(
-      Exit.isFailure(
-        await Effect.runPromiseExit(
-          unknown.search({ query: "x", scope: always, headFor: never, limit: 10 }),
+  it.effect("scopeCheckedBranch fails a branch that ranks a row outside its scope", () =>
+    Effect.gen(function* () {
+      const leaky: SearchBranch<InMemoryFollowing, never, never> = {
+        name: "leaky",
+        search: () => Effect.succeed(hitsOf("p-private")),
+      };
+      const checked = scopeCheckedBranch(leaky, { rows: () => rows, now: NOW });
+      const exit = yield* Effect.exit(
+        hybridSearch({ branches: [checked] })({
+          query: "tomato",
+          scope: publicOnly,
+          headFor: never,
+          limit: 10,
+        }),
+      );
+      expect(
+        Exit.isFailure(exit) && Option.getOrUndefined(Exit.findErrorOption(exit)),
+      ).toMatchObject({ _tag: "SearchScopeLeak", branch: "leaky", id: "p-private" });
+      // An unknown id fails too; an honest branch passes.
+      const unknown = scopeCheckedBranch(
+        { name: "ghost", search: () => Effect.succeed(hitsOf("nope")) },
+        { rows: () => rows, now: NOW },
+      );
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(
+            unknown.search({ query: "x", scope: always, headFor: never, limit: 10 }),
+          ),
         ),
-      ),
-    ).toBe(true);
-    const honest = scopeCheckedBranch(text, { rows: () => rows, now: NOW });
-    expect(
-      ids(
-        await run(honest.search({ query: "tomato", scope: publicOnly, headFor: never, limit: 10 })),
-      ),
-    ).toEqual(["p-public"]);
-  });
+      ).toBe(true);
+      const honest = scopeCheckedBranch(text, { rows: () => rows, now: NOW });
+      expect(
+        ids(
+          yield* honest.search({ query: "tomato", scope: publicOnly, headFor: never, limit: 10 }),
+        ),
+      ).toEqual(["p-public"]);
+    }),
+  );
 
-  it("the in-memory branch reads the follower set through the scope", async () => {
-    const following = HashSet.make("u-1");
-    const followed: ReadonlyArray<Row> = [
-      { id: "f-1", owner: "u-1", title: "tomato" },
-      { id: "f-2", owner: "u-2", title: "tomato" },
-    ];
-    const branch = makeInMemorySearchBranch({
-      name: "text",
-      rows: () => followed,
-      score: () => Option.some(1),
-      now: NOW,
-    });
-    const scope = { kind: "in", column: "owner", set: following } as const;
-    expect(
-      ids(await run(branch.search({ query: "tomato", scope, headFor: never, limit: 10 }))),
-    ).toEqual(["f-1"]);
-  });
+  it.effect("the in-memory branch reads the follower set through the scope", () =>
+    Effect.gen(function* () {
+      const following = HashSet.make("u-1");
+      const followed: ReadonlyArray<Row> = [
+        { id: "f-1", owner: "u-1", title: "tomato" },
+        { id: "f-2", owner: "u-2", title: "tomato" },
+      ];
+      const branch = makeInMemorySearchBranch({
+        name: "text",
+        rows: () => followed,
+        score: () => Option.some(1),
+        now: NOW,
+      });
+      const scope = { kind: "in", column: "owner", set: following } as const;
+      expect(
+        ids(yield* branch.search({ query: "tomato", scope, headFor: never, limit: 10 })),
+      ).toEqual(["f-1"]);
+    }),
+  );
 });
 
 describe("a publish-gated leaf's search ranks what list reads", () => {
@@ -358,38 +362,36 @@ describe("a publish-gated leaf's search ranks what list reads", () => {
     return { find, seed };
   };
   const runAt = <A, E>(effect: Effect.Effect<A, E>) =>
-    Effect.runPromise(
-      Effect.andThen(TestClock.setTime(NOW.getTime()), effect).pipe(
-        Effect.provide(TestClock.layer()),
-      ),
-    );
+    Effect.andThen(TestClock.setTime(NOW.getTime()), effect);
 
-  it("the writer finds their unpublished head, the anonymous reader only the live row", async () => {
-    const { find, seed } = setup();
-    const found = await runAt(
-      Effect.andThen(
-        seed(),
-        Effect.all(
-          {
-            writer: find(Option.some(member), "potato"),
-            readerPotato: find(Option.none(), "potato"),
-            readerTomato: find(Option.none(), "tomato"),
-            writerTomato: find(Option.some(member), "tomato"),
-          },
-          { concurrency: 1 },
+  it.effect("the writer finds their unpublished head, the anonymous reader only the live row", () =>
+    Effect.gen(function* () {
+      const { find, seed } = setup();
+      const found = yield* runAt(
+        Effect.andThen(
+          seed(),
+          Effect.all(
+            {
+              writer: find(Option.some(member), "potato"),
+              readerPotato: find(Option.none(), "potato"),
+              readerTomato: find(Option.none(), "tomato"),
+              writerTomato: find(Option.some(member), "tomato"),
+            },
+            { concurrency: 1 },
+          ),
         ),
-      ),
-    );
-    expect(found).toEqual({
-      writer: [
-        { id: "p-1", title: "potato" },
-        { id: "p-2", title: "potato salad" },
-      ],
-      readerPotato: [],
-      readerTomato: [{ id: "p-1", title: "tomato" }],
-      writerTomato: [],
-    });
-  });
+      );
+      expect(found).toEqual({
+        writer: [
+          { id: "p-1", title: "potato" },
+          { id: "p-2", title: "potato salad" },
+        ],
+        readerPotato: [],
+        readerTomato: [{ id: "p-1", title: "tomato" }],
+        writerTomato: [],
+      });
+    }),
+  );
 
   it("searchHeadFor is the head choice list makes: every head by rung, own heads, else none", () => {
     const leaf = { access: ownedAccess({ draft: true }), policy: gardeneriaPolicy };
@@ -424,59 +426,73 @@ describe("the embedding pipeline", () => {
     return { embeddings, documents, calls, pipeline };
   };
 
-  it("queues a document on its first insert only", async () => {
-    const { embeddings, documents } = setup();
-    const first = await run(documents.put({ text: "hello" }));
-    await run(documents.put({ text: "hello" }));
-    expect(embeddings.queued()).toEqual([first.hash]);
-  });
+  it.effect("queues a document on its first insert only", () =>
+    Effect.gen(function* () {
+      const { embeddings, documents } = setup();
+      const first = yield* documents.put({ text: "hello" });
+      yield* documents.put({ text: "hello" });
+      expect(embeddings.queued()).toEqual([first.hash]);
+    }),
+  );
 
-  it("embeds one batch in one embedder call, and writes and dequeues it", async () => {
-    const { embeddings, documents, calls, pipeline } = setup(2);
-    const [a, b] = await run(
-      Effect.forEach(["one", "three", "fifteen"], (text) => documents.put({ text }), {
-        concurrency: 1,
-      }),
-    );
-    const batch = await run(embedPending(pipeline));
-    expect(batch).toEqual({ embedded: 2, discarded: 0 });
-    expect(calls).toEqual([["one", "three"]]);
-    expect(HashMap.get(embeddings.vectors(), a?.hash ?? "")).toEqual(Option.some([3]));
-    expect(HashMap.has(embeddings.vectors(), b?.hash ?? "")).toBe(true);
-    expect(embeddings.queued()).toHaveLength(1);
-  });
+  it.effect("embeds one batch in one embedder call, and writes and dequeues it", () =>
+    Effect.gen(function* () {
+      const { embeddings, documents, calls, pipeline } = setup(2);
+      const [a, b] = yield* Effect.forEach(
+        ["one", "three", "fifteen"],
+        (text) => documents.put({ text }),
+        {
+          concurrency: 1,
+        },
+      );
+      const batch = yield* embedPending(pipeline);
+      expect(batch).toEqual({ embedded: 2, discarded: 0 });
+      expect(calls).toEqual([["one", "three"]]);
+      expect(HashMap.get(embeddings.vectors(), a?.hash ?? "")).toEqual(Option.some([3]));
+      expect(HashMap.has(embeddings.vectors(), b?.hash ?? "")).toBe(true);
+      expect(embeddings.queued()).toHaveLength(1);
+    }),
+  );
 
-  it("discards a pending document with no text rather than retrying it forever", async () => {
-    const { embeddings, documents, calls, pipeline } = setup();
-    await run(documents.put({ text: "" }));
-    expect(await run(embedPending(pipeline))).toEqual({ embedded: 0, discarded: 1 });
-    expect(calls).toEqual([]);
-    expect(embeddings.queued()).toEqual([]);
-  });
+  it.effect("discards a pending document with no text rather than retrying it forever", () =>
+    Effect.gen(function* () {
+      const { embeddings, documents, calls, pipeline } = setup();
+      yield* documents.put({ text: "" });
+      expect(yield* embedPending(pipeline)).toEqual({ embedded: 0, discarded: 1 });
+      expect(calls).toEqual([]);
+      expect(embeddings.queued()).toEqual([]);
+    }),
+  );
 
-  it("fails EmbeddingMismatch and writes nothing when the embedder answers short", async () => {
-    const { embeddings, documents, pipeline } = setup();
-    await run(documents.put({ text: "one" }));
-    const exit = await Effect.runPromiseExit(
-      embedPending({ ...pipeline, embedder: { embed: () => Effect.succeed([]) } }),
-    );
-    expect(Exit.isFailure(exit) && Option.getOrUndefined(Exit.findErrorOption(exit))).toMatchObject(
-      { _tag: "EmbeddingMismatch", expected: 1, received: 0 },
-    );
-    expect(HashMap.size(embeddings.vectors())).toBe(0);
-  });
+  it.effect("fails EmbeddingMismatch and writes nothing when the embedder answers short", () =>
+    Effect.gen(function* () {
+      const { embeddings, documents, pipeline } = setup();
+      yield* documents.put({ text: "one" });
+      const exit = yield* Effect.exit(
+        embedPending({ ...pipeline, embedder: { embed: () => Effect.succeed([]) } }),
+      );
+      expect(
+        Exit.isFailure(exit) && Option.getOrUndefined(Exit.findErrorOption(exit)),
+      ).toMatchObject({ _tag: "EmbeddingMismatch", expected: 1, received: 0 });
+      expect(HashMap.size(embeddings.vectors())).toBe(0);
+    }),
+  );
 
-  it("sweeps batch by batch until the queue drains, or stops at maxBatches", async () => {
-    const { embeddings, documents, calls, pipeline } = setup(2);
-    await run(
-      Effect.forEach(["a", "bb", "ccc", "dddd", "eeeee"], (text) => documents.put({ text }), {
-        concurrency: 1,
-      }),
-    );
-    expect(await run(sweepEmbeddings(pipeline, 2))).toEqual({ embedded: 4, discarded: 0 });
-    expect(embeddings.queued()).toHaveLength(1);
-    expect(await run(sweepEmbeddings(pipeline, 10))).toEqual({ embedded: 1, discarded: 0 });
-    expect(calls).toHaveLength(3);
-    expect(await run(sweepEmbeddings(pipeline, 10))).toEqual({ embedded: 0, discarded: 0 });
-  });
+  it.effect("sweeps batch by batch until the queue drains, or stops at maxBatches", () =>
+    Effect.gen(function* () {
+      const { embeddings, documents, calls, pipeline } = setup(2);
+      yield* Effect.forEach(
+        ["a", "bb", "ccc", "dddd", "eeeee"],
+        (text) => documents.put({ text }),
+        {
+          concurrency: 1,
+        },
+      );
+      expect(yield* sweepEmbeddings(pipeline, 2)).toEqual({ embedded: 4, discarded: 0 });
+      expect(embeddings.queued()).toHaveLength(1);
+      expect(yield* sweepEmbeddings(pipeline, 10)).toEqual({ embedded: 1, discarded: 0 });
+      expect(calls).toHaveLength(3);
+      expect(yield* sweepEmbeddings(pipeline, 10)).toEqual({ embedded: 0, discarded: 0 });
+    }),
+  );
 });

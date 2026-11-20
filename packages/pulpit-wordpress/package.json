@@ -69,6 +69,7 @@
   "devDependencies": {
     "@effect/docgen": "catalog:",
     "@effect/language-service": "catalog:",
+    "@effect/vitest": "catalog:",
     "@thomasfosterau/pulpit": "workspace:*",
     "@types/node": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",

@@ -7,7 +7,8 @@
  * @module tests/version-chain
  */
 
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -38,8 +39,8 @@ const ID = "00000000-0000-4000-8000-00000000abcd";
 const setup = () => {
   const store = makeInMemoryVersionChain("posts");
   const chain = defineVersionChain("posts", store);
-  const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
-  const exit = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromiseExit(effect);
+  const run = <A, E>(effect: Effect.Effect<A, E>) => effect;
+  const exit = <A, E>(effect: Effect.Effect<A, E>) => Effect.exit(effect);
   return { store, chain, run, exit };
 };
 
@@ -151,124 +152,148 @@ describe("diffStates — the field-level change set", () => {
 });
 
 describe("compare — two getVersion reads and diffStates", () => {
-  const created = async () => {
-    const context = setup();
-    await context.run(
-      context.chain.create({ id: Option.some(ID), state: initial, actorId: ACTOR }),
-    );
-    return context;
-  };
+  const created = () =>
+    Effect.gen(function* () {
+      const context = setup();
+      yield* context.run(
+        context.chain.create({ id: Option.some(ID), state: initial, actorId: ACTOR }),
+      );
+      return context;
+    });
 
-  it.each([0n, 1n])("the same version on both sides (%s) is the empty set", async (version) => {
-    const { chain, run } = await created();
-    await run(chain.update({ id: ID, patch: { title: "Second" }, actorId: ACTOR }));
-    const same = await run(chain.compare(ID, version, version));
-    expect(same.changes).toStrictEqual({});
-    expect([same.from.version, same.to.version]).toStrictEqual([version, version]);
-  });
+  it.effect.each([0n, 1n])("the same version on both sides (%s) is the empty set", (version) =>
+    Effect.gen(function* () {
+      const { chain, run } = yield* created();
+      yield* run(chain.update({ id: ID, patch: { title: "Second" }, actorId: ACTOR }));
+      const same = yield* run(chain.compare(ID, version, version));
+      expect(same.changes).toStrictEqual({});
+      expect([same.from.version, same.to.version]).toStrictEqual([version, version]);
+    }),
+  );
 
-  it("reports what the tri-state patch did: a set and a clear change, a carry-forward does not", async () => {
-    const { store, chain, run } = await created();
-    await run(
-      chain.update({
-        id: ID,
-        patch: { title: "Second", summary: null, body: undefined },
-        actorId: ACTOR,
+  it.effect(
+    "reports what the tri-state patch did: a set and a clear change, a carry-forward does not",
+    () =>
+      Effect.gen(function* () {
+        const { store, chain, run } = yield* created();
+        yield* run(
+          chain.update({
+            id: ID,
+            patch: { title: "Second", summary: null, body: undefined },
+            actorId: ACTOR,
+          }),
+        );
+        const comparison = yield* run(chain.compare(ID, 0n, 1n));
+        expect(comparison.changes).toStrictEqual({
+          title: { _tag: "changed", before: "First", after: "Second" },
+          summary: { _tag: "changed", before: "s", after: null },
+        });
+        expect(comparison.from).toMatchObject({ version: 0n, action: "create", state: initial });
+        expect(comparison.to).toMatchObject({ version: 1n, action: "update" });
+        // Read-only.
+        expect(store.rows()).toHaveLength(2);
       }),
-    );
-    const comparison = await run(chain.compare(ID, 0n, 1n));
-    expect(comparison.changes).toStrictEqual({
-      title: { _tag: "changed", before: "First", after: "Second" },
-      summary: { _tag: "changed", before: "s", after: null },
-    });
-    expect(comparison.from).toMatchObject({ version: 0n, action: "create", state: initial });
-    expect(comparison.to).toMatchObject({ version: 1n, action: "update" });
-    // Read-only.
-    expect(store.rows()).toHaveLength(2);
-  });
+  );
 
-  it("reports a column a version gained as added, and one a restore dropped as removed", async () => {
-    const { chain, run } = await created();
-    await run(chain.update({ id: ID, patch: { subtitle: null }, actorId: ACTOR }));
-    await run(chain.restoreVersion(ID, 0n, ACTOR));
-    expect((await run(chain.compare(ID, 0n, 1n))).changes).toStrictEqual({
-      subtitle: { _tag: "added", after: null },
-    });
-    expect((await run(chain.compare(ID, 1n, 2n))).changes).toStrictEqual({
-      subtitle: { _tag: "removed", before: null },
-    });
-  });
+  it.effect(
+    "reports a column a version gained as added, and one a restore dropped as removed",
+    () =>
+      Effect.gen(function* () {
+        const { chain, run } = yield* created();
+        yield* run(chain.update({ id: ID, patch: { subtitle: null }, actorId: ACTOR }));
+        yield* run(chain.restoreVersion(ID, 0n, ACTOR));
+        expect((yield* run(chain.compare(ID, 0n, 1n))).changes).toStrictEqual({
+          subtitle: { _tag: "added", after: null },
+        });
+        expect((yield* run(chain.compare(ID, 1n, 2n))).changes).toStrictEqual({
+          subtitle: { _tag: "removed", before: null },
+        });
+      }),
+  );
 
-  it("a tombstone on the to side is its action, not an attribute: the state it carried forward is unchanged", async () => {
-    const { chain, run } = await created();
-    await run(chain.delete(ID, ACTOR));
-    const comparison = await run(chain.compare(ID, 0n, 1n));
-    expect(comparison.changes).toStrictEqual({});
-    expect([comparison.from.action, comparison.to.action]).toStrictEqual(["create", "delete"]);
-  });
+  it.effect(
+    "a tombstone on the to side is its action, not an attribute: the state it carried forward is unchanged",
+    () =>
+      Effect.gen(function* () {
+        const { chain, run } = yield* created();
+        yield* run(chain.delete(ID, ACTOR));
+        const comparison = yield* run(chain.compare(ID, 0n, 1n));
+        expect(comparison.changes).toStrictEqual({});
+        expect([comparison.from.action, comparison.to.action]).toStrictEqual(["create", "delete"]);
+      }),
+  );
 
-  it("a tombstone on the from side: a restore over it reports only what the content did", async () => {
-    const { chain, run } = await created();
-    await run(chain.delete(ID, ACTOR));
-    await run(chain.restore({ id: ID, patch: { title: "Back" }, actorId: ACTOR }));
-    const comparison = await run(chain.compare(ID, 1n, 2n));
-    expect(comparison.changes).toStrictEqual({
-      title: { _tag: "changed", before: "First", after: "Back" },
-    });
-    expect([comparison.from.action, comparison.to.action]).toStrictEqual(["delete", "update"]);
-    // Across the tombstone, from the live version before it, the same change.
-    expect((await run(chain.compare(ID, 0n, 2n))).changes).toStrictEqual(comparison.changes);
-  });
+  it.effect(
+    "a tombstone on the from side: a restore over it reports only what the content did",
+    () =>
+      Effect.gen(function* () {
+        const { chain, run } = yield* created();
+        yield* run(chain.delete(ID, ACTOR));
+        yield* run(chain.restore({ id: ID, patch: { title: "Back" }, actorId: ACTOR }));
+        const comparison = yield* run(chain.compare(ID, 1n, 2n));
+        expect(comparison.changes).toStrictEqual({
+          title: { _tag: "changed", before: "First", after: "Back" },
+        });
+        expect([comparison.from.action, comparison.to.action]).toStrictEqual(["delete", "update"]);
+        // Across the tombstone, from the live version before it, the same change.
+        expect((yield* run(chain.compare(ID, 0n, 2n))).changes).toStrictEqual(comparison.changes);
+      }),
+  );
 
-  it.each([
+  it.effect.each([
     ["from", 8n, 1n, 8n, [8n]],
     ["to", 0n, 9n, 9n, [0n, 9n]],
     ["from and to", 8n, 9n, 8n, [8n]],
   ] as const)(
     "fails VersionNotFound for a missing %s version, naming it (from first)",
-    async (_side, from, to, missing, read) => {
-      const { store, run, exit } = await created();
-      // Every snapshot read, logged before it yields: a compare that read both
-      // versions concurrently would log `to` even when `from` is missing.
-      const reads: Array<readonly [string, bigint]> = [];
-      const chain = defineVersionChain("posts", {
-        ...store,
-        getVersion: (id, version) =>
-          Effect.gen(function* () {
-            reads.push([id, version]);
-            yield* Effect.yieldNow;
-            return yield* store.getVersion(id, version);
-          }),
-      });
-      await run(chain.update({ id: ID, patch: { title: "Second" }, actorId: ACTOR }));
-      reads.length = 0;
-      const error = Option.getOrUndefined(
-        Exit.findErrorOption(await exit(chain.compare(ID, from, to))),
-      );
-      expect(error).toBeInstanceOf(VersionNotFound);
-      expect(error).toMatchObject({ type: "posts", id: ID, version: missing });
-      expect(reads).toStrictEqual(read.map((version) => [ID, version]));
-      expect(store.rows()).toHaveLength(2);
-    },
+    ([_side, from, to, missing, read]) =>
+      Effect.gen(function* () {
+        const { store, run, exit } = yield* created();
+        // Every snapshot read, logged before it yields: a compare that read both
+        // versions concurrently would log `to` even when `from` is missing.
+        const reads: Array<readonly [string, bigint]> = [];
+        const chain = defineVersionChain("posts", {
+          ...store,
+          getVersion: (id, version) =>
+            Effect.gen(function* () {
+              reads.push([id, version]);
+              yield* Effect.yieldNow;
+              return yield* store.getVersion(id, version);
+            }),
+        });
+        yield* run(chain.update({ id: ID, patch: { title: "Second" }, actorId: ACTOR }));
+        reads.length = 0;
+        const error = Option.getOrUndefined(
+          Exit.findErrorOption(yield* exit(chain.compare(ID, from, to))),
+        );
+        expect(error).toBeInstanceOf(VersionNotFound);
+        expect(error).toMatchObject({ type: "posts", id: ID, version: missing });
+        expect(reads).toStrictEqual(read.map((version) => [ID, version]));
+        expect(store.rows()).toHaveLength(2);
+      }),
   );
 
-  it("fails VersionNotFound for an unknown node, and for a version a partial chain cannot rebuild", async () => {
-    const { store, chain, run, exit } = await created();
-    await run(chain.update({ id: ID, patch: { title: "Second" }, actorId: ACTOR }));
-    expect(tagOf(await exit(chain.compare("unknown", 0n, 0n)))).toStrictEqual(
-      Option.some("VersionNotFound"),
-    );
-    store.dropState(ID, 1n);
-    const partial = Option.getOrUndefined(
-      Exit.findErrorOption(await exit(chain.compare(ID, 0n, 1n))),
-    );
-    expect(partial).toMatchObject({ _tag: "VersionNotFound", version: 1n });
-    const partialFrom = Option.getOrUndefined(
-      Exit.findErrorOption(await exit(chain.compare(ID, 1n, 0n))),
-    );
-    expect(partialFrom).toMatchObject({ _tag: "VersionNotFound", version: 1n });
-    expect(store.rows()).toHaveLength(2);
-  });
+  it.effect(
+    "fails VersionNotFound for an unknown node, and for a version a partial chain cannot rebuild",
+    () =>
+      Effect.gen(function* () {
+        const { store, chain, run, exit } = yield* created();
+        yield* run(chain.update({ id: ID, patch: { title: "Second" }, actorId: ACTOR }));
+        expect(tagOf(yield* exit(chain.compare("unknown", 0n, 0n)))).toStrictEqual(
+          Option.some("VersionNotFound"),
+        );
+        store.dropState(ID, 1n);
+        const partial = Option.getOrUndefined(
+          Exit.findErrorOption(yield* exit(chain.compare(ID, 0n, 1n))),
+        );
+        expect(partial).toMatchObject({ _tag: "VersionNotFound", version: 1n });
+        const partialFrom = Option.getOrUndefined(
+          Exit.findErrorOption(yield* exit(chain.compare(ID, 1n, 0n))),
+        );
+        expect(partialFrom).toMatchObject({ _tag: "VersionNotFound", version: 1n });
+        expect(store.rows()).toHaveLength(2);
+      }),
+  );
 });
 
 describe("beforeAppend — the kernel's hook layer over the port", () => {
@@ -288,237 +313,258 @@ describe("beforeAppend — the kernel's hook layer over the port", () => {
     return { store, chain, events };
   };
 
-  it("shows each write its action, prior head and patch, and stores the hook's patch", async () => {
-    const { store, chain, events } = hookedChain((event) =>
-      Effect.succeed(
-        event.action === "delete" ? event.patch : { ...event.patch, stamped: event.action },
-      ),
-    );
-    const { id } = await Effect.runPromise(
-      chain.create({ id: Option.some(ID), state: { title: "a" }, actorId: ACTOR }),
-    );
-    await Effect.runPromise(chain.update({ id, patch: { title: "b" }, actorId: ACTOR }));
-    await Effect.runPromise(chain.delete(id, ACTOR));
-    await Effect.runPromise(chain.restore({ id, patch: {}, actorId: ACTOR }));
-    await Effect.runPromise(chain.restoreVersion(id, 0n, ACTOR));
-    expect(
-      events.map((event) => [
-        event.action,
-        Option.map(event.prior, (prior) => prior.version),
-        event.patch,
-      ]),
-    ).toEqual([
-      ["create", Option.none(), { title: "a" }],
-      ["update", Option.some(0n), { title: "b" }],
-      ["delete", Option.some(1n), {}],
-      ["restore", Option.some(2n), {}],
-      ["restoreVersion", Option.some(3n), { title: "a", stamped: "create" }],
-    ]);
-    expect(store.rows().map((row) => [row.action, row.state])).toEqual([
-      ["create", { title: "a", stamped: "create" }],
-      ["update", { title: "b", stamped: "update" }],
-      ["delete", { title: "b", stamped: "update" }],
-      ["update", { title: "b", stamped: "restore" }],
-      ["update", { title: "a", stamped: "restoreVersion" }],
-    ]);
-  });
-
-  it("a hooked create that names no id mints a UUID before the hook, which is shown it", async () => {
-    const { store, chain, events } = hookedChain((event) => Effect.succeed(event.patch));
-    const { id } = await Effect.runPromise(
-      chain.create({ id: Option.none(), state: { title: "a" }, actorId: ACTOR }),
-    );
-    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-    expect(events.map((event) => event.id)).toEqual([id]);
-    expect(store.rows().map((row) => row.id)).toEqual([id]);
-  });
-
-  it("an unchanged restoreVersion is the port's own restoreVersion", async () => {
-    const calls: Array<string> = [];
-    const { store, chain } = hookedChain(
-      (event) => Effect.succeed(event.patch),
-      (port) => ({
-        ...port,
-        restoreVersion: (id, version, actorId, precondition) =>
-          Effect.suspend(() => {
-            calls.push("restoreVersion");
-            return port.restoreVersion(id, version, actorId, precondition);
-          }),
-        restore: (input) =>
-          Effect.suspend(() => {
-            calls.push("restore");
-            return port.restore(input);
-          }),
-      }),
-    );
-    await Effect.runPromise(
-      chain.create({ id: Option.some(ID), state: { title: "a" }, actorId: ACTOR }),
-    );
-    await Effect.runPromise(chain.update({ id: ID, patch: { title: "b" }, actorId: ACTOR }));
-    await Effect.runPromise(chain.restoreVersion(ID, 0n, ACTOR));
-    expect(calls).toEqual(["restoreVersion"]);
-    expect(store.rows().at(-1)?.state).toEqual({ title: "a" });
-  });
-
-  it("an unchanged restoreVersion of a localised version is the port's own, locale level and all", async () => {
-    const calls: Array<string> = [];
-    const store = makeInMemoryVersionChain("posts");
-    const chain = defineVersionChain(
-      "posts",
-      {
-        ...store,
-        restoreVersion: (id, version, actorId, precondition) =>
-          Effect.suspend(() => {
-            calls.push("restoreVersion");
-            return store.restoreVersion(id, version, actorId, precondition);
-          }),
-      },
-      {
-        beforeAppend: (event) => Effect.succeed(event.patch),
-        beforeAppendLocales: (event) => Effect.succeed(event.locales ?? {}),
-      },
-    );
-    await Effect.runPromise(
-      chain.create({
-        id: Option.some(ID),
-        state: { title: "a" },
-        locales: { en: { name: "A" } },
-        actorId: ACTOR,
-      }),
-    );
-    await Effect.runPromise(
-      chain.update({
-        id: ID,
-        patch: { title: "b" },
-        locales: { en: { name: "B" } },
-        actorId: ACTOR,
-      }),
-    );
-    await Effect.runPromise(chain.restoreVersion(ID, 0n, ACTOR));
-    expect(calls).toEqual(["restoreVersion"]);
-    expect(store.rows().at(-1)?.locales).toEqual({ en: { name: "A" } });
-  });
-
-  it("a restoreVersion the hook changes is appended through restore, with the restored locale level", async () => {
-    const locales = (event: ChainAppendEvent) => Effect.succeed(event.locales ?? {});
-    const store = makeInMemoryVersionChain("posts");
-    const chain = defineVersionChain("posts", store, {
-      beforeAppend: (event) =>
+  it.effect("shows each write its action, prior head and patch, and stores the hook's patch", () =>
+    Effect.gen(function* () {
+      const { store, chain, events } = hookedChain((event) =>
         Effect.succeed(
-          event.action === "restoreVersion" ? { ...event.patch, restored: true } : event.patch,
+          event.action === "delete" ? event.patch : { ...event.patch, stamped: event.action },
         ),
-      beforeAppendLocales: locales,
-    });
-    await Effect.runPromise(
-      chain.create({
+      );
+      const { id } = yield* chain.create({
         id: Option.some(ID),
         state: { title: "a" },
-        locales: { en: { name: "A" } },
         actorId: ACTOR,
-      }),
-    );
-    await Effect.runPromise(
-      chain.update({
-        id: ID,
-        patch: { title: "b" },
-        locales: { fr: { name: "B" } },
-        actorId: ACTOR,
-      }),
-    );
-    await Effect.runPromise(chain.restoreVersion(ID, 0n, ACTOR));
-    const restored = store.rows().at(-1);
-    expect(restored?.state).toEqual({ title: "a", restored: true });
-    expect(restored?.locales).toEqual({ en: { name: "A" } });
-  });
+      });
+      yield* chain.update({ id, patch: { title: "b" }, actorId: ACTOR });
+      yield* chain.delete(id, ACTOR);
+      yield* chain.restore({ id, patch: {}, actorId: ACTOR });
+      yield* chain.restoreVersion(id, 0n, ACTOR);
+      expect(
+        events.map((event) => [
+          event.action,
+          Option.map(event.prior, (prior) => prior.version),
+          event.patch,
+        ]),
+      ).toEqual([
+        ["create", Option.none(), { title: "a" }],
+        ["update", Option.some(0n), { title: "b" }],
+        ["delete", Option.some(1n), {}],
+        ["restore", Option.some(2n), {}],
+        ["restoreVersion", Option.some(3n), { title: "a", stamped: "create" }],
+      ]);
+      expect(store.rows().map((row) => [row.action, row.state])).toEqual([
+        ["create", { title: "a", stamped: "create" }],
+        ["update", { title: "b", stamped: "update" }],
+        ["delete", { title: "b", stamped: "update" }],
+        ["update", { title: "b", stamped: "restore" }],
+        ["update", { title: "a", stamped: "restoreVersion" }],
+      ]);
+    }),
+  );
 
-  it("a hook that changes a delete's patch is a defect, and nothing is written", async () => {
-    const { store, chain } = hookedChain((event) =>
-      Effect.succeed({ ...event.patch, stamped: event.action }),
-    );
-    await Effect.runPromise(chain.create({ id: Option.some(ID), state: {}, actorId: ACTOR }));
-    const result = await Effect.runPromiseExit(chain.delete(ID, ACTOR));
-    expect(Exit.hasDies(result)).toBe(true);
-    expect(store.rows()).toHaveLength(1);
-  });
+  it.effect(
+    "a hooked create that names no id mints a UUID before the hook, which is shown it",
+    () =>
+      Effect.gen(function* () {
+        const { store, chain, events } = hookedChain((event) => Effect.succeed(event.patch));
+        const { id } = yield* chain.create({
+          id: Option.none(),
+          state: { title: "a" },
+          actorId: ACTOR,
+        });
+        expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+        expect(events.map((event) => event.id)).toEqual([id]);
+        expect(store.rows().map((row) => row.id)).toEqual([id]);
+      }),
+  );
 
-  it("the append is pinned to the head the hook saw: a writer in between makes it StaleVersion", async () => {
-    const store = makeInMemoryVersionChain("posts");
-    let interleave = true;
-    const chain = defineVersionChain("posts", store, {
-      beforeAppend: (event) =>
-        Effect.gen(function* () {
-          if (interleave && event.action === "update") {
-            interleave = false;
-            yield* store.update({ id: event.id, patch: { title: "interloper" }, actorId: ACTOR });
-          }
-          return event.patch;
+  it.effect("an unchanged restoreVersion is the port's own restoreVersion", () =>
+    Effect.gen(function* () {
+      const calls: Array<string> = [];
+      const { store, chain } = hookedChain(
+        (event) => Effect.succeed(event.patch),
+        (port) => ({
+          ...port,
+          restoreVersion: (id, version, actorId, precondition) =>
+            Effect.suspend(() => {
+              calls.push("restoreVersion");
+              return port.restoreVersion(id, version, actorId, precondition);
+            }),
+          restore: (input) =>
+            Effect.suspend(() => {
+              calls.push("restore");
+              return port.restore(input);
+            }),
         }),
-    });
-    await Effect.runPromise(
-      chain.create({ id: Option.some(ID), state: { title: "a" }, actorId: ACTOR }),
-    );
-    const result = await Effect.runPromiseExit(
-      chain.update({ id: ID, patch: { title: "mine" }, actorId: ACTOR }),
-    );
-    expect(
-      Exit.isFailure(result) &&
-        Option.exists(Exit.findErrorOption(result), Schema.is(StaleVersion)),
-    ).toBe(true);
-    expect(store.rows().map((row) => row.state["title"])).toEqual(["a", "interloper"]);
-  });
+      );
+      yield* chain.create({ id: Option.some(ID), state: { title: "a" }, actorId: ACTOR });
+      yield* chain.update({ id: ID, patch: { title: "b" }, actorId: ACTOR });
+      yield* chain.restoreVersion(ID, 0n, ACTOR);
+      expect(calls).toEqual(["restoreVersion"]);
+      expect(store.rows().at(-1)?.state).toEqual({ title: "a" });
+    }),
+  );
 
-  it("a refusing hook appends nothing, and the caller's expected version is still checked", async () => {
-    const { store, chain } = hookedChain((event) =>
-      event.action === "update" ? Effect.fail("refused") : Effect.succeed(event.patch),
-    );
-    await Effect.runPromise(chain.create({ id: Option.some(ID), state: {}, actorId: ACTOR }));
-    const refused = await Effect.runPromiseExit(
-      chain.update({ id: ID, patch: {}, actorId: ACTOR }),
-    );
-    expect(Exit.isFailure(refused) && Exit.findErrorOption(refused)).toEqual(
-      Option.some("refused"),
-    );
-    const stale = await Effect.runPromiseExit(chain.delete(ID, ACTOR, { expectedVersion: 5n }));
-    expect(
-      Exit.isFailure(stale) && Option.exists(Exit.findErrorOption(stale), Schema.is(StaleVersion)),
-    ).toBe(true);
-    expect(store.rows()).toHaveLength(1);
-  });
+  it.effect(
+    "an unchanged restoreVersion of a localised version is the port's own, locale level and all",
+    () =>
+      Effect.gen(function* () {
+        const calls: Array<string> = [];
+        const store = makeInMemoryVersionChain("posts");
+        const chain = defineVersionChain(
+          "posts",
+          {
+            ...store,
+            restoreVersion: (id, version, actorId, precondition) =>
+              Effect.suspend(() => {
+                calls.push("restoreVersion");
+                return store.restoreVersion(id, version, actorId, precondition);
+              }),
+          },
+          {
+            beforeAppend: (event) => Effect.succeed(event.patch),
+            beforeAppendLocales: (event) => Effect.succeed(event.locales ?? {}),
+          },
+        );
+        yield* chain.create({
+          id: Option.some(ID),
+          state: { title: "a" },
+          locales: { en: { name: "A" } },
+          actorId: ACTOR,
+        });
+        yield* chain.update({
+          id: ID,
+          patch: { title: "b" },
+          locales: { en: { name: "B" } },
+          actorId: ACTOR,
+        });
+        yield* chain.restoreVersion(ID, 0n, ACTOR);
+        expect(calls).toEqual(["restoreVersion"]);
+        expect(store.rows().at(-1)?.locales).toEqual({ en: { name: "A" } });
+      }),
+  );
 
-  it("an update over a missing or tombstoned node is NodeNotFound before any hook runs", async () => {
-    const { store, chain, events } = hookedChain((event) => Effect.succeed(event.patch));
-    const missing = await Effect.runPromiseExit(
-      chain.update({ id: ID, patch: {}, actorId: ACTOR }),
-    );
-    expect(
-      Exit.isFailure(missing) &&
-        Option.map(Exit.findErrorOption(missing), (error) =>
-          P.isString(error) ? error : error._tag,
-        ),
-    ).toEqual(Option.some("NodeNotFound"));
-    await Effect.runPromise(chain.create({ id: Option.some(ID), state: {}, actorId: ACTOR }));
-    await Effect.runPromise(store.delete(ID, ACTOR));
-    events.length = 0;
-    const tombstoned = await Effect.runPromiseExit(
-      chain.update({ id: ID, patch: {}, actorId: ACTOR }),
-    );
-    expect(Exit.isFailure(tombstoned)).toBe(true);
-    expect(events).toEqual([]);
-    const alreadyDeleted = await Effect.runPromise(chain.delete(ID, ACTOR));
-    expect(alreadyDeleted.alreadyDeleted).toBe(true);
-    expect(events).toEqual([]);
-  });
+  it.effect(
+    "a restoreVersion the hook changes is appended through restore, with the restored locale level",
+    () =>
+      Effect.gen(function* () {
+        const locales = (event: ChainAppendEvent) => Effect.succeed(event.locales ?? {});
+        const store = makeInMemoryVersionChain("posts");
+        const chain = defineVersionChain("posts", store, {
+          beforeAppend: (event) =>
+            Effect.succeed(
+              event.action === "restoreVersion" ? { ...event.patch, restored: true } : event.patch,
+            ),
+          beforeAppendLocales: locales,
+        });
+        yield* chain.create({
+          id: Option.some(ID),
+          state: { title: "a" },
+          locales: { en: { name: "A" } },
+          actorId: ACTOR,
+        });
+        yield* chain.update({
+          id: ID,
+          patch: { title: "b" },
+          locales: { fr: { name: "B" } },
+          actorId: ACTOR,
+        });
+        yield* chain.restoreVersion(ID, 0n, ACTOR);
+        const restored = store.rows().at(-1);
+        expect(restored?.state).toEqual({ title: "a", restored: true });
+        expect(restored?.locales).toEqual({ en: { name: "A" } });
+      }),
+  );
 
-  it("a head with no reconstructable state is a defect for a hooked write", async () => {
-    const { store, chain } = hookedChain((event) => Effect.succeed(event.patch));
-    await Effect.runPromise(chain.create({ id: Option.some(ID), state: {}, actorId: ACTOR }));
-    store.dropState(ID, 0n);
-    expect(
-      Exit.hasDies(
-        await Effect.runPromiseExit(chain.update({ id: ID, patch: {}, actorId: ACTOR })),
-      ),
-    ).toBe(true);
-  });
+  it.effect("a hook that changes a delete's patch is a defect, and nothing is written", () =>
+    Effect.gen(function* () {
+      const { store, chain } = hookedChain((event) =>
+        Effect.succeed({ ...event.patch, stamped: event.action }),
+      );
+      yield* chain.create({ id: Option.some(ID), state: {}, actorId: ACTOR });
+      const result = yield* Effect.exit(chain.delete(ID, ACTOR));
+      expect(Exit.hasDies(result)).toBe(true);
+      expect(store.rows()).toHaveLength(1);
+    }),
+  );
+
+  it.effect(
+    "the append is pinned to the head the hook saw: a writer in between makes it StaleVersion",
+    () =>
+      Effect.gen(function* () {
+        const store = makeInMemoryVersionChain("posts");
+        let interleave = true;
+        const chain = defineVersionChain("posts", store, {
+          beforeAppend: (event) =>
+            Effect.gen(function* () {
+              if (interleave && event.action === "update") {
+                interleave = false;
+                yield* store.update({
+                  id: event.id,
+                  patch: { title: "interloper" },
+                  actorId: ACTOR,
+                });
+              }
+              return event.patch;
+            }),
+        });
+        yield* chain.create({ id: Option.some(ID), state: { title: "a" }, actorId: ACTOR });
+        const result = yield* Effect.exit(
+          chain.update({ id: ID, patch: { title: "mine" }, actorId: ACTOR }),
+        );
+        expect(
+          Exit.isFailure(result) &&
+            Option.exists(Exit.findErrorOption(result), Schema.is(StaleVersion)),
+        ).toBe(true);
+        expect(store.rows().map((row) => row.state["title"])).toEqual(["a", "interloper"]);
+      }),
+  );
+
+  it.effect(
+    "a refusing hook appends nothing, and the caller's expected version is still checked",
+    () =>
+      Effect.gen(function* () {
+        const { store, chain } = hookedChain((event) =>
+          event.action === "update" ? Effect.fail("refused") : Effect.succeed(event.patch),
+        );
+        yield* chain.create({ id: Option.some(ID), state: {}, actorId: ACTOR });
+        const refused = yield* Effect.exit(chain.update({ id: ID, patch: {}, actorId: ACTOR }));
+        expect(Exit.isFailure(refused) && Exit.findErrorOption(refused)).toEqual(
+          Option.some("refused"),
+        );
+        const stale = yield* Effect.exit(chain.delete(ID, ACTOR, { expectedVersion: 5n }));
+        expect(
+          Exit.isFailure(stale) &&
+            Option.exists(Exit.findErrorOption(stale), Schema.is(StaleVersion)),
+        ).toBe(true);
+        expect(store.rows()).toHaveLength(1);
+      }),
+  );
+
+  it.effect(
+    "an update over a missing or tombstoned node is NodeNotFound before any hook runs",
+    () =>
+      Effect.gen(function* () {
+        const { store, chain, events } = hookedChain((event) => Effect.succeed(event.patch));
+        const missing = yield* Effect.exit(chain.update({ id: ID, patch: {}, actorId: ACTOR }));
+        expect(
+          Exit.isFailure(missing) &&
+            Option.map(Exit.findErrorOption(missing), (error) =>
+              P.isString(error) ? error : error._tag,
+            ),
+        ).toEqual(Option.some("NodeNotFound"));
+        yield* chain.create({ id: Option.some(ID), state: {}, actorId: ACTOR });
+        yield* store.delete(ID, ACTOR);
+        events.length = 0;
+        const tombstoned = yield* Effect.exit(chain.update({ id: ID, patch: {}, actorId: ACTOR }));
+        expect(Exit.isFailure(tombstoned)).toBe(true);
+        expect(events).toEqual([]);
+        const alreadyDeleted = yield* chain.delete(ID, ACTOR);
+        expect(alreadyDeleted.alreadyDeleted).toBe(true);
+        expect(events).toEqual([]);
+      }),
+  );
+
+  it.effect("a head with no reconstructable state is a defect for a hooked write", () =>
+    Effect.gen(function* () {
+      const { store, chain } = hookedChain((event) => Effect.succeed(event.patch));
+      yield* chain.create({ id: Option.some(ID), state: {}, actorId: ACTOR });
+      store.dropState(ID, 0n);
+      expect(
+        Exit.hasDies(yield* Effect.exit(chain.update({ id: ID, patch: {}, actorId: ACTOR }))),
+      ).toBe(true);
+    }),
+  );
 });
 
 // ── The port's conformance suite, against the in-memory chain ─────────

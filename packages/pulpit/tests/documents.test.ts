@@ -8,7 +8,8 @@
  * @module tests/documents
  */
 
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
@@ -45,8 +46,6 @@ import {
   makeInMemoryLeafStore,
   makeInMemoryVersionChain,
 } from "../src/testing.ts";
-
-const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 
 const ACTOR = Option.some("u-author");
 
@@ -136,20 +135,24 @@ const VECTORS: ReadonlyArray<{
 ];
 
 describe("the hash contract — the in-memory store against Postgres", () => {
-  it.each(VECTORS)("$name", async ({ document, text, hash }) => {
-    expect(canonicalText(document)).toBe(text);
-    expect((await run(makeInMemoryDocumentStore().put(document))).hash).toBe(hash);
-    expect(decodes(DocumentHash, hash)).toBe(true);
-  });
+  it.effect.each(VECTORS)("$name", ({ document, text, hash }) =>
+    Effect.gen(function* () {
+      expect(canonicalText(document)).toBe(text);
+      expect((yield* makeInMemoryDocumentStore().put(document)).hash).toBe(hash);
+      expect(decodes(DocumentHash, hash)).toBe(true);
+    }),
+  );
 
-  it("hashes the structure, not the spelling: member order is irrelevant", async () => {
-    const store = makeInMemoryDocumentStore();
-    const reordered = {
-      content: [{ content: [{ text: "Hello", type: "text" }], type: "paragraph" }],
-      type: "doc",
-    };
-    expect((await run(store.put(reordered))).hash).toBe(HELLO);
-  });
+  it.effect("hashes the structure, not the spelling: member order is irrelevant", () =>
+    Effect.gen(function* () {
+      const store = makeInMemoryDocumentStore();
+      const reordered = {
+        content: [{ content: [{ text: "Hello", type: "text" }], type: "paragraph" }],
+        type: "doc",
+      };
+      expect((yield* store.put(reordered)).hash).toBe(HELLO);
+    }),
+  );
 
   it("DocumentHash is exactly 64 lowercase hex characters", () => {
     expect(decodes(DocumentHash, HELLO.toUpperCase())).toBe(false);
@@ -159,43 +162,49 @@ describe("the hash contract — the in-memory store against Postgres", () => {
 });
 
 describe("put — idempotent, never rewritten (DOC-001)", () => {
-  it("a second put of the same document returns the same hash and writes nothing", async () => {
-    const store = makeInMemoryDocumentStore();
-    const document = paragraph("Hello");
-    const first = await run(store.put(document));
-    const second = await run(store.put(document));
-    expect(first.inserted).toBe(true);
-    expect(second).toEqual({ hash: first.hash, inserted: false });
-    expect(HashMap.size(store.stored())).toBe(1);
-    expect(store.writes()).toBe(1);
-  });
+  it.effect("a second put of the same document returns the same hash and writes nothing", () =>
+    Effect.gen(function* () {
+      const store = makeInMemoryDocumentStore();
+      const document = paragraph("Hello");
+      const first = yield* store.put(document);
+      const second = yield* store.put(document);
+      expect(first.inserted).toBe(true);
+      expect(second).toEqual({ hash: first.hash, inserted: false });
+      expect(HashMap.size(store.stored())).toBe(1);
+      expect(store.writes()).toBe(1);
+    }),
+  );
 
-  it("an equal document never replaces the stored one; a different one is a new write", async () => {
-    const store = makeInMemoryDocumentStore();
-    const original = paragraph("Hello");
-    const hash = (await run(store.put(original))).hash;
-    expect(store.writes()).toBe(1);
-    // A structurally equal copy reaches the same hash and writes nothing.
-    // `stored()` alone can't show that: `HashMap.set` keeps the existing value
-    // when the new one is `Equal`, so only the write count tells them apart.
-    expect((await run(store.put(paragraph("Hello")))).hash).toBe(hash);
-    expect(store.writes()).toBe(1);
-    expect(Option.exists(HashMap.get(store.stored(), hash), (stored) => stored === original)).toBe(
-      true,
-    );
-    await run(store.put(paragraph("Hello, world")));
-    expect(store.writes()).toBe(2);
-  });
+  it.effect("an equal document never replaces the stored one; a different one is a new write", () =>
+    Effect.gen(function* () {
+      const store = makeInMemoryDocumentStore();
+      const original = paragraph("Hello");
+      const hash = (yield* store.put(original)).hash;
+      expect(store.writes()).toBe(1);
+      // A structurally equal copy reaches the same hash and writes nothing.
+      // `stored()` alone can't show that: `HashMap.set` keeps the existing value
+      // when the new one is `Equal`, so only the write count tells them apart.
+      expect((yield* store.put(paragraph("Hello"))).hash).toBe(hash);
+      expect(store.writes()).toBe(1);
+      expect(
+        Option.exists(HashMap.get(store.stored(), hash), (stored) => stored === original),
+      ).toBe(true);
+      yield* store.put(paragraph("Hello, world"));
+      expect(store.writes()).toBe(2);
+    }),
+  );
 
-  it("a changed document is a new hash, and the old one is untouched", async () => {
-    const store = makeInMemoryDocumentStore();
-    const original = paragraph("Hello");
-    const before = (await run(store.put(original))).hash;
-    const after = (await run(store.put(paragraph("Hello, world")))).hash;
-    expect(after).not.toBe(before);
-    expect(HashMap.size(store.stored())).toBe(2);
-    expect(await run(store.get(before))).toEqual(Option.some(original));
-  });
+  it.effect("a changed document is a new hash, and the old one is untouched", () =>
+    Effect.gen(function* () {
+      const store = makeInMemoryDocumentStore();
+      const original = paragraph("Hello");
+      const before = (yield* store.put(original)).hash;
+      const after = (yield* store.put(paragraph("Hello, world"))).hash;
+      expect(after).not.toBe(before);
+      expect(HashMap.size(store.stored())).toBe(2);
+      expect(yield* store.get(before)).toEqual(Option.some(original));
+    }),
+  );
 });
 
 describe("onDocumentInsert — the first-insert event", () => {
@@ -210,44 +219,52 @@ describe("onDocumentInsert — the first-insert event", () => {
     return { seen, inner, store };
   };
 
-  it("runs once per stored document, never for a put that found it stored", async () => {
-    const { seen, store } = recording();
-    const first = await run(store.put(paragraph("Hello")));
-    await run(store.put(paragraph("Hello")));
-    const second = await run(store.put(paragraph("World")));
-    expect(seen).toEqual([
-      { hash: first.hash, document: paragraph("Hello") },
-      { hash: second.hash, document: paragraph("World") },
-    ]);
-  });
+  it.effect("runs once per stored document, never for a put that found it stored", () =>
+    Effect.gen(function* () {
+      const { seen, store } = recording();
+      const first = yield* store.put(paragraph("Hello"));
+      yield* store.put(paragraph("Hello"));
+      const second = yield* store.put(paragraph("World"));
+      expect(seen).toEqual([
+        { hash: first.hash, document: paragraph("Hello") },
+        { hash: second.hash, document: paragraph("World") },
+      ]);
+    }),
+  );
 
-  it("a hook that fails fails the put; get and getMany are the store's own", async () => {
-    const inner = makeInMemoryDocumentStore();
-    const store = onDocumentInsert(inner, () => Effect.fail("queue down" as const));
-    const exit = await Effect.runPromiseExit(store.put(paragraph("Hello")));
-    expect(Exit.isFailure(exit)).toBe(true);
-    expect(store.get).toBe(inner.get);
-    expect(store.getMany).toBe(inner.getMany);
-  });
+  it.effect("a hook that fails fails the put; get and getMany are the store's own", () =>
+    Effect.gen(function* () {
+      const inner = makeInMemoryDocumentStore();
+      const store = onDocumentInsert(inner, () => Effect.fail("queue down" as const));
+      const exit = yield* Effect.exit(store.put(paragraph("Hello")));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(store.get).toBe(inner.get);
+      expect(store.getMany).toBe(inner.getMany);
+    }),
+  );
 });
 
 describe("get / getMany", () => {
-  it("get returns the stored document, or none for an unseen hash", async () => {
-    const store = makeInMemoryDocumentStore();
-    const hash = (await run(store.put(paragraph("Hello")))).hash;
-    expect(await run(store.get(hash))).toEqual(Option.some(paragraph("Hello")));
-    expect(await run(store.get(UNSEEN))).toEqual(Option.none());
-  });
+  it.effect("get returns the stored document, or none for an unseen hash", () =>
+    Effect.gen(function* () {
+      const store = makeInMemoryDocumentStore();
+      const hash = (yield* store.put(paragraph("Hello"))).hash;
+      expect(yield* store.get(hash)).toEqual(Option.some(paragraph("Hello")));
+      expect(yield* store.get(UNSEEN)).toEqual(Option.none());
+    }),
+  );
 
-  it("getMany returns the found documents keyed by hash, omitting an unseen one", async () => {
-    const store = makeInMemoryDocumentStore();
-    const hello = (await run(store.put(paragraph("Hello")))).hash;
-    const world = (await run(store.put(paragraph("World")))).hash;
-    const found = await run(store.getMany([hello, UNSEEN, world, hello]));
-    expect(HashMap.size(found)).toBe(2);
-    expect(HashMap.get(found, hello)).toEqual(Option.some(paragraph("Hello")));
-    expect(HashMap.get(found, world)).toEqual(Option.some(paragraph("World")));
-  });
+  it.effect("getMany returns the found documents keyed by hash, omitting an unseen one", () =>
+    Effect.gen(function* () {
+      const store = makeInMemoryDocumentStore();
+      const hello = (yield* store.put(paragraph("Hello"))).hash;
+      const world = (yield* store.put(paragraph("World"))).hash;
+      const found = yield* store.getMany([hello, UNSEEN, world, hello]);
+      expect(HashMap.size(found)).toBe(2);
+      expect(HashMap.get(found, hello)).toEqual(Option.some(paragraph("Hello")));
+      expect(HashMap.get(found, world)).toEqual(Option.some(paragraph("World")));
+    }),
+  );
 });
 
 describe("documentRef — the version row's document reference", () => {
@@ -279,33 +296,35 @@ describe("version rows that reference documents", () => {
     return { documents, chainStore, chain };
   };
 
-  it("two nodes share one stored document", async () => {
-    const { documents, chainStore, chain } = setup();
-    const body = paragraph("Shared");
-    const createWith = (document: Schema.Json) =>
-      Effect.gen(function* () {
-        const { hash } = yield* documents.put(document);
-        const write = yield* chain.create({
-          id: Option.none(),
-          state: { body: hash },
-          actorId: ACTOR,
+  it.effect("two nodes share one stored document", () =>
+    Effect.gen(function* () {
+      const { documents, chainStore, chain } = setup();
+      const body = paragraph("Shared");
+      const createWith = (document: Schema.Json) =>
+        Effect.gen(function* () {
+          const { hash } = yield* documents.put(document);
+          const write = yield* chain.create({
+            id: Option.none(),
+            state: { body: hash },
+            actorId: ACTOR,
+          });
+          return { hash, id: write.id };
         });
-        return { hash, id: write.id };
-      });
-    const first = await run(createWith(body));
-    const second = await run(createWith(paragraph("Shared")));
-    expect(second.id).not.toBe(first.id);
-    expect(second.hash).toBe(first.hash);
-    expect(HashMap.size(documents.stored())).toBe(1);
-    expect(chainStore.rows().map((row) => row.state["body"])).toEqual([first.hash, first.hash]);
-    expect(await run(documents.get(first.hash))).toEqual(Option.some(body));
-  });
+      const first = yield* createWith(body);
+      const second = yield* createWith(paragraph("Shared"));
+      expect(second.id).not.toBe(first.id);
+      expect(second.hash).toBe(first.hash);
+      expect(HashMap.size(documents.stored())).toBe(1);
+      expect(chainStore.rows().map((row) => row.state["body"])).toEqual([first.hash, first.hash]);
+      expect(yield* documents.get(first.hash)).toEqual(Option.some(body));
+    }),
+  );
 
-  it("restoreVersion restores the old hash, which still reads back the old document", async () => {
-    const { documents, chainStore, chain } = setup();
-    const original = paragraph("First draft");
-    const restored = await run(
-      Effect.gen(function* () {
+  it.effect("restoreVersion restores the old hash, which still reads back the old document", () =>
+    Effect.gen(function* () {
+      const { documents, chainStore, chain } = setup();
+      const original = paragraph("First draft");
+      const restored = yield* Effect.gen(function* () {
         const { hash: before } = yield* documents.put(original);
         const { id } = yield* chain.create({
           id: Option.none(),
@@ -316,18 +335,18 @@ describe("version rows that reference documents", () => {
         yield* chain.update({ id, patch: { body: after }, actorId: ACTOR });
         const write = yield* chain.restoreVersion(id, 0n, ACTOR);
         return { before, after, write };
-      }),
-    );
-    expect(restored.write.version).toBe(2n);
-    expect(chainStore.rows().map((row) => row.state["body"])).toEqual([
-      restored.before,
-      restored.after,
-      restored.before,
-    ]);
-    // Nothing was re-stored or rewritten: both drafts, each at its own hash.
-    expect(HashMap.size(documents.stored())).toBe(2);
-    expect(await run(documents.get(restored.before))).toEqual(Option.some(original));
-  });
+      });
+      expect(restored.write.version).toBe(2n);
+      expect(chainStore.rows().map((row) => row.state["body"])).toEqual([
+        restored.before,
+        restored.after,
+        restored.before,
+      ]);
+      // Nothing was re-stored or rewritten: both drafts, each at its own hash.
+      expect(HashMap.size(documents.stored())).toBe(2);
+      expect(yield* documents.get(restored.before)).toEqual(Option.some(original));
+    }),
+  );
 });
 
 // ── The grammar check ────────────────────────────────────
@@ -384,73 +403,79 @@ describe("the grammar check", () => {
       error instanceof WriteRejected ? error.reason : String(error),
     );
 
-  it("checkedDocumentStore never stores an off-grammar document", async () => {
-    const { store, bodies } = fixture();
-    const exit = await Effect.runPromiseExit(bodies.put({ type: "script" }));
-    expect(Exit.isFailure(exit)).toBe(true);
-    expect(store.writes()).toBe(0);
-    expect((await Effect.runPromise(bodies.put({ type: "paragraph" }))).inserted).toBe(true);
-    expect(store.writes()).toBe(1);
-  });
+  it.effect("checkedDocumentStore never stores an off-grammar document", () =>
+    Effect.gen(function* () {
+      const { store, bodies } = fixture();
+      const exit = yield* Effect.exit(bodies.put({ type: "script" }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(store.writes()).toBe(0);
+      expect((yield* bodies.put({ type: "paragraph" })).inserted).toBe(true);
+      expect(store.writes()).toBe(1);
+    }),
+  );
 
-  it("refuses a create or an update whose document fails its grammar, appending nothing", async () => {
-    const { store, chain, posts } = fixture();
-    const outcome = await Effect.runPromise(
+  it.effect(
+    "refuses a create or an update whose document fails its grammar, appending nothing",
+    () =>
       Effect.gen(function* () {
-        const good = yield* store.put({ type: "paragraph" });
-        const bad = yield* store.put({ type: "script" });
-        const created = yield* reasonOf(
-          posts.create({ id: Option.none(), state: { body: bad.hash, visibility: "public" } }),
-        );
-        const rowsAfterCreate = chain.rows().length;
-        const { id } = yield* posts.create({
-          id: Option.none(),
-          state: { body: good.hash, visibility: "public" },
+        const { store, chain, posts } = fixture();
+        const outcome = yield* Effect.gen(function* () {
+          const good = yield* store.put({ type: "paragraph" });
+          const bad = yield* store.put({ type: "script" });
+          const created = yield* reasonOf(
+            posts.create({ id: Option.none(), state: { body: bad.hash, visibility: "public" } }),
+          );
+          const rowsAfterCreate = chain.rows().length;
+          const { id } = yield* posts.create({
+            id: Option.none(),
+            state: { body: good.hash, visibility: "public" },
+          });
+          const updated = yield* reasonOf(posts.update({ id, patch: { body: bad.hash } }));
+          return { created, rowsAfterCreate, updated, rows: chain.rows().length };
         });
-        const updated = yield* reasonOf(posts.update({ id, patch: { body: bad.hash } }));
-        return { created, rowsAfterCreate, updated, rows: chain.rows().length };
+        expect(outcome).toEqual({
+          created: `${DOCUMENT_VIOLATION} body: script is not allowed`,
+          rowsAfterCreate: 0,
+          updated: `${DOCUMENT_VIOLATION} body: script is not allowed`,
+          rows: 1,
+        });
       }),
-    );
-    expect(outcome).toEqual({
-      created: `${DOCUMENT_VIOLATION} body: script is not allowed`,
-      rowsAfterCreate: 0,
-      updated: `${DOCUMENT_VIOLATION} body: script is not allowed`,
-      rows: 1,
-    });
-  });
+  );
 
-  it("refuses a reference to no stored document (fail closed)", async () => {
-    const { posts } = fixture();
-    const reason = await Effect.runPromise(
-      reasonOf(
+  it.effect("refuses a reference to no stored document (fail closed)", () =>
+    Effect.gen(function* () {
+      const { posts } = fixture();
+      const reason = yield* reasonOf(
         posts.create({ id: Option.none(), state: { body: "0".repeat(64), visibility: "public" } }),
-      ),
-    );
-    expect(reason).toBe(`${DOCUMENT_VIOLATION} body: no stored document at this reference`);
-  });
+      );
+      expect(reason).toBe(`${DOCUMENT_VIOLATION} body: no stored document at this reference`);
+    }),
+  );
 
-  it("checks only what the patch sets: an absent field, a cleared one and undeclared columns are not read", async () => {
-    const { store, posts, checks } = fixture();
-    const versions = await Effect.runPromise(
+  it.effect(
+    "checks only what the patch sets: an absent field, a cleared one and undeclared columns are not read",
+    () =>
       Effect.gen(function* () {
-        const good = yield* store.put({ type: "paragraph" });
-        const { id } = yield* posts.create({
-          id: Option.none(),
-          state: { body: good.hash, title: "Hello", visibility: "public" },
+        const { store, posts, checks } = fixture();
+        const versions = yield* Effect.gen(function* () {
+          const good = yield* store.put({ type: "paragraph" });
+          const { id } = yield* posts.create({
+            id: Option.none(),
+            state: { body: good.hash, title: "Hello", visibility: "public" },
+          });
+          yield* posts.update({ id, patch: { title: "Hi" } });
+          yield* posts.update({ id, patch: { body: null } });
+          return id;
         });
-        yield* posts.update({ id, patch: { title: "Hi" } });
-        yield* posts.update({ id, patch: { body: null } });
-        return id;
+        expect(versions).toBeTypeOf("string");
+        expect(checks).toEqual(["body:paragraph"]);
       }),
-    );
-    expect(versions).toBeTypeOf("string");
-    expect(checks).toEqual(["body:paragraph"]);
-  });
+  );
 
-  it("leaves restoreVersion, delete and restore over an unchanged reference unchecked", async () => {
-    const { store, posts, checks } = fixture();
-    await Effect.runPromise(
-      Effect.gen(function* () {
+  it.effect("leaves restoreVersion, delete and restore over an unchanged reference unchecked", () =>
+    Effect.gen(function* () {
+      const { store, posts, checks } = fixture();
+      yield* Effect.gen(function* () {
         const good = yield* store.put({ type: "paragraph" });
         const { id } = yield* posts.create({
           id: Option.none(),
@@ -460,15 +485,15 @@ describe("the grammar check", () => {
         yield* posts.restoreVersion(id, 0n);
         yield* posts.delete(id);
         yield* posts.restore({ id, patch: {} });
-      }),
-    );
-    expect(checks).toEqual(["body:paragraph"]);
-  });
+      });
+      expect(checks).toEqual(["body:paragraph"]);
+    }),
+  );
 
-  it("checks a restore that sets a document", async () => {
-    const { store, posts } = fixture();
-    const reason = await Effect.runPromise(
-      Effect.gen(function* () {
+  it.effect("checks a restore that sets a document", () =>
+    Effect.gen(function* () {
+      const { store, posts } = fixture();
+      const reason = yield* Effect.gen(function* () {
         const good = yield* store.put({ type: "paragraph" });
         const bad = yield* store.put({ type: "script" });
         const { id } = yield* posts.create({
@@ -477,33 +502,31 @@ describe("the grammar check", () => {
         });
         yield* posts.delete(id);
         return yield* reasonOf(posts.restore({ id, patch: { body: bad.hash } }));
-      }),
-    );
-    expect(reason).toBe(`${DOCUMENT_VIOLATION} body: script is not allowed`);
-  });
+      });
+      expect(reason).toBe(`${DOCUMENT_VIOLATION} body: script is not allowed`);
+    }),
+  );
 
-  it("composes with other before hooks, seeing the patch they return", async () => {
-    const { bodies, posts, chain } = await Effect.runPromise(
-      Effect.sync(() => {
+  it.effect("composes with other before hooks, seeing the patch they return", () =>
+    Effect.gen(function* () {
+      const { bodies, posts, chain } = yield* Effect.sync(() => {
         const swap: BeforeWriteHook<never, never> = {
           name: "posts.swap",
           run: (event) => Effect.succeed({ ...event.patch, title: "Normalised" }),
           locales: (event) => Effect.succeed(event.locales ?? {}),
         };
         return fixture([swap]);
-      }),
-    );
-    await Effect.runPromise(
-      Effect.gen(function* () {
+      });
+      yield* Effect.gen(function* () {
         const good = yield* bodies.put({ type: "paragraph" });
         yield* posts.create({
           id: Option.none(),
           state: { body: good.hash, visibility: "public" },
         });
-      }),
-    );
-    expect(chain.rows().map((row) => row.state["title"])).toEqual(["Normalised"]);
-  });
+      });
+      expect(chain.rows().map((row) => row.state["title"])).toEqual(["Normalised"]);
+    }),
+  );
 
   const event = (action: WriteAction, locales: LocalePatch): BeforeWriteEvent => ({
     type: "posts",
@@ -516,12 +539,13 @@ describe("the grammar check", () => {
     actorId: Option.none(),
   });
 
-  it("checks every locale's patch, and passes the locale patch through", async () => {
-    const store = makeInMemoryDocumentStore<Doc>();
-    const hook = documentCheckHook({ type: "posts", fields: ["body"], documents: store, check });
-    const locales = hook.locales ?? (() => Effect.die("documentCheckHook declares no locale pass"));
-    const outcome = await Effect.runPromise(
-      Effect.gen(function* () {
+  it.effect("checks every locale's patch, and passes the locale patch through", () =>
+    Effect.gen(function* () {
+      const store = makeInMemoryDocumentStore<Doc>();
+      const hook = documentCheckHook({ type: "posts", fields: ["body"], documents: store, check });
+      const locales =
+        hook.locales ?? (() => Effect.die("documentCheckHook declares no locale pass"));
+      const outcome = yield* Effect.gen(function* () {
         const good = yield* store.put({ type: "paragraph" });
         const bad = yield* store.put({ type: "script" });
         const passed = yield* locales(event("update", { en: { body: good.hash }, fr: null }));
@@ -530,15 +554,15 @@ describe("the grammar check", () => {
         const { locales: _omitted, ...withoutLocales } = event("update", {});
         const none = yield* locales(withoutLocales);
         return { passed, refused, exempt, none, good: good.hash, bad: bad.hash };
-      }),
-    );
-    expect(outcome).toEqual({
-      passed: { en: { body: outcome.good }, fr: null },
-      refused: `${DOCUMENT_VIOLATION} body: script is not allowed`,
-      exempt: { de: { body: outcome.bad } },
-      none: {},
-      good: outcome.good,
-      bad: outcome.bad,
-    });
-  });
+      });
+      expect(outcome).toEqual({
+        passed: { en: { body: outcome.good }, fr: null },
+        refused: `${DOCUMENT_VIOLATION} body: script is not allowed`,
+        exempt: { de: { body: outcome.bad } },
+        none: {},
+        good: outcome.good,
+        bad: outcome.bad,
+      });
+    }),
+  );
 });

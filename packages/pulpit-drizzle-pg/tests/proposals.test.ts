@@ -11,7 +11,8 @@ import { getTableName } from "drizzle-orm";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import { makeProposalStore } from "../src/Proposals.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
 import { database, owners, proposals, tables } from "./fixtures/tree.ts";
@@ -59,12 +60,10 @@ const runWith = <A, E>(
   effect: Effect.Effect<A, E, typeof database.CurrentTransaction.Identifier>,
 ) => {
   const { tx, calls } = cannedTransaction(rows);
-  return Effect.runPromise(
-    Effect.map(Effect.provideService(effect, database.CurrentTransaction, tx), (value) => ({
-      value,
-      calls,
-    })),
-  );
+  return Effect.map(Effect.provideService(effect, database.CurrentTransaction, tx), (value) => ({
+    value,
+    calls,
+  }));
 };
 
 describe("makeProposalStore over canned rows", () => {
@@ -72,89 +71,106 @@ describe("makeProposalStore over canned rows", () => {
     expect(getTableName(proposals)).toBe("proposal");
   });
 
-  it("get decodes the row and reads the head version off its text", async () => {
-    const { value, calls } = await runWith([{ ...stored, targetVersion: "3" }], store.get(ID));
-    expect(value).toEqual(Option.some({ row, targetVersion: Option.some(3n) }));
-    expect(calls).toEqual(["select", "from", "innerJoin", "where", "limit"]);
-    expect((await runWith([{ ...stored, targetVersion: null }], store.get(ID))).value).toEqual(
-      Option.some({ row, targetVersion: Option.none() }),
-    );
-    expect((await runWith([], store.get(ID))).value).toEqual(Option.none());
-  });
+  it.effect("get decodes the row and reads the head version off its text", () =>
+    Effect.gen(function* () {
+      const { value, calls } = yield* runWith([{ ...stored, targetVersion: "3" }], store.get(ID));
+      expect(value).toEqual(Option.some({ row, targetVersion: Option.some(3n) }));
+      expect(calls).toEqual(["select", "from", "innerJoin", "where", "limit"]);
+      expect((yield* runWith([{ ...stored, targetVersion: null }], store.get(ID))).value).toEqual(
+        Option.some({ row, targetVersion: Option.none() }),
+      );
+      expect((yield* runWith([], store.get(ID))).value).toEqual(Option.none());
+    }),
+  );
 
-  it("a malformed id reads nothing and writes nothing", async () => {
-    expect(await runWith([stored], store.get("x"))).toEqual({ value: Option.none(), calls: [] });
-    expect(await runWith([stored], store.lock("x"))).toEqual({ value: Option.none(), calls: [] });
-    const decision = {
-      status: "rejected" as const,
-      decidedAt: AT,
-      decidedBy: "u-2",
-      decisionNote: Option.none(),
-      appliedVersion: Option.none(),
-    };
-    expect((await runWith([], store.close("x", decision))).calls).toEqual([]);
-  });
+  it.effect("a malformed id reads nothing and writes nothing", () =>
+    Effect.gen(function* () {
+      expect(yield* runWith([stored], store.get("x"))).toEqual({ value: Option.none(), calls: [] });
+      expect(yield* runWith([stored], store.lock("x"))).toEqual({
+        value: Option.none(),
+        calls: [],
+      });
+      const decision = {
+        status: "rejected" as const,
+        decidedAt: AT,
+        decidedBy: "u-2",
+        decisionNote: Option.none(),
+        appliedVersion: Option.none(),
+      };
+      expect((yield* runWith([], store.close("x", decision))).calls).toEqual([]);
+    }),
+  );
 
-  it("lock reads the row FOR UPDATE; close updates; insert inserts", async () => {
-    const locked = await runWith([stored], store.lock(ID));
-    expect(locked.value).toEqual(Option.some(row));
-    expect(locked.calls).toContain("for");
-    const decision = {
-      status: "accepted" as const,
-      decidedAt: AT,
-      decidedBy: "u-2",
-      decisionNote: Option.some("ok"),
-      appliedVersion: Option.some(1n),
-    };
-    expect((await runWith([], store.close(ID, decision))).calls).toEqual([
-      "update",
-      "set",
-      "where",
-    ]);
-    expect(
-      (
-        await runWith(
+  it.effect("lock reads the row FOR UPDATE; close updates; insert inserts", () =>
+    Effect.gen(function* () {
+      const locked = yield* runWith([stored], store.lock(ID));
+      expect(locked.value).toEqual(Option.some(row));
+      expect(locked.calls).toContain("for");
+      const decision = {
+        status: "accepted" as const,
+        decidedAt: AT,
+        decidedBy: "u-2",
+        decisionNote: Option.some("ok"),
+        appliedVersion: Option.some(1n),
+      };
+      expect((yield* runWith([], store.close(ID, decision))).calls).toEqual([
+        "update",
+        "set",
+        "where",
+      ]);
+      expect(
+        (yield* runWith(
           [],
           store.insert({ ...row, locales: Option.some({ en: { heading: "Hi" } }), patch: null }),
-        )
-      ).calls,
-    ).toEqual(["insert", "values"]);
-  });
+        )).calls,
+      ).toEqual(["insert", "values"]);
+    }),
+  );
 
-  it("list pages the decoded rows with the window total", async () => {
-    const page = await runWith(
-      [{ ...stored, targetVersion: "0", pageTotal: 7 }],
-      store.list({ where: always, limit: 5, offset: 0 }),
-    );
-    expect(page.value).toEqual({ rows: [{ row, targetVersion: Option.some(0n) }], total: 7 });
-    expect((await runWith([], store.list({ where: always, limit: 5, offset: 0 }))).value).toEqual({
-      rows: [],
-      total: 0,
-    });
-  });
+  it.effect("list pages the decoded rows with the window total", () =>
+    Effect.gen(function* () {
+      const page = yield* runWith(
+        [{ ...stored, targetVersion: "0", pageTotal: 7 }],
+        store.list({ where: always, limit: 5, offset: 0 }),
+      );
+      expect(page.value).toEqual({ rows: [{ row, targetVersion: Option.some(0n) }], total: 7 });
+      expect(
+        (yield* runWith([], store.list({ where: always, limit: 5, offset: 0 }))).value,
+      ).toEqual({
+        rows: [],
+        total: 0,
+      });
+    }),
+  );
 
-  it("eraseAuthor answers the changed count, and reads nothing for a zero limit", async () => {
-    const query = { accountId: "u-1", replacement: "gone", limit: 10 };
-    expect((await runWith([{ changed: 3 }], store.eraseAuthor(query))).value).toBe(3);
-    expect((await runWith([], store.eraseAuthor(query))).value).toBe(0);
-    expect(await runWith([{ changed: 3 }], store.eraseAuthor({ ...query, limit: 0 }))).toEqual({
-      value: 0,
-      calls: [],
-    });
-  });
+  it.effect("eraseAuthor answers the changed count, and reads nothing for a zero limit", () =>
+    Effect.gen(function* () {
+      const query = { accountId: "u-1", replacement: "gone", limit: 10 };
+      expect((yield* runWith([{ changed: 3 }], store.eraseAuthor(query))).value).toBe(3);
+      expect((yield* runWith([], store.eraseAuthor(query))).value).toBe(0);
+      expect(yield* runWith([{ changed: 3 }], store.eraseAuthor({ ...query, limit: 0 }))).toEqual({
+        value: 0,
+        calls: [],
+      });
+    }),
+  );
 
-  it("mintId reads a generated UUID", async () => {
-    expect((await runWith([{ id: ID }], store.mintId)).value).toBe(ID);
-  });
+  it.effect("mintId reads a generated UUID", () =>
+    Effect.gen(function* () {
+      expect((yield* runWith([{ id: ID }], store.mintId)).value).toBe(ID);
+    }),
+  );
 
-  it("a stored row outside the contract is a defect", async () => {
-    const exit = await Effect.runPromiseExit(
-      Effect.provideService(
-        store.get(ID),
-        database.CurrentTransaction,
-        cannedTransaction([{ ...stored, status: "lost", targetVersion: null }]).tx,
-      ),
-    );
-    expect(exit._tag).toBe("Failure");
-  });
+  it.effect("a stored row outside the contract is a defect", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        Effect.provideService(
+          store.get(ID),
+          database.CurrentTransaction,
+          cannedTransaction([{ ...stored, status: "lost", targetVersion: null }]).tx,
+        ),
+      );
+      expect(exit._tag).toBe("Failure");
+    }),
+  );
 });

@@ -23,7 +23,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Order from "effect/Order";
 import * as Str from "effect/String";
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { beforeAll, it } from "@effect/vitest";
+import { afterAll, describe, expect } from "vite-plus/test";
 import { makeLeafStores } from "../../src/LeafStore.ts";
 import { makeVersionChains } from "../../src/VersionChain.ts";
 import { owners, tables, tree, views } from "../fixtures/tree.ts";
@@ -45,7 +46,7 @@ const runtime = ManagedRuntime.make(
 afterAll(() => runtime.dispose());
 
 const run = <A, E>(effect: Effect.Effect<A, E, typeof CurrentTransaction.Identifier>) =>
-  runtime.runPromise(transact(effect));
+  Effect.flatMap(runtime.contextEffect, (context) => Effect.provide(transact(effect), context));
 
 const chains = makeVersionChains({ tree, tables, CurrentTransaction });
 const store = makeLeafStores({ tree, tables, views, owners, CurrentTransaction }).notes;
@@ -67,8 +68,8 @@ const notes: ReadonlyArray<readonly [number, string, LocaleStates]> = [
   [5, "five", { "en-AU": { heading: "Five, mate" } }],
 ];
 
-beforeAll(async () => {
-  await run(
+beforeAll(() =>
+  run(
     Effect.gen(function* () {
       const tx = yield* CurrentTransaction;
       yield* tx.execute(
@@ -96,8 +97,8 @@ beforeAll(async () => {
       };
       yield* Effect.andThen(chains.notes.update(update), memoryChain.update(update));
     }),
-  );
-});
+  ),
+);
 
 const decodeLocale = Schema.decodeUnknownSync(Schema.NullOr(Schema.String));
 
@@ -122,21 +123,23 @@ describe("the localised LeafStore agrees with the in-memory one", () => {
     ["a translated column", eq("heading", "Four"), []],
     ["ordered by the translated column", always, [{ column: "heading", direction: "asc" }]],
   ];
-  it.each(lists)("list: %s", async (_name, where, orderBy) => {
-    const query = { where, orderBy, limit: 100, offset: 0 };
-    const fromSql = await run(store.list(query));
-    const fromMemory = await Effect.runPromise(memory.list(query));
-    // The two order ties within a node (its locale rows) differently past the
-    // closing id, so the rows are compared as a set when no key orders them.
-    const rows = (page: { readonly rows: ReadonlyArray<LeafRow> }) =>
-      Arr.isReadonlyArrayNonEmpty(orderBy)
-        ? Arr.map(page.rows, agreed)
-        : Arr.sort(Arr.map(page.rows, agreed), byIdThenLocale);
-    expect({ total: fromSql.total, rows: rows(fromSql) }).toEqual({
-      total: fromMemory.total,
-      rows: rows(fromMemory),
-    });
-  });
+  it.live.each(lists)("list: %s", ([_name, where, orderBy]) =>
+    Effect.gen(function* () {
+      const query = { where, orderBy, limit: 100, offset: 0 };
+      const fromSql = yield* run(store.list(query));
+      const fromMemory = yield* memory.list(query);
+      // The two order ties within a node (its locale rows) differently past the
+      // closing id, so the rows are compared as a set when no key orders them.
+      const rows = (page: { readonly rows: ReadonlyArray<LeafRow> }) =>
+        Arr.isReadonlyArrayNonEmpty(orderBy)
+          ? Arr.map(page.rows, agreed)
+          : Arr.sort(Arr.map(page.rows, agreed), byIdThenLocale);
+      expect({ total: fromSql.total, rows: rows(fromSql) }).toEqual({
+        total: fromMemory.total,
+        rows: rows(fromMemory),
+      });
+    }),
+  );
 
   const preferences: ReadonlyArray<readonly [string, ReadonlyArray<string>, ListFilter<never>]> = [
     ["English first", ["en", "fr"], always],
@@ -146,54 +149,60 @@ describe("the localised LeafStore agrees with the in-memory one", () => {
     ["none", [], always],
     ["a filter over the chosen rows", ["fr", "en"], eq("title", "four")],
   ];
-  it.each(preferences)("listLocalised: %s", async (_name, locales, where) => {
-    const query = { where, orderBy: [], limit: 100, offset: 0, locales };
-    const fromSql = await run(store.listLocalised(query));
-    const fromMemory = await Effect.runPromise(memory.listLocalised(query));
-    expect({ total: fromSql.total, rows: Arr.map(fromSql.rows, agreed) }).toEqual({
-      total: fromMemory.total,
-      rows: Arr.map(fromMemory.rows, agreed),
-    });
-  });
+  it.live.each(preferences)("listLocalised: %s", ([_name, locales, where]) =>
+    Effect.gen(function* () {
+      const query = { where, orderBy: [], limit: 100, offset: 0, locales };
+      const fromSql = yield* run(store.listLocalised(query));
+      const fromMemory = yield* memory.listLocalised(query);
+      expect({ total: fromSql.total, rows: Arr.map(fromSql.rows, agreed) }).toEqual({
+        total: fromMemory.total,
+        rows: Arr.map(fromMemory.rows, agreed),
+      });
+    }),
+  );
 
-  it("pins the fixture's shape, so agreement is never two empty pages", async () => {
-    const all = await run(store.list({ where: always, orderBy: [], limit: 100, offset: 0 }));
-    // Note 1's French was dropped; note 3 has no locale (one NULL row); note 4 has two.
-    expect(all.total).toBe(6);
-    const chosen = await run(
-      store.listLocalised({
-        where: always,
-        orderBy: [],
-        limit: 100,
-        offset: 0,
-        locales: ["fr", "en"],
-      }),
-    );
-    expect(Arr.map(chosen.rows, (row) => [row.id, row["locale"]])).toEqual([
-      [id(1), "en"],
-      [id(2), "fr"],
-      [id(4), "en"],
-    ]);
-  });
+  it.live("pins the fixture's shape, so agreement is never two empty pages", () =>
+    Effect.gen(function* () {
+      const all = yield* run(store.list({ where: always, orderBy: [], limit: 100, offset: 0 }));
+      // Note 1's French was dropped; note 3 has no locale (one NULL row); note 4 has two.
+      expect(all.total).toBe(6);
+      const chosen = yield* run(
+        store.listLocalised({
+          where: always,
+          orderBy: [],
+          limit: 100,
+          offset: 0,
+          locales: ["fr", "en"],
+        }),
+      );
+      expect(Arr.map(chosen.rows, (row) => [row.id, row["locale"]])).toEqual([
+        [id(1), "en"],
+        [id(2), "fr"],
+        [id(4), "en"],
+      ]);
+    }),
+  );
 
-  it("distinct reads over the locale rows", async () => {
-    const query = { column: "heading", where: always, limit: 100, offset: 0 };
-    expect(await run(store.distinct(query))).toEqual(
-      await Effect.runPromise(memory.distinct(query)),
-    );
-  });
+  it.live("distinct reads over the locale rows", () =>
+    Effect.gen(function* () {
+      const query = { column: "heading", where: always, limit: 100, offset: 0 };
+      expect(yield* run(store.distinct(query))).toEqual(yield* memory.distinct(query));
+    }),
+  );
 
-  it("get / getMany read the shared rows, one per node", async () => {
-    const fromSql = await run(store.getMany([id(1), id(2), id(3)]));
-    expect(
-      Arr.sort(
-        Arr.map(fromSql, (row) => row.id),
-        Str.Order,
-      ),
-    ).toEqual([id(1), id(2), id(3)]);
-    expect(Option.map(await run(store.get(id(4))), (row) => row["title"])).toEqual(
-      Option.some("four"),
-    );
-    expect(HashSet.has(store.columns, "locale")).toBe(true);
-  });
+  it.live("get / getMany read the shared rows, one per node", () =>
+    Effect.gen(function* () {
+      const fromSql = yield* run(store.getMany([id(1), id(2), id(3)]));
+      expect(
+        Arr.sort(
+          Arr.map(fromSql, (row) => row.id),
+          Str.Order,
+        ),
+      ).toEqual([id(1), id(2), id(3)]);
+      expect(Option.map(yield* run(store.get(id(4))), (row) => row["title"])).toEqual(
+        Option.some("four"),
+      );
+      expect(HashSet.has(store.columns, "locale")).toBe(true);
+    }),
+  );
 });

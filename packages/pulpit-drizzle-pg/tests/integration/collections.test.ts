@@ -18,7 +18,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { beforeAll, it } from "@effect/vitest";
+import { afterAll, describe, expect } from "vite-plus/test";
 import { makeCollectionStore } from "../../src/Collections.ts";
 import { makeVersionChains } from "../../src/VersionChain.ts";
 import { collection, tables, tree } from "../fixtures/tree.ts";
@@ -40,7 +41,7 @@ const runtime = ManagedRuntime.make(
 afterAll(() => runtime.dispose());
 
 const run = <A, E>(effect: Effect.Effect<A, E, typeof CurrentTransaction.Identifier>) =>
-  runtime.runPromise(transact(effect));
+  Effect.flatMap(runtime.contextEffect, (context) => Effect.provide(transact(effect), context));
 
 const chains = makeVersionChains({ tree, tables, CurrentTransaction });
 const store = makeCollectionStore({ table: collection, CurrentTransaction });
@@ -49,8 +50,8 @@ const memory = makeInMemoryCollectionStore();
 const node = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const [listA, listB, m1, m2, m3, m4, m5] = Arr.map([1, 2, 3, 4, 5, 6, 7], node);
 
-beforeAll(async () => {
-  await run(
+beforeAll(() =>
+  run(
     Effect.gen(function* () {
       const tx = yield* CurrentTransaction;
       yield* tx.execute(
@@ -67,23 +68,27 @@ beforeAll(async () => {
         { concurrency: 1 },
       );
     }),
-  );
-});
+  ),
+);
 
 const order = (...members: ReadonlyArray<string>): ReadonlyArray<CollectionEntry> =>
   Arr.map(members, (memberId, position) => ({ memberId, position }));
 
-const replaceBoth = async (parentId: string, entries: ReadonlyArray<CollectionEntry>) => {
-  await run(store.replace(parentId, entries));
-  await Effect.runPromise(memory.replace(parentId, entries));
-};
-const entriesBoth = async (parentId: string, limit: number) => ({
-  sql: await run(store.entries(parentId, limit)),
-  memory: await Effect.runPromise(memory.entries(parentId, limit)),
-});
+const replaceBoth = (parentId: string, entries: ReadonlyArray<CollectionEntry>) =>
+  Effect.gen(function* () {
+    yield* run(store.replace(parentId, entries));
+    yield* memory.replace(parentId, entries);
+  });
+const entriesBoth = (parentId: string, limit: number) =>
+  Effect.gen(function* () {
+    return {
+      sql: yield* run(store.entries(parentId, limit)),
+      memory: yield* memory.entries(parentId, limit),
+    };
+  });
 
 describe("CollectionStore over PostgreSQL agrees with the in-memory store", () => {
-  it.each([
+  it.live.each([
     { label: "a first order", entries: order(m1, m2, m3) },
     { label: "a reorder", entries: order(m3, m1, m2) },
     { label: "an append and a removal", entries: order(m1, m2, m4, m5) },
@@ -97,63 +102,73 @@ describe("CollectionStore over PostgreSQL agrees with the in-memory store", () =
     },
     { label: "an emptying", entries: order() },
     { label: "a refill", entries: order(m5, m4) },
-  ])("replace then entries: $label", async ({ entries }) => {
-    await replaceBoth(listA, entries);
-    const read = await entriesBoth(listA, 10);
-    expect(read.sql).toEqual(read.memory);
-    expect(read.sql).toHaveLength(entries.length);
-  });
+  ])("replace then entries: $label", ({ entries }) =>
+    Effect.gen(function* () {
+      yield* replaceBoth(listA, entries);
+      const read = yield* entriesBoth(listA, 10);
+      expect(read.sql).toEqual(read.memory);
+      expect(read.sql).toHaveLength(entries.length);
+    }),
+  );
 
-  it("entries is at most limit, and none for a limit below one or an unknown parent", async () => {
-    await replaceBoth(listA, order(m1, m2, m3, m4));
-    const two = await entriesBoth(listA, 2);
-    expect(two.sql).toEqual(two.memory);
-    expect(two.sql).toEqual(order(m1, m2));
-    expect(await entriesBoth(listA, 0)).toEqual({ sql: [], memory: [] });
-    expect(await entriesBoth(node(99), 5)).toEqual({ sql: [], memory: [] });
-  });
+  it.live("entries is at most limit, and none for a limit below one or an unknown parent", () =>
+    Effect.gen(function* () {
+      yield* replaceBoth(listA, order(m1, m2, m3, m4));
+      const two = yield* entriesBoth(listA, 2);
+      expect(two.sql).toEqual(two.memory);
+      expect(two.sql).toEqual(order(m1, m2));
+      expect(yield* entriesBoth(listA, 0)).toEqual({ sql: [], memory: [] });
+      expect(yield* entriesBoth(node(99), 5)).toEqual({ sql: [], memory: [] });
+    }),
+  );
 
-  it("parents are independent: one member in two lists, each its own position", async () => {
-    await replaceBoth(listB, order(m3, m5));
-    await replaceBoth(listA, order(m5, m3));
-    const [a, b] = [await entriesBoth(listA, 10), await entriesBoth(listB, 10)];
-    expect(a.sql).toEqual(a.memory);
-    expect(b.sql).toEqual(b.memory);
-    expect(b.sql).toEqual(order(m3, m5));
-  });
+  it.live("parents are independent: one member in two lists, each its own position", () =>
+    Effect.gen(function* () {
+      yield* replaceBoth(listB, order(m3, m5));
+      yield* replaceBoth(listA, order(m5, m3));
+      const [a, b] = [yield* entriesBoth(listA, 10), yield* entriesBoth(listB, 10)];
+      expect(a.sql).toEqual(a.memory);
+      expect(b.sql).toEqual(b.memory);
+      expect(b.sql).toEqual(order(m3, m5));
+    }),
+  );
 });
 
 describe("beyond the in-memory fake", () => {
-  it("a member named twice keeps its first entry; a malformed id names no node", async () => {
-    await run(
-      store.replace(listA, [
+  it.live("a member named twice keeps its first entry; a malformed id names no node", () =>
+    Effect.gen(function* () {
+      yield* run(
+        store.replace(listA, [
+          { memberId: m2, position: 0 },
+          { memberId: "nope", position: 1 },
+          { memberId: m2, position: 2 },
+          { memberId: m1, position: 3 },
+        ]),
+      );
+      expect(yield* run(store.entries(listA, 10))).toEqual([
         { memberId: m2, position: 0 },
-        { memberId: "nope", position: 1 },
-        { memberId: m2, position: 2 },
         { memberId: m1, position: 3 },
-      ]),
-    );
-    expect(await run(store.entries(listA, 10))).toEqual([
-      { memberId: m2, position: 0 },
-      { memberId: m1, position: 3 },
-    ]);
-    await run(store.replace("nope", order(m1)));
-    expect(await run(store.entries("nope", 10))).toEqual([]);
-  });
+      ]);
+      yield* run(store.replace("nope", order(m1)));
+      expect(yield* run(store.entries("nope", 10))).toEqual([]);
+    }),
+  );
 
-  it("purging a member or a parent takes its rows (the foreign keys cascade)", async () => {
-    await run(store.replace(listA, order(m1, m2)));
-    await run(store.replace(listB, order(m1)));
-    await run(chains.links.purge(m1));
-    expect(await run(store.entries(listA, 10))).toEqual([{ memberId: m2, position: 1 }]);
-    expect(await run(store.entries(listB, 10))).toEqual([]);
-    await run(chains.links.purge(listA));
-    const rows = await run(
-      Effect.gen(function* () {
-        const tx = yield* CurrentTransaction;
-        return yield* tx.select({ member: collection.memberId }).from(collection);
-      }),
-    );
-    expect(rows).toEqual([]);
-  });
+  it.live("purging a member or a parent takes its rows (the foreign keys cascade)", () =>
+    Effect.gen(function* () {
+      yield* run(store.replace(listA, order(m1, m2)));
+      yield* run(store.replace(listB, order(m1)));
+      yield* run(chains.links.purge(m1));
+      expect(yield* run(store.entries(listA, 10))).toEqual([{ memberId: m2, position: 1 }]);
+      expect(yield* run(store.entries(listB, 10))).toEqual([]);
+      yield* run(chains.links.purge(listA));
+      const rows = yield* run(
+        Effect.gen(function* () {
+          const tx = yield* CurrentTransaction;
+          return yield* tx.select({ member: collection.memberId }).from(collection);
+        }),
+      );
+      expect(rows).toEqual([]);
+    }),
+  );
 });

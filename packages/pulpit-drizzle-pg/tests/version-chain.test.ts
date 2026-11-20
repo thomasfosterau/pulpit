@@ -28,7 +28,8 @@ import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 import * as Str from "effect/String";
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import {
   fromLeafChain,
   ProposedByUnrecorded,
@@ -190,38 +191,42 @@ describe("fromLeafChain — proposedBy, the root version extra", () => {
       return context;
     });
 
-  it("records the contributor of an accepted proposal, and nothing for a plain write", async () => {
-    const { roots } = await Effect.runPromise(
-      Effect.tap(created(true), ({ chain }) =>
+  it.effect("records the contributor of an accepted proposal, and nothing for a plain write", () =>
+    Effect.gen(function* () {
+      const { roots } = yield* Effect.tap(created(true), ({ chain }) =>
         Effect.andThen(
           chain.update({ id: ID, patch: {}, actorId, proposedBy: Option.some("u-contributor") }),
           chain.restore({ id: ID, patch: {}, actorId, proposedBy: Option.none() }),
         ),
-      ),
-    );
-    expect(roots).toEqual([Option.some("u-contributor"), Option.none()]);
-  });
+      );
+      expect(roots).toEqual([Option.some("u-contributor"), Option.none()]);
+    }),
+  );
 
-  it("dies rather than dropping a contributor the tree cannot record", async () => {
-    const exit = await Effect.runPromiseExit(
-      Effect.flatMap(created(false), ({ chain }) =>
-        chain.update({ id: ID, patch: {}, actorId, proposedBy: Option.some("u-contributor") }),
-      ),
-    );
-    expect(Exit.isFailure(exit) && Exit.hasDies(exit)).toBe(true);
-    const defect = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
-    expect(Schema.is(ProposedByUnrecorded)(defect)).toBe(true);
-    expect(Schema.is(ProposedByUnrecorded)(defect) ? defect.message : "").toContain(
-      "no proposedBy column",
-    );
-  });
+  it.effect("dies rather than dropping a contributor the tree cannot record", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        Effect.flatMap(created(false), ({ chain }) =>
+          chain.update({ id: ID, patch: {}, actorId, proposedBy: Option.some("u-contributor") }),
+        ),
+      );
+      expect(Exit.isFailure(exit) && Exit.hasDies(exit)).toBe(true);
+      const defect = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+      expect(Schema.is(ProposedByUnrecorded)(defect)).toBe(true);
+      expect(Schema.is(ProposedByUnrecorded)(defect) ? defect.message : "").toContain(
+        "no proposedBy column",
+      );
+    }),
+  );
 
-  it("writes a plain update over a tree without the column", async () => {
-    const exit = await Effect.runPromiseExit(
-      Effect.flatMap(created(false), ({ chain }) => chain.update({ id: ID, patch: {}, actorId })),
-    );
-    expect(Exit.isSuccess(exit)).toBe(true);
-  });
+  it.effect("writes a plain update over a tree without the column", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        Effect.flatMap(created(false), ({ chain }) => chain.update({ id: ID, patch: {}, actorId })),
+      );
+      expect(Exit.isSuccess(exit)).toBe(true);
+    }),
+  );
 });
 
 describe("fromLeafChain — the driver's own failure", () => {
@@ -248,45 +253,49 @@ describe("fromLeafChain — the driver's own failure", () => {
   const ID = "00000000-0000-4000-8000-000000000002";
   const actorId = Option.none<string>();
 
-  it("passes through every operation unchanged", async () => {
-    const operations: ReadonlyArray<Effect.Effect<unknown, unknown>> = [
-      chain.create({ id: Option.none(), state: {}, actorId }),
-      chain.update({ id: ID, patch: {}, actorId }),
-      chain.restore({ id: ID, patch: {}, actorId }),
-      chain.delete(ID, actorId),
-      chain.restoreVersion(ID, 0n, actorId),
-      chain.getVersion(ID, 0n),
-      chain.history(ID),
-      chain.head(ID),
-      chain.purge(ID),
-    ];
-    const outcomes = await Effect.runPromise(
-      Effect.forEach(operations, (operation) => Effect.flip(operation), { concurrency: 1 }),
-    );
-    expect(Arr.map(outcomes, (error) => Schema.is(QueryFailed)(error))).toEqual(
-      Arr.replicate(true, 9),
-    );
-  });
+  it.effect("passes through every operation unchanged", () =>
+    Effect.gen(function* () {
+      const outcomes = yield* Effect.all(
+        [
+          Effect.flip(chain.create({ id: Option.none(), state: {}, actorId })),
+          Effect.flip(chain.update({ id: ID, patch: {}, actorId })),
+          Effect.flip(chain.restore({ id: ID, patch: {}, actorId })),
+          Effect.flip(chain.delete(ID, actorId)),
+          Effect.flip(chain.restoreVersion(ID, 0n, actorId)),
+          Effect.flip(chain.getVersion(ID, 0n)),
+          Effect.flip(chain.history(ID)),
+          Effect.flip(chain.head(ID)),
+          Effect.flip(chain.purge(ID)),
+        ],
+        { concurrency: 1 },
+      );
+      expect(Arr.map(outcomes, (error) => Schema.is(QueryFailed)(error))).toEqual(
+        Arr.replicate(true, 9),
+      );
+    }),
+  );
 });
 
 describe("fromLeafChain — an id that is no UUID names no node", () => {
   const { chain } = harness(true);
   const actorId = Option.none<string>();
   const tag = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
-    Effect.runPromise(Effect.map(Effect.flip(effect), (error) => error._tag));
+    Effect.map(Effect.flip(effect), (error) => error._tag);
 
-  it("answers as an unknown id does, without reaching the chain", async () => {
-    expect(await tag(chain.update({ id: "not-a-uuid", patch: {}, actorId }))).toBe("NodeNotFound");
-    expect(await tag(chain.restore({ id: "1", patch: {}, actorId }))).toBe("NodeNotFound");
-    expect(await tag(chain.delete("X", actorId))).toBe("NodeNotFound");
-    expect(await tag(chain.history("x"))).toBe("NodeNotFound");
-    expect(await tag(chain.getVersion("x", 0n))).toBe("VersionNotFound");
-    expect(await tag(chain.restoreVersion("x", 0n, actorId))).toBe("VersionNotFound");
-    expect(await Effect.runPromise(chain.head("00000000-0000-4000-8000-00000000ABCD"))).toEqual(
-      Option.none(),
-    );
-    await Effect.runPromise(chain.purge("x"));
-  });
+  it.effect("answers as an unknown id does, without reaching the chain", () =>
+    Effect.gen(function* () {
+      expect(yield* tag(chain.update({ id: "not-a-uuid", patch: {}, actorId }))).toBe(
+        "NodeNotFound",
+      );
+      expect(yield* tag(chain.restore({ id: "1", patch: {}, actorId }))).toBe("NodeNotFound");
+      expect(yield* tag(chain.delete("X", actorId))).toBe("NodeNotFound");
+      expect(yield* tag(chain.history("x"))).toBe("NodeNotFound");
+      expect(yield* tag(chain.getVersion("x", 0n))).toBe("VersionNotFound");
+      expect(yield* tag(chain.restoreVersion("x", 0n, actorId))).toBe("VersionNotFound");
+      expect(yield* chain.head("00000000-0000-4000-8000-00000000ABCD")).toEqual(Option.none());
+      yield* chain.purge("x");
+    }),
+  );
 });
 
 describe("makeVersionChains", () => {

@@ -20,7 +20,8 @@
  * @module tests/media
  */
 
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -53,13 +54,13 @@ import {
 } from "../src/testing.ts";
 import { decodes, gardeneriaPolicy, member, moderator, NOW, otherMember } from "./fixtures.ts";
 
-const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
-const tagOf = async <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) => {
-  const exit = await Effect.runPromiseExit(effect);
-  return Exit.isFailure(exit)
-    ? Option.map(Exit.findErrorOption(exit), (e) => e._tag)
-    : Option.none();
-};
+const tagOf = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.exit(effect);
+    return Exit.isFailure(exit)
+      ? Option.map(Exit.findErrorOption(exit), (e) => e._tag)
+      : Option.none();
+  });
 const bytesOf = (text: string) => new TextEncoder().encode(text);
 const upload = (text: string): Upload => ({
   bytes: bytesOf(text),
@@ -234,79 +235,83 @@ const uploads = (options: { readonly stripLocation?: true } = {}) => {
 };
 
 describe("defineMediaUploads", () => {
-  it("records the metadata in the version the bytes land with, location kept", async () => {
-    const { images, media, extracted } = uploads();
-    const written = await run(
-      media.create({
+  it.effect("records the metadata in the version the bytes land with, location kept", () =>
+    Effect.gen(function* () {
+      const { images, media, extracted } = uploads();
+      const written = yield* media.create({
         id: Option.none(),
         state: { visibility: "public", altText: "Harbour at dusk" },
         upload: upload("jpeg"),
-      }),
-    );
-    expect(written.bytesPending).toBe(false);
-    expect(extracted).toEqual(["photo.jpg"]);
-    const head = await run(images.ops.get(written.id));
-    expect(head).toMatchObject({
-      altText: "Harbour at dusk",
-      mediaKind: "image",
-      width: 4000,
-      height: 3000,
-      bytesPending: false,
-      exif: { cameraModel: "X100V", orientation: 1, location: SYDNEY },
-    });
-  });
+      });
+      expect(written.bytesPending).toBe(false);
+      expect(extracted).toEqual(["photo.jpg"]);
+      const head = yield* images.ops.get(written.id);
+      expect(head).toMatchObject({
+        altText: "Harbour at dusk",
+        mediaKind: "image",
+        width: 4000,
+        height: 3000,
+        bytesPending: false,
+        exif: { cameraModel: "X100V", orientation: 1, location: SYDNEY },
+      });
+    }),
+  );
 
-  it("records no location under stripLocation", async () => {
-    const { images, media } = uploads({ stripLocation: true });
-    const written = await run(
-      media.create({ id: Option.none(), state: { visibility: "public" }, upload: upload("jpeg") }),
-    );
-    const head = await run(images.ops.get(written.id));
-    expect(head["exif"]).toEqual({ cameraModel: "X100V", orientation: 1 });
-  });
+  it.effect("records no location under stripLocation", () =>
+    Effect.gen(function* () {
+      const { images, media } = uploads({ stripLocation: true });
+      const written = yield* media.create({
+        id: Option.none(),
+        state: { visibility: "public" },
+        upload: upload("jpeg"),
+      });
+      const head = yield* images.ops.get(written.id);
+      expect(head["exif"]).toEqual({ cameraModel: "X100V", orientation: 1 });
+    }),
+  );
 
-  it("a replace re-records the metadata and carries the editorial fields forward", async () => {
-    const { images, media } = uploads();
-    const created = await run(
-      media.create({
+  it.effect("a replace re-records the metadata and carries the editorial fields forward", () =>
+    Effect.gen(function* () {
+      const { images, media } = uploads();
+      const created = yield* media.create({
         id: Option.none(),
         state: { visibility: "public", caption: "First" },
         upload: upload("one"),
-      }),
-    );
-    const replaced = await run(
-      media.replace({
+      });
+      const replaced = yield* media.replace({
         id: created.id,
         upload: upload("two"),
         patch: { license: "CC-BY-4.0" },
-      }),
-    );
-    const head = await run(images.ops.get(created.id));
-    expect(head).toMatchObject({
-      caption: "First",
-      license: "CC-BY-4.0",
-      contentHash: replaced.contentHash,
-      mediaKind: "image",
-    });
-    expect(replaced.contentHash).toBe(await run(sha256Hex(bytesOf("two"))));
-  });
+      });
+      const head = yield* images.ops.get(created.id);
+      expect(head).toMatchObject({
+        caption: "First",
+        license: "CC-BY-4.0",
+        contentHash: replaced.contentHash,
+        mediaKind: "image",
+      });
+      expect(replaced.contentHash).toBe(yield* sha256Hex(bytesOf("two")));
+    }),
+  );
 
-  it("an extractor failure writes nothing", async () => {
-    const { leaf } = setup();
-    const images = leaf("images");
-    const media = defineMediaUploads({
-      files: defineFileWrites({
-        leaf: images.ops,
-        blobs: makeInMemoryBlobStore(),
-        transact: (effect) => effect,
-      }),
-      extractor: { extract: () => Effect.fail({ _tag: "Unparseable" as const }) },
-    });
-    expect(
-      await tagOf(media.create({ id: Option.none(), state: {}, upload: upload("x") })),
-    ).toEqual(Option.some("Unparseable"));
-    expect(images.chain.rows()).toEqual([]);
-  });
+  it.effect("an extractor failure writes nothing", () =>
+    Effect.gen(function* () {
+      const { leaf } = setup();
+      const images = leaf("images");
+      const media = defineMediaUploads({
+        files: defineFileWrites({
+          leaf: images.ops,
+          blobs: makeInMemoryBlobStore(),
+          transact: (effect) => effect,
+        }),
+        extractor: { extract: () => Effect.fail({ _tag: "Unparseable" as const }) },
+      });
+      expect(
+        yield* tagOf(media.create({ id: Option.none(), state: {}, upload: upload("x") })),
+      ).toEqual(Option.some("Unparseable"));
+      expect(images.chain.rows()).toEqual([]);
+    }),
+  );
 });
 
 // ── Renditions ────────────────────────────────────────────────────────
@@ -379,120 +384,140 @@ const renditions = () => {
     },
   });
   /** An image node at `visibility`, its bytes referenced; its id and hash. */
-  const image = async (text: string, visibility: string) => {
-    const written = await run(
-      as(owner, files.create({ id: Option.none(), state: { visibility }, upload: upload(text) })),
-    );
-    references.add(written.contentHash, { type: "images", id: written.id });
-    return written;
-  };
+  const image = (text: string, visibility: string) =>
+    Effect.gen(function* () {
+      const written = yield* as(
+        owner,
+        files.create({ id: Option.none(), state: { visibility }, upload: upload(text) }),
+      );
+      references.add(written.contentHash, { type: "images", id: written.id });
+      return written;
+    });
   const serve = (who: Viewer, contentHash: string) =>
     as(who, ops.serve({ contentHash, width: 500, accept: "image/webp,*/*" }));
   return { images, blobs, files, references, rendered, ops, image, serve, as };
 };
 
 describe("defineRenditions", () => {
-  it("serves a public image's rendition at the bucket and negotiated format, to anyone", async () => {
-    const { image, serve, rendered } = renditions();
-    const { contentHash } = await image("public", "public");
-    expect(await run(serve(anonymous, contentHash))).toEqual({
-      width: 640,
-      format: "image/webp",
-      rendition: `${contentHash.slice(0, 8)}@640.image/webp`,
-    });
-    expect(rendered).toHaveLength(1);
-  });
+  it.effect(
+    "serves a public image's rendition at the bucket and negotiated format, to anyone",
+    () =>
+      Effect.gen(function* () {
+        const { image, serve, rendered } = renditions();
+        const { contentHash } = yield* image("public", "public");
+        expect(yield* serve(anonymous, contentHash)).toEqual({
+          width: 640,
+          format: "image/webp",
+          rendition: `${contentHash.slice(0, 8)}@640.image/webp`,
+        });
+        expect(rendered).toHaveLength(1);
+      }),
+  );
 
-  it.each([
+  it.effect.each([
     { label: "the owner", who: owner, served: true },
     { label: "the view-private rung", who: rung, served: true },
     { label: "a stranger", who: stranger, served: false },
     { label: "anonymous", who: anonymous, served: false },
-  ])("a private image: $label → served $served", async ({ who, served }) => {
-    const { image, serve } = renditions();
-    const { contentHash } = await image("private", "private");
-    expect(await tagOf(serve(who, contentHash))).toEqual(
-      served ? Option.none() : Option.some("RenditionNotFound"),
-    );
-  });
+  ])("a private image: $label → served $served", ({ who, served }) =>
+    Effect.gen(function* () {
+      const { image, serve } = renditions();
+      const { contentHash } = yield* image("private", "private");
+      expect(yield* tagOf(serve(who, contentHash))).toEqual(
+        served ? Option.none() : Option.some("RenditionNotFound"),
+      );
+    }),
+  );
 
-  it("a tombstoned image's bytes answer not-found below the view-deleted rung", async () => {
-    const { image, serve, images, as } = renditions();
-    const { id, contentHash } = await image("gone", "public");
-    await run(as(owner, images.ops.delete(id)));
-    expect(await tagOf(serve(anonymous, contentHash))).toEqual(Option.some("RenditionNotFound"));
-    expect(await tagOf(serve(owner, contentHash))).toEqual(Option.some("RenditionNotFound"));
-  });
+  it.effect("a tombstoned image's bytes answer not-found below the view-deleted rung", () =>
+    Effect.gen(function* () {
+      const { image, serve, images, as } = renditions();
+      const { id, contentHash } = yield* image("gone", "public");
+      yield* as(owner, images.ops.delete(id));
+      expect(yield* tagOf(serve(anonymous, contentHash))).toEqual(Option.some("RenditionNotFound"));
+      expect(yield* tagOf(serve(owner, contentHash))).toEqual(Option.some("RenditionNotFound"));
+    }),
+  );
 
-  it("unreferenced bytes answer not-found even when the store holds them", async () => {
-    const { image, serve, references } = renditions();
-    const { id, contentHash } = await image("orphan", "public");
-    references.removeNode({ type: "images", id });
-    expect(await tagOf(serve(owner, contentHash))).toEqual(Option.some("RenditionNotFound"));
-  });
+  it.effect("unreferenced bytes answer not-found even when the store holds them", () =>
+    Effect.gen(function* () {
+      const { image, serve, references } = renditions();
+      const { id, contentHash } = yield* image("orphan", "public");
+      references.removeNode({ type: "images", id });
+      expect(yield* tagOf(serve(owner, contentHash))).toEqual(Option.some("RenditionNotFound"));
+    }),
+  );
 
-  it("bytes only a hidden node references answer not-found; a readable reference opens them", async () => {
-    const { image, serve, files, references, as } = renditions();
-    const hidden = await image("shared", "private");
-    expect(await tagOf(serve(stranger, hidden.contentHash))).toEqual(
-      Option.some("RenditionNotFound"),
-    );
-    const open = await run(
-      as(
-        owner,
-        files.create({
-          id: Option.none(),
-          state: { visibility: "public" },
-          upload: upload("shared"),
-        }),
-      ),
-    );
-    references.add(open.contentHash, { type: "images", id: open.id });
-    expect(open.contentHash).toBe(hidden.contentHash);
-    expect(await tagOf(serve(stranger, hidden.contentHash))).toEqual(Option.none());
-  });
+  it.effect(
+    "bytes only a hidden node references answer not-found; a readable reference opens them",
+    () =>
+      Effect.gen(function* () {
+        const { image, serve, files, references, as } = renditions();
+        const hidden = yield* image("shared", "private");
+        expect(yield* tagOf(serve(stranger, hidden.contentHash))).toEqual(
+          Option.some("RenditionNotFound"),
+        );
+        const open = yield* as(
+          owner,
+          files.create({
+            id: Option.none(),
+            state: { visibility: "public" },
+            upload: upload("shared"),
+          }),
+        );
+        references.add(open.contentHash, { type: "images", id: open.id });
+        expect(open.contentHash).toBe(hidden.contentHash);
+        expect(yield* tagOf(serve(stranger, hidden.contentHash))).toEqual(Option.none());
+      }),
+  );
 
-  it("a node whose readable version points at other bytes doesn't open these", async () => {
-    const { image, serve, files, as } = renditions();
-    const first = await image("v1", "public");
-    // The reference index still lists the node against its old bytes.
-    await run(as(owner, files.replace({ id: first.id, upload: upload("v2") })));
-    expect(await tagOf(serve(anonymous, first.contentHash))).toEqual(
-      Option.some("RenditionNotFound"),
-    );
-  });
+  it.effect("a node whose readable version points at other bytes doesn't open these", () =>
+    Effect.gen(function* () {
+      const { image, serve, files, as } = renditions();
+      const first = yield* image("v1", "public");
+      // The reference index still lists the node against its old bytes.
+      yield* as(owner, files.replace({ id: first.id, upload: upload("v2") }));
+      expect(yield* tagOf(serve(anonymous, first.contentHash))).toEqual(
+        Option.some("RenditionNotFound"),
+      );
+    }),
+  );
 
-  it("pending bytes answer not-found", async () => {
-    const { blobs, files, references, serve, as } = renditions();
-    blobs.failNextPut();
-    const written = await run(
-      as(
+  it.effect("pending bytes answer not-found", () =>
+    Effect.gen(function* () {
+      const { blobs, files, references, serve, as } = renditions();
+      blobs.failNextPut();
+      const written = yield* as(
         owner,
         files.create({ id: Option.none(), state: { visibility: "public" }, upload: upload("p") }),
-      ),
-    );
-    expect(written.bytesPending).toBe(true);
-    references.add(written.contentHash, { type: "images", id: written.id });
-    expect(await tagOf(serve(owner, written.contentHash))).toEqual(
-      Option.some("RenditionNotFound"),
-    );
-  });
+      );
+      expect(written.bytesPending).toBe(true);
+      references.add(written.contentHash, { type: "images", id: written.id });
+      expect(yield* tagOf(serve(owner, written.contentHash))).toEqual(
+        Option.some("RenditionNotFound"),
+      );
+    }),
+  );
 
-  it("a ref to an undeclared leaf never opens the gate", async () => {
-    const { serve, references, image } = renditions();
-    const { contentHash } = await image("x", "private");
-    references.add(contentHash, { type: "posts", id: "p-1" });
-    expect(await tagOf(serve(stranger, contentHash))).toEqual(Option.some("RenditionNotFound"));
-  });
+  it.effect("a ref to an undeclared leaf never opens the gate", () =>
+    Effect.gen(function* () {
+      const { serve, references, image } = renditions();
+      const { contentHash } = yield* image("x", "private");
+      references.add(contentHash, { type: "posts", id: "p-1" });
+      expect(yield* tagOf(serve(stranger, contentHash))).toEqual(Option.some("RenditionNotFound"));
+    }),
+  );
 
-  it("a malformed hash answers not-found and reads nothing", async () => {
-    const { ops, rendered } = renditions();
-    expect(await run(ops.readable("not-a-hash"))).toBe(false);
-    expect(await tagOf(ops.serve({ contentHash: "../etc/passwd", width: 100 }))).toEqual(
-      Option.some("RenditionNotFound"),
-    );
-    expect(rendered).toEqual([]);
-  });
+  it.effect("a malformed hash answers not-found and reads nothing", () =>
+    Effect.gen(function* () {
+      const { ops, rendered } = renditions();
+      expect(yield* ops.readable("not-a-hash")).toBe(false);
+      expect(yield* tagOf(ops.serve({ contentHash: "../etc/passwd", width: 100 }))).toEqual(
+        Option.some("RenditionNotFound"),
+      );
+      expect(rendered).toEqual([]);
+    }),
+  );
 
   /**
    * A width list emptied at runtime, as a declaration built from data can be:
@@ -545,56 +570,65 @@ const albums = () => {
   // mints its own sequence, so the fixture names them.
   let next = 0;
   const create = (ops: typeof images.ops, visibility: string) =>
-    run(
+    Effect.map(
       as(
         owner,
         ops.create({ id: Option.some(`${ops.type}-${(next += 1)}`), state: { visibility } }),
       ),
-    ).then(({ id }) => id);
-  const listed = async (albumId: string, who: Viewer) =>
-    Arr.map(
-      (await run(as(who, album.list(albumId, { limit: 50, offset: 0 })))).rows,
-      (row) => [row.memberId, row.resource.type] as const,
+      ({ id }) => id,
     );
+  const listed = (albumId: string, who: Viewer) =>
+    Effect.gen(function* () {
+      return Arr.map(
+        (yield* as(who, album.list(albumId, { limit: 50, offset: 0 }))).rows,
+        (row) => [row.memberId, row.resource.type] as const,
+      );
+    });
   return { lists, images, videos, posts, album, create, listed, as };
 };
 
 describe("defineAlbum", () => {
-  it("holds media items from every declared leaf, in order, tagged with their leaf", async () => {
-    const { lists, images, videos, album, create, listed, as } = albums();
-    const albumId = await create(lists.ops, "public");
-    const photoId = await create(images.ops, "public");
-    const clipId = await create(videos.ops, "public");
-    await run(as(owner, album.append(albumId, clipId)));
-    await run(as(owner, album.append(albumId, photoId)));
-    expect(await listed(albumId, anonymous)).toEqual([
-      [clipId, "videos"],
-      [photoId, "images"],
-    ]);
-  });
+  it.effect("holds media items from every declared leaf, in order, tagged with their leaf", () =>
+    Effect.gen(function* () {
+      const { lists, images, videos, album, create, listed, as } = albums();
+      const albumId = yield* create(lists.ops, "public");
+      const photoId = yield* create(images.ops, "public");
+      const clipId = yield* create(videos.ops, "public");
+      yield* as(owner, album.append(albumId, clipId));
+      yield* as(owner, album.append(albumId, photoId));
+      expect(yield* listed(albumId, anonymous)).toEqual([
+        [clipId, "videos"],
+        [photoId, "images"],
+      ]);
+    }),
+  );
 
-  it("refuses a non-media node as one it can't find", async () => {
-    const { lists, posts, album, create, as } = albums();
-    const albumId = await create(lists.ops, "public");
-    const postId = await create(posts.ops, "public");
-    expect(await tagOf(as(owner, album.append(albumId, postId)))).toEqual(
-      Option.some("NodeNotFound"),
-    );
-  });
+  it.effect("refuses a non-media node as one it can't find", () =>
+    Effect.gen(function* () {
+      const { lists, posts, album, create, as } = albums();
+      const albumId = yield* create(lists.ops, "public");
+      const postId = yield* create(posts.ops, "public");
+      expect(yield* tagOf(as(owner, album.append(albumId, postId)))).toEqual(
+        Option.some("NodeNotFound"),
+      );
+    }),
+  );
 
-  it("omits an item the viewer can't read", async () => {
-    const { lists, images, album, create, listed, as } = albums();
-    const albumId = await create(lists.ops, "public");
-    const shown = await create(images.ops, "public");
-    const hidden = await create(images.ops, "private");
-    await run(as(owner, album.append(albumId, shown)));
-    await run(as(owner, album.append(albumId, hidden)));
-    expect(await listed(albumId, owner)).toEqual([
-      [shown, "images"],
-      [hidden, "images"],
-    ]);
-    expect(await listed(albumId, stranger)).toEqual([[shown, "images"]]);
-  });
+  it.effect("omits an item the viewer can't read", () =>
+    Effect.gen(function* () {
+      const { lists, images, album, create, listed, as } = albums();
+      const albumId = yield* create(lists.ops, "public");
+      const shown = yield* create(images.ops, "public");
+      const hidden = yield* create(images.ops, "private");
+      yield* as(owner, album.append(albumId, shown));
+      yield* as(owner, album.append(albumId, hidden));
+      expect(yield* listed(albumId, owner)).toEqual([
+        [shown, "images"],
+        [hidden, "images"],
+      ]);
+      expect(yield* listed(albumId, stranger)).toEqual([[shown, "images"]]);
+    }),
+  );
 
   it("throws MediaDeclarationError for a leaf declared twice", () => {
     const { lists, images } = albums();

@@ -37,7 +37,8 @@
  * @module tests/subtype
  */
 
-import { describe, expect, it } from "vite-plus/test";
+import { beforeAll, it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -134,8 +135,6 @@ import {
   websitePolicy,
 } from "./fixtures.ts";
 
-const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
-
 /** The resource a handler write's writer read back, failing the test when it can't. */
 const readBack = <Resource>(write: CommittedWrite<Resource>): Resource =>
   Option.match(write.resource, {
@@ -147,14 +146,13 @@ const readBack = <Resource>(write: CommittedWrite<Resource>): Resource =>
 const viewOf = (...columns: ReadonlyArray<string>): HashSet.HashSet<string> =>
   HashSet.make("id", "version", "action", ...columns);
 
-const tagOf = async <A, E extends { readonly _tag: string }>(
-  effect: Effect.Effect<A, E>,
-): Promise<Option.Option<string>> => {
-  const exit = await Effect.runPromiseExit(effect);
-  return Exit.isFailure(exit)
-    ? Option.map(Exit.findErrorOption(exit), (error) => error._tag)
-    : Option.none();
-};
+const tagOf = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.exit(effect);
+    return Exit.isFailure(exit)
+      ? Option.map(Exit.findErrorOption(exit), (error) => error._tag)
+      : Option.none();
+  });
 
 const as = (account: ViewerAccount): Viewer => Option.some(account);
 const anonymous: Viewer = Option.none();
@@ -175,64 +173,76 @@ describe("canViewOwned (the owned-material read predicate)", () => {
       readonly followers?: typeof follows;
     } = {},
   ) =>
-    run(
-      canViewOwned(viewer, gardeneriaPolicy, options.followers ?? follows, {
-        ownerId: member.id,
-        visibility,
-        draft: options.draft ?? false,
-        unapproved: options.unapproved ?? false,
-      }),
-    );
+    canViewOwned(viewer, gardeneriaPolicy, options.followers ?? follows, {
+      ownerId: member.id,
+      visibility,
+      draft: options.draft ?? false,
+      unapproved: options.unapproved ?? false,
+    });
 
-  it("public: everyone, anonymous included", async () => {
-    expect(await view("public", anonymous)).toBe(true);
-    expect(await view("public", as(otherMember))).toBe(true);
-  });
+  it.effect("public: everyone, anonymous included", () =>
+    Effect.gen(function* () {
+      expect(yield* view("public", anonymous)).toBe(true);
+      expect(yield* view("public", as(otherMember))).toBe(true);
+    }),
+  );
 
-  it("private: the owner and moderator+, nobody else", async () => {
-    expect(await view("private", as(member))).toBe(true);
-    expect(await view("private", as(moderator))).toBe(true);
-    expect(await view("private", as(admin))).toBe(true);
-    expect(await view("private", as(otherMember))).toBe(false);
-    expect(await view("private", as(contributor))).toBe(false);
-    expect(await view("private", anonymous)).toBe(false);
-  });
+  it.effect("private: the owner and moderator+, nobody else", () =>
+    Effect.gen(function* () {
+      expect(yield* view("private", as(member))).toBe(true);
+      expect(yield* view("private", as(moderator))).toBe(true);
+      expect(yield* view("private", as(admin))).toBe(true);
+      expect(yield* view("private", as(otherMember))).toBe(false);
+      expect(yield* view("private", as(contributor))).toBe(false);
+      expect(yield* view("private", anonymous)).toBe(false);
+    }),
+  );
 
-  it("followers: the owner, moderator+, and the owner's followers via the seam", async () => {
-    expect(await view("followers", as(member))).toBe(true);
-    expect(await view("followers", as(moderator))).toBe(true);
-    expect(await view("followers", as(follower))).toBe(true);
-    expect(await view("followers", as(contributor))).toBe(false);
-    expect(await view("followers", anonymous)).toBe(false);
-  });
+  it.effect("followers: the owner, moderator+, and the owner's followers via the seam", () =>
+    Effect.gen(function* () {
+      expect(yield* view("followers", as(member))).toBe(true);
+      expect(yield* view("followers", as(moderator))).toBe(true);
+      expect(yield* view("followers", as(follower))).toBe(true);
+      expect(yield* view("followers", as(contributor))).toBe(false);
+      expect(yield* view("followers", anonymous)).toBe(false);
+    }),
+  );
 
-  it("followers: fails closed under the nobody-follows seam", async () => {
-    expect(await view("followers", as(follower), { followers: nobody })).toBe(false);
-  });
+  it.effect("followers: fails closed under the nobody-follows seam", () =>
+    Effect.gen(function* () {
+      expect(yield* view("followers", as(follower), { followers: nobody })).toBe(false);
+    }),
+  );
 
-  it("private never consults the follower seam", async () => {
-    const everyoneFollows = {
-      isFollower: () => Effect.succeed(true),
-      following: () => HashSet.empty<string>(),
-    };
-    expect(await view("private", as(otherMember), { followers: everyoneFollows })).toBe(false);
-  });
+  it.effect("private never consults the follower seam", () =>
+    Effect.gen(function* () {
+      const everyoneFollows = {
+        isFollower: () => Effect.succeed(true),
+        following: () => HashSet.empty<string>(),
+      };
+      expect(yield* view("private", as(otherMember), { followers: everyoneFollows })).toBe(false);
+    }),
+  );
 
-  it("a draft narrows even public to the owner and moderator+", async () => {
-    expect(await view("public", anonymous, { draft: true })).toBe(false);
-    expect(await view("public", as(otherMember), { draft: true })).toBe(false);
-    expect(await view("followers", as(follower), { draft: true })).toBe(false);
-    expect(await view("public", as(member), { draft: true })).toBe(true);
-    expect(await view("private", as(moderator), { draft: true })).toBe(true);
-  });
+  it.effect("a draft narrows even public to the owner and moderator+", () =>
+    Effect.gen(function* () {
+      expect(yield* view("public", anonymous, { draft: true })).toBe(false);
+      expect(yield* view("public", as(otherMember), { draft: true })).toBe(false);
+      expect(yield* view("followers", as(follower), { draft: true })).toBe(false);
+      expect(yield* view("public", as(member), { draft: true })).toBe(true);
+      expect(yield* view("private", as(moderator), { draft: true })).toBe(true);
+    }),
+  );
 
-  it("an unapproved row narrows even public to the owner and moderator+", async () => {
-    expect(await view("public", anonymous, { unapproved: true })).toBe(false);
-    expect(await view("public", as(otherMember), { unapproved: true })).toBe(false);
-    expect(await view("followers", as(follower), { unapproved: true })).toBe(false);
-    expect(await view("public", as(member), { unapproved: true })).toBe(true);
-    expect(await view("private", as(moderator), { unapproved: true })).toBe(true);
-  });
+  it.effect("an unapproved row narrows even public to the owner and moderator+", () =>
+    Effect.gen(function* () {
+      expect(yield* view("public", anonymous, { unapproved: true })).toBe(false);
+      expect(yield* view("public", as(otherMember), { unapproved: true })).toBe(false);
+      expect(yield* view("followers", as(follower), { unapproved: true })).toBe(false);
+      expect(yield* view("public", as(member), { unapproved: true })).toBe(true);
+      expect(yield* view("private", as(moderator), { unapproved: true })).toBe(true);
+    }),
+  );
 });
 
 describe("readScopeFor", () => {
@@ -248,20 +258,20 @@ describe("readScopeFor", () => {
     expect(readScopeFor(as(moderator), websitePolicy, follows).kind).toBe("member");
   });
 
-  it("carries the member's groups when the seam answers them", () => {
-    const memberships = makeInMemoryMembershipStore();
-    Effect.runSync(
-      memberships.add({ groupId: "g-1", accountId: follower.id, role: "member", at: NOW }),
-    );
-    expect(
-      readScopeFor(as(follower), gardeneriaPolicy, { ...follows, ...audienceSeam(memberships) }),
-    ).toEqual({
-      kind: "member",
-      userId: follower.id,
-      following: HashSet.make(member.id),
-      groups: HashSet.make("g-1"),
-    });
-  });
+  it.effect("carries the member's groups when the seam answers them", () =>
+    Effect.gen(function* () {
+      const memberships = makeInMemoryMembershipStore();
+      yield* memberships.add({ groupId: "g-1", accountId: follower.id, role: "member", at: NOW });
+      expect(
+        readScopeFor(as(follower), gardeneriaPolicy, { ...follows, ...audienceSeam(memberships) }),
+      ).toEqual({
+        kind: "member",
+        userId: follower.id,
+        following: HashSet.make(member.id),
+        groups: HashSet.make("g-1"),
+      });
+    }),
+  );
 });
 
 // ── The list filter never disagrees with the row predicate ───────────
@@ -311,22 +321,22 @@ describe("ownedListFilter ≡ canViewOwned", () => {
     ),
   );
 
-  it.each(cases)("$label", async ({ withDraft, withModeration, viewer }) => {
-    const access = ownedAccess({ draft: withDraft, moderation: withModeration });
-    const filter = ownedListFilter(
-      access,
-      columns,
-      readScopeFor(viewer, gardeneriaPolicy, follows),
-    );
-    const listed = Arr.map(rows, (row) => [
-      row.id,
-      evaluate(filter, row, {
-        now: NOW,
-        contains: (set: Following, value) => P.isString(value) && HashSet.has(set, value),
-      }),
-    ]);
-    const seen = await run(
-      Effect.forEach(
+  it.effect.each(cases)("$label", ({ withDraft, withModeration, viewer }) =>
+    Effect.gen(function* () {
+      const access = ownedAccess({ draft: withDraft, moderation: withModeration });
+      const filter = ownedListFilter(
+        access,
+        columns,
+        readScopeFor(viewer, gardeneriaPolicy, follows),
+      );
+      const listed = Arr.map(rows, (row) => [
+        row.id,
+        evaluate(filter, row, {
+          now: NOW,
+          contains: (set: Following, value) => P.isString(value) && HashSet.has(set, value),
+        }),
+      ]);
+      const seen = yield* Effect.forEach(
         rows,
         (row) =>
           Effect.map(
@@ -341,10 +351,10 @@ describe("ownedListFilter ≡ canViewOwned", () => {
             (visible) => [row.id, visible],
           ),
         { concurrency: 1 },
-      ),
-    );
-    expect(listed).toEqual(seen);
-  });
+      );
+      expect(listed).toEqual(seen);
+    }),
+  );
 
   it("reads an absent or false draft option as no draft column", () => {
     expect(ownedAccess({})).toEqual(ownedAccess());
@@ -474,53 +484,69 @@ describe("the write gates", () => {
   const row = { type: "gardens", id: "g1" };
   const ownedBy = (owner: Option.Option<string>) => Effect.succeed(owner);
 
-  it("create: reference data needs the corpus rung, an owned leaf any account", async () => {
-    expect(await tagOf(requireCreator(reference, anonymous, gardeneriaPolicy))).toEqual(
-      Option.some("Unauthorized"),
-    );
-    expect(await tagOf(requireCreator(reference, as(member), gardeneriaPolicy))).toEqual(
-      Option.some("Forbidden"),
-    );
-    expect(await tagOf(requireCreator(reference, as(contributor), gardeneriaPolicy))).toEqual(
-      Option.none(),
-    );
-    expect(await tagOf(requireCreator(owned, anonymous, gardeneriaPolicy))).toEqual(
-      Option.some("Unauthorized"),
-    );
-    expect(await tagOf(requireCreator(owned, as(member), gardeneriaPolicy))).toEqual(Option.none());
-  });
+  it.effect("create: reference data needs the corpus rung, an owned leaf any account", () =>
+    Effect.gen(function* () {
+      expect(yield* tagOf(requireCreator(reference, anonymous, gardeneriaPolicy))).toEqual(
+        Option.some("Unauthorized"),
+      );
+      expect(yield* tagOf(requireCreator(reference, as(member), gardeneriaPolicy))).toEqual(
+        Option.some("Forbidden"),
+      );
+      expect(yield* tagOf(requireCreator(reference, as(contributor), gardeneriaPolicy))).toEqual(
+        Option.none(),
+      );
+      expect(yield* tagOf(requireCreator(owned, anonymous, gardeneriaPolicy))).toEqual(
+        Option.some("Unauthorized"),
+      );
+      expect(yield* tagOf(requireCreator(owned, as(member), gardeneriaPolicy))).toEqual(
+        Option.none(),
+      );
+    }),
+  );
 
-  it("an owned write admits the owner whatever their rung, and moderator+ on anyone's row", async () => {
-    const gate = (viewer: Viewer) =>
-      tagOf(requireWriter(owned, viewer, gardeneriaPolicy, row, ownedBy(Option.some(member.id))));
-    expect(await gate(as(member))).toEqual(Option.none());
-    expect(await gate(as(moderator))).toEqual(Option.none());
-    expect(await gate(as(admin))).toEqual(Option.none());
-    // Another member below the rung: Forbidden, not NotFound. The gate never reads visibility, so it
-    // deliberately confirms any owned row with an owner record, hidden or not (docs/SECURITY.md →
-    // "Existence disclosure by the write gates").
-    expect(await gate(as(otherMember))).toEqual(Option.some("Forbidden"));
-    expect(await gate(as(contributor))).toEqual(Option.some("Forbidden"));
-    expect(await gate(anonymous)).toEqual(Option.some("Unauthorized"));
-  });
+  it.effect(
+    "an owned write admits the owner whatever their rung, and moderator+ on anyone's row",
+    () =>
+      Effect.gen(function* () {
+        const gate = (viewer: Viewer) =>
+          tagOf(
+            requireWriter(owned, viewer, gardeneriaPolicy, row, ownedBy(Option.some(member.id))),
+          );
+        expect(yield* gate(as(member))).toEqual(Option.none());
+        expect(yield* gate(as(moderator))).toEqual(Option.none());
+        expect(yield* gate(as(admin))).toEqual(Option.none());
+        // Another member below the rung: Forbidden, not NotFound. The gate never reads visibility, so it
+        // deliberately confirms any owned row with an owner record, hidden or not (docs/SECURITY.md →
+        // "Existence disclosure by the write gates").
+        expect(yield* gate(as(otherMember))).toEqual(Option.some("Forbidden"));
+        expect(yield* gate(as(contributor))).toEqual(Option.some("Forbidden"));
+        expect(yield* gate(anonymous)).toEqual(Option.some("Unauthorized"));
+      }),
+  );
 
-  it("a missing owner on an owned leaf is NotFound, never an open gate", async () => {
-    expect(
-      await tagOf(
-        requireWriter(owned, as(moderator), gardeneriaPolicy, row, ownedBy(Option.none())),
-      ),
-    ).toEqual(Option.some("NodeNotFound"));
-  });
+  it.effect("a missing owner on an owned leaf is NotFound, never an open gate", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* tagOf(
+          requireWriter(owned, as(moderator), gardeneriaPolicy, row, ownedBy(Option.none())),
+        ),
+      ).toEqual(Option.some("NodeNotFound"));
+    }),
+  );
 
-  it("a reference write needs the corpus rung and never loads an owner", async () => {
-    const noOwnerLookup = Effect.die("the reference gate must not load an owner");
-    expect(
-      await tagOf(requireWriter(reference, as(contributor), gardeneriaPolicy, row, noOwnerLookup)),
-    ).toEqual(Option.none());
-    expect(
-      await tagOf(requireWriter(reference, as(member), gardeneriaPolicy, row, noOwnerLookup)),
-    ).toEqual(Option.some("Forbidden"));
-  });
+  it.effect("a reference write needs the corpus rung and never loads an owner", () =>
+    Effect.gen(function* () {
+      const noOwnerLookup = Effect.die("the reference gate must not load an owner");
+      expect(
+        yield* tagOf(
+          requireWriter(reference, as(contributor), gardeneriaPolicy, row, noOwnerLookup),
+        ),
+      ).toEqual(Option.none());
+      expect(
+        yield* tagOf(requireWriter(reference, as(member), gardeneriaPolicy, row, noOwnerLookup)),
+      ).toEqual(Option.some("Forbidden"));
+    }),
+  );
 });
 
 // ── The factory end to end ────────────────────────────────────────────
@@ -565,247 +591,280 @@ const ownedPosts = () => {
       viewer = who;
       return effect;
     });
-  const post = async (visibility: Visibility, owner: ViewerAccount = member) => {
-    const written = await run(
-      actAs(
+  const post = (visibility: Visibility, owner: ViewerAccount = member) =>
+    Effect.gen(function* () {
+      const written = yield* actAs(
         as(owner),
         ops.create({ id: Option.none(), state: { title: "A post", visibility, draft: false } }),
-      ),
-    );
-    return written.id;
-  };
+      );
+      return written.id;
+    });
   return { chain, leaves, ops, actAs, post, snapshots };
 };
 
 describe("defineSubtype — an owned leaf", () => {
-  it("create stamps the creating account as owner, and records it as the actor", async () => {
-    const { chain, leaves, post } = ownedPosts();
-    const id = await post("public");
-    expect(HashMap.get(leaves.owners(), id)).toEqual(Option.some(member.id));
-    expect(chain.rows()[0]?.actorId).toEqual(Option.some(member.id));
-  });
+  it.effect("create stamps the creating account as owner, and records it as the actor", () =>
+    Effect.gen(function* () {
+      const { chain, leaves, post } = ownedPosts();
+      const id = yield* post("public");
+      expect(HashMap.get(leaves.owners(), id)).toEqual(Option.some(member.id));
+      expect(chain.rows()[0]?.actorId).toEqual(Option.some(member.id));
+    }),
+  );
 
-  it("a private target refuses a stranger and the anonymous as NotFound, never Forbidden", async () => {
-    const { ops, actAs, post } = ownedPosts();
-    const id = await post("private");
-    expect(await tagOf(actAs(as(otherMember), ops.get(id)))).toEqual(Option.some("NodeNotFound"));
-    expect(await tagOf(actAs(anonymous, ops.get(id)))).toEqual(Option.some("NodeNotFound"));
-  });
+  it.effect(
+    "a private target refuses a stranger and the anonymous as NotFound, never Forbidden",
+    () =>
+      Effect.gen(function* () {
+        const { ops, actAs, post } = ownedPosts();
+        const id = yield* post("private");
+        expect(yield* tagOf(actAs(as(otherMember), ops.get(id)))).toEqual(
+          Option.some("NodeNotFound"),
+        );
+        expect(yield* tagOf(actAs(anonymous, ops.get(id)))).toEqual(Option.some("NodeNotFound"));
+      }),
+  );
 
-  it("the same target still reads for whoever may see it", async () => {
-    const { ops, actAs, post } = ownedPosts();
-    const hidden = await post("private");
-    const open = await post("public");
-    expect(await tagOf(actAs(as(member), ops.get(hidden)))).toEqual(Option.none());
-    expect(await tagOf(actAs(as(moderator), ops.get(hidden)))).toEqual(Option.none());
-    expect(await tagOf(actAs(as(otherMember), ops.get(open)))).toEqual(Option.none());
-  });
+  it.effect("the same target still reads for whoever may see it", () =>
+    Effect.gen(function* () {
+      const { ops, actAs, post } = ownedPosts();
+      const hidden = yield* post("private");
+      const open = yield* post("public");
+      expect(yield* tagOf(actAs(as(member), ops.get(hidden)))).toEqual(Option.none());
+      expect(yield* tagOf(actAs(as(moderator), ops.get(hidden)))).toEqual(Option.none());
+      expect(yield* tagOf(actAs(as(otherMember), ops.get(open)))).toEqual(Option.none());
+    }),
+  );
 
-  it("a stranger cannot write; the owner can; a flip to private hides the row from the stranger", async () => {
-    const { ops, actAs, post } = ownedPosts();
-    const id = await post("public");
-    expect(await tagOf(actAs(as(otherMember), ops.update({ id, patch: { title: "x" } })))).toEqual(
-      Option.some("Forbidden"),
-    );
-    await run(actAs(as(member), ops.update({ id, patch: { visibility: "private" } })));
-    expect(await tagOf(actAs(as(otherMember), ops.get(id)))).toEqual(Option.some("NodeNotFound"));
-  });
+  it.effect(
+    "a stranger cannot write; the owner can; a flip to private hides the row from the stranger",
+    () =>
+      Effect.gen(function* () {
+        const { ops, actAs, post } = ownedPosts();
+        const id = yield* post("public");
+        expect(
+          yield* tagOf(actAs(as(otherMember), ops.update({ id, patch: { title: "x" } }))),
+        ).toEqual(Option.some("Forbidden"));
+        yield* actAs(as(member), ops.update({ id, patch: { visibility: "private" } }));
+        expect(yield* tagOf(actAs(as(otherMember), ops.get(id)))).toEqual(
+          Option.some("NodeNotFound"),
+        );
+      }),
+  );
 
-  it("a tombstone is hidden from all but the view-deleted rung", async () => {
-    const { ops, actAs, post } = ownedPosts();
-    const id = await post("public");
-    await run(actAs(as(member), ops.delete(id)));
-    expect(await tagOf(actAs(as(member), ops.get(id)))).toEqual(Option.some("NodeNotFound"));
-    expect(await tagOf(actAs(as(moderator), ops.get(id)))).toEqual(Option.none());
-  });
+  it.effect("a tombstone is hidden from all but the view-deleted rung", () =>
+    Effect.gen(function* () {
+      const { ops, actAs, post } = ownedPosts();
+      const id = yield* post("public");
+      yield* actAs(as(member), ops.delete(id));
+      expect(yield* tagOf(actAs(as(member), ops.get(id)))).toEqual(Option.some("NodeNotFound"));
+      expect(yield* tagOf(actAs(as(moderator), ops.get(id)))).toEqual(Option.none());
+    }),
+  );
 
-  it("list and getMany apply the same facts as get", async () => {
-    const { ops, actAs, post } = ownedPosts();
-    const open = await post("public");
-    const followersOnly = await post("followers");
-    const hidden = await post("private");
-    const listed = async (who: Viewer, includeDeleted = false) =>
-      (
-        await run(actAs(who, ops.list({ limit: 50, offset: 0, includeDeleted, where: always })))
-      ).rows.map((row) => row.id);
-    expect(await listed(anonymous)).toEqual([open]);
-    const sorted = Arr.sortBy(Order.String);
-    expect(sorted(await listed(as(follower)))).toEqual(sorted([open, followersOnly]));
-    expect(sorted(await listed(as(member)))).toEqual(sorted([open, followersOnly, hidden]));
-    const many = await run(
-      actAs(as(otherMember), ops.getMany([open, followersOnly, hidden, "missing"])),
-    );
-    expect([...HashMap.keys(many)]).toEqual([open]);
-    // A tombstone lists only when the rung asked for it.
-    await run(actAs(as(member), ops.delete(open)));
-    expect(await listed(anonymous)).toEqual([]);
-    expect(await listed(as(moderator))).not.toContain(open);
-    expect(await listed(as(moderator), true)).toContain(open);
-  });
+  it.effect("list and getMany apply the same facts as get", () =>
+    Effect.gen(function* () {
+      const { ops, actAs, post } = ownedPosts();
+      const open = yield* post("public");
+      const followersOnly = yield* post("followers");
+      const hidden = yield* post("private");
+      const listed = (who: Viewer, includeDeleted = false) =>
+        Effect.gen(function* () {
+          return (yield* actAs(
+            who,
+            ops.list({ limit: 50, offset: 0, includeDeleted, where: always }),
+          )).rows.map((row) => row.id);
+        });
+      expect(yield* listed(anonymous)).toEqual([open]);
+      const sorted = Arr.sortBy(Order.String);
+      expect(sorted(yield* listed(as(follower)))).toEqual(sorted([open, followersOnly]));
+      expect(sorted(yield* listed(as(member)))).toEqual(sorted([open, followersOnly, hidden]));
+      const many = yield* actAs(
+        as(otherMember),
+        ops.getMany([open, followersOnly, hidden, "missing"]),
+      );
+      expect([...HashMap.keys(many)]).toEqual([open]);
+      // A tombstone lists only when the rung asked for it.
+      yield* actAs(as(member), ops.delete(open));
+      expect(yield* listed(anonymous)).toEqual([]);
+      expect(yield* listed(as(moderator))).not.toContain(open);
+      expect(yield* listed(as(moderator), true)).toContain(open);
+    }),
+  );
 
-  it("a moderated leaf shows an unapproved row only to its owner and moderator+", async () => {
-    const chain = makeInMemoryVersionChain("comments");
-    const leaves = makeInMemoryLeafStore(chain, {
-      columns: ["title", "visibility", "moderationState"],
-      now: NOW,
-    });
-    let viewer: Viewer = anonymous;
-    const ops = defineSubtype({
-      type: "comments",
-      access: ownedAccess({ moderation: true }),
-      chain,
-      leaves,
-      viewer: Effect.sync(() => viewer),
-      policy: gardeneriaPolicy,
-      followers: follows,
-      toResource: (row: LeafRow) => row.id,
-    });
-    const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
-      Effect.suspend(() => {
-        viewer = who;
-        return effect;
+  it.effect("a moderated leaf shows an unapproved row only to its owner and moderator+", () =>
+    Effect.gen(function* () {
+      const chain = makeInMemoryVersionChain("comments");
+      const leaves = makeInMemoryLeafStore(chain, {
+        columns: ["title", "visibility", "moderationState"],
+        now: NOW,
       });
-    const create = (moderationState: string) =>
-      run(
-        actAs(
+      let viewer: Viewer = anonymous;
+      const ops = defineSubtype({
+        type: "comments",
+        access: ownedAccess({ moderation: true }),
+        chain,
+        leaves,
+        viewer: Effect.sync(() => viewer),
+        policy: gardeneriaPolicy,
+        followers: follows,
+        toResource: (row: LeafRow) => row.id,
+      });
+      const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+        Effect.suspend(() => {
+          viewer = who;
+          return effect;
+        });
+      const create = (moderationState: string) =>
+        Effect.map(
+          actAs(
+            as(member),
+            ops.create({
+              id: Option.none(),
+              state: { title: "t", visibility: "public", moderationState },
+            }),
+          ),
+          (written) => written.id,
+        );
+      const approved = yield* create("approved");
+      const pending = yield* create("pending");
+      const rejected = yield* create("rejected");
+      const listed = (who: Viewer) =>
+        Effect.gen(function* () {
+          return Arr.sort(
+            (yield* actAs(
+              who,
+              ops.list({ limit: 50, offset: 0, includeDeleted: false, where: always }),
+            )).rows,
+            Order.String,
+          );
+        });
+      const all = Arr.sort([approved, pending, rejected], Order.String);
+      expect(yield* listed(anonymous)).toEqual([approved]);
+      expect(yield* listed(as(otherMember))).toEqual([approved]);
+      expect(yield* listed(as(member))).toEqual(all);
+      expect(yield* listed(as(moderator))).toEqual(all);
+      expect(yield* tagOf(actAs(anonymous, ops.get(pending)))).toEqual(Option.some("NodeNotFound"));
+      expect(yield* tagOf(actAs(as(otherMember), ops.get(rejected)))).toEqual(
+        Option.some("NodeNotFound"),
+      );
+      expect(yield* tagOf(actAs(as(member), ops.get(pending)))).toEqual(Option.none());
+      expect(yield* tagOf(actAs(as(moderator), ops.get(rejected)))).toEqual(Option.none());
+      const many = yield* actAs(as(otherMember), ops.getMany([approved, pending, rejected]));
+      expect([...HashMap.keys(many)]).toEqual([approved]);
+    }),
+  );
+
+  it.effect("list clamps the page to the cap and reports the unpaged total", () =>
+    Effect.gen(function* () {
+      const { ops, actAs, post } = ownedPosts();
+      yield* post("public");
+      yield* post("public");
+      const page = yield* actAs(
+        anonymous,
+        ops.list({ limit: 1, offset: 0, includeDeleted: false, where: always }),
+      );
+      expect(page.rows).toHaveLength(1);
+      expect(page.total).toBe(2);
+      const huge = yield* actAs(
+        anonymous,
+        ops.list({ limit: 1e9, offset: -5, includeDeleted: false, where: always }),
+      );
+      expect(huge.rows).toHaveLength(2);
+    }),
+  );
+
+  it.effect("the version history is gated like a write, and a restore appends", () =>
+    Effect.gen(function* () {
+      const { chain, ops, actAs, post } = ownedPosts();
+      const id = yield* post("public");
+      yield* actAs(as(member), ops.update({ id, patch: { title: "Second" } }));
+      expect(yield* tagOf(actAs(as(otherMember), ops.getVersion(id, 0n)))).toEqual(
+        Option.some("Forbidden"),
+      );
+      const snapshot = yield* actAs(as(member), ops.getVersion(id, 0n));
+      expect(snapshot.state["title"]).toBe("A post");
+      const restored = yield* actAs(as(moderator), ops.restoreVersion(id, 0n));
+      expect(restored.version).toBe(2n);
+      expect(chain.rows()[2]?.actorId).toEqual(Option.some(moderator.id));
+    }),
+  );
+
+  it.effect(
+    "the write and history gates confirm existence: a stranger gets Forbidden on every hidden row, the anonymous Unauthorized",
+    () =>
+      Effect.gen(function* () {
+        const { ops, actAs, post, snapshots } = ownedPosts();
+        const draft = yield* actAs(
           as(member),
           ops.create({
             id: Option.none(),
-            state: { title: "t", visibility: "public", moderationState },
+            state: { title: "A draft", visibility: "public", draft: true },
           }),
-        ),
-      ).then((written) => written.id);
-    const approved = await create("approved");
-    const pending = await create("pending");
-    const rejected = await create("rejected");
-    const listed = async (who: Viewer) =>
-      Arr.sort(
-        (
-          await run(
-            actAs(who, ops.list({ limit: 50, offset: 0, includeDeleted: false, where: always })),
-          )
-        ).rows,
-        Order.String,
-      );
-    const all = Arr.sort([approved, pending, rejected], Order.String);
-    expect(await listed(anonymous)).toEqual([approved]);
-    expect(await listed(as(otherMember))).toEqual([approved]);
-    expect(await listed(as(member))).toEqual(all);
-    expect(await listed(as(moderator))).toEqual(all);
-    expect(await tagOf(actAs(anonymous, ops.get(pending)))).toEqual(Option.some("NodeNotFound"));
-    expect(await tagOf(actAs(as(otherMember), ops.get(rejected)))).toEqual(
-      Option.some("NodeNotFound"),
-    );
-    expect(await tagOf(actAs(as(member), ops.get(pending)))).toEqual(Option.none());
-    expect(await tagOf(actAs(as(moderator), ops.get(rejected)))).toEqual(Option.none());
-    const many = await run(actAs(as(otherMember), ops.getMany([approved, pending, rejected])));
-    expect([...HashMap.keys(many)]).toEqual([approved]);
-  });
-
-  it("list clamps the page to the cap and reports the unpaged total", async () => {
-    const { ops, actAs, post } = ownedPosts();
-    await post("public");
-    await post("public");
-    const page = await run(
-      actAs(anonymous, ops.list({ limit: 1, offset: 0, includeDeleted: false, where: always })),
-    );
-    expect(page.rows).toHaveLength(1);
-    expect(page.total).toBe(2);
-    const huge = await run(
-      actAs(anonymous, ops.list({ limit: 1e9, offset: -5, includeDeleted: false, where: always })),
-    );
-    expect(huge.rows).toHaveLength(2);
-  });
-
-  it("the version history is gated like a write, and a restore appends", async () => {
-    const { chain, ops, actAs, post } = ownedPosts();
-    const id = await post("public");
-    await run(actAs(as(member), ops.update({ id, patch: { title: "Second" } })));
-    expect(await tagOf(actAs(as(otherMember), ops.getVersion(id, 0n)))).toEqual(
-      Option.some("Forbidden"),
-    );
-    const snapshot = await run(actAs(as(member), ops.getVersion(id, 0n)));
-    expect(snapshot.state["title"]).toBe("A post");
-    const restored = await run(actAs(as(moderator), ops.restoreVersion(id, 0n)));
-    expect(restored.version).toBe(2n);
-    expect(chain.rows()[2]?.actorId).toEqual(Option.some(moderator.id));
-  });
-
-  it("the write and history gates confirm existence: a stranger gets Forbidden on every hidden row, the anonymous Unauthorized", async () => {
-    const { ops, actAs, post, snapshots } = ownedPosts();
-    const draft = await run(
-      actAs(
-        as(member),
-        ops.create({
-          id: Option.none(),
-          state: { title: "A draft", visibility: "public", draft: true },
-        }),
-      ),
-    );
-    const tombstone = await post("public");
-    await run(actAs(as(member), ops.delete(tombstone)));
-    const hidden = [await post("private"), await post("followers"), draft.id, tombstone];
-    const gated = (
-      id: string,
-    ): ReadonlyArray<Effect.Effect<unknown, { readonly _tag: string }>> => [
-      ops.update({ id, patch: { title: "x" } }),
-      ops.restore({ id, patch: {} }),
-      ops.delete(id),
-      ops.getVersion(id, 0n),
-      ops.restoreVersion(id, 0n),
-      // A version no row has, on either side: the gate answers before the chain could.
-      ops.getVersion(id, 99n),
-      ops.compare(id, 0n, 0n),
-      ops.compare(id, 99n, 0n),
-      ops.compare(id, 0n, 99n),
-    ];
-    /** The failure tag `who` gets from `effect`, as an Effect so the probes run in sequence. */
-    const tag = <A, E extends { readonly _tag: string }>(
-      who: Viewer,
-      effect: Effect.Effect<A, E>,
-    ) =>
-      Effect.map(Effect.exit(actAs(who, effect)), (exit) =>
-        Exit.isFailure(exit)
-          ? Option.map(Exit.findErrorOption(exit), (error) => error._tag)
-          : Option.none(),
-      );
-    // The reads hide each row from the stranger (SEC-AUTH-ENUM-001) …
-    expect(
-      await run(
-        Effect.forEach(hidden, (id) => tag(as(otherMember), ops.get(id)), { concurrency: 1 }),
-      ),
-    ).toEqual(Arr.map(hidden, () => Option.some("NodeNotFound")));
-    // … but the write and history gates disclose that it exists, while the
-    // anonymous get the same answer as for a missing id.
-    const cases = Arr.flatMap([...hidden, "missing"], (id) =>
-      Arr.map(gated(id), (op) => [id, op] as const),
-    );
-    const readBefore = snapshots.length;
-    const observed = await run(
-      Effect.forEach(
-        cases,
-        ([id, op]) =>
-          Effect.map(
-            Effect.all(
-              { stranger: tag(as(otherMember), op), anonymous: tag(anonymous, op) },
-              { concurrency: 1 },
+        );
+        const tombstone = yield* post("public");
+        yield* actAs(as(member), ops.delete(tombstone));
+        const hidden = [yield* post("private"), yield* post("followers"), draft.id, tombstone];
+        const gated = (
+          id: string,
+        ): ReadonlyArray<Effect.Effect<unknown, { readonly _tag: string }>> => [
+          ops.update({ id, patch: { title: "x" } }),
+          ops.restore({ id, patch: {} }),
+          ops.delete(id),
+          ops.getVersion(id, 0n),
+          ops.restoreVersion(id, 0n),
+          // A version no row has, on either side: the gate answers before the chain could.
+          ops.getVersion(id, 99n),
+          ops.compare(id, 0n, 0n),
+          ops.compare(id, 99n, 0n),
+          ops.compare(id, 0n, 99n),
+        ];
+        /** The failure tag `who` gets from `effect`, as an Effect so the probes run in sequence. */
+        const tag = <A, E extends { readonly _tag: string }>(
+          who: Viewer,
+          effect: Effect.Effect<A, E>,
+        ) =>
+          Effect.map(Effect.exit(actAs(who, effect)), (exit) =>
+            Exit.isFailure(exit)
+              ? Option.map(Exit.findErrorOption(exit), (error) => error._tag)
+              : Option.none(),
+          );
+        // The reads hide each row from the stranger (SEC-AUTH-ENUM-001) …
+        expect(
+          yield* Effect.forEach(hidden, (id) => tag(as(otherMember), ops.get(id)), {
+            concurrency: 1,
+          }),
+        ).toEqual(Arr.map(hidden, () => Option.some("NodeNotFound")));
+        // … but the write and history gates disclose that it exists, while the
+        // anonymous get the same answer as for a missing id.
+        const cases = Arr.flatMap([...hidden, "missing"], (id) =>
+          Arr.map(gated(id), (op) => [id, op] as const),
+        );
+        const readBefore = snapshots.length;
+        const observed = yield* Effect.forEach(
+          cases,
+          ([id, op]) =>
+            Effect.map(
+              Effect.all(
+                { stranger: tag(as(otherMember), op), anonymous: tag(anonymous, op) },
+                { concurrency: 1 },
+              ),
+              (answers) => ({ id, ...answers }),
             ),
-            (answers) => ({ id, ...answers }),
-          ),
-        // One probe at a time: `actAs` sets a shared viewer.
-        { concurrency: 1 },
-      ),
-    );
-    expect(observed).toEqual(
-      Arr.map(cases, ([id]) => ({
-        id,
-        stranger: Option.some(id === "missing" ? "NodeNotFound" : "Forbidden"),
-        anonymous: Option.some("Unauthorized"),
-      })),
-    );
-    // No refused history read reached a version.
-    expect(snapshots.slice(readBefore)).toEqual([]);
-  });
+          // One probe at a time: `actAs` sets a shared viewer.
+          { concurrency: 1 },
+        );
+        expect(observed).toEqual(
+          Arr.map(cases, ([id]) => ({
+            id,
+            stranger: Option.some(id === "missing" ? "NodeNotFound" : "Forbidden"),
+            anonymous: Option.some("Unauthorized"),
+          })),
+        );
+        // No refused history read reached a version.
+        expect(snapshots.slice(readBefore)).toEqual([]);
+      }),
+  );
 
   describe("compare: getVersion's gate, then the chain's compare", () => {
     /** A version no row has. */
@@ -828,170 +887,175 @@ describe("defineSubtype — an owned leaf", () => {
       ["an admin", as(admin)],
     ];
     /** An owned leaf with a row per state, each at head 1, plus a missing id and an ownerless row. */
-    const seeded = async () => {
-      const leaf = ownedPosts();
-      const { ops, actAs, post, leaves } = leaf;
-      const edited = async (id: string) => {
-        await run(actAs(as(member), ops.update({ id, patch: { title: "Second", draft: null } })));
-        return id;
-      };
-      const draft = (
-        await run(
-          actAs(
-            as(member),
-            ops.create({
-              id: Option.none(),
-              state: { title: "A draft", visibility: "public", draft: true },
-            }),
-          ),
-        )
-      ).id;
-      const tombstone = await post("private");
-      await run(actAs(as(member), ops.delete(tombstone)));
-      const ownerless = await edited(await post("public"));
-      leaves.dropOwner(ownerless);
-      const privateId = await edited(await post("private"));
-      const rows: ReadonlyArray<readonly [string, string]> = [
-        ["public", await edited(await post("public"))],
-        ["private", privateId],
-        ["followers", await edited(await post("followers"))],
-        ["draft", await edited(draft)],
-        ["tombstoned private", tombstone],
-        ["ownerless", ownerless],
-        ["missing", "missing"],
-      ];
-      return { ...leaf, rows, privateId };
-    };
-    it("answers every row × caller × version pair as getVersion(from) then getVersion(to) would, reading nothing past a refusing gate", async () => {
-      const { ops, actAs, rows, snapshots } = await seeded();
-      const cases = Arr.flatMap(rows, ([label, id]) =>
-        Arr.flatMap(viewers, ([viewerName, viewer]) =>
-          Arr.map(pairs, ([from, to]) => ({ label, id, viewerName, viewer, from, to })),
-        ),
-      );
-      const observed = await run(
-        Effect.forEach(
-          cases,
-          ({ label, id, viewerName, viewer, from, to }) =>
-            Effect.gen(function* () {
-              const fromAnswer = yield* actAs(viewer, Effect.result(ops.getVersion(id, from)));
-              const toAnswer = yield* actAs(viewer, Effect.result(ops.getVersion(id, to)));
-              const readBefore = snapshots.length;
-              const answer = yield* actAs(viewer, Effect.result(ops.compare(id, from, to)));
-              const read = snapshots.slice(readBefore);
-              const implied = Result.isFailure(fromAnswer)
-                ? Result.fail(fromAnswer.failure)
-                : Result.isFailure(toAnswer)
-                  ? Result.fail(toAnswer.failure)
-                  : Result.succeed({
-                      from: fromAnswer.success,
-                      to: toAnswer.success,
-                    });
-              return { label, viewerName, from, to, answer, implied, read };
-            }),
-          // One probe at a time: `actAs` sets a shared viewer.
-          { concurrency: 1 },
-        ),
-      );
-      // The failure itself (tag and fields), or the two snapshots `getVersion` serves.
-      expect(
-        observed.map(({ answer, implied: _, read: __, ...where }) => ({
-          ...where,
-          answer: Result.map(answer, ({ from, to }) => ({ from, to })),
-        })),
-      ).toEqual(
-        observed.map(({ answer: _, implied, read: __, ...where }) => ({
-          ...where,
-          answer: implied,
-        })),
-      );
-      // A compare the gate refuses reads no version.
-      expect(
-        observed.filter(
-          ({ answer, read }) =>
-            Result.isFailure(answer) &&
-            answer.failure._tag !== "VersionNotFound" &&
-            Arr.isReadonlyArrayNonEmpty(read),
-        ),
-      ).toEqual([]);
-      // Not vacuous: every answer occurs, and each where the gate puts it.
-      const tags = (label: string, viewerName: string) =>
-        observed
-          .filter((probe) => probe.label === label && probe.viewerName === viewerName)
-          .map(({ answer }) =>
-            Result.isFailure(answer) ? answer.failure._tag : R.keys(answer.success.changes),
-          );
-      const admitted = [
-        [],
-        ["title", "draft"],
-        ["title", "draft"],
-        "VersionNotFound",
-        "VersionNotFound",
-        "VersionNotFound",
-      ];
-      expect(tags("private", "the owner")).toEqual(admitted);
-      expect(tags("tombstoned private", "a moderator")).toEqual([
-        [],
-        [],
-        [],
-        "VersionNotFound",
-        "VersionNotFound",
-        "VersionNotFound",
-      ]);
-      expect(tags("public", "a stranger")).toEqual(Arr.map(pairs, () => "Forbidden"));
-      expect(tags("draft", "the owner's follower")).toEqual(Arr.map(pairs, () => "Forbidden"));
-      expect(tags("followers", "anonymous")).toEqual(Arr.map(pairs, () => "Unauthorized"));
-      expect(tags("ownerless", "an admin")).toEqual(Arr.map(pairs, () => "NodeNotFound"));
-      expect(tags("missing", "the owner")).toEqual(Arr.map(pairs, () => "NodeNotFound"));
-    });
-
-    it("delegates to the chain's compare: the same comparison, and VersionNotFound naming the absent version, from first", async () => {
-      const { chain, ops, actAs, privateId: id } = await seeded();
-      const direct = defineVersionChain("posts", chain);
-      const admitted = pairs.slice(0, 3);
-      expect(
-        await run(
-          Effect.forEach(admitted, ([from, to]) => actAs(as(member), ops.compare(id, from, to)), {
-            concurrency: 1,
+    const seeded = () =>
+      Effect.gen(function* () {
+        const leaf = ownedPosts();
+        const { ops, actAs, post, leaves } = leaf;
+        const edited = (id: string) =>
+          Effect.gen(function* () {
+            yield* actAs(as(member), ops.update({ id, patch: { title: "Second", draft: null } }));
+            return id;
+          });
+        const draft = (yield* actAs(
+          as(member),
+          ops.create({
+            id: Option.none(),
+            state: { title: "A draft", visibility: "public", draft: true },
           }),
-        ),
-      ).toEqual(
-        await run(
-          Effect.forEach(admitted, ([from, to]) => direct.compare(id, from, to), {
-            concurrency: 1,
-          }),
-        ),
-      );
-      const forward = await run(actAs(as(moderator), ops.compare(id, 0n, 1n)));
-      expect(forward.from.version).toBe(0n);
-      expect(forward.to.version).toBe(1n);
-      expect(forward.changes).toEqual({
-        title: { _tag: "changed", before: "A post", after: "Second" },
-        draft: { _tag: "changed", before: false, after: null },
+        )).id;
+        const tombstone = yield* post("private");
+        yield* actAs(as(member), ops.delete(tombstone));
+        const ownerless = yield* edited(yield* post("public"));
+        leaves.dropOwner(ownerless);
+        const privateId = yield* edited(yield* post("private"));
+        const rows: ReadonlyArray<readonly [string, string]> = [
+          ["public", yield* edited(yield* post("public"))],
+          ["private", privateId],
+          ["followers", yield* edited(yield* post("followers"))],
+          ["draft", yield* edited(draft)],
+          ["tombstoned private", tombstone],
+          ["ownerless", ownerless],
+          ["missing", "missing"],
+        ];
+        return { ...leaf, rows, privateId };
       });
-      const missingVersion = (from: bigint, to: bigint) =>
-        run(Effect.flip(actAs(as(member), ops.compare(id, from, to))));
-      expect(await missingVersion(0n, ABSENT_VERSION)).toEqual(
-        new VersionNotFound({ type: "posts", id, version: ABSENT_VERSION }),
-      );
-      expect(await missingVersion(ABSENT_VERSION, 0n)).toEqual(
-        new VersionNotFound({ type: "posts", id, version: ABSENT_VERSION }),
-      );
-      expect(await missingVersion(ABSENT_VERSION + 1n, ABSENT_VERSION)).toEqual(
-        new VersionNotFound({ type: "posts", id, version: ABSENT_VERSION + 1n }),
-      );
-    });
+    it.effect(
+      "answers every row × caller × version pair as getVersion(from) then getVersion(to) would, reading nothing past a refusing gate",
+      () =>
+        Effect.gen(function* () {
+          const { ops, actAs, rows, snapshots } = yield* seeded();
+          const cases = Arr.flatMap(rows, ([label, id]) =>
+            Arr.flatMap(viewers, ([viewerName, viewer]) =>
+              Arr.map(pairs, ([from, to]) => ({ label, id, viewerName, viewer, from, to })),
+            ),
+          );
+          const observed = yield* Effect.forEach(
+            cases,
+            ({ label, id, viewerName, viewer, from, to }) =>
+              Effect.gen(function* () {
+                const fromAnswer = yield* actAs(viewer, Effect.result(ops.getVersion(id, from)));
+                const toAnswer = yield* actAs(viewer, Effect.result(ops.getVersion(id, to)));
+                const readBefore = snapshots.length;
+                const answer = yield* actAs(viewer, Effect.result(ops.compare(id, from, to)));
+                const read = snapshots.slice(readBefore);
+                const implied = Result.isFailure(fromAnswer)
+                  ? Result.fail(fromAnswer.failure)
+                  : Result.isFailure(toAnswer)
+                    ? Result.fail(toAnswer.failure)
+                    : Result.succeed({
+                        from: fromAnswer.success,
+                        to: toAnswer.success,
+                      });
+                return { label, viewerName, from, to, answer, implied, read };
+              }),
+            // One probe at a time: `actAs` sets a shared viewer.
+            { concurrency: 1 },
+          );
+          // The failure itself (tag and fields), or the two snapshots `getVersion` serves.
+          expect(
+            observed.map(({ answer, implied: _, read: __, ...where }) => ({
+              ...where,
+              answer: Result.map(answer, ({ from, to }) => ({ from, to })),
+            })),
+          ).toEqual(
+            observed.map(({ answer: _, implied, read: __, ...where }) => ({
+              ...where,
+              answer: implied,
+            })),
+          );
+          // A compare the gate refuses reads no version.
+          expect(
+            observed.filter(
+              ({ answer, read }) =>
+                Result.isFailure(answer) &&
+                answer.failure._tag !== "VersionNotFound" &&
+                Arr.isReadonlyArrayNonEmpty(read),
+            ),
+          ).toEqual([]);
+          // Not vacuous: every answer occurs, and each where the gate puts it.
+          const tags = (label: string, viewerName: string) =>
+            observed
+              .filter((probe) => probe.label === label && probe.viewerName === viewerName)
+              .map(({ answer }) =>
+                Result.isFailure(answer) ? answer.failure._tag : R.keys(answer.success.changes),
+              );
+          const admitted = [
+            [],
+            ["title", "draft"],
+            ["title", "draft"],
+            "VersionNotFound",
+            "VersionNotFound",
+            "VersionNotFound",
+          ];
+          expect(tags("private", "the owner")).toEqual(admitted);
+          expect(tags("tombstoned private", "a moderator")).toEqual([
+            [],
+            [],
+            [],
+            "VersionNotFound",
+            "VersionNotFound",
+            "VersionNotFound",
+          ]);
+          expect(tags("public", "a stranger")).toEqual(Arr.map(pairs, () => "Forbidden"));
+          expect(tags("draft", "the owner's follower")).toEqual(Arr.map(pairs, () => "Forbidden"));
+          expect(tags("followers", "anonymous")).toEqual(Arr.map(pairs, () => "Unauthorized"));
+          expect(tags("ownerless", "an admin")).toEqual(Arr.map(pairs, () => "NodeNotFound"));
+          expect(tags("missing", "the owner")).toEqual(Arr.map(pairs, () => "NodeNotFound"));
+        }),
+    );
+
+    it.effect(
+      "delegates to the chain's compare: the same comparison, and VersionNotFound naming the absent version, from first",
+      () =>
+        Effect.gen(function* () {
+          const { chain, ops, actAs, privateId: id } = yield* seeded();
+          const direct = defineVersionChain("posts", chain);
+          const admitted = pairs.slice(0, 3);
+          expect(
+            yield* Effect.forEach(
+              admitted,
+              ([from, to]) => actAs(as(member), ops.compare(id, from, to)),
+              {
+                concurrency: 1,
+              },
+            ),
+          ).toEqual(
+            yield* Effect.forEach(admitted, ([from, to]) => direct.compare(id, from, to), {
+              concurrency: 1,
+            }),
+          );
+          const forward = yield* actAs(as(moderator), ops.compare(id, 0n, 1n));
+          expect(forward.from.version).toBe(0n);
+          expect(forward.to.version).toBe(1n);
+          expect(forward.changes).toEqual({
+            title: { _tag: "changed", before: "A post", after: "Second" },
+            draft: { _tag: "changed", before: false, after: null },
+          });
+          const missingVersion = (from: bigint, to: bigint) =>
+            Effect.flip(actAs(as(member), ops.compare(id, from, to)));
+          expect(yield* missingVersion(0n, ABSENT_VERSION)).toEqual(
+            new VersionNotFound({ type: "posts", id, version: ABSENT_VERSION }),
+          );
+          expect(yield* missingVersion(ABSENT_VERSION, 0n)).toEqual(
+            new VersionNotFound({ type: "posts", id, version: ABSENT_VERSION }),
+          );
+          expect(yield* missingVersion(ABSENT_VERSION + 1n, ABSENT_VERSION)).toEqual(
+            new VersionNotFound({ type: "posts", id, version: ABSENT_VERSION + 1n }),
+          );
+        }),
+    );
   });
 });
 
 describe("defineSubtype — the expected-version precondition", () => {
   /** An owned post at head 1, written by its owner. */
-  const atHeadOne = async () => {
-    const context = ownedPosts();
-    const id = await context.post("public");
-    await run(context.actAs(as(member), context.ops.update({ id, patch: { title: "Second" } })));
-    return { ...context, id };
-  };
+  const atHeadOne = () =>
+    Effect.gen(function* () {
+      const context = ownedPosts();
+      const id = yield* context.post("public");
+      yield* context.actAs(as(member), context.ops.update({ id, patch: { title: "Second" } }));
+      return { ...context, id };
+    });
 
   type Ops = ReturnType<typeof ownedPosts>["ops"];
   type Write = (
@@ -1008,101 +1072,112 @@ describe("defineSubtype — the expected-version precondition", () => {
   ];
 
   describe.each(writes)("%s", (_name, write) => {
-    it("writes when the expected version is the head", async () => {
-      const { chain, ops, actAs, id } = await atHeadOne();
-      const written = await run(actAs(as(member), write(ops, id, { expectedVersion: 1n })));
-      expect(written.version).toBe(2n);
-      expect(chain.rows()).toHaveLength(3);
-    });
-
-    it("writes nothing on a stale version, failing StaleVersion with the head", async () => {
-      const { chain, ops, actAs, id } = await atHeadOne();
-      const before = chain.rows();
-      const exit = await Effect.runPromiseExit(
-        actAs(as(member), write(ops, id, { expectedVersion: 0n })),
-      );
-      expect(Option.getOrUndefined(Exit.findErrorOption(exit))).toMatchObject({
-        _tag: "StaleVersion",
-        type: "posts",
-        id,
-        expected: 0n,
-        current: 1n,
-      });
-      expect(chain.rows()).toEqual(before);
-    });
-
-    it("without one, writes over whatever the head is", async () => {
-      const { chain, ops, actAs, id } = await atHeadOne();
-      const written = await run(actAs(as(member), write(ops, id, {})));
-      expect(written.version).toBe(2n);
-      expect(chain.rows()).toHaveLength(3);
-    });
-
-    it("gates first: a caller who may not write learns Forbidden, never the head", async () => {
-      const { chain, ops, actAs, id } = await atHeadOne();
-      expect(await tagOf(actAs(as(otherMember), write(ops, id, { expectedVersion: 0n })))).toEqual(
-        Option.some("Forbidden"),
-      );
-      expect(chain.rows()).toHaveLength(2);
-    });
-  });
-
-  it("the handlers thread it through, and a stale write neither caches nor evicts", async () => {
-    const { ops, actAs, id } = await atHeadOne();
-    const cached = MutableHashMap.make<Array<readonly [string, unknown]>>([id, "cached"]);
-    const handlers = subtypeHandlers(ops, {
-      inTransaction: Effect.succeed(false),
-      transact: (effect) => effect,
-      cache: Option.some({
-        set: (key, resource) => Effect.sync(() => void MutableHashMap.set(cached, key, resource)),
-        delete: (key) => Effect.sync(() => void MutableHashMap.remove(cached, key)),
+    it.effect("writes when the expected version is the head", () =>
+      Effect.gen(function* () {
+        const { chain, ops, actAs, id } = yield* atHeadOne();
+        const written = yield* actAs(as(member), write(ops, id, { expectedVersion: 1n }));
+        expect(written.version).toBe(2n);
+        expect(chain.rows()).toHaveLength(3);
       }),
-    });
-    const stale = { expectedVersion: 0n };
-    expect(
-      await tagOf(actAs(as(member), handlers.update({ id, patch: { title: "x" }, ...stale }))),
-    ).toEqual(Option.some("StaleVersion"));
-    expect(await tagOf(actAs(as(member), handlers.delete(id, stale)))).toEqual(
-      Option.some("StaleVersion"),
     );
-    expect(
-      await tagOf(actAs(as(member), handlers.restoreVersion({ id, version: 0n, ...stale }))),
-    ).toEqual(Option.some("StaleVersion"));
-    expect(MutableHashMap.get(cached, id)).toEqual(Option.some("cached"));
-    const updated = await run(
-      actAs(as(member), handlers.update({ id, patch: { title: "Third" }, expectedVersion: 1n })),
+
+    it.effect("writes nothing on a stale version, failing StaleVersion with the head", () =>
+      Effect.gen(function* () {
+        const { chain, ops, actAs, id } = yield* atHeadOne();
+        const before = chain.rows();
+        const exit = yield* Effect.exit(actAs(as(member), write(ops, id, { expectedVersion: 0n })));
+        expect(Option.getOrUndefined(Exit.findErrorOption(exit))).toMatchObject({
+          _tag: "StaleVersion",
+          type: "posts",
+          id,
+          expected: 0n,
+          current: 1n,
+        });
+        expect(chain.rows()).toEqual(before);
+      }),
     );
-    expect(MutableHashMap.get(cached, id)).toEqual(updated.resource);
-    await run(actAs(as(member), handlers.restoreVersion({ id, version: 0n, expectedVersion: 2n })));
-    await run(actAs(as(member), handlers.delete(id, { expectedVersion: 3n })));
-    expect(MutableHashMap.has(cached, id)).toBe(false);
+
+    it.effect("without one, writes over whatever the head is", () =>
+      Effect.gen(function* () {
+        const { chain, ops, actAs, id } = yield* atHeadOne();
+        const written = yield* actAs(as(member), write(ops, id, {}));
+        expect(written.version).toBe(2n);
+        expect(chain.rows()).toHaveLength(3);
+      }),
+    );
+
+    it.effect("gates first: a caller who may not write learns Forbidden, never the head", () =>
+      Effect.gen(function* () {
+        const { chain, ops, actAs, id } = yield* atHeadOne();
+        expect(
+          yield* tagOf(actAs(as(otherMember), write(ops, id, { expectedVersion: 0n }))),
+        ).toEqual(Option.some("Forbidden"));
+        expect(chain.rows()).toHaveLength(2);
+      }),
+    );
   });
+
+  it.effect("the handlers thread it through, and a stale write neither caches nor evicts", () =>
+    Effect.gen(function* () {
+      const { ops, actAs, id } = yield* atHeadOne();
+      const cached = MutableHashMap.make<Array<readonly [string, unknown]>>([id, "cached"]);
+      const handlers = subtypeHandlers(ops, {
+        inTransaction: Effect.succeed(false),
+        transact: (effect) => effect,
+        cache: Option.some({
+          set: (key, resource) => Effect.sync(() => void MutableHashMap.set(cached, key, resource)),
+          delete: (key) => Effect.sync(() => void MutableHashMap.remove(cached, key)),
+        }),
+      });
+      const stale = { expectedVersion: 0n };
+      expect(
+        yield* tagOf(actAs(as(member), handlers.update({ id, patch: { title: "x" }, ...stale }))),
+      ).toEqual(Option.some("StaleVersion"));
+      expect(yield* tagOf(actAs(as(member), handlers.delete(id, stale)))).toEqual(
+        Option.some("StaleVersion"),
+      );
+      expect(
+        yield* tagOf(actAs(as(member), handlers.restoreVersion({ id, version: 0n, ...stale }))),
+      ).toEqual(Option.some("StaleVersion"));
+      expect(MutableHashMap.get(cached, id)).toEqual(Option.some("cached"));
+      const updated = yield* actAs(
+        as(member),
+        handlers.update({ id, patch: { title: "Third" }, expectedVersion: 1n }),
+      );
+      expect(MutableHashMap.get(cached, id)).toEqual(updated.resource);
+      yield* actAs(as(member), handlers.restoreVersion({ id, version: 0n, expectedVersion: 2n }));
+      yield* actAs(as(member), handlers.delete(id, { expectedVersion: 3n }));
+      expect(MutableHashMap.has(cached, id)).toBe(false);
+    }),
+  );
 });
 
 describe("defineSubtype — a reference leaf", () => {
-  it("writes at the corpus rung; reads are public", async () => {
-    const chain = makeInMemoryVersionChain("taxa");
-    const leaves = makeInMemoryLeafStore(chain, { columns: ["name"], now: NOW });
-    let viewer: Viewer = as(member);
-    const ops = defineSubtype({
-      type: "taxa",
-      access: { kind: "reference" },
-      chain,
-      leaves,
-      viewer: Effect.sync(() => viewer),
-      policy: gardeneriaPolicy,
-      followers: nobody,
-      toResource: (row: LeafRow) => ({ id: row.id }),
-    });
-    expect(await tagOf(ops.create({ id: Option.none(), state: { name: "Quercus" } }))).toEqual(
-      Option.some("Forbidden"),
-    );
-    viewer = as(contributor);
-    const { id } = await run(ops.create({ id: Option.none(), state: { name: "Quercus" } }));
-    expect(HashMap.size(leaves.owners())).toBe(0);
-    viewer = anonymous;
-    expect(await tagOf(ops.get(id))).toEqual(Option.none());
-  });
+  it.effect("writes at the corpus rung; reads are public", () =>
+    Effect.gen(function* () {
+      const chain = makeInMemoryVersionChain("taxa");
+      const leaves = makeInMemoryLeafStore(chain, { columns: ["name"], now: NOW });
+      let viewer: Viewer = as(member);
+      const ops = defineSubtype({
+        type: "taxa",
+        access: { kind: "reference" },
+        chain,
+        leaves,
+        viewer: Effect.sync(() => viewer),
+        policy: gardeneriaPolicy,
+        followers: nobody,
+        toResource: (row: LeafRow) => ({ id: row.id }),
+      });
+      expect(yield* tagOf(ops.create({ id: Option.none(), state: { name: "Quercus" } }))).toEqual(
+        Option.some("Forbidden"),
+      );
+      viewer = as(contributor);
+      const { id } = yield* ops.create({ id: Option.none(), state: { name: "Quercus" } });
+      expect(HashMap.size(leaves.owners())).toBe(0);
+      viewer = anonymous;
+      expect(yield* tagOf(ops.get(id))).toEqual(Option.none());
+    }),
+  );
 });
 
 // ── List ordering ────────────────────────────────────────
@@ -1140,42 +1215,42 @@ describe("defineSubtype — list ordering", () => {
    * receives and a count of the viewer's reads. `sortable` is the leaf's
    * allow-list, forwarded as given (`undefined` included).
    */
-  const ranked = async (
+  const ranked = (
     seeds: ReadonlyArray<OrderSeed>,
     leaf: Pick<SubtypeDefinition<LeafRow, LeafRow, never, never, never>, "sortable"> = {},
-  ) => {
-    const chain = makeInMemoryVersionChain("taxa");
-    const store = makeInMemoryLeafStore(chain, {
-      columns: ["title", "rank", "publishedAt", "visibility"],
-      now: NOW,
-    });
-    const queries: Array<Parameters<typeof store.list>[0]> = [];
-    let viewer: Viewer = anonymous;
-    let viewerReads = 0;
-    const ops = defineSubtype({
-      ...leaf,
-      type: "taxa",
-      access: { kind: "reference" },
-      chain,
-      leaves: {
-        ...store,
-        list: (query) =>
-          Effect.suspend(() => {
-            queries.push(query);
-            return store.list(query);
-          }),
-      },
-      viewer: Effect.sync(() => {
-        viewerReads += 1;
-        return viewer;
-      }),
-      policy: gardeneriaPolicy,
-      followers: nobody,
-      toResource: (row: LeafRow) => row,
-    });
-    const versions = defineVersionChain("taxa", chain);
-    await run(
-      Effect.forEach(
+  ) =>
+    Effect.gen(function* () {
+      const chain = makeInMemoryVersionChain("taxa");
+      const store = makeInMemoryLeafStore(chain, {
+        columns: ["title", "rank", "publishedAt", "visibility"],
+        now: NOW,
+      });
+      const queries: Array<Parameters<typeof store.list>[0]> = [];
+      let viewer: Viewer = anonymous;
+      let viewerReads = 0;
+      const ops = defineSubtype({
+        ...leaf,
+        type: "taxa",
+        access: { kind: "reference" },
+        chain,
+        leaves: {
+          ...store,
+          list: (query) =>
+            Effect.suspend(() => {
+              queries.push(query);
+              return store.list(query);
+            }),
+        },
+        viewer: Effect.sync(() => {
+          viewerReads += 1;
+          return viewer;
+        }),
+        policy: gardeneriaPolicy,
+        followers: nobody,
+        toResource: (row: LeafRow) => row,
+      });
+      const versions = defineVersionChain("taxa", chain);
+      yield* Effect.forEach(
         seeds,
         ({ id, state, deleted }) =>
           Effect.andThen(
@@ -1187,129 +1262,142 @@ describe("defineSubtype — list ordering", () => {
             deleted ? versions.delete(id, Option.none()) : Effect.void,
           ),
         { concurrency: 1, discard: true },
-      ),
-    );
-    /** One page, as `ask.who`; `order` carries `orderBy`, or leaves it out. */
-    const page = (order: Pick<ListRequest, "orderBy">, ask: Ask = everything) =>
-      Effect.suspend(() => {
-        viewer = ask.who;
-        return ops.list({
-          limit: ask.limit,
-          offset: ask.offset,
-          includeDeleted: ask.includeDeleted,
-          where: always,
-          ...order,
+      );
+      /** One page, as `ask.who`; `order` carries `orderBy`, or leaves it out. */
+      const page = (order: Pick<ListRequest, "orderBy">, ask: Ask = everything) =>
+        Effect.suspend(() => {
+          viewer = ask.who;
+          return ops.list({
+            limit: ask.limit,
+            offset: ask.offset,
+            includeDeleted: ask.includeDeleted,
+            where: always,
+            ...order,
+          });
         });
-      });
-    const ids = (orderBy: Keys, who: Viewer = anonymous) =>
-      run(
+      const ids = (orderBy: Keys, who: Viewer = anonymous) =>
         Effect.map(page({ orderBy }, { ...everything, who }), (listed) =>
           listed.rows.map((row) => row.id),
+        );
+      return { page, ids, queries, viewerReads: () => viewerReads };
+    });
+
+  it.effect("keeps the default order, id ascending, when the order is absent, null or empty", () =>
+    Effect.gen(function* () {
+      const { page, queries } = yield* ranked([
+        seed("c", { rank: 1 }),
+        seed("a", { rank: 3 }),
+        seed("b", { rank: 2 }),
+      ]);
+      // `null`, as an unchecked caller might send it, is the same as absent.
+      const nullOrder: Pick<ListRequest, "orderBy"> = {};
+      Reflect.set(nullOrder, "orderBy", null);
+      const listed = yield* Effect.all([page({}), page(nullOrder), page({ orderBy: [] })], {
+        concurrency: 1,
+      });
+      expect(listed.map((each) => each.rows.map((row) => row.id))).toEqual([
+        ["a", "b", "c"],
+        ["a", "b", "c"],
+        ["a", "b", "c"],
+      ]);
+      expect(queries.map((query) => query.orderBy)).toEqual([[], [], []]);
+    }),
+  );
+
+  it.effect("orders by one key in either direction, NULL and absent last in both", () =>
+    Effect.gen(function* () {
+      const { ids } = yield* ranked([
+        seed("a", { rank: 2 }),
+        seed("b", { rank: null }),
+        seed("c", { rank: 10 }),
+        seed("d", {}),
+        seed("e", { rank: -1 }),
+      ]);
+      // Numerically (10 after 2), not as text; NULL and absent tie, so `id` orders them.
+      expect(yield* ids([asc("rank")])).toEqual(["e", "a", "c", "b", "d"]);
+      expect(yield* ids([desc("rank")])).toEqual(["c", "a", "e", "b", "d"]);
+    }),
+  );
+
+  it.effect(
+    "sorts NaN after every number, as PostgreSQL's float8 does, and false before true",
+    () =>
+      Effect.gen(function* () {
+        const { ids } = yield* ranked([
+          seed("a", { rank: Number.NaN, title: true }),
+          seed("b", { rank: Number.POSITIVE_INFINITY, title: false }),
+          seed("c", { rank: null, title: null }),
+          seed("d", { rank: Number.NEGATIVE_INFINITY, title: true }),
+          seed("e", { rank: Number.NaN, title: false }),
+        ]);
+        expect(yield* ids([asc("rank")])).toEqual(["d", "b", "a", "e", "c"]);
+        expect(yield* ids([desc("rank")])).toEqual(["a", "e", "b", "d", "c"]);
+        expect(yield* ids([asc("title")])).toEqual(["b", "e", "a", "d", "c"]);
+        expect(yield* ids([desc("title")])).toEqual(["a", "d", "b", "e", "c"]);
+      }),
+  );
+
+  it.effect("orders by two keys, the second breaking the first's ties, then id", () =>
+    Effect.gen(function* () {
+      const { ids } = yield* ranked([
+        seed("a", { title: "Oak", rank: 1 }),
+        seed("b", { title: "Ash", rank: 1 }),
+        seed("c", { title: "Oak", rank: 2 }),
+        seed("d", { title: "Ash", rank: 1 }),
+        seed("e", { title: null, rank: 2 }),
+      ]);
+      expect(yield* ids([asc("title"), desc("rank")])).toEqual(["b", "d", "c", "a", "e"]);
+      expect(yield* ids([desc("title"), asc("rank")])).toEqual(["a", "c", "b", "d", "e"]);
+      expect(yield* ids([desc("rank"), asc("title")])).toEqual(["c", "e", "b", "d", "a"]);
+    }),
+  );
+
+  it.effect(
+    'compares strings by code point, as COLLATE "C" does, astral characters after the BMP',
+    () =>
+      Effect.gen(function* () {
+        const { ids } = yield* ranked([
+          seed("a", { title: "\u{1F600}" }),
+          seed("b", { title: "�" }),
+          seed("c", { title: "a" }),
+          seed("d", { title: "B" }),
+          seed("e", { title: "" }),
+        ]);
+        // UTF-16's `<` would put U+1F600 (a surrogate pair from U+D83D) before U+FFFD.
+        expect(yield* ids([asc("title")])).toEqual(["e", "d", "c", "b", "a"]);
+        expect(yield* ids([desc("title")])).toEqual(["a", "b", "c", "d", "e"]);
+      }),
+  );
+
+  it.effect("compares dates by instant", () =>
+    Effect.gen(function* () {
+      const { ids } = yield* ranked([
+        seed("a", { publishedAt: at("2026-01-02T00:00:00.000Z") }),
+        seed("b", { publishedAt: at("2025-12-31T23:59:59.999Z") }),
+        seed("c", { publishedAt: null }),
+        seed("d", { publishedAt: at("2026-01-02T00:00:00.001Z") }),
+      ]);
+      expect(yield* ids([asc("publishedAt")])).toEqual(["b", "a", "d", "c"]);
+      expect(yield* ids([desc("publishedAt")])).toEqual(["d", "a", "b", "c"]);
+    }),
+  );
+
+  it.effect("closes every order with id, so pages never skip or repeat a row across a tie", () =>
+    Effect.gen(function* () {
+      const order = ["h", "c", "f", "a", "g", "b", "e", "d", "i"];
+      const { page, ids } = yield* ranked(
+        Arr.map(order, (id, index) =>
+          seed(id, { rank: index % 3 === 0 ? null : index % 2, title: "same" }),
         ),
       );
-    return { page, ids, queries, viewerReads: () => viewerReads };
-  };
-
-  it("keeps the default order, id ascending, when the order is absent, null or empty", async () => {
-    const { page, queries } = await ranked([
-      seed("c", { rank: 1 }),
-      seed("a", { rank: 3 }),
-      seed("b", { rank: 2 }),
-    ]);
-    // `null`, as an unchecked caller might send it, is the same as absent.
-    const nullOrder: Pick<ListRequest, "orderBy"> = {};
-    Reflect.set(nullOrder, "orderBy", null);
-    const listed = await run(
-      Effect.all([page({}), page(nullOrder), page({ orderBy: [] })], { concurrency: 1 }),
-    );
-    expect(listed.map((each) => each.rows.map((row) => row.id))).toEqual([
-      ["a", "b", "c"],
-      ["a", "b", "c"],
-      ["a", "b", "c"],
-    ]);
-    expect(queries.map((query) => query.orderBy)).toEqual([[], [], []]);
-  });
-
-  it("orders by one key in either direction, NULL and absent last in both", async () => {
-    const { ids } = await ranked([
-      seed("a", { rank: 2 }),
-      seed("b", { rank: null }),
-      seed("c", { rank: 10 }),
-      seed("d", {}),
-      seed("e", { rank: -1 }),
-    ]);
-    // Numerically (10 after 2), not as text; NULL and absent tie, so `id` orders them.
-    expect(await ids([asc("rank")])).toEqual(["e", "a", "c", "b", "d"]);
-    expect(await ids([desc("rank")])).toEqual(["c", "a", "e", "b", "d"]);
-  });
-
-  it("sorts NaN after every number, as PostgreSQL's float8 does, and false before true", async () => {
-    const { ids } = await ranked([
-      seed("a", { rank: Number.NaN, title: true }),
-      seed("b", { rank: Number.POSITIVE_INFINITY, title: false }),
-      seed("c", { rank: null, title: null }),
-      seed("d", { rank: Number.NEGATIVE_INFINITY, title: true }),
-      seed("e", { rank: Number.NaN, title: false }),
-    ]);
-    expect(await ids([asc("rank")])).toEqual(["d", "b", "a", "e", "c"]);
-    expect(await ids([desc("rank")])).toEqual(["a", "e", "b", "d", "c"]);
-    expect(await ids([asc("title")])).toEqual(["b", "e", "a", "d", "c"]);
-    expect(await ids([desc("title")])).toEqual(["a", "d", "b", "e", "c"]);
-  });
-
-  it("orders by two keys, the second breaking the first's ties, then id", async () => {
-    const { ids } = await ranked([
-      seed("a", { title: "Oak", rank: 1 }),
-      seed("b", { title: "Ash", rank: 1 }),
-      seed("c", { title: "Oak", rank: 2 }),
-      seed("d", { title: "Ash", rank: 1 }),
-      seed("e", { title: null, rank: 2 }),
-    ]);
-    expect(await ids([asc("title"), desc("rank")])).toEqual(["b", "d", "c", "a", "e"]);
-    expect(await ids([desc("title"), asc("rank")])).toEqual(["a", "c", "b", "d", "e"]);
-    expect(await ids([desc("rank"), asc("title")])).toEqual(["c", "e", "b", "d", "a"]);
-  });
-
-  it('compares strings by code point, as COLLATE "C" does, astral characters after the BMP', async () => {
-    const { ids } = await ranked([
-      seed("a", { title: "\u{1F600}" }),
-      seed("b", { title: "�" }),
-      seed("c", { title: "a" }),
-      seed("d", { title: "B" }),
-      seed("e", { title: "" }),
-    ]);
-    // UTF-16's `<` would put U+1F600 (a surrogate pair from U+D83D) before U+FFFD.
-    expect(await ids([asc("title")])).toEqual(["e", "d", "c", "b", "a"]);
-    expect(await ids([desc("title")])).toEqual(["a", "b", "c", "d", "e"]);
-  });
-
-  it("compares dates by instant", async () => {
-    const { ids } = await ranked([
-      seed("a", { publishedAt: at("2026-01-02T00:00:00.000Z") }),
-      seed("b", { publishedAt: at("2025-12-31T23:59:59.999Z") }),
-      seed("c", { publishedAt: null }),
-      seed("d", { publishedAt: at("2026-01-02T00:00:00.001Z") }),
-    ]);
-    expect(await ids([asc("publishedAt")])).toEqual(["b", "a", "d", "c"]);
-    expect(await ids([desc("publishedAt")])).toEqual(["d", "a", "b", "c"]);
-  });
-
-  it("closes every order with id, so pages never skip or repeat a row across a tie", async () => {
-    const order = ["h", "c", "f", "a", "g", "b", "e", "d", "i"];
-    const { page, ids } = await ranked(
-      Arr.map(order, (id, index) =>
-        seed(id, { rank: index % 3 === 0 ? null : index % 2, title: "same" }),
-      ),
-    );
-    const offsets = Arr.makeBy(Math.ceil(order.length / 2), (index) => index * 2);
-    const orders: ReadonlyArray<Keys> = [
-      [],
-      [asc("rank")],
-      [desc("rank")],
-      [asc("title"), desc("rank")],
-    ];
-    const paged = await run(
-      Effect.forEach(
+      const offsets = Arr.makeBy(Math.ceil(order.length / 2), (index) => index * 2);
+      const orders: ReadonlyArray<Keys> = [
+        [],
+        [asc("rank")],
+        [desc("rank")],
+        [asc("title"), desc("rank")],
+      ];
+      const paged = yield* Effect.forEach(
         orders,
         (orderBy) =>
           Effect.all(
@@ -1324,92 +1412,100 @@ describe("defineSubtype — list ordering", () => {
             { concurrency: 1 },
           ),
         { concurrency: 1 },
-      ),
-    );
-    expect(paged).toHaveLength(orders.length);
-    Arr.forEach(paged, ({ whole, pages }) => {
-      const stitched = Arr.flatMap(pages, (each) => each.rows.map((row) => row.id));
-      expect(stitched).toEqual(whole.rows.map((row) => row.id));
-      expect(Arr.dedupe(stitched)).toHaveLength(order.length);
-      expect(Arr.map(pages, (each) => each.total)).toEqual(Arr.map(offsets, () => order.length));
-    });
-    // Within a tie, id ascending: every row has the same title.
-    expect(await ids([asc("title")])).toEqual(byText(order));
-  });
+      );
+      expect(paged).toHaveLength(orders.length);
+      Arr.forEach(paged, ({ whole, pages }) => {
+        const stitched = Arr.flatMap(pages, (each) => each.rows.map((row) => row.id));
+        expect(stitched).toEqual(whole.rows.map((row) => row.id));
+        expect(Arr.dedupe(stitched)).toHaveLength(order.length);
+        expect(Arr.map(pages, (each) => each.total)).toEqual(Arr.map(offsets, () => order.length));
+      });
+      // Within a tie, id ascending: every row has the same title.
+      expect(yield* ids([asc("title")])).toEqual(byText(order));
+    }),
+  );
 
-  it("refuses a column the view does not declare, before the store is read", async () => {
-    const { page, queries } = await ranked([seed("a", { rank: 1, secret: "x" })]);
-    // A direction outside the type, as an unchecked caller might send it.
-    const sideways = asc("rank");
-    Reflect.set(sideways, "direction", "sideways");
-    const refused = await run(
-      Effect.forEach(
+  it.effect("refuses a column the view does not declare, before the store is read", () =>
+    Effect.gen(function* () {
+      const { page, queries } = yield* ranked([seed("a", { rank: 1, secret: "x" })]);
+      // A direction outside the type, as an unchecked caller might send it.
+      const sideways = asc("rank");
+      Reflect.set(sideways, "direction", "sideways");
+      const refused = yield* Effect.forEach(
         [[asc("secret")], [asc("rank"), desc("rank; DROP TABLE taxa")], [sideways]],
         (orderBy) => Effect.flip(page({ orderBy })),
         { concurrency: 1 },
-      ),
-    );
-    expect(refused).toEqual([
-      new InvalidListOrder({ type: "taxa", column: "secret" }),
-      new InvalidListOrder({ type: "taxa", column: "rank; DROP TABLE taxa" }),
-      new InvalidListOrder({ type: "taxa", column: "rank" }),
-    ]);
-    expect(queries).toEqual([]);
-  });
+      );
+      expect(refused).toEqual([
+        new InvalidListOrder({ type: "taxa", column: "secret" }),
+        new InvalidListOrder({ type: "taxa", column: "rank; DROP TABLE taxa" }),
+        new InvalidListOrder({ type: "taxa", column: "rank" }),
+      ]);
+      expect(queries).toEqual([]);
+    }),
+  );
 
-  it("hands the store each column once, rebuilt to its column and direction", async () => {
-    const { ids, queries } = await ranked([seed("a", { rank: 1 })]);
-    const extra = { ...desc("rank"), raw: "DESC NULLS FIRST" };
-    await ids([extra, asc("title"), asc("rank"), desc("title")]);
-    expect(queries.map((query) => query.orderBy)).toEqual([[desc("rank"), asc("title")]]);
-  });
+  it.effect("hands the store each column once, rebuilt to its column and direction", () =>
+    Effect.gen(function* () {
+      const { ids, queries } = yield* ranked([seed("a", { rank: 1 })]);
+      const extra = { ...desc("rank"), raw: "DESC NULLS FIRST" };
+      yield* ids([extra, asc("title"), asc("rank"), desc("title")]);
+      expect(queries.map((query) => query.orderBy)).toEqual([[desc("rank"), asc("title")]]);
+    }),
+  );
 
-  it("compares bigints by value, past a double's precision", async () => {
-    const big = 2n ** 64n;
-    const { ids } = await ranked([
-      seed("a", { rank: big + 1n }),
-      seed("b", { rank: big }),
-      seed("c", { rank: null }),
-      seed("d", { rank: 0n }),
-      seed("e", { rank: -1n }),
-    ]);
-    // As doubles, 2^64 and 2^64 + 1 tie, and `id` would put `a` first.
-    expect(await ids([asc("rank")])).toEqual(["e", "d", "b", "a", "c"]);
-    expect(await ids([desc("rank")])).toEqual(["a", "b", "d", "e", "c"]);
-  });
+  it.effect("compares bigints by value, past a double's precision", () =>
+    Effect.gen(function* () {
+      const big = 2n ** 64n;
+      const { ids } = yield* ranked([
+        seed("a", { rank: big + 1n }),
+        seed("b", { rank: big }),
+        seed("c", { rank: null }),
+        seed("d", { rank: 0n }),
+        seed("e", { rank: -1n }),
+      ]);
+      // As doubles, 2^64 and 2^64 + 1 tie, and `id` would put `a` first.
+      expect(yield* ids([asc("rank")])).toEqual(["e", "d", "b", "a", "c"]);
+      expect(yield* ids([desc("rank")])).toEqual(["a", "b", "d", "e", "c"]);
+    }),
+  );
 
-  it('closes the order with id by code point, as uuid or a COLLATE "C" text id sorts', async () => {
-    const { ids } = await ranked([
-      seed("\u{1F600}", { title: "same" }),
-      seed("�", { title: "same" }),
-      seed("z", { title: "same" }),
-    ]);
-    // UTF-16's `<` would put U+1F600 (a surrogate pair from U+D83D) before U+FFFD.
-    const expected = ["z", "�", "\u{1F600}"];
-    expect(await ids([])).toEqual(expected);
-    expect(await ids([asc("title")])).toEqual(expected);
-  });
+  it.effect('closes the order with id by code point, as uuid or a COLLATE "C" text id sorts', () =>
+    Effect.gen(function* () {
+      const { ids } = yield* ranked([
+        seed("\u{1F600}", { title: "same" }),
+        seed("�", { title: "same" }),
+        seed("z", { title: "same" }),
+      ]);
+      // UTF-16's `<` would put U+1F600 (a surrogate pair from U+D83D) before U+FFFD.
+      const expected = ["z", "�", "\u{1F600}"];
+      expect(yield* ids([])).toEqual(expected);
+      expect(yield* ids([asc("title")])).toEqual(expected);
+    }),
+  );
 
-  it("checks the order before the viewer is read", async () => {
-    const { page, queries, viewerReads } = await ranked([seed("a", { rank: 1 })]);
-    const refused = await run(Effect.flip(page({ orderBy: [asc("secret")] })));
-    expect(refused).toEqual(new InvalidListOrder({ type: "taxa", column: "secret" }));
-    expect(viewerReads()).toBe(0);
-    expect(queries).toEqual([]);
-    await run(page({ orderBy: [asc("rank")] }));
-    expect(viewerReads()).toBe(1);
-  });
+  it.effect("checks the order before the viewer is read", () =>
+    Effect.gen(function* () {
+      const { page, queries, viewerReads } = yield* ranked([seed("a", { rank: 1 })]);
+      const refused = yield* Effect.flip(page({ orderBy: [asc("secret")] }));
+      expect(refused).toEqual(new InvalidListOrder({ type: "taxa", column: "secret" }));
+      expect(viewerReads()).toBe(0);
+      expect(queries).toEqual([]);
+      yield* page({ orderBy: [asc("rank")] });
+      expect(viewerReads()).toBe(1);
+    }),
+  );
 
-  it("refuses an order not shaped as one with InvalidListOrder, never a defect", async () => {
-    const { page, queries, viewerReads } = await ranked([seed("a", { title: "Oak" })]);
-    /** A request whose `orderBy` is `value`, as an unchecked caller might send it. */
-    const unchecked = (value: Schema.Json) => {
-      const order: Pick<ListRequest, "orderBy"> = { orderBy: [] };
-      Reflect.set(order, "orderBy", value);
-      return order;
-    };
-    const refused = await run(
-      Effect.forEach(
+  it.effect("refuses an order not shaped as one with InvalidListOrder, never a defect", () =>
+    Effect.gen(function* () {
+      const { page, queries, viewerReads } = yield* ranked([seed("a", { title: "Oak" })]);
+      /** A request whose `orderBy` is `value`, as an unchecked caller might send it. */
+      const unchecked = (value: Schema.Json) => {
+        const order: Pick<ListRequest, "orderBy"> = { orderBy: [] };
+        Reflect.set(order, "orderBy", value);
+        return order;
+      };
+      const refused = yield* Effect.forEach(
         [
           [{ column: 42, direction: "asc" }],
           // A sortable column with no direction: refused, never defaulted to `asc`.
@@ -1422,191 +1518,206 @@ describe("defineSubtype — list ordering", () => {
         ],
         (orderBy) => Effect.flip(page(unchecked(orderBy))),
         { concurrency: 1 },
-      ),
-    );
-    expect(refused).toEqual([
-      new InvalidListOrder({ type: "taxa", column: "" }),
-      new InvalidListOrder({ type: "taxa", column: "title" }),
-      new InvalidListOrder({ type: "taxa", column: "" }),
-      new InvalidListOrder({ type: "taxa", column: "" }),
-      new InvalidListOrder({ type: "taxa", column: "" }),
-      // An object where an array belongs: the caller's own column, still refused.
-      new InvalidListOrder({ type: "taxa", column: "title" }),
-      new InvalidListOrder({ type: "taxa", column: "" }),
-    ]);
-    expect(queries).toEqual([]);
-    expect(viewerReads()).toBe(0);
-  });
+      );
+      expect(refused).toEqual([
+        new InvalidListOrder({ type: "taxa", column: "" }),
+        new InvalidListOrder({ type: "taxa", column: "title" }),
+        new InvalidListOrder({ type: "taxa", column: "" }),
+        new InvalidListOrder({ type: "taxa", column: "" }),
+        new InvalidListOrder({ type: "taxa", column: "" }),
+        // An object where an array belongs: the caller's own column, still refused.
+        new InvalidListOrder({ type: "taxa", column: "title" }),
+        new InvalidListOrder({ type: "taxa", column: "" }),
+      ]);
+      expect(queries).toEqual([]);
+      expect(viewerReads()).toBe(0);
+    }),
+  );
 
-  it("sorts only by a declared sortable allow-list, refusing a declared column outside it", async () => {
-    const seeds = [
-      seed("a", { title: "Oak", rank: 2 }),
-      seed("b", { title: "Ash", rank: 1 }),
-      seed("c", { title: "Elm", rank: 3 }),
-    ];
-    const { ids, page, queries, viewerReads } = await ranked(seeds, {
-      sortable: ["title", "id"],
-    });
-    expect(await ids([asc("title")])).toEqual(["b", "c", "a"]);
-    expect(await ids([desc("id")])).toEqual(["c", "b", "a"]);
-    const refused = await run(
-      Effect.forEach(
-        [[asc("rank")], [asc("title"), desc("visibility")], [asc("secret")]],
-        (orderBy) => Effect.flip(page({ orderBy })),
-        { concurrency: 1 },
-      ),
-    );
-    expect(refused).toEqual([
-      new InvalidListOrder({ type: "taxa", column: "rank" }),
-      new InvalidListOrder({ type: "taxa", column: "visibility" }),
-      new InvalidListOrder({ type: "taxa", column: "secret" }),
-    ]);
-    // Only the two admitted orders reached the viewer and the store.
-    expect(viewerReads()).toBe(2);
-    expect(queries.map((query) => query.orderBy)).toEqual([[asc("title")], [desc("id")]]);
-  });
+  it.effect(
+    "sorts only by a declared sortable allow-list, refusing a declared column outside it",
+    () =>
+      Effect.gen(function* () {
+        const seeds = [
+          seed("a", { title: "Oak", rank: 2 }),
+          seed("b", { title: "Ash", rank: 1 }),
+          seed("c", { title: "Elm", rank: 3 }),
+        ];
+        const { ids, page, queries, viewerReads } = yield* ranked(seeds, {
+          sortable: ["title", "id"],
+        });
+        expect(yield* ids([asc("title")])).toEqual(["b", "c", "a"]);
+        expect(yield* ids([desc("id")])).toEqual(["c", "b", "a"]);
+        const refused = yield* Effect.forEach(
+          [[asc("rank")], [asc("title"), desc("visibility")], [asc("secret")]],
+          (orderBy) => Effect.flip(page({ orderBy })),
+          { concurrency: 1 },
+        );
+        expect(refused).toEqual([
+          new InvalidListOrder({ type: "taxa", column: "rank" }),
+          new InvalidListOrder({ type: "taxa", column: "visibility" }),
+          new InvalidListOrder({ type: "taxa", column: "secret" }),
+        ]);
+        // Only the two admitted orders reached the viewer and the store.
+        expect(viewerReads()).toBe(2);
+        expect(queries.map((query) => query.orderBy)).toEqual([[asc("title")], [desc("id")]]);
+      }),
+  );
 
-  it("throws SubtypeDeclarationError when a sortable entry is not a column of the view", async () => {
-    await expect(ranked([], { sortable: ["title", "secret"] })).rejects.toThrow(
-      SubtypeDeclarationError,
-    );
-    await expect(ranked([], { sortable: ["title", "secret"] })).rejects.toThrow(
-      "taxa: sortable names 'secret', which is not a column of the view",
-    );
-    // An empty list is a valid declaration: nothing but the default order.
-    const { page } = await ranked([seed("a", {})], { sortable: [] });
-    expect(await run(Effect.flip(page({ orderBy: [asc("id")] })))).toEqual(
-      new InvalidListOrder({ type: "taxa", column: "id" }),
-    );
-    expect((await run(page({}))).rows.map((row) => row.id)).toEqual(["a"]);
-  });
+  it.effect(
+    "throws SubtypeDeclarationError when a sortable entry is not a column of the view",
+    () =>
+      Effect.gen(function* () {
+        const refused = yield* Effect.exit(ranked([], { sortable: ["title", "secret"] }));
+        const defect = Exit.isFailure(refused) ? Cause.squash(refused.cause) : undefined;
+        expect(defect).toBeInstanceOf(SubtypeDeclarationError);
+        expect(String(defect)).toContain(
+          "taxa: sortable names 'secret', which is not a column of the view",
+        );
+        // An empty list is a valid declaration: nothing but the default order.
+        const { page } = yield* ranked([seed("a", {})], { sortable: [] });
+        expect(yield* Effect.flip(page({ orderBy: [asc("id")] }))).toEqual(
+          new InvalidListOrder({ type: "taxa", column: "id" }),
+        );
+        expect((yield* page({})).rows.map((row) => row.id)).toEqual(["a"]);
+      }),
+  );
 
-  it("without a sortable list, every declared view column sorts", async () => {
-    const columns = ["id", "action", "ownerId", "title", "rank", "publishedAt", "visibility"];
-    const listed = await Promise.all(
-      Arr.map([{}, {}], async (leaf) => {
-        const { page, queries } = await ranked([seed("a", { rank: 1 })], leaf);
-        await run(
-          Effect.forEach(columns, (column) => page({ orderBy: [desc(column)] }), {
-            concurrency: 1,
+  it.effect("without a sortable list, every declared view column sorts", () =>
+    Effect.gen(function* () {
+      const columns = ["id", "action", "ownerId", "title", "rank", "publishedAt", "visibility"];
+      const listed = yield* Effect.all(
+        Arr.map([{}, {}], (leaf) =>
+          Effect.gen(function* () {
+            const { page, queries } = yield* ranked([seed("a", { rank: 1 })], leaf);
+            yield* Effect.forEach(columns, (column) => page({ orderBy: [desc(column)] }), {
+              concurrency: 1,
+            });
+            return queries.map((query) => query.orderBy);
+          }),
+        ),
+        { concurrency: "unbounded" },
+      );
+      expect(listed).toEqual([
+        Arr.map(columns, (column) => [desc(column)]),
+        Arr.map(columns, (column) => [desc(column)]),
+      ]);
+    }),
+  );
+
+  it.effect(
+    "never changes membership or the total: the privacy, soft-delete and where filters apply as before (SEC-AUTH-ENUM-001)",
+    () =>
+      Effect.gen(function* () {
+        const { page, ids } = yield* ranked([
+          seed("a", { rank: 3, title: "Oak", visibility: "public" }),
+          seed("b", { rank: 1, title: "Ash", visibility: "private" }),
+          seed("c", { rank: null, title: "Elm", visibility: "public" }),
+          seed("d", { rank: 2, title: "Yew", visibility: "public" }, true),
+          seed("e", { rank: 0, title: "Fir", visibility: "followers" }),
+          seed("f", { rank: 4, title: "Box", visibility: "public" }),
+        ]);
+        const orders: ReadonlyArray<Keys> = [
+          [],
+          [asc("rank")],
+          [desc("rank")],
+          [asc("title")],
+          [desc("visibility"), asc("rank")],
+          [asc("id")],
+          [desc("id")],
+        ];
+        const cases = [
+          { who: anonymous, includeDeleted: false, members: ["a", "c", "f"] },
+          { who: as(member), includeDeleted: true, members: ["a", "c", "f"] },
+          { who: as(moderator), includeDeleted: false, members: ["a", "b", "c", "e", "f"] },
+          { who: as(moderator), includeDeleted: true, members: ["a", "b", "c", "d", "e", "f"] },
+        ];
+        const seen = yield* Effect.forEach(
+          cases,
+          ({ who, includeDeleted }) =>
+            Effect.forEach(
+              orders,
+              (orderBy) =>
+                Effect.all(
+                  {
+                    all: page({ orderBy }, { ...everything, who, includeDeleted }),
+                    // A one-row page reports the same unpaged total.
+                    one: page({ orderBy }, { who, includeDeleted, limit: 1, offset: 1 }),
+                  },
+                  { concurrency: 1 },
+                ),
+              { concurrency: 1 },
+            ),
+          { concurrency: 1 },
+        );
+        expect(
+          seen.map((byOrder) =>
+            byOrder.map(({ all, one }) => [
+              byText(all.rows.map((row) => row.id)),
+              all.total,
+              one.total,
+            ]),
+          ),
+        ).toEqual(
+          cases.map(({ members }) => orders.map(() => [members, members.length, members.length])),
+        );
+        // The anonymous reader's order sorts only what it may see: the hidden ranks 0–2 leave no gap to probe.
+        expect(yield* ids([asc("rank")])).toEqual(["a", "f", "c"]);
+      }),
+  );
+
+  it.effect(
+    "orders inside the caller's own where, and on an owned leaf inside the read scope",
+    () =>
+      Effect.gen(function* () {
+        const { ops, actAs, post } = ownedPosts();
+        const open = yield* post("public");
+        const hidden = yield* post("private");
+        const theirs = yield* post("public", otherMember);
+        const listed = (who: Viewer, orderBy: Keys, where: ListFilter<never> = always) =>
+          Effect.map(
+            actAs(who, ops.list({ limit: 50, offset: 0, includeDeleted: false, where, orderBy })),
+            ({ rows, total }) => ({ ids: byText(rows.map((row) => row.id)), total }),
+          );
+        const orders: ReadonlyArray<Keys> = [
+          [asc("ownerId")],
+          [desc("ownerId")],
+          [desc("visibility")],
+        ];
+        const seen = yield* Effect.forEach(
+          orders,
+          (orderBy) =>
+            Effect.all(
+              [
+                listed(anonymous, orderBy),
+                listed(as(member), orderBy),
+                listed(as(member), orderBy, eq("visibility", "private")),
+              ],
+              { concurrency: 1 },
+            ),
+          { concurrency: 1 },
+        );
+        expect(seen).toEqual(
+          Arr.map(orders, () => [
+            { ids: byText([open, theirs]), total: 2 },
+            { ids: byText([open, hidden, theirs]), total: 3 },
+            { ids: [hidden], total: 1 },
+          ]),
+        );
+        const ordered = yield* actAs(
+          as(member),
+          ops.list({
+            limit: 50,
+            offset: 0,
+            includeDeleted: false,
+            where: always,
+            orderBy: [desc("ownerId")],
           }),
         );
-        return queries.map((query) => query.orderBy);
+        // `u-other` sorts after `u-member`; the member's two rows tie, so `id` orders them.
+        expect(ordered.rows.map((row) => row.id)).toEqual([theirs, ...byText([open, hidden])]);
       }),
-    );
-    expect(listed).toEqual([
-      Arr.map(columns, (column) => [desc(column)]),
-      Arr.map(columns, (column) => [desc(column)]),
-    ]);
-  });
-
-  it("never changes membership or the total: the privacy, soft-delete and where filters apply as before (SEC-AUTH-ENUM-001)", async () => {
-    const { page, ids } = await ranked([
-      seed("a", { rank: 3, title: "Oak", visibility: "public" }),
-      seed("b", { rank: 1, title: "Ash", visibility: "private" }),
-      seed("c", { rank: null, title: "Elm", visibility: "public" }),
-      seed("d", { rank: 2, title: "Yew", visibility: "public" }, true),
-      seed("e", { rank: 0, title: "Fir", visibility: "followers" }),
-      seed("f", { rank: 4, title: "Box", visibility: "public" }),
-    ]);
-    const orders: ReadonlyArray<Keys> = [
-      [],
-      [asc("rank")],
-      [desc("rank")],
-      [asc("title")],
-      [desc("visibility"), asc("rank")],
-      [asc("id")],
-      [desc("id")],
-    ];
-    const cases = [
-      { who: anonymous, includeDeleted: false, members: ["a", "c", "f"] },
-      { who: as(member), includeDeleted: true, members: ["a", "c", "f"] },
-      { who: as(moderator), includeDeleted: false, members: ["a", "b", "c", "e", "f"] },
-      { who: as(moderator), includeDeleted: true, members: ["a", "b", "c", "d", "e", "f"] },
-    ];
-    const seen = await run(
-      Effect.forEach(
-        cases,
-        ({ who, includeDeleted }) =>
-          Effect.forEach(
-            orders,
-            (orderBy) =>
-              Effect.all(
-                {
-                  all: page({ orderBy }, { ...everything, who, includeDeleted }),
-                  // A one-row page reports the same unpaged total.
-                  one: page({ orderBy }, { who, includeDeleted, limit: 1, offset: 1 }),
-                },
-                { concurrency: 1 },
-              ),
-            { concurrency: 1 },
-          ),
-        { concurrency: 1 },
-      ),
-    );
-    expect(
-      seen.map((byOrder) =>
-        byOrder.map(({ all, one }) => [
-          byText(all.rows.map((row) => row.id)),
-          all.total,
-          one.total,
-        ]),
-      ),
-    ).toEqual(
-      cases.map(({ members }) => orders.map(() => [members, members.length, members.length])),
-    );
-    // The anonymous reader's order sorts only what it may see: the hidden ranks 0–2 leave no gap to probe.
-    expect(await ids([asc("rank")])).toEqual(["a", "f", "c"]);
-  });
-
-  it("orders inside the caller's own where, and on an owned leaf inside the read scope", async () => {
-    const { ops, actAs, post } = ownedPosts();
-    const open = await post("public");
-    const hidden = await post("private");
-    const theirs = await post("public", otherMember);
-    const listed = (who: Viewer, orderBy: Keys, where: ListFilter<never> = always) =>
-      Effect.map(
-        actAs(who, ops.list({ limit: 50, offset: 0, includeDeleted: false, where, orderBy })),
-        ({ rows, total }) => ({ ids: byText(rows.map((row) => row.id)), total }),
-      );
-    const orders: ReadonlyArray<Keys> = [[asc("ownerId")], [desc("ownerId")], [desc("visibility")]];
-    const seen = await run(
-      Effect.forEach(
-        orders,
-        (orderBy) =>
-          Effect.all(
-            [
-              listed(anonymous, orderBy),
-              listed(as(member), orderBy),
-              listed(as(member), orderBy, eq("visibility", "private")),
-            ],
-            { concurrency: 1 },
-          ),
-        { concurrency: 1 },
-      ),
-    );
-    expect(seen).toEqual(
-      Arr.map(orders, () => [
-        { ids: byText([open, theirs]), total: 2 },
-        { ids: byText([open, hidden, theirs]), total: 3 },
-        { ids: [hidden], total: 1 },
-      ]),
-    );
-    const ordered = await run(
-      actAs(
-        as(member),
-        ops.list({
-          limit: 50,
-          offset: 0,
-          includeDeleted: false,
-          where: always,
-          orderBy: [desc("ownerId")],
-        }),
-      ),
-    );
-    // `u-other` sorts after `u-member`; the member's two rows tie, so `id` orders them.
-    expect(ordered.rows.map((row) => row.id)).toEqual([theirs, ...byText([open, hidden])]);
-  });
+  );
 });
 
 // ── get ≡ list, end to end, over every row state ─────────────────────
@@ -1750,7 +1861,7 @@ const seededLeaf = (
         { concurrency: 1 },
       );
     });
-  return run(Effect.map(seeding, (ids) => ({ reads: (who: Viewer) => run(reads(who, ids)) })));
+  return Effect.map(seeding, (ids) => ({ reads: (who: Viewer) => reads(who, ids) }));
 };
 
 /** Every read agrees with `list`: a listed row reads, and an unlisted one is `NodeNotFound`. */
@@ -1766,8 +1877,10 @@ const expectAgreement = (reads: ReadonlyArray<RowReads>) =>
   );
 
 /** Each row as `[listed, read by get]`. */
-const shownTo = async (leaf: Awaited<ReturnType<typeof seededLeaf>>, who: Viewer) =>
-  (await leaf.reads(who)).map((read) => [read.listed, Option.isNone(read.got)] as const);
+const shownTo = (leaf: Effect.Success<ReturnType<typeof seededLeaf>>, who: Viewer) =>
+  Effect.gen(function* () {
+    return (yield* leaf.reads(who)).map((read) => [read.listed, Option.isNone(read.got)] as const);
+  });
 
 /** The labels of the rows `list` showed. */
 const listedRows = (reads: ReadonlyArray<RowReads>) =>
@@ -1816,37 +1929,43 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
   const hidden = [false, false] as const;
   const shown = [true, true] as const;
 
-  it("a reference row at `followers` or out of the enum is public to neither read", async () => {
-    const leaf = await seededLeaf({ kind: "reference" }, ["visibility"], gardeneriaPolicy, [
-      { owner: contributor, state: { visibility: "followers" }, deleted: false },
-      { owner: contributor, state: { visibility: "friends" }, deleted: false },
-    ]);
-    const strangers = [anonymous, as(member), as(follower), as(contributor)];
-    expect(await Promise.all(strangers.map((who) => shownTo(leaf, who)))).toEqual(
-      strangers.map(() => [hidden, hidden]),
-    );
-    expect(await shownTo(leaf, as(moderator))).toEqual([shown, shown]);
-  });
+  it.effect("a reference row at `followers` or out of the enum is public to neither read", () =>
+    Effect.gen(function* () {
+      const leaf = yield* seededLeaf({ kind: "reference" }, ["visibility"], gardeneriaPolicy, [
+        { owner: contributor, state: { visibility: "followers" }, deleted: false },
+        { owner: contributor, state: { visibility: "friends" }, deleted: false },
+      ]);
+      const strangers = [anonymous, as(member), as(follower), as(contributor)];
+      expect(
+        yield* Effect.forEach(strangers, (who) => shownTo(leaf, who), { concurrency: "unbounded" }),
+      ).toEqual(strangers.map(() => [hidden, hidden]));
+      expect(yield* shownTo(leaf, as(moderator))).toEqual([shown, shown]);
+    }),
+  );
 
-  it("an owned row whose draft is `null` or absent is a draft to both reads", async () => {
-    const leaf = await seededLeaf(
-      ownedAccess({ draft: true }),
-      ["visibility", "draft"],
-      gardeneriaPolicy,
-      [
-        { owner: member, state: { visibility: "public", draft: null }, deleted: false },
-        { owner: member, state: { visibility: "public" }, deleted: false },
-      ],
-    );
-    const strangers = [anonymous, as(follower), as(otherMember), as(contributor)];
-    expect(await Promise.all(strangers.map((who) => shownTo(leaf, who)))).toEqual(
-      strangers.map(() => [hidden, hidden]),
-    );
-    const privileged = [as(member), as(moderator)];
-    expect(await Promise.all(privileged.map((who) => shownTo(leaf, who)))).toEqual(
-      privileged.map(() => [shown, shown]),
-    );
-  });
+  it.effect("an owned row whose draft is `null` or absent is a draft to both reads", () =>
+    Effect.gen(function* () {
+      const leaf = yield* seededLeaf(
+        ownedAccess({ draft: true }),
+        ["visibility", "draft"],
+        gardeneriaPolicy,
+        [
+          { owner: member, state: { visibility: "public", draft: null }, deleted: false },
+          { owner: member, state: { visibility: "public" }, deleted: false },
+        ],
+      );
+      const strangers = [anonymous, as(follower), as(otherMember), as(contributor)];
+      expect(
+        yield* Effect.forEach(strangers, (who) => shownTo(leaf, who), { concurrency: "unbounded" }),
+      ).toEqual(strangers.map(() => [hidden, hidden]));
+      const privileged = [as(member), as(moderator)];
+      expect(
+        yield* Effect.forEach(privileged, (who) => shownTo(leaf, who), {
+          concurrency: "unbounded",
+        }),
+      ).toEqual(privileged.map(() => [shown, shown]));
+    }),
+  );
 
   describe("an owned leaf: visibility × draft × owner × tombstone, for every viewer", () => {
     const seeds: ReadonlyArray<Seed> = Arr.flatMap(visibilities, (visibility) =>
@@ -1861,25 +1980,31 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
       ),
     );
 
-    it("is not vacuous: the anonymous read only the live, public, explicitly published rows", async () => {
-      const leaf = await seededLeaf(
-        ownedAccess({ draft: true }),
-        ["title", "visibility", "draft"],
-        gardeneriaPolicy,
-        seeds,
-      );
-      const open = seeds
-        .filter(
-          (seed) =>
-            seed.state["visibility"] === "public" && seed.state["draft"] === false && !seed.deleted,
-        )
-        .map(labelOf);
-      expect(open).toHaveLength(2);
-      expect(listedRows(await leaf.reads(anonymous))).toEqual(open);
-      expect(listedRows(await leaf.reads(as(moderator)))).toEqual(seeds.map(labelOf));
-    });
+    it.effect(
+      "is not vacuous: the anonymous read only the live, public, explicitly published rows",
+      () =>
+        Effect.gen(function* () {
+          const leaf = yield* seededLeaf(
+            ownedAccess({ draft: true }),
+            ["title", "visibility", "draft"],
+            gardeneriaPolicy,
+            seeds,
+          );
+          const open = seeds
+            .filter(
+              (seed) =>
+                seed.state["visibility"] === "public" &&
+                seed.state["draft"] === false &&
+                !seed.deleted,
+            )
+            .map(labelOf);
+          expect(open).toHaveLength(2);
+          expect(listedRows(yield* leaf.reads(anonymous))).toEqual(open);
+          expect(listedRows(yield* leaf.reads(as(moderator)))).toEqual(seeds.map(labelOf));
+        }),
+    );
 
-    it.each(
+    it.effect.each(
       matrix([
         {
           variant: "with a draft column",
@@ -1892,17 +2017,16 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
           columns: ["title", "visibility", "draft"],
         },
       ]),
-    )(
-      "$variant, $policyName policy, for $viewerName",
-      async ({ access, columns, policy, viewer }) => {
-        const leaf = await seededLeaf(access, columns, policy, seeds);
-        expectAgreement(await leaf.reads(viewer));
-      },
+    )("$variant, $policyName policy, for $viewerName", ({ access, columns, policy, viewer }) =>
+      Effect.gen(function* () {
+        const leaf = yield* seededLeaf(access, columns, policy, seeds);
+        expectAgreement(yield* leaf.reads(viewer));
+      }),
     );
 
     // The declaration names a column the view lacks: the list fails closed, so
     // must the row — no read shows anything, whoever asks.
-    it.each(
+    it.effect.each(
       matrix([
         {
           variant: "declaring a draft column the view lacks",
@@ -1922,14 +2046,15 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
       ]),
     )(
       "$variant reads nothing, $policyName policy, for $viewerName",
-      async ({ access, columns, policy, viewer }) => {
-        const leaf = await seededLeaf(access, columns, policy, seeds);
-        const reads = await leaf.reads(viewer);
-        expectAgreement(reads);
-        expect(reads.filter((read) => read.listed || read.many || Option.isNone(read.got))).toEqual(
-          [],
-        );
-      },
+      ({ access, columns, policy, viewer }) =>
+        Effect.gen(function* () {
+          const leaf = yield* seededLeaf(access, columns, policy, seeds);
+          const reads = yield* leaf.reads(viewer);
+          expectAgreement(reads);
+          expect(
+            reads.filter((read) => read.listed || read.many || Option.isNone(read.got)),
+          ).toEqual([]);
+        }),
     );
   });
 
@@ -1942,30 +2067,34 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
       })),
     );
 
-    it("is not vacuous: the anonymous read only the live, exactly public row", async () => {
-      const leaf = await seededLeaf(
-        { kind: "reference" },
-        ["name", "visibility"],
-        gardeneriaPolicy,
-        seeds,
-      );
-      const open = seeds
-        .filter((seed) => seed.state["visibility"] === "public" && !seed.deleted)
-        .map(labelOf);
-      expect(open).toHaveLength(1);
-      expect(listedRows(await leaf.reads(anonymous))).toEqual(open);
-      expect(listedRows(await leaf.reads(as(moderator)))).toEqual(seeds.map(labelOf));
-    });
+    it.effect("is not vacuous: the anonymous read only the live, exactly public row", () =>
+      Effect.gen(function* () {
+        const leaf = yield* seededLeaf(
+          { kind: "reference" },
+          ["name", "visibility"],
+          gardeneriaPolicy,
+          seeds,
+        );
+        const open = seeds
+          .filter((seed) => seed.state["visibility"] === "public" && !seed.deleted)
+          .map(labelOf);
+        expect(open).toHaveLength(1);
+        expect(listedRows(yield* leaf.reads(anonymous))).toEqual(open);
+        expect(listedRows(yield* leaf.reads(as(moderator)))).toEqual(seeds.map(labelOf));
+      }),
+    );
 
-    it.each(
+    it.effect.each(
       matrix([
         { variant: "with a visibility column", columns: ["name", "visibility"] },
         { variant: "over a view without a visibility column", columns: ["name"] },
       ]),
-    )("$variant, $policyName policy, for $viewerName", async ({ columns, policy, viewer }) => {
-      const leaf = await seededLeaf({ kind: "reference" }, columns, policy, seeds);
-      expectAgreement(await leaf.reads(viewer));
-    });
+    )("$variant, $policyName policy, for $viewerName", ({ columns, policy, viewer }) =>
+      Effect.gen(function* () {
+        const leaf = yield* seededLeaf({ kind: "reference" }, columns, policy, seeds);
+        expectAgreement(yield* leaf.reads(viewer));
+      }),
+    );
   });
 
   describe("a reference leaf with a followers column: visibility × curator × tombstone, for every viewer", () => {
@@ -1987,99 +2116,126 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
     const live = seeds.filter((seed) => !seed.deleted);
     const publicRows = live.filter((seed) => seed.state["visibility"] === "public").map(labelOf);
 
-    it("is not vacuous: the named account and its follower read its live followers rows, and nobody else below the rung does", async () => {
-      const leaf = await seededLeaf(
-        curated,
-        ["name", "visibility", "curatorId"],
-        gardeneriaPolicy,
-        seeds,
-      );
-      expect(listedRows(await leaf.reads(as(follower)))).toEqual(
-        live
-          .filter(
-            (seed) =>
-              seed.state["visibility"] === "public" ||
-              (seed.state["visibility"] === "followers" && seed.state["curatorId"] === member.id),
-          )
-          .map(labelOf),
-      );
-      // Each account the column names reads its own followers rows, never its private ones.
-      const named = [member, otherMember];
-      expect(
-        await Promise.all(named.map(async (account) => listedRows(await leaf.reads(as(account))))),
-      ).toEqual(
-        named.map((account) =>
-          live
-            .filter(
-              (seed) =>
-                seed.state["visibility"] === "public" ||
-                (seed.state["visibility"] === "followers" &&
-                  seed.state["curatorId"] === account.id),
-            )
-            .map(labelOf),
-        ),
-      );
-      const strangers = [anonymous, as(contributor)];
-      expect(
-        await Promise.all(strangers.map(async (viewer) => listedRows(await leaf.reads(viewer)))),
-      ).toEqual(strangers.map(() => publicRows));
-      expect(listedRows(await leaf.reads(as(moderator)))).toEqual(seeds.map(labelOf));
-    });
+    it.effect(
+      "is not vacuous: the named account and its follower read its live followers rows, and nobody else below the rung does",
+      () =>
+        Effect.gen(function* () {
+          const leaf = yield* seededLeaf(
+            curated,
+            ["name", "visibility", "curatorId"],
+            gardeneriaPolicy,
+            seeds,
+          );
+          expect(listedRows(yield* leaf.reads(as(follower)))).toEqual(
+            live
+              .filter(
+                (seed) =>
+                  seed.state["visibility"] === "public" ||
+                  (seed.state["visibility"] === "followers" &&
+                    seed.state["curatorId"] === member.id),
+              )
+              .map(labelOf),
+          );
+          // Each account the column names reads its own followers rows, never its private ones.
+          const named = [member, otherMember];
+          expect(
+            yield* Effect.forEach(
+              named,
+              (account) =>
+                Effect.gen(function* () {
+                  return listedRows(yield* leaf.reads(as(account)));
+                }),
+              { concurrency: "unbounded" },
+            ),
+          ).toEqual(
+            named.map((account) =>
+              live
+                .filter(
+                  (seed) =>
+                    seed.state["visibility"] === "public" ||
+                    (seed.state["visibility"] === "followers" &&
+                      seed.state["curatorId"] === account.id),
+                )
+                .map(labelOf),
+            ),
+          );
+          const strangers = [anonymous, as(contributor)];
+          expect(
+            yield* Effect.forEach(
+              strangers,
+              (viewer) =>
+                Effect.gen(function* () {
+                  return listedRows(yield* leaf.reads(viewer));
+                }),
+              { concurrency: "unbounded" },
+            ),
+          ).toEqual(strangers.map(() => publicRows));
+          expect(listedRows(yield* leaf.reads(as(moderator)))).toEqual(seeds.map(labelOf));
+        }),
+    );
 
-    it("the named account reads its own followers row, not its private row, without following anybody", async () => {
-      const leaf = await seededLeaf(
-        curated,
-        ["name", "visibility", "curatorId"],
-        gardeneriaPolicy,
-        Arr.map(["followers", "private"] as const, (visibility) => ({
-          owner: admin,
-          state: { name: "n", visibility, curatorId: otherMember.id },
-          deleted: false,
-        })),
-        nobody,
-      );
-      const reads = await leaf.reads(as(otherMember));
-      expectAgreement(reads);
-      expect(await shownTo(leaf, as(otherMember))).toEqual([
-        [true, true],
-        [false, false],
-      ]);
-      expect(await shownTo(leaf, as(member))).toEqual([
-        [false, false],
-        [false, false],
-      ]);
-    });
+    it.effect(
+      "the named account reads its own followers row, not its private row, without following anybody",
+      () =>
+        Effect.gen(function* () {
+          const leaf = yield* seededLeaf(
+            curated,
+            ["name", "visibility", "curatorId"],
+            gardeneriaPolicy,
+            Arr.map(["followers", "private"] as const, (visibility) => ({
+              owner: admin,
+              state: { name: "n", visibility, curatorId: otherMember.id },
+              deleted: false,
+            })),
+            nobody,
+          );
+          const reads = yield* leaf.reads(as(otherMember));
+          expectAgreement(reads);
+          expect(yield* shownTo(leaf, as(otherMember))).toEqual([
+            [true, true],
+            [false, false],
+          ]);
+          expect(yield* shownTo(leaf, as(member))).toEqual([
+            [false, false],
+            [false, false],
+          ]);
+        }),
+    );
 
-    it("a declared column the view lacks opens no followers row, fail closed", async () => {
-      const leaf = await seededLeaf(curated, ["name", "visibility"], gardeneriaPolicy, seeds);
-      const reads = await leaf.reads(as(follower));
-      expectAgreement(reads);
-      expect(listedRows(reads)).toEqual(publicRows);
-    });
+    it.effect("a declared column the view lacks opens no followers row, fail closed", () =>
+      Effect.gen(function* () {
+        const leaf = yield* seededLeaf(curated, ["name", "visibility"], gardeneriaPolicy, seeds);
+        const reads = yield* leaf.reads(as(follower));
+        expectAgreement(reads);
+        expect(listedRows(reads)).toEqual(publicRows);
+      }),
+    );
 
-    it("asks the follower seam only about a string", async () => {
-      const asked: Array<unknown> = [];
-      const recording: FollowerSeam<Following, never> = {
-        isFollower: (followerId, ownerId) =>
-          Effect.sync(() => {
-            asked.push(ownerId);
-            return followerId === follower.id && ownerId === member.id;
-          }),
-        following: follows.following,
-      };
-      const leaf = await seededLeaf(
-        curated,
-        ["name", "visibility", "curatorId"],
-        gardeneriaPolicy,
-        seeds,
-        recording,
-      );
-      expectAgreement(await leaf.reads(as(follower)));
-      expect(asked.length).toBeGreaterThan(0);
-      expect(asked.filter((ownerId) => !P.isString(ownerId))).toEqual([]);
-    });
+    it.effect("asks the follower seam only about a string", () =>
+      Effect.gen(function* () {
+        const asked: Array<unknown> = [];
+        const recording: FollowerSeam<Following, never> = {
+          isFollower: (followerId, ownerId) =>
+            Effect.sync(() => {
+              asked.push(ownerId);
+              return followerId === follower.id && ownerId === member.id;
+            }),
+          following: follows.following,
+        };
+        const leaf = yield* seededLeaf(
+          curated,
+          ["name", "visibility", "curatorId"],
+          gardeneriaPolicy,
+          seeds,
+          recording,
+        );
+        expectAgreement(yield* leaf.reads(as(follower)));
+        expect(asked.length).toBeGreaterThan(0);
+        expect(asked.filter((ownerId) => !P.isString(ownerId))).toEqual([]);
+      }),
+    );
 
-    it.each(
+    it.effect.each(
       matrix([
         {
           variant: "declaring a column the view carries",
@@ -2102,12 +2258,11 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
           columns: ["name", "curatorId"],
         },
       ]),
-    )(
-      "$variant, $policyName policy, for $viewerName",
-      async ({ access, columns, policy, viewer }) => {
-        const leaf = await seededLeaf(access, columns, policy, seeds);
-        expectAgreement(await leaf.reads(viewer));
-      },
+    )("$variant, $policyName policy, for $viewerName", ({ access, columns, policy, viewer }) =>
+      Effect.gen(function* () {
+        const leaf = yield* seededLeaf(access, columns, policy, seeds);
+        expectAgreement(yield* leaf.reads(viewer));
+      }),
     );
   });
 });
@@ -2115,7 +2270,7 @@ describe("defineSubtype — get / getMany never serve a row list hides (SEC-AUTH
 describe("defineSubtype — a `group` row reads to its group's members", () => {
   /** `follower` belongs to `g-1`; nobody belongs to anything else. */
   const memberships = makeInMemoryMembershipStore();
-  Effect.runSync(
+  beforeAll(() =>
     memberships.add({ groupId: "g-1", accountId: follower.id, role: "member", at: NOW }),
   );
   const audience: FollowerSeam<Following, never> = { ...follows, ...audienceSeam(memberships) };
@@ -2205,69 +2360,78 @@ describe("defineSubtype — a `group` row reads to its group's members", () => {
       ),
   );
 
-  it.each(cases)(
+  it.effect.each(cases)(
     "$variant, $policyName policy, for $viewerName",
-    async ({ access, columns, seeds, seam, policy, viewer }) => {
-      const leaf = await seededLeaf(access, columns, policy, seeds, seam);
-      expectAgreement(await leaf.reads(viewer));
-    },
+    ({ access, columns, seeds, seam, policy, viewer }) =>
+      Effect.gen(function* () {
+        const leaf = yield* seededLeaf(access, columns, policy, seeds, seam);
+        expectAgreement(yield* leaf.reads(viewer));
+      }),
   );
 
   const isOpenGroupRow = (seed: Seed) =>
     seed.state["visibility"] === "group" && seed.state["groupId"] === "g-1";
 
-  it("is not vacuous: on an owned leaf the member reads exactly the live, published rows public or shared with their group", async () => {
-    const leaf = await seededLeaf(
-      ownedAccess({ draft: true, group: true }),
-      ownedColumns,
-      gardeneriaPolicy,
-      ownedSeeds,
-      audience,
-    );
-    const open = ownedSeeds
-      .filter(
-        (seed) =>
-          !seed.deleted &&
-          seed.state["draft"] === false &&
-          (seed.state["visibility"] === "public" || isOpenGroupRow(seed)),
-      )
-      .map(labelOf);
-    expect(open.filter((label) => label.includes('group "g-1"'))).toHaveLength(4);
-    expect(listedRows(await leaf.reads(as(follower)))).toEqual(open);
-    // A stranger reads no `group` row; the owner reads all of their own, a
-    // deleted group's included (`private` to them).
-    expect(
-      listedRows(await leaf.reads(as(otherMember))).filter((label) =>
-        label.startsWith('visibility "group"'),
-      ),
-    ).toEqual(
-      ownedSeeds
-        .filter(
-          (seed) =>
-            seed.owner === otherMember && !seed.deleted && seed.state["visibility"] === "group",
-        )
-        .map(labelOf),
-    );
-  });
+  it.effect(
+    "is not vacuous: on an owned leaf the member reads exactly the live, published rows public or shared with their group",
+    () =>
+      Effect.gen(function* () {
+        const leaf = yield* seededLeaf(
+          ownedAccess({ draft: true, group: true }),
+          ownedColumns,
+          gardeneriaPolicy,
+          ownedSeeds,
+          audience,
+        );
+        const open = ownedSeeds
+          .filter(
+            (seed) =>
+              !seed.deleted &&
+              seed.state["draft"] === false &&
+              (seed.state["visibility"] === "public" || isOpenGroupRow(seed)),
+          )
+          .map(labelOf);
+        expect(open.filter((label) => label.includes('group "g-1"'))).toHaveLength(4);
+        expect(listedRows(yield* leaf.reads(as(follower)))).toEqual(open);
+        // A stranger reads no `group` row; the owner reads all of their own, a
+        // deleted group's included (`private` to them).
+        expect(
+          listedRows(yield* leaf.reads(as(otherMember))).filter((label) =>
+            label.startsWith('visibility "group"'),
+          ),
+        ).toEqual(
+          ownedSeeds
+            .filter(
+              (seed) =>
+                seed.owner === otherMember && !seed.deleted && seed.state["visibility"] === "group",
+            )
+            .map(labelOf),
+        );
+      }),
+  );
 
-  it("is not vacuous: on a reference leaf the member reads the group rows of their group, a stranger none", async () => {
-    const leaf = await seededLeaf(
-      referenceAccess,
-      ["visibility", "groupId"],
-      gardeneriaPolicy,
-      referenceSeeds,
-      audience,
-    );
-    const live = referenceSeeds.filter((seed) => !seed.deleted);
-    expect(listedRows(await leaf.reads(as(follower)))).toEqual(
-      live
-        .filter((seed) => seed.state["visibility"] === "public" || isOpenGroupRow(seed))
-        .map(labelOf),
-    );
-    expect(listedRows(await leaf.reads(as(otherMember)))).toEqual(
-      live.filter((seed) => seed.state["visibility"] === "public").map(labelOf),
-    );
-  });
+  it.effect(
+    "is not vacuous: on a reference leaf the member reads the group rows of their group, a stranger none",
+    () =>
+      Effect.gen(function* () {
+        const leaf = yield* seededLeaf(
+          referenceAccess,
+          ["visibility", "groupId"],
+          gardeneriaPolicy,
+          referenceSeeds,
+          audience,
+        );
+        const live = referenceSeeds.filter((seed) => !seed.deleted);
+        expect(listedRows(yield* leaf.reads(as(follower)))).toEqual(
+          live
+            .filter((seed) => seed.state["visibility"] === "public" || isOpenGroupRow(seed))
+            .map(labelOf),
+        );
+        expect(listedRows(yield* leaf.reads(as(otherMember)))).toEqual(
+          live.filter((seed) => seed.state["visibility"] === "public").map(labelOf),
+        );
+      }),
+  );
 
   it("a group row is never cache-serveable (CACHE-AUTH-005)", () => {
     expect(
@@ -2322,43 +2486,46 @@ describe("defineSubtype — a pending group invitation reads nothing a `group` r
   );
   const columns = ["title", "visibility", "draft", "groupId"];
   const invite = (memberships: ReturnType<typeof makeInMemoryMembershipStore>) =>
-    Effect.runSync(
-      memberships.invite({
-        groupId: "g-1",
-        accountId: follower.id,
-        role: "admin",
-        invitedBy: member.id,
-        at: NOW,
-      }),
-    );
+    memberships.invite({
+      groupId: "g-1",
+      accountId: follower.id,
+      role: "admin",
+      invitedBy: member.id,
+      at: NOW,
+    });
   const sharedWithG1 = (labels: ReadonlyArray<string>) =>
     labels.filter((label) => label.includes('visibility "group"') && label.includes('"g-1"'));
 
-  it("hidden to the pending invitee in get, getMany and list; open once accepted; hidden after leaving or a revoke", async () => {
-    const memberships = makeInMemoryMembershipStore();
-    const seam: FollowerSeam<Following, never> = { ...follows, ...audienceSeam(memberships) };
-    const leaf = await seededLeaf(
-      ownedAccess({ draft: true, group: true }),
-      columns,
-      gardeneriaPolicy,
-      groupSeeds,
-      seam,
-    );
-    const readsAs = async () => {
-      const reads = await leaf.reads(as(follower));
-      expectAgreement(reads);
-      return sharedWithG1(listedRows(reads));
-    };
-    invite(memberships);
-    expect(await readsAs()).toEqual([]);
-    Effect.runSync(memberships.accept("g-1", follower.id, NOW));
-    expect(await readsAs()).toHaveLength(1);
-    Effect.runSync(memberships.remove("g-1", follower.id));
-    expect(await readsAs()).toEqual([]);
-    invite(memberships);
-    Effect.runSync(memberships.removeInvitation("g-1", follower.id));
-    expect(await readsAs()).toEqual([]);
-  });
+  it.effect(
+    "hidden to the pending invitee in get, getMany and list; open once accepted; hidden after leaving or a revoke",
+    () =>
+      Effect.gen(function* () {
+        const memberships = makeInMemoryMembershipStore();
+        const seam: FollowerSeam<Following, never> = { ...follows, ...audienceSeam(memberships) };
+        const leaf = yield* seededLeaf(
+          ownedAccess({ draft: true, group: true }),
+          columns,
+          gardeneriaPolicy,
+          groupSeeds,
+          seam,
+        );
+        const readsAs = () =>
+          Effect.gen(function* () {
+            const reads = yield* leaf.reads(as(follower));
+            expectAgreement(reads);
+            return sharedWithG1(listedRows(reads));
+          });
+        yield* invite(memberships);
+        expect(yield* readsAs()).toEqual([]);
+        yield* memberships.accept("g-1", follower.id, NOW);
+        expect(yield* readsAs()).toHaveLength(1);
+        yield* memberships.remove("g-1", follower.id);
+        expect(yield* readsAs()).toEqual([]);
+        yield* invite(memberships);
+        yield* memberships.removeInvitation("g-1", follower.id);
+        expect(yield* readsAs()).toEqual([]);
+      }),
+  );
 });
 
 describe("defineSubtype — an owner column holding no string is no owner", () => {
@@ -2402,26 +2569,27 @@ describe("defineSubtype — an owner column holding no string is no owner", () =
     ["a member", as(member)],
   ];
 
-  it.each(
+  it.effect.each(
     Arr.flatMap(matrixPolicies, ([policyName, policy]) =>
       Arr.map(viewers, ([viewerName, viewer]) => ({ policyName, policy, viewerName, viewer })),
     ),
   )(
     "matches no viewer and asks no follower, $policyName policy, for $viewerName",
-    async ({ policy, viewer }) => {
-      asked.length = 0;
-      const leaf = await seededLeaf(
-        ownedAccess({ draft: true }),
-        ["title", "visibility", "draft"],
-        policy,
-        seeds,
-        fans,
-      );
-      const reads = await leaf.reads(viewer);
-      expectAgreement(reads);
-      expect(listedRows(reads)).toEqual(open);
-      expect(asked).toEqual([]);
-    },
+    ({ policy, viewer }) =>
+      Effect.gen(function* () {
+        asked.length = 0;
+        const leaf = yield* seededLeaf(
+          ownedAccess({ draft: true }),
+          ["title", "visibility", "draft"],
+          policy,
+          seeds,
+          fans,
+        );
+        const reads = yield* leaf.reads(viewer);
+        expectAgreement(reads);
+        expect(listedRows(reads)).toEqual(open);
+        expect(asked).toEqual([]);
+      }),
   );
 
   describe("a reference leaf's followers column holding no string names nobody", () => {
@@ -2444,93 +2612,100 @@ describe("defineSubtype — an owner column holding no string is no owner", () =
       ["nobody follows anybody", nobody],
     ];
 
-    it.each(
+    it.effect.each(
       Arr.flatMap(seams, ([seamName, seam]) =>
         Arr.map(viewers, ([viewerName, viewer]) => ({ seamName, seam, viewerName, viewer })),
       ),
-    )(
-      "matches no viewer and asks no follower, $seamName, for $viewerName",
-      async ({ seam, viewer }) => {
+    )("matches no viewer and asks no follower, $seamName, for $viewerName", ({ seam, viewer }) =>
+      Effect.gen(function* () {
         asked.length = 0;
-        const leaf = await seededLeaf(
+        const leaf = yield* seededLeaf(
           curated,
           ["name", "visibility", "curatorId"],
           gardeneriaPolicy,
           referenceSeeds,
           seam,
         );
-        const reads = await leaf.reads(viewer);
+        const reads = yield* leaf.reads(viewer);
         expectAgreement(reads);
         expect(listedRows(reads)).toEqual(publicRows);
         expect(asked).toEqual([]);
-      },
+      }),
     );
 
-    it('is not vacuous: a followers column holding the string "null" is that account\'s', async () => {
-      const leaf = await seededLeaf(
-        curated,
-        ["name", "visibility", "curatorId"],
+    it.effect(
+      'is not vacuous: a followers column holding the string "null" is that account\'s',
+      () =>
+        Effect.gen(function* () {
+          const leaf = yield* seededLeaf(
+            curated,
+            ["name", "visibility", "curatorId"],
+            gardeneriaPolicy,
+            [
+              {
+                owner: admin,
+                state: { name: "n", visibility: "followers", curatorId: "null" },
+                deleted: false,
+              },
+            ],
+            nobody,
+          );
+          expect(yield* shownTo(leaf, as(nullId))).toEqual([[true, true]]);
+          expect(yield* shownTo(leaf, as(undefinedId))).toEqual([[false, false]]);
+        }),
+    );
+  });
+
+  it.effect("still shows every row to the view-private rung", () =>
+    Effect.gen(function* () {
+      const leaf = yield* seededLeaf(
+        ownedAccess({ draft: true }),
+        ["title", "visibility", "draft"],
+        gardeneriaPolicy,
+        seeds,
+        fans,
+      );
+      const reads = yield* leaf.reads(as(moderator));
+      expectAgreement(reads);
+      expect(listedRows(reads)).toEqual(seeds.map(labelOf));
+    }),
+  );
+
+  it.effect('is not vacuous: an owner column holding the string "null" is that account\'s', () =>
+    Effect.gen(function* () {
+      asked.length = 0;
+      const leaf = yield* seededLeaf(
+        ownedAccess({ draft: true }),
+        ["title", "visibility", "draft"],
         gardeneriaPolicy,
         [
           {
-            owner: admin,
-            state: { name: "n", visibility: "followers", curatorId: "null" },
+            owner: member,
+            state: { title: "t", visibility: "private", draft: true, ownerId: "null" },
             deleted: false,
+            unstamped: true,
+          },
+          {
+            owner: member,
+            state: { title: "t", visibility: "followers", draft: false, ownerId: "null" },
+            deleted: false,
+            unstamped: true,
           },
         ],
-        nobody,
+        fans,
       );
-      expect(await shownTo(leaf, as(nullId))).toEqual([[true, true]]);
-      expect(await shownTo(leaf, as(undefinedId))).toEqual([[false, false]]);
-    });
-  });
-
-  it("still shows every row to the view-private rung", async () => {
-    const leaf = await seededLeaf(
-      ownedAccess({ draft: true }),
-      ["title", "visibility", "draft"],
-      gardeneriaPolicy,
-      seeds,
-      fans,
-    );
-    const reads = await leaf.reads(as(moderator));
-    expectAgreement(reads);
-    expect(listedRows(reads)).toEqual(seeds.map(labelOf));
-  });
-
-  it('is not vacuous: an owner column holding the string "null" is that account\'s', async () => {
-    asked.length = 0;
-    const leaf = await seededLeaf(
-      ownedAccess({ draft: true }),
-      ["title", "visibility", "draft"],
-      gardeneriaPolicy,
-      [
-        {
-          owner: member,
-          state: { title: "t", visibility: "private", draft: true, ownerId: "null" },
-          deleted: false,
-          unstamped: true,
-        },
-        {
-          owner: member,
-          state: { title: "t", visibility: "followers", draft: false, ownerId: "null" },
-          deleted: false,
-          unstamped: true,
-        },
-      ],
-      fans,
-    );
-    expect(await shownTo(leaf, as(nullId))).toEqual([
-      [true, true],
-      [true, true],
-    ]);
-    // `"42"` follows `"null"`: the seam is asked, and its answer is the read's.
-    expect(await shownTo(leaf, as(fortyTwo))).toEqual([
-      [false, false],
-      [true, true],
-    ]);
-    expect(asked).toContain("null");
-  });
+      expect(yield* shownTo(leaf, as(nullId))).toEqual([
+        [true, true],
+        [true, true],
+      ]);
+      // `"42"` follows `"null"`: the seam is asked, and its answer is the read's.
+      expect(yield* shownTo(leaf, as(fortyTwo))).toEqual([
+        [false, false],
+        [true, true],
+      ]);
+      expect(asked).toContain("null");
+    }),
+  );
 });
 
 // ── A reference row's write and history gates answer as `get` does ────
@@ -2816,7 +2991,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     ["declaring a followers column the view lacks", ["name", "visibility", "draft"], curated],
   ];
 
-  it.each(
+  it.effect.each(
     Arr.flatMap(columnVariants, ([variant, columns, access]) =>
       Arr.flatMap(policies, ([policyName, policy]) =>
         Arr.map(viewers, ([viewerName, viewer]) => ({
@@ -2830,10 +3005,9 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
         })),
       ),
     ),
-  )(
-    "$variant, $policyName policy, for $viewerName",
-    async ({ columns, access, policy, viewer }) => {
-      const results = await run(probe(policy, columns, viewer, access));
+  )("$variant, $policyName policy, for $viewerName", ({ columns, access, policy, viewer }) =>
+    Effect.gen(function* () {
+      const results = yield* probe(policy, columns, viewer, access);
       expect(results.map(({ operation, label, answer }) => ({ operation, label, answer }))).toEqual(
         results.map(({ operation, label, implied: expected }) => ({
           operation,
@@ -2852,161 +3026,193 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
             result.read,
         ),
       ).toEqual([]);
-    },
+    }),
   );
 
-  it("is not vacuous: a corpus writer without the view rungs reaches no hidden row, and the rungs restore access", async () => {
-    const answers = async (who: ViewerAccount) =>
-      R.fromEntries(
-        (await run(probe(splitPolicy, ["name", "visibility", "draft"], as(who)))).map(
-          (result) => [`${result.operation} ${result.label}`, result.answer] as const,
-        ),
-      );
-    const hiddenFromContributor = HashSet.make(
-      "private",
-      "followers",
-      "followers of the member",
-      "followers of another",
-      "private, curated by the member",
-      "tombstoned followers of the member",
-      "out of the enum",
-      "null visibility",
-      "tombstoned public",
-      "tombstoned private",
-      "missing",
-    );
-    // Every operation on every row: only the two rows `get` serves it reach the chain.
-    expect(await answers(contributor)).toEqual(
-      R.fromEntries(
-        Arr.flatMap(operations, (operation) =>
-          Arr.map([...seeds.map((seed) => seed.label), "missing"], (label) => [
-            `${operation} ${label}`,
-            HashSet.has(hiddenFromContributor, label)
-              ? Option.some("NodeNotFound")
-              : absentVersion(operation)
-                ? Option.some("VersionNotFound")
-                : Option.none(),
-          ]),
-        ),
-      ),
-    );
-    // view-private opens the live private rows, but no tombstone …
-    const curatorAnswers = await answers(curator);
-    expect(curatorAnswers["getVersion private"]).toEqual(Option.none());
-    expect(curatorAnswers["update private"]).toEqual(Option.none());
-    expect(curatorAnswers["restore tombstoned public"]).toEqual(Option.some("NodeNotFound"));
-    expect(curatorAnswers["getVersion tombstoned private"]).toEqual(Option.some("NodeNotFound"));
-    // … view-deleted opens the public tombstone, but not a private one …
-    const archivistAnswers = await answers(archivist);
-    expect(archivistAnswers["restore tombstoned public"]).toEqual(Option.none());
-    expect(archivistAnswers["delete tombstoned public"]).toEqual(Option.none());
-    expect(archivistAnswers["getVersion tombstoned public"]).toEqual(Option.none());
-    expect(archivistAnswers["restore tombstoned private"]).toEqual(Option.some("NodeNotFound"));
-    expect(archivistAnswers["getVersion private"]).toEqual(Option.some("NodeNotFound"));
-    // … and a moderator, holding both, reaches every existing row.
-    const moderatorAnswers = await answers(moderator);
-    expect(moderatorAnswers["restore tombstoned private"]).toEqual(Option.none());
-    expect(moderatorAnswers["getVersion tombstoned private"]).toEqual(Option.none());
-    expect(moderatorAnswers["restoreVersion private"]).toEqual(Option.none());
-    expect(moderatorAnswers["getVersion missing"]).toEqual(Option.some("NodeNotFound"));
-    // An absent version is no oracle: hidden and missing rows answer alike.
-    expect(curatorAnswers["getVersion absent tombstoned public"]).toEqual(
-      Option.some("NodeNotFound"),
-    );
-    expect(curatorAnswers["restoreVersion absent private"]).toEqual(Option.some("VersionNotFound"));
-    expect(archivistAnswers["restoreVersion absent private"]).toEqual(Option.some("NodeNotFound"));
-    expect(archivistAnswers["getVersion absent missing"]).toEqual(Option.some("NodeNotFound"));
-    expect(moderatorAnswers["getVersion absent tombstoned private"]).toEqual(
-      Option.some("VersionNotFound"),
-    );
-    // compare answers each row as getVersion does, whichever side is absent.
-    expect(curatorAnswers["compare private"]).toEqual(Option.none());
-    expect(curatorAnswers["compare absent from private"]).toEqual(Option.some("VersionNotFound"));
-    expect(curatorAnswers["compare absent to tombstoned public"]).toEqual(
-      Option.some("NodeNotFound"),
-    );
-    expect(archivistAnswers["compare absent from private"]).toEqual(Option.some("NodeNotFound"));
-    expect(archivistAnswers["compare tombstoned public"]).toEqual(Option.none());
-    expect(moderatorAnswers["compare absent to tombstoned private"]).toEqual(
-      Option.some("VersionNotFound"),
-    );
-    expect(moderatorAnswers["compare absent from missing"]).toEqual(Option.some("NodeNotFound"));
-  });
+  it.effect(
+    "is not vacuous: a corpus writer without the view rungs reaches no hidden row, and the rungs restore access",
+    () =>
+      Effect.gen(function* () {
+        const answers = (who: ViewerAccount) =>
+          Effect.gen(function* () {
+            return R.fromEntries(
+              (yield* probe(splitPolicy, ["name", "visibility", "draft"], as(who))).map(
+                (result) => [`${result.operation} ${result.label}`, result.answer] as const,
+              ),
+            );
+          });
+        const hiddenFromContributor = HashSet.make(
+          "private",
+          "followers",
+          "followers of the member",
+          "followers of another",
+          "private, curated by the member",
+          "tombstoned followers of the member",
+          "out of the enum",
+          "null visibility",
+          "tombstoned public",
+          "tombstoned private",
+          "missing",
+        );
+        // Every operation on every row: only the two rows `get` serves it reach the chain.
+        expect(yield* answers(contributor)).toEqual(
+          R.fromEntries(
+            Arr.flatMap(operations, (operation) =>
+              Arr.map([...seeds.map((seed) => seed.label), "missing"], (label) => [
+                `${operation} ${label}`,
+                HashSet.has(hiddenFromContributor, label)
+                  ? Option.some("NodeNotFound")
+                  : absentVersion(operation)
+                    ? Option.some("VersionNotFound")
+                    : Option.none(),
+              ]),
+            ),
+          ),
+        );
+        // view-private opens the live private rows, but no tombstone …
+        const curatorAnswers = yield* answers(curator);
+        expect(curatorAnswers["getVersion private"]).toEqual(Option.none());
+        expect(curatorAnswers["update private"]).toEqual(Option.none());
+        expect(curatorAnswers["restore tombstoned public"]).toEqual(Option.some("NodeNotFound"));
+        expect(curatorAnswers["getVersion tombstoned private"]).toEqual(
+          Option.some("NodeNotFound"),
+        );
+        // … view-deleted opens the public tombstone, but not a private one …
+        const archivistAnswers = yield* answers(archivist);
+        expect(archivistAnswers["restore tombstoned public"]).toEqual(Option.none());
+        expect(archivistAnswers["delete tombstoned public"]).toEqual(Option.none());
+        expect(archivistAnswers["getVersion tombstoned public"]).toEqual(Option.none());
+        expect(archivistAnswers["restore tombstoned private"]).toEqual(Option.some("NodeNotFound"));
+        expect(archivistAnswers["getVersion private"]).toEqual(Option.some("NodeNotFound"));
+        // … and a moderator, holding both, reaches every existing row.
+        const moderatorAnswers = yield* answers(moderator);
+        expect(moderatorAnswers["restore tombstoned private"]).toEqual(Option.none());
+        expect(moderatorAnswers["getVersion tombstoned private"]).toEqual(Option.none());
+        expect(moderatorAnswers["restoreVersion private"]).toEqual(Option.none());
+        expect(moderatorAnswers["getVersion missing"]).toEqual(Option.some("NodeNotFound"));
+        // An absent version is no oracle: hidden and missing rows answer alike.
+        expect(curatorAnswers["getVersion absent tombstoned public"]).toEqual(
+          Option.some("NodeNotFound"),
+        );
+        expect(curatorAnswers["restoreVersion absent private"]).toEqual(
+          Option.some("VersionNotFound"),
+        );
+        expect(archivistAnswers["restoreVersion absent private"]).toEqual(
+          Option.some("NodeNotFound"),
+        );
+        expect(archivistAnswers["getVersion absent missing"]).toEqual(Option.some("NodeNotFound"));
+        expect(moderatorAnswers["getVersion absent tombstoned private"]).toEqual(
+          Option.some("VersionNotFound"),
+        );
+        // compare answers each row as getVersion does, whichever side is absent.
+        expect(curatorAnswers["compare private"]).toEqual(Option.none());
+        expect(curatorAnswers["compare absent from private"]).toEqual(
+          Option.some("VersionNotFound"),
+        );
+        expect(curatorAnswers["compare absent to tombstoned public"]).toEqual(
+          Option.some("NodeNotFound"),
+        );
+        expect(archivistAnswers["compare absent from private"]).toEqual(
+          Option.some("NodeNotFound"),
+        );
+        expect(archivistAnswers["compare tombstoned public"]).toEqual(Option.none());
+        expect(moderatorAnswers["compare absent to tombstoned private"]).toEqual(
+          Option.some("VersionNotFound"),
+        );
+        expect(moderatorAnswers["compare absent from missing"]).toEqual(
+          Option.some("NodeNotFound"),
+        );
+      }),
+  );
 
-  it("is not vacuous: a declared followers column opens its followers rows to a following corpus writer, and nothing else", async () => {
-    const answers = async (who: ViewerAccount) =>
-      R.fromEntries(
-        (
-          await run(
-            probe(splitPolicy, ["name", "visibility", "draft", "curatorId"], as(who), curated),
-          )
-        ).map((result) => [`${result.operation} ${result.label}`, result.answer] as const),
-      );
-    const contributorAnswers = await answers(contributor);
-    const rowsByAnswer = [
-      ["followers of the member", Option.none()],
-      ["followers of another", Option.some("NodeNotFound")],
-      ["followers", Option.some("NodeNotFound")],
-      ["private, curated by the member", Option.some("NodeNotFound")],
-      ["tombstoned followers of the member", Option.some("NodeNotFound")],
-    ] as const;
-    const gated = [
-      "update",
-      "restore",
-      "delete",
-      "getVersion",
-      "restoreVersion",
-      "compare",
-    ] as const;
-    const pairs = Arr.flatMap(gated, (operation) =>
-      Arr.map(rowsByAnswer, ([label, answer]) => [`${operation} ${label}`, answer] as const),
-    );
-    expect(pairs.map(([key]) => [key, contributorAnswers[key]])).toEqual(pairs);
-    // The account the column names, below the corpus rung, still meets the rung first.
-    const memberAnswers = await answers(member);
-    expect(memberAnswers["update followers of the member"]).toEqual(Option.some("Forbidden"));
-    // The same writer without the declaration is shut out.
-    const undeclared = R.fromEntries(
-      (
-        await run(probe(splitPolicy, ["name", "visibility", "draft", "curatorId"], as(contributor)))
-      ).map((result) => [`${result.operation} ${result.label}`, result.answer] as const),
-    );
-    expect(undeclared["update followers of the member"]).toEqual(Option.some("NodeNotFound"));
-  });
+  it.effect(
+    "is not vacuous: a declared followers column opens its followers rows to a following corpus writer, and nothing else",
+    () =>
+      Effect.gen(function* () {
+        const answers = (who: ViewerAccount) =>
+          Effect.gen(function* () {
+            return R.fromEntries(
+              (yield* probe(
+                splitPolicy,
+                ["name", "visibility", "draft", "curatorId"],
+                as(who),
+                curated,
+              )).map((result) => [`${result.operation} ${result.label}`, result.answer] as const),
+            );
+          });
+        const contributorAnswers = yield* answers(contributor);
+        const rowsByAnswer = [
+          ["followers of the member", Option.none()],
+          ["followers of another", Option.some("NodeNotFound")],
+          ["followers", Option.some("NodeNotFound")],
+          ["private, curated by the member", Option.some("NodeNotFound")],
+          ["tombstoned followers of the member", Option.some("NodeNotFound")],
+        ] as const;
+        const gated = [
+          "update",
+          "restore",
+          "delete",
+          "getVersion",
+          "restoreVersion",
+          "compare",
+        ] as const;
+        const pairs = Arr.flatMap(gated, (operation) =>
+          Arr.map(rowsByAnswer, ([label, answer]) => [`${operation} ${label}`, answer] as const),
+        );
+        expect(pairs.map(([key]) => [key, contributorAnswers[key]])).toEqual(pairs);
+        // The account the column names, below the corpus rung, still meets the rung first.
+        const memberAnswers = yield* answers(member);
+        expect(memberAnswers["update followers of the member"]).toEqual(Option.some("Forbidden"));
+        // The same writer without the declaration is shut out.
+        const undeclared = R.fromEntries(
+          (yield* probe(
+            splitPolicy,
+            ["name", "visibility", "draft", "curatorId"],
+            as(contributor),
+          )).map((result) => [`${result.operation} ${result.label}`, result.answer] as const),
+        );
+        expect(undeclared["update followers of the member"]).toEqual(Option.some("NodeNotFound"));
+      }),
+  );
 });
 
 describe("subtypeHandlers — the handlers seam", () => {
-  it("writes every mutation through the cache inside the write boundary, and evicts on delete", async () => {
-    const { ops, actAs, post } = ownedPosts();
-    const cached = MutableHashMap.empty<string, unknown>();
-    const log: Array<string> = [];
-    const handlers = subtypeHandlers(ops, {
-      inTransaction: Effect.succeed(false),
-      transact: (effect) =>
-        Effect.andThen(
-          Effect.sync(() => log.push("transact")),
-          effect,
-        ),
-      cache: Option.some({
-        set: (id, resource) => Effect.sync(() => void MutableHashMap.set(cached, id, resource)),
-        delete: (id) => Effect.sync(() => void MutableHashMap.remove(cached, id)),
+  it.effect(
+    "writes every mutation through the cache inside the write boundary, and evicts on delete",
+    () =>
+      Effect.gen(function* () {
+        const { ops, actAs, post } = ownedPosts();
+        const cached = MutableHashMap.empty<string, unknown>();
+        const log: Array<string> = [];
+        const handlers = subtypeHandlers(ops, {
+          inTransaction: Effect.succeed(false),
+          transact: (effect) =>
+            Effect.andThen(
+              Effect.sync(() => log.push("transact")),
+              effect,
+            ),
+          cache: Option.some({
+            set: (id, resource) => Effect.sync(() => void MutableHashMap.set(cached, id, resource)),
+            delete: (id) => Effect.sync(() => void MutableHashMap.remove(cached, id)),
+          }),
+        });
+        const id = yield* post("public");
+        const updated = yield* actAs(
+          as(member),
+          handlers.update({ id, patch: { title: "Cached" } }),
+        );
+        expect(readBack(updated)).toMatchObject({ id, title: "Cached" });
+        expect(MutableHashMap.get(cached, id)).toEqual(updated.resource);
+        const restored = yield* actAs(as(member), handlers.restoreVersion({ id, version: 0n }));
+        expect(Option.getOrUndefined(MutableHashMap.get(cached, id))).toMatchObject({
+          title: "A post",
+        });
+        expect(MutableHashMap.get(cached, id)).toEqual(restored.resource);
+        yield* actAs(as(member), handlers.delete(id));
+        expect(MutableHashMap.has(cached, id)).toBe(false);
+        expect(log).toEqual(["transact", "transact", "transact"]);
       }),
-    });
-    const id = await post("public");
-    const updated = await run(
-      actAs(as(member), handlers.update({ id, patch: { title: "Cached" } })),
-    );
-    expect(readBack(updated)).toMatchObject({ id, title: "Cached" });
-    expect(MutableHashMap.get(cached, id)).toEqual(updated.resource);
-    const restored = await run(actAs(as(member), handlers.restoreVersion({ id, version: 0n })));
-    expect(Option.getOrUndefined(MutableHashMap.get(cached, id))).toMatchObject({
-      title: "A post",
-    });
-    expect(MutableHashMap.get(cached, id)).toEqual(restored.resource);
-    await run(actAs(as(member), handlers.delete(id)));
-    expect(MutableHashMap.has(cached, id)).toBe(false);
-    expect(log).toEqual(["transact", "transact", "transact"]);
-  });
+  );
 });
 
 describe("subtypeHandlers — a write that hides the row from its own writer evicts the cached resource", () => {
@@ -3118,208 +3324,229 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
       }),
     });
     /** A public row the contributor created, cached by the write-through. */
-    const publicRow = async () => {
-      const { id } = await run(
-        actAs(
+    const publicRow = () =>
+      Effect.gen(function* () {
+        const { id } = yield* actAs(
           as(contributor),
           handlers.create({ id: Option.none(), state: { name: "Quercus", visibility: "public" } }),
-        ),
-      );
-      expect(MutableHashMap.has(cached, id)).toBe(true);
-      return id;
-    };
+        );
+        expect(MutableHashMap.has(cached, id)).toBe(true);
+        return id;
+      });
     return { chain, handlers, actAs, cached, faults, publicRow };
   };
 
-  it("update: a corpus writer flipping a public row private", async () => {
-    const { chain, handlers, actAs, cached } = cachedReference();
-    const { id } = await run(
-      actAs(
+  it.effect("update: a corpus writer flipping a public row private", () =>
+    Effect.gen(function* () {
+      const { chain, handlers, actAs, cached } = cachedReference();
+      const { id } = yield* actAs(
         as(contributor),
         handlers.create({ id: Option.none(), state: { name: "Quercus", visibility: "public" } }),
-      ),
-    );
-    expect(MutableHashMap.has(cached, id)).toBe(true);
-    // The writer gets the committed write, without the resource it can no
-    // longer read, not a 404 for a write that committed.
-    expect(
-      await run(actAs(as(contributor), handlers.update({ id, patch: { visibility: "private" } }))),
-    ).toEqual({ id, version: 1n, resource: Option.none() });
-    expect(chain.rows()).toHaveLength(2);
-    expect(MutableHashMap.has(cached, id)).toBe(false);
-  });
+      );
+      expect(MutableHashMap.has(cached, id)).toBe(true);
+      // The writer gets the committed write, without the resource it can no
+      // longer read, not a 404 for a write that committed.
+      expect(
+        yield* actAs(as(contributor), handlers.update({ id, patch: { visibility: "private" } })),
+      ).toEqual({ id, version: 1n, resource: Option.none() });
+      expect(chain.rows()).toHaveLength(2);
+      expect(MutableHashMap.has(cached, id)).toBe(false);
+    }),
+  );
 
-  it("create: a corpus writer creating a private row gets the committed write, and nothing is cached", async () => {
-    const { chain, handlers, actAs, cached } = cachedReference();
-    const created = await run(
-      actAs(
-        as(contributor),
-        handlers.create({
-          id: Option.some("t-1"),
-          state: { name: "Quercus", visibility: "private" },
-        }),
-      ),
-    );
-    expect(created).toEqual({ id: "t-1", version: 0n, resource: Option.none() });
-    expect(chain.rows()).toHaveLength(1);
-    expect(MutableHashMap.has(cached, "t-1")).toBe(false);
-  });
+  it.effect(
+    "create: a corpus writer creating a private row gets the committed write, and nothing is cached",
+    () =>
+      Effect.gen(function* () {
+        const { chain, handlers, actAs, cached } = cachedReference();
+        const created = yield* actAs(
+          as(contributor),
+          handlers.create({
+            id: Option.some("t-1"),
+            state: { name: "Quercus", visibility: "private" },
+          }),
+        );
+        expect(created).toEqual({ id: "t-1", version: 0n, resource: Option.none() });
+        expect(chain.rows()).toHaveLength(1);
+        expect(MutableHashMap.has(cached, "t-1")).toBe(false);
+      }),
+  );
 
-  it("restoreVersion: a corpus writer restoring a private version", async () => {
-    const { chain, handlers, actAs, cached } = cachedReference();
-    const { id } = await run(
-      actAs(
+  it.effect("restoreVersion: a corpus writer restoring a private version", () =>
+    Effect.gen(function* () {
+      const { chain, handlers, actAs, cached } = cachedReference();
+      const { id } = yield* actAs(
         as(admin),
         handlers.create({ id: Option.none(), state: { name: "Quercus", visibility: "private" } }),
-      ),
-    );
-    expect(MutableHashMap.has(cached, id)).toBe(false);
-    await run(actAs(as(admin), handlers.update({ id, patch: { visibility: "public" } })));
-    expect(MutableHashMap.has(cached, id)).toBe(true);
-    expect(await run(actAs(as(contributor), handlers.restoreVersion({ id, version: 0n })))).toEqual(
-      { id, version: 2n, resource: Option.none() },
-    );
-    expect(chain.rows()).toHaveLength(3);
-    expect(MutableHashMap.has(cached, id)).toBe(false);
-  });
+      );
+      expect(MutableHashMap.has(cached, id)).toBe(false);
+      yield* actAs(as(admin), handlers.update({ id, patch: { visibility: "public" } }));
+      expect(MutableHashMap.has(cached, id)).toBe(true);
+      expect(yield* actAs(as(contributor), handlers.restoreVersion({ id, version: 0n }))).toEqual({
+        id,
+        version: 2n,
+        resource: Option.none(),
+      });
+      expect(chain.rows()).toHaveLength(3);
+      expect(MutableHashMap.has(cached, id)).toBe(false);
+    }),
+  );
 
-  it("a re-read the writer can still make writes the resource through as before", async () => {
-    const { handlers, actAs, cached } = cachedReference();
-    const { id } = await run(
-      actAs(
+  it.effect("a re-read the writer can still make writes the resource through as before", () =>
+    Effect.gen(function* () {
+      const { handlers, actAs, cached } = cachedReference();
+      const { id } = yield* actAs(
         as(moderator),
         handlers.create({ id: Option.none(), state: { name: "Quercus", visibility: "public" } }),
-      ),
-    );
-    const hidden = await run(
-      actAs(as(moderator), handlers.update({ id, patch: { visibility: "private" } })),
-    );
-    expect(readBack(hidden)).toMatchObject({ id, attributes: { visibility: "private" } });
-    expect(MutableHashMap.has(cached, id)).toBe(false);
-    const shown = await run(
-      actAs(as(moderator), handlers.update({ id, patch: { visibility: "public" } })),
-    );
-    expect(MutableHashMap.get(cached, id)).toEqual(shown.resource);
-  });
+      );
+      const hidden = yield* actAs(
+        as(moderator),
+        handlers.update({ id, patch: { visibility: "private" } }),
+      );
+      expect(readBack(hidden)).toMatchObject({ id, attributes: { visibility: "private" } });
+      expect(MutableHashMap.has(cached, id)).toBe(false);
+      const shown = yield* actAs(
+        as(moderator),
+        handlers.update({ id, patch: { visibility: "public" } }),
+      );
+      expect(MutableHashMap.get(cached, id)).toEqual(shown.resource);
+    }),
+  );
 
-  it("an interrupt after the chain write still evicts, on update and on delete", async () => {
-    const { chain, handlers, actAs, cached, faults, publicRow } = cachedReference();
-    const updated = await publicRow();
-    const deleted = await publicRow();
-    faults.interruptAfterWrite = true;
-    const interrupted = async <A, E>(effect: Effect.Effect<A, E>) =>
-      Exit.hasInterrupts(await Effect.runPromiseExit(effect));
-    expect(
-      await interrupted(
-        actAs(as(contributor), handlers.update({ id: updated, patch: { name: "Quercus robur" } })),
-      ),
-    ).toBe(true);
-    expect(await interrupted(actAs(as(contributor), handlers.delete(deleted)))).toBe(true);
-    expect(chain.rows()).toHaveLength(4);
-    expect(MutableHashMap.has(cached, updated)).toBe(false);
-    expect(MutableHashMap.has(cached, deleted)).toBe(false);
-  });
+  it.effect("an interrupt after the chain write still evicts, on update and on delete", () =>
+    Effect.gen(function* () {
+      const { chain, handlers, actAs, cached, faults, publicRow } = cachedReference();
+      const updated = yield* publicRow();
+      const deleted = yield* publicRow();
+      faults.interruptAfterWrite = true;
+      const interrupted = <A, E>(effect: Effect.Effect<A, E>) =>
+        Effect.gen(function* () {
+          return Exit.hasInterrupts(yield* Effect.exit(effect));
+        });
+      expect(
+        yield* interrupted(
+          actAs(
+            as(contributor),
+            handlers.update({ id: updated, patch: { name: "Quercus robur" } }),
+          ),
+        ),
+      ).toBe(true);
+      expect(yield* interrupted(actAs(as(contributor), handlers.delete(deleted)))).toBe(true);
+      expect(chain.rows()).toHaveLength(4);
+      expect(MutableHashMap.has(cached, updated)).toBe(false);
+      expect(MutableHashMap.has(cached, deleted)).toBe(false);
+    }),
+  );
 
-  it("an interrupt during the cache step can't skip it, on update and on delete", async () => {
-    const { chain, handlers, actAs, cached, faults, publicRow } = cachedReference();
-    const updated = await publicRow();
-    const deleted = await publicRow();
-    // Hold the handler's cache step open, interrupt the handler while it
-    // waits there, then let the step go on: the interrupt must wait for it.
-    const interruptedDuring = (on: Block["on"], handler: Effect.Effect<unknown, unknown>) =>
-      Effect.gen(function* () {
-        const entered = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        faults.block = Option.some({ on, entered, release });
-        const fiber = yield* Effect.forkChild(handler);
-        yield* Deferred.await(entered);
-        const interrupter = yield* Effect.forkChild(Fiber.interrupt(fiber));
-        yield* Effect.yieldNow;
-        yield* Deferred.succeed(release, undefined);
-        yield* Fiber.join(interrupter);
-      });
-    // A moderator's re-read sees the now-private row; its write-through is
-    // what evicts the superseded public resource.
-    await run(
-      interruptedDuring(
+  it.effect("an interrupt during the cache step can't skip it, on update and on delete", () =>
+    Effect.gen(function* () {
+      const { chain, handlers, actAs, cached, faults, publicRow } = cachedReference();
+      const updated = yield* publicRow();
+      const deleted = yield* publicRow();
+      // Hold the handler's cache step open, interrupt the handler while it
+      // waits there, then let the step go on: the interrupt must wait for it.
+      const interruptedDuring = <A, E>(on: Block["on"], handler: Effect.Effect<A, E>) =>
+        Effect.gen(function* () {
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          faults.block = Option.some({ on, entered, release });
+          const fiber = yield* Effect.forkChild(handler);
+          yield* Deferred.await(entered);
+          const interrupter = yield* Effect.forkChild(Fiber.interrupt(fiber));
+          yield* Effect.yieldNow;
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(interrupter);
+        });
+      // A moderator's re-read sees the now-private row; its write-through is
+      // what evicts the superseded public resource.
+      yield* interruptedDuring(
         "set",
         actAs(as(moderator), handlers.update({ id: updated, patch: { visibility: "private" } })),
-      ),
-    );
-    await run(interruptedDuring("delete", actAs(as(contributor), handlers.delete(deleted))));
-    expect(chain.rows()).toHaveLength(4);
-    expect(MutableHashMap.has(cached, updated)).toBe(false);
-    expect(MutableHashMap.has(cached, deleted)).toBe(false);
-  });
-
-  it("a write the gate refuses never evicts, interrupt or not", async () => {
-    const { chain, handlers, actAs, cached, faults, publicRow } = cachedReference();
-    const id = await publicRow();
-    const refused = async (interruptAfterWrite: boolean) => {
-      faults.interruptAfterWrite = interruptAfterWrite;
-      expect(
-        await tagOf(actAs(anonymous, handlers.update({ id, patch: { name: "Vandal" } }))),
-      ).toEqual(Option.some("Unauthorized"));
-      expect(await tagOf(actAs(anonymous, handlers.delete(id)))).toEqual(
-        Option.some("Unauthorized"),
       );
-      // A signed-in caller below the corpus-write rung.
+      yield* interruptedDuring("delete", actAs(as(contributor), handlers.delete(deleted)));
+      expect(chain.rows()).toHaveLength(4);
+      expect(MutableHashMap.has(cached, updated)).toBe(false);
+      expect(MutableHashMap.has(cached, deleted)).toBe(false);
+    }),
+  );
+
+  it.effect("a write the gate refuses never evicts, interrupt or not", () =>
+    Effect.gen(function* () {
+      const { chain, handlers, actAs, cached, faults, publicRow } = cachedReference();
+      const id = yield* publicRow();
+      const refused = (interruptAfterWrite: boolean) =>
+        Effect.gen(function* () {
+          faults.interruptAfterWrite = interruptAfterWrite;
+          expect(
+            yield* tagOf(actAs(anonymous, handlers.update({ id, patch: { name: "Vandal" } }))),
+          ).toEqual(Option.some("Unauthorized"));
+          expect(yield* tagOf(actAs(anonymous, handlers.delete(id)))).toEqual(
+            Option.some("Unauthorized"),
+          );
+          // A signed-in caller below the corpus-write rung.
+          expect(
+            yield* tagOf(actAs(as(member), handlers.update({ id, patch: { name: "Vandal" } }))),
+          ).toEqual(Option.some("Forbidden"));
+          expect(yield* tagOf(actAs(as(member), handlers.delete(id)))).toEqual(
+            Option.some("Forbidden"),
+          );
+        });
+      yield* refused(false);
+      yield* refused(true);
+      expect(chain.rows()).toHaveLength(1);
+      expect(MutableHashMap.has(cached, id)).toBe(true);
+    }),
+  );
+
+  it.effect("a write whose retried attempt the precondition refuses never evicts", () =>
+    Effect.gen(function* () {
+      const { chain, handlers, actAs, cached, faults, publicRow } = cachedReference();
+      const id = yield* publicRow();
+      const before = MutableHashMap.get(cached, id);
+      faults.retry = true;
+      // The first attempt writes (and, in a real store, rolls back); the
+      // retry finds the head moved and fails the precondition.
       expect(
-        await tagOf(actAs(as(member), handlers.update({ id, patch: { name: "Vandal" } }))),
-      ).toEqual(Option.some("Forbidden"));
-      expect(await tagOf(actAs(as(member), handlers.delete(id)))).toEqual(Option.some("Forbidden"));
-    };
-    await refused(false);
-    await refused(true);
-    expect(chain.rows()).toHaveLength(1);
-    expect(MutableHashMap.has(cached, id)).toBe(true);
-  });
-
-  it("a write whose retried attempt the precondition refuses never evicts", async () => {
-    const { chain, handlers, actAs, cached, faults, publicRow } = cachedReference();
-    const id = await publicRow();
-    const before = MutableHashMap.get(cached, id);
-    faults.retry = true;
-    // The first attempt writes (and, in a real store, rolls back); the
-    // retry finds the head moved and fails the precondition.
-    expect(
-      await tagOf(
-        actAs(
-          as(contributor),
-          handlers.update({ id, patch: { name: "Quercus robur" }, expectedVersion: 0n }),
+        yield* tagOf(
+          actAs(
+            as(contributor),
+            handlers.update({ id, patch: { name: "Quercus robur" }, expectedVersion: 0n }),
+          ),
         ),
-      ),
-    ).toEqual(Option.some("StaleVersion"));
-    expect(
-      await tagOf(
-        actAs(as(contributor), handlers.restoreVersion({ id, version: 0n, expectedVersion: 1n })),
-      ),
-    ).toEqual(Option.some("StaleVersion"));
-    expect(chain.rows()).toHaveLength(3);
-    expect(MutableHashMap.get(cached, id)).toEqual(before);
-  });
+      ).toEqual(Option.some("StaleVersion"));
+      expect(
+        yield* tagOf(
+          actAs(as(contributor), handlers.restoreVersion({ id, version: 0n, expectedVersion: 1n })),
+        ),
+      ).toEqual(Option.some("StaleVersion"));
+      expect(chain.rows()).toHaveLength(3);
+      expect(MutableHashMap.get(cached, id)).toEqual(before);
+    }),
+  );
 
-  it("any re-read failure evicts, and the re-read's own failure propagates", async () => {
-    const { chain, handlers, actAs, cached, faults, publicRow } = cachedReference();
-    const failed = await publicRow();
-    faults.reRead = Option.some(Effect.fail(new StoreDown()));
-    expect(
-      await tagOf(
-        actAs(as(contributor), handlers.update({ id: failed, patch: { name: "Quercus robur" } })),
-      ),
-    ).toEqual(Option.some("StoreDown"));
-    expect(MutableHashMap.has(cached, failed)).toBe(false);
+  it.effect("any re-read failure evicts, and the re-read's own failure propagates", () =>
+    Effect.gen(function* () {
+      const { chain, handlers, actAs, cached, faults, publicRow } = cachedReference();
+      const failed = yield* publicRow();
+      faults.reRead = Option.some(Effect.fail(new StoreDown()));
+      expect(
+        yield* tagOf(
+          actAs(as(contributor), handlers.update({ id: failed, patch: { name: "Quercus robur" } })),
+        ),
+      ).toEqual(Option.some("StoreDown"));
+      expect(MutableHashMap.has(cached, failed)).toBe(false);
 
-    faults.reRead = Option.none();
-    const died = await publicRow();
-    faults.reRead = Option.some(Effect.die("store gone"));
-    const exit = await Effect.runPromiseExit(
-      actAs(as(contributor), handlers.restoreVersion({ id: died, version: 0n })),
-    );
-    expect(Exit.hasDies(exit)).toBe(true);
-    expect(MutableHashMap.has(cached, died)).toBe(false);
-    expect(chain.rows()).toHaveLength(4);
-  });
+      faults.reRead = Option.none();
+      const died = yield* publicRow();
+      faults.reRead = Option.some(Effect.die("store gone"));
+      const exit = yield* Effect.exit(
+        actAs(as(contributor), handlers.restoreVersion({ id: died, version: 0n })),
+      );
+      expect(Exit.hasDies(exit)).toBe(true);
+      expect(MutableHashMap.has(cached, died)).toBe(false);
+      expect(chain.rows()).toHaveLength(4);
+    }),
+  );
 });
 
 describe("lifecycle hooks — before and after every write", () => {
@@ -3390,195 +3617,220 @@ describe("lifecycle hooks — before and after every write", () => {
 
   const state = { title: "A post", slug: null, visibility: "public", draft: false } as const;
 
-  it("every write operation emits, before and after, in the hooks' order", async () => {
-    const seen: Array<Seen> = [];
-    const { handlers } = hooked({
-      before: [recordBefore(seen, "b1"), recordBefore(seen, "b2")],
-      after: [recordAfter(seen, "a1"), recordAfter(seen, "a2")],
-    });
-    const { id } = await run(handlers.create({ id: Option.none(), state }));
-    await run(handlers.update({ id, patch: { title: "Edited" } }));
-    await run(handlers.delete(id));
-    await run(handlers.restore({ id, patch: {} }));
-    await run(handlers.restoreVersion({ id, version: 0n }));
-    expect(seen).toEqual([
-      ["b1", "create", "posts:false"],
-      ["b2", "create", "posts:false"],
-      ["a1", "create", "0:true"],
-      ["a2", "create", "0:true"],
-      ["b1", "update", "posts:true"],
-      ["b2", "update", "posts:true"],
-      ["a1", "update", "1:true"],
-      ["a2", "update", "1:true"],
-      ["b1", "delete", "posts:true"],
-      ["b2", "delete", "posts:true"],
-      ["a1", "delete", "2:false"],
-      ["a2", "delete", "2:false"],
-      ["b1", "restore", "posts:true"],
-      ["b2", "restore", "posts:true"],
-      ["a1", "restore", "3:true"],
-      ["a2", "restore", "3:true"],
-      ["b1", "restoreVersion", "posts:true"],
-      ["b2", "restoreVersion", "posts:true"],
-      ["a1", "restoreVersion", "4:true"],
-      ["a2", "restoreVersion", "4:true"],
-    ]);
-  });
-
-  it("an already tombstoned node's delete writes nothing and emits nothing", async () => {
-    const seen: Array<Seen> = [];
-    const { handlers } = hooked({
-      before: [recordBefore(seen, "b")],
-      after: [recordAfter(seen, "a")],
-    });
-    const { id } = await run(handlers.create({ id: Option.none(), state }));
-    await run(handlers.delete(id));
-    seen.length = 0;
-    await run(handlers.delete(id));
-    expect(seen).toEqual([]);
-  });
-
-  it("a before hook transforms the patch: each hook sees the previous one's", async () => {
-    const title = (patch: ChainPatch) => Option.liftPredicate(patch["title"], P.isString);
-    const slugOf = (patch: ChainPatch): ChainPatch =>
-      Option.match(title(patch), {
-        onNone: () => patch,
-        onSome: (value) => ({ ...patch, slug: value.toLowerCase() }),
+  it.effect("every write operation emits, before and after, in the hooks' order", () =>
+    Effect.gen(function* () {
+      const seen: Array<Seen> = [];
+      const { handlers } = hooked({
+        before: [recordBefore(seen, "b1"), recordBefore(seen, "b2")],
+        after: [recordAfter(seen, "a1"), recordAfter(seen, "a2")],
       });
-    const shout: BeforeWriteHook<never, never> = {
-      name: "shout",
-      run: (event) =>
-        Effect.succeed(
-          Option.match(title(event.patch), {
-            onNone: () => event.patch,
-            onSome: (value) => ({ ...event.patch, title: value.toUpperCase() }),
-          }),
-        ),
-    };
-    const slug: BeforeWriteHook<never, never> = {
-      name: "slug",
-      run: (event) => Effect.succeed(slugOf(event.patch)),
-    };
-    const { chain, ops } = hooked({ before: [shout, slug] });
-    const { id } = await run(ops.create({ id: Option.none(), state }));
-    await run(ops.update({ id, patch: { title: "Edited" } }));
-    expect(chain.rows().map((row) => [row.state["title"], row.state["slug"]])).toEqual([
-      ["A POST", "a post"],
-      ["EDITED", "edited"],
-    ]);
-  });
+      const { id } = yield* handlers.create({ id: Option.none(), state });
+      yield* handlers.update({ id, patch: { title: "Edited" } });
+      yield* handlers.delete(id);
+      yield* handlers.restore({ id, patch: {} });
+      yield* handlers.restoreVersion({ id, version: 0n });
+      expect(seen).toEqual([
+        ["b1", "create", "posts:false"],
+        ["b2", "create", "posts:false"],
+        ["a1", "create", "0:true"],
+        ["a2", "create", "0:true"],
+        ["b1", "update", "posts:true"],
+        ["b2", "update", "posts:true"],
+        ["a1", "update", "1:true"],
+        ["a2", "update", "1:true"],
+        ["b1", "delete", "posts:true"],
+        ["b2", "delete", "posts:true"],
+        ["a1", "delete", "2:false"],
+        ["a2", "delete", "2:false"],
+        ["b1", "restore", "posts:true"],
+        ["b2", "restore", "posts:true"],
+        ["a1", "restore", "3:true"],
+        ["a2", "restore", "3:true"],
+        ["b1", "restoreVersion", "posts:true"],
+        ["b2", "restoreVersion", "posts:true"],
+        ["a1", "restoreVersion", "4:true"],
+        ["a2", "restoreVersion", "4:true"],
+      ]);
+    }),
+  );
 
-  it("a before hook that fails rolls the write back: nothing is appended, nothing emitted after", async () => {
-    const seen: Array<Seen> = [];
-    const refuse: BeforeWriteHook<never, never> = {
-      name: "refuse",
-      run: (event) =>
-        event.action === "create"
-          ? Effect.succeed(event.patch)
-          : Effect.fail(
-              new WriteRejected({
-                type: event.type,
-                id: event.id,
-                action: event.action,
-                reason: "no",
+  it.effect("an already tombstoned node's delete writes nothing and emits nothing", () =>
+    Effect.gen(function* () {
+      const seen: Array<Seen> = [];
+      const { handlers } = hooked({
+        before: [recordBefore(seen, "b")],
+        after: [recordAfter(seen, "a")],
+      });
+      const { id } = yield* handlers.create({ id: Option.none(), state });
+      yield* handlers.delete(id);
+      seen.length = 0;
+      yield* handlers.delete(id);
+      expect(seen).toEqual([]);
+    }),
+  );
+
+  it.effect("a before hook transforms the patch: each hook sees the previous one's", () =>
+    Effect.gen(function* () {
+      const title = (patch: ChainPatch) => Option.liftPredicate(patch["title"], P.isString);
+      const slugOf = (patch: ChainPatch): ChainPatch =>
+        Option.match(title(patch), {
+          onNone: () => patch,
+          onSome: (value) => ({ ...patch, slug: value.toLowerCase() }),
+        });
+      const shout: BeforeWriteHook<never, never> = {
+        name: "shout",
+        run: (event) =>
+          Effect.succeed(
+            Option.match(title(event.patch), {
+              onNone: () => event.patch,
+              onSome: (value) => ({ ...event.patch, title: value.toUpperCase() }),
+            }),
+          ),
+      };
+      const slug: BeforeWriteHook<never, never> = {
+        name: "slug",
+        run: (event) => Effect.succeed(slugOf(event.patch)),
+      };
+      const { chain, ops } = hooked({ before: [shout, slug] });
+      const { id } = yield* ops.create({ id: Option.none(), state });
+      yield* ops.update({ id, patch: { title: "Edited" } });
+      expect(chain.rows().map((row) => [row.state["title"], row.state["slug"]])).toEqual([
+        ["A POST", "a post"],
+        ["EDITED", "edited"],
+      ]);
+    }),
+  );
+
+  it.effect(
+    "a before hook that fails rolls the write back: nothing is appended, nothing emitted after",
+    () =>
+      Effect.gen(function* () {
+        const seen: Array<Seen> = [];
+        const refuse: BeforeWriteHook<never, never> = {
+          name: "refuse",
+          run: (event) =>
+            event.action === "create"
+              ? Effect.succeed(event.patch)
+              : Effect.fail(
+                  new WriteRejected({
+                    type: event.type,
+                    id: event.id,
+                    action: event.action,
+                    reason: "no",
+                  }),
+                ),
+        };
+        const { chain, handlers, cached } = hooked({
+          before: [refuse, recordBefore(seen, "later")],
+          after: [recordAfter(seen, "a")],
+        });
+        const { id } = yield* handlers.create({ id: Option.none(), state });
+        seen.length = 0;
+        const cachedBefore = MutableHashMap.get(cached, id);
+        const refused = yield* Effect.all(
+          [
+            tagOf(handlers.update({ id, patch: { title: "x" } })),
+            tagOf(handlers.delete(id)),
+            tagOf(handlers.restore({ id, patch: {} })),
+            tagOf(handlers.restoreVersion({ id, version: 0n })),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(refused).toEqual(Arr.replicate(Option.some("WriteRejected"), 4));
+        expect(chain.rows()).toHaveLength(1);
+        expect(seen).toEqual([]);
+        expect(MutableHashMap.get(cached, id)).toEqual(cachedBefore);
+      }),
+  );
+
+  it.effect("a before hook runs after the gate: a refused caller never reaches it", () =>
+    Effect.gen(function* () {
+      const seen: Array<Seen> = [];
+      const chain = makeInMemoryVersionChain("pages");
+      const leaves = makeInMemoryLeafStore(chain, { columns: ["title"], now: NOW });
+      const ops = defineSubtype<LeafRow, unknown, Following, never, never>({
+        type: "pages",
+        access: { kind: "reference" },
+        chain,
+        leaves,
+        viewer: Effect.succeed(as(member)),
+        policy: gardeneriaPolicy,
+        followers: follows,
+        toResource: (row) => row,
+        hooks: Effect.succeed({ before: [recordBefore(seen, "b")], after: [] }),
+      });
+      expect(yield* tagOf(ops.create({ id: Option.none(), state: { title: "t" } }))).toEqual(
+        Option.some("Forbidden"),
+      );
+      expect(seen).toEqual([]);
+    }),
+  );
+
+  it.effect("an after hook that fails doesn't fail the write, and the next one still runs", () =>
+    Effect.gen(function* () {
+      const seen: Array<Seen> = [];
+      const broken: AfterWriteHook<Post, never, never> = {
+        name: "broken",
+        run: () => Effect.die("webhook down"),
+      };
+      const { chain, handlers, cached } = hooked({
+        after: [broken, recordAfter(seen, "next")],
+      });
+      const created = yield* handlers.create({ id: Option.none(), state });
+      expect(chain.rows()).toHaveLength(1);
+      expect(seen).toEqual([["next", "create", "0:true"]]);
+      // The cache write-through is the first after hook, and still ran.
+      expect(MutableHashMap.get(cached, created.id)).toEqual(created.resource);
+    }),
+  );
+
+  it.effect(
+    "under afterFailure: defect, an after hook's failure is a defect after the commit",
+    () =>
+      Effect.gen(function* () {
+        const broken: AfterWriteHook<Post, never, never> = {
+          name: "broken",
+          run: () => Effect.die("webhook down"),
+        };
+        const { chain, handlers } = hooked({ after: [broken], afterFailure: "defect" });
+        const exit = yield* Effect.exit(handlers.create({ id: Option.none(), state }));
+        expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+        expect(chain.rows()).toHaveLength(1);
+      }),
+  );
+
+  it.effect(
+    "a leaf without hooks reads no version for restoreVersion: the port's own restoreVersion does",
+    () =>
+      Effect.gen(function* () {
+        const chain = makeInMemoryVersionChain("pages");
+        const snapshots: Array<bigint> = [];
+        const leaves = makeInMemoryLeafStore(chain, { columns: ["title"], now: NOW });
+        const ops = defineSubtype<LeafRow, unknown, Following, never, never>({
+          type: "pages",
+          access: { kind: "reference" },
+          chain: {
+            ...chain,
+            getVersion: (id, version) =>
+              Effect.suspend(() => {
+                snapshots.push(version);
+                return chain.getVersion(id, version);
               }),
-            ),
-    };
-    const { chain, handlers, cached } = hooked({
-      before: [refuse, recordBefore(seen, "later")],
-      after: [recordAfter(seen, "a")],
-    });
-    const { id } = await run(handlers.create({ id: Option.none(), state }));
-    seen.length = 0;
-    const cachedBefore = MutableHashMap.get(cached, id);
-    const refused = await Promise.all([
-      tagOf(handlers.update({ id, patch: { title: "x" } })),
-      tagOf(handlers.delete(id)),
-      tagOf(handlers.restore({ id, patch: {} })),
-      tagOf(handlers.restoreVersion({ id, version: 0n })),
-    ]);
-    expect(refused).toEqual(Arr.replicate(Option.some("WriteRejected"), 4));
-    expect(chain.rows()).toHaveLength(1);
-    expect(seen).toEqual([]);
-    expect(MutableHashMap.get(cached, id)).toEqual(cachedBefore);
-  });
-
-  it("a before hook runs after the gate: a refused caller never reaches it", async () => {
-    const seen: Array<Seen> = [];
-    const chain = makeInMemoryVersionChain("pages");
-    const leaves = makeInMemoryLeafStore(chain, { columns: ["title"], now: NOW });
-    const ops = defineSubtype<LeafRow, unknown, Following, never, never>({
-      type: "pages",
-      access: { kind: "reference" },
-      chain,
-      leaves,
-      viewer: Effect.succeed(as(member)),
-      policy: gardeneriaPolicy,
-      followers: follows,
-      toResource: (row) => row,
-      hooks: Effect.succeed({ before: [recordBefore(seen, "b")], after: [] }),
-    });
-    expect(await tagOf(ops.create({ id: Option.none(), state: { title: "t" } }))).toEqual(
-      Option.some("Forbidden"),
-    );
-    expect(seen).toEqual([]);
-  });
-
-  it("an after hook that fails doesn't fail the write, and the next one still runs", async () => {
-    const seen: Array<Seen> = [];
-    const broken: AfterWriteHook<Post, never, never> = {
-      name: "broken",
-      run: () => Effect.die("webhook down"),
-    };
-    const { chain, handlers, cached } = hooked({
-      after: [broken, recordAfter(seen, "next")],
-    });
-    const created = await run(handlers.create({ id: Option.none(), state }));
-    expect(chain.rows()).toHaveLength(1);
-    expect(seen).toEqual([["next", "create", "0:true"]]);
-    // The cache write-through is the first after hook, and still ran.
-    expect(MutableHashMap.get(cached, created.id)).toEqual(created.resource);
-  });
-
-  it("under afterFailure: defect, an after hook's failure is a defect after the commit", async () => {
-    const broken: AfterWriteHook<Post, never, never> = {
-      name: "broken",
-      run: () => Effect.die("webhook down"),
-    };
-    const { chain, handlers } = hooked({ after: [broken], afterFailure: "defect" });
-    const exit = await Effect.runPromiseExit(handlers.create({ id: Option.none(), state }));
-    expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
-    expect(chain.rows()).toHaveLength(1);
-  });
-
-  it("a leaf without hooks reads no version for restoreVersion: the port's own restoreVersion does", async () => {
-    const chain = makeInMemoryVersionChain("pages");
-    const snapshots: Array<bigint> = [];
-    const leaves = makeInMemoryLeafStore(chain, { columns: ["title"], now: NOW });
-    const ops = defineSubtype<LeafRow, unknown, Following, never, never>({
-      type: "pages",
-      access: { kind: "reference" },
-      chain: {
-        ...chain,
-        getVersion: (id, version) =>
-          Effect.suspend(() => {
-            snapshots.push(version);
-            return chain.getVersion(id, version);
-          }),
-      },
-      leaves,
-      viewer: Effect.succeed(as(admin)),
-      policy: gardeneriaPolicy,
-      followers: follows,
-      toResource: (row) => row,
-    });
-    const { id } = await run(ops.create({ id: Option.none(), state: { title: "t" } }));
-    await run(ops.update({ id, patch: { title: "u" } }));
-    snapshots.length = 0;
-    await run(ops.restoreVersion(id, 0n));
-    expect(snapshots).toEqual([]);
-    expect(chain.rows().at(-1)?.state).toEqual({ title: "t" });
-  });
+          },
+          leaves,
+          viewer: Effect.succeed(as(admin)),
+          policy: gardeneriaPolicy,
+          followers: follows,
+          toResource: (row) => row,
+        });
+        const { id } = yield* ops.create({ id: Option.none(), state: { title: "t" } });
+        yield* ops.update({ id, patch: { title: "u" } });
+        snapshots.length = 0;
+        yield* ops.restoreVersion(id, 0n);
+        expect(snapshots).toEqual([]);
+        expect(chain.rows().at(-1)?.state).toEqual({ title: "t" });
+      }),
+  );
 
   it("composeHooks concatenates in order, and the first given afterFailure wins", () => {
     const seen: Array<Seen> = [];
@@ -3598,23 +3850,25 @@ describe("lifecycle hooks — before and after every write", () => {
     expect(composeHooks().afterFailure).toBeUndefined();
   });
 
-  it("cacheWriteThrough sets a re-read resource and evicts on none", async () => {
-    const cached = MutableHashMap.empty<string, unknown>();
-    const hook = cacheWriteThrough<unknown, never>({
-      set: (id, resource) => Effect.sync(() => void MutableHashMap.set(cached, id, resource)),
-      delete: (id) => Effect.sync(() => void MutableHashMap.remove(cached, id)),
-    });
-    const event = {
-      type: "posts",
-      action: "update",
-      write: { id: "p", version: 1n },
-      publication: Option.none(),
-    } as const;
-    await run(hook.run({ ...event, resource: Option.some("r") }));
-    expect(MutableHashMap.get(cached, "p")).toEqual(Option.some("r"));
-    await run(hook.run({ ...event, resource: Option.none() }));
-    expect(MutableHashMap.has(cached, "p")).toBe(false);
-  });
+  it.effect("cacheWriteThrough sets a re-read resource and evicts on none", () =>
+    Effect.gen(function* () {
+      const cached = MutableHashMap.empty<string, unknown>();
+      const hook = cacheWriteThrough<unknown, never>({
+        set: (id, resource) => Effect.sync(() => void MutableHashMap.set(cached, id, resource)),
+        delete: (id) => Effect.sync(() => void MutableHashMap.remove(cached, id)),
+      });
+      const event = {
+        type: "posts",
+        action: "update",
+        write: { id: "p", version: 1n },
+        publication: Option.none(),
+      } as const;
+      yield* hook.run({ ...event, resource: Option.some("r") });
+      expect(MutableHashMap.get(cached, "p")).toEqual(Option.some("r"));
+      yield* hook.run({ ...event, resource: Option.none() });
+      expect(MutableHashMap.has(cached, "p")).toBe(false);
+    }),
+  );
 });
 
 describe("the head version on the wire", () => {
@@ -3645,77 +3899,78 @@ describe("the head version on the wire", () => {
     return { ops, handlers, actAs };
   };
 
-  it("projects the head version: a mapper stamps it as meta.version, and it moves with each write", async () => {
-    const { ops, handlers, actAs } = versionedLeaf();
-    const created = await run(
-      actAs(
-        as(member),
-        handlers.create({ id: Option.none(), state: { title: "A", visibility: "public" } }),
-      ),
-    );
-    expect(readBack(created).meta).toEqual({ version: "0" });
-    const updated = await run(
-      actAs(as(member), handlers.update({ id: created.id, patch: { title: "B" } })),
-    );
-    expect(readBack(updated).meta).toEqual({ version: "1" });
-    expect((await run(actAs(anonymous, ops.get(created.id)))).meta).toEqual({ version: "1" });
-    const { rows } = await run(
-      actAs(
-        anonymous,
-        ops.list({ limit: 10, offset: 0, includeDeleted: false, where: { kind: "always" } }),
-      ),
-    );
-    expect(rows.map((row) => row.meta)).toEqual([{ version: "1" }]);
-  });
-
-  it("round-trips the ETag as the update's expected version: the head writes, a superseded tag is StaleVersion", async () => {
-    const { handlers, actAs } = versionedLeaf();
-    const created = await run(
-      actAs(
-        as(member),
-        handlers.create({ id: Option.none(), state: { title: "A", visibility: "public" } }),
-      ),
-    );
-    const read = versionEtag(readBack(created));
-    expect(read).toEqual(Option.some('"0"'));
-    // An If-Match echoes the tag; its value is the expected version.
-    const expectedVersion = BigInt(Option.getOrElse(read, () => "").slice(1, -1));
-    const updated = await run(
-      actAs(
-        as(member),
-        handlers.update({ id: created.id, patch: { title: "B" }, expectedVersion }),
-      ),
-    );
-    expect(versionEtag(readBack(updated))).toEqual(Option.some('"1"'));
-    expect(
-      await tagOf(
-        actAs(
+  it.effect(
+    "projects the head version: a mapper stamps it as meta.version, and it moves with each write",
+    () =>
+      Effect.gen(function* () {
+        const { ops, handlers, actAs } = versionedLeaf();
+        const created = yield* actAs(
           as(member),
-          handlers.update({ id: created.id, patch: { title: "C" }, expectedVersion }),
-        ),
-      ),
-    ).toEqual(Option.some("StaleVersion"));
-  });
+          handlers.create({ id: Option.none(), state: { title: "A", visibility: "public" } }),
+        );
+        expect(readBack(created).meta).toEqual({ version: "0" });
+        const updated = yield* actAs(
+          as(member),
+          handlers.update({ id: created.id, patch: { title: "B" } }),
+        );
+        expect(readBack(updated).meta).toEqual({ version: "1" });
+        expect((yield* actAs(anonymous, ops.get(created.id))).meta).toEqual({ version: "1" });
+        const { rows } = yield* actAs(
+          anonymous,
+          ops.list({ limit: 10, offset: 0, includeDeleted: false, where: { kind: "always" } }),
+        );
+        expect(rows.map((row) => row.meta)).toEqual([{ version: "1" }]);
+      }),
+  );
 
-  it("discloses no version of a hidden row (SEC-AUTH-ENUM-001): get is NodeNotFound and list omits it", async () => {
-    const { ops, handlers, actAs } = versionedLeaf();
-    const hidden = await run(
-      actAs(
-        as(member),
-        handlers.create({ id: Option.none(), state: { title: "A", visibility: "private" } }),
-      ),
-    );
-    expect(await tagOf(actAs(as(otherMember), ops.get(hidden.id)))).toEqual(
-      Option.some("NodeNotFound"),
-    );
-    const { rows, total } = await run(
-      actAs(
-        as(otherMember),
-        ops.list({ limit: 10, offset: 0, includeDeleted: false, where: { kind: "always" } }),
-      ),
-    );
-    expect([rows, total]).toEqual([[], 0]);
-  });
+  it.effect(
+    "round-trips the ETag as the update's expected version: the head writes, a superseded tag is StaleVersion",
+    () =>
+      Effect.gen(function* () {
+        const { handlers, actAs } = versionedLeaf();
+        const created = yield* actAs(
+          as(member),
+          handlers.create({ id: Option.none(), state: { title: "A", visibility: "public" } }),
+        );
+        const read = versionEtag(readBack(created));
+        expect(read).toEqual(Option.some('"0"'));
+        // An If-Match echoes the tag; its value is the expected version.
+        const expectedVersion = BigInt(Option.getOrElse(read, () => "").slice(1, -1));
+        const updated = yield* actAs(
+          as(member),
+          handlers.update({ id: created.id, patch: { title: "B" }, expectedVersion }),
+        );
+        expect(versionEtag(readBack(updated))).toEqual(Option.some('"1"'));
+        expect(
+          yield* tagOf(
+            actAs(
+              as(member),
+              handlers.update({ id: created.id, patch: { title: "C" }, expectedVersion }),
+            ),
+          ),
+        ).toEqual(Option.some("StaleVersion"));
+      }),
+  );
+
+  it.effect(
+    "discloses no version of a hidden row (SEC-AUTH-ENUM-001): get is NodeNotFound and list omits it",
+    () =>
+      Effect.gen(function* () {
+        const { ops, handlers, actAs } = versionedLeaf();
+        const hidden = yield* actAs(
+          as(member),
+          handlers.create({ id: Option.none(), state: { title: "A", visibility: "private" } }),
+        );
+        expect(yield* tagOf(actAs(as(otherMember), ops.get(hidden.id)))).toEqual(
+          Option.some("NodeNotFound"),
+        );
+        const { rows, total } = yield* actAs(
+          as(otherMember),
+          ops.list({ limit: 10, offset: 0, includeDeleted: false, where: { kind: "always" } }),
+        );
+        expect([rows, total]).toEqual([[], 0]);
+      }),
+  );
 
   it("tags only a decimal meta.version", () => {
     expect(versionEtag({ meta: { version: "12" } })).toEqual(Option.some('"12"'));
@@ -3818,101 +4073,112 @@ describe("subtypeResourceHandlers — effect-jsonapi's ResourceHandlers", () => 
     return { handlers, cached, actAs };
   };
 
-  it("serves the five endpoints through the record, which keeps the cache write-through", async () => {
-    const { handlers, cached } = jsonapiLeaf();
-    const created = await run(
-      handlers.create({ payload: { title: "Hello", visibility: "public" } }),
-    );
-    const id = created.data.id;
-    expect(created.data).toHaveProperty("attributes", { title: "Hello", visibility: "public" });
-    expect(MutableHashMap.get(cached, id)).toEqual(
-      Option.some({ type: "posts", id, attributes: { title: "Hello", visibility: "public" } }),
-    );
-    const updated = await run(handlers.update({ params: { id }, payload: { id, title: "Again" } }));
-    expect(updated.data).toHaveProperty("attributes.title", "Again");
-    expect((await run(handlers.get({ params: { id } }))).data.attributes.title).toBe("Again");
-    const list = await run(handlers.list({ query: { offset: 0, limit: 10 } }));
-    expect([list.data.map((post) => post.id), list.meta.totalCount]).toEqual([[id], 1]);
-    await run(handlers.delete({ params: { id } }));
-    expect(MutableHashMap.has(cached, id)).toBe(false);
-    expect(await tagOf(handlers.get({ params: { id } }))).toEqual(Option.some("NodeNotFound"));
-  });
+  it.effect(
+    "serves the five endpoints through the record, which keeps the cache write-through",
+    () =>
+      Effect.gen(function* () {
+        const { handlers, cached } = jsonapiLeaf();
+        const created = yield* handlers.create({
+          payload: { title: "Hello", visibility: "public" },
+        });
+        const id = created.data.id;
+        expect(created.data).toHaveProperty("attributes", { title: "Hello", visibility: "public" });
+        expect(MutableHashMap.get(cached, id)).toEqual(
+          Option.some({ type: "posts", id, attributes: { title: "Hello", visibility: "public" } }),
+        );
+        const updated = yield* handlers.update({ params: { id }, payload: { id, title: "Again" } });
+        expect(updated.data).toHaveProperty("attributes.title", "Again");
+        expect((yield* handlers.get({ params: { id } })).data.attributes.title).toBe("Again");
+        const list = yield* handlers.list({ query: { offset: 0, limit: 10 } });
+        expect([list.data.map((post) => post.id), list.meta.totalCount]).toEqual([[id], 1]);
+        yield* handlers.delete({ params: { id } });
+        expect(MutableHashMap.has(cached, id)).toBe(false);
+        expect(yield* tagOf(handlers.get({ params: { id } }))).toEqual(Option.some("NodeNotFound"));
+      }),
+  );
 
-  it("refuses an update whose payload id is not the route's, before any write", async () => {
-    const { handlers } = jsonapiLeaf();
-    const created = await run(
-      handlers.create({ payload: { title: "Hello", visibility: "public" } }),
-    );
-    const id = created.data.id;
-    expect(
-      await tagOf(handlers.update({ params: { id }, payload: { id: "other", title: "x" } })),
-    ).toEqual(Option.some("Conflict"));
-    expect((await run(handlers.get({ params: { id } }))).data.attributes.title).toBe("Hello");
-  });
+  it.effect("refuses an update whose payload id is not the route's, before any write", () =>
+    Effect.gen(function* () {
+      const { handlers } = jsonapiLeaf();
+      const created = yield* handlers.create({ payload: { title: "Hello", visibility: "public" } });
+      const id = created.data.id;
+      expect(
+        yield* tagOf(handlers.update({ params: { id }, payload: { id: "other", title: "x" } })),
+      ).toEqual(Option.some("Conflict"));
+      expect((yield* handlers.get({ params: { id } })).data.attributes.title).toBe("Hello");
+    }),
+  );
 
-  it("answers a write hidden from its writer with the committed identifier, not a 404, and evicts", async () => {
-    const { handlers, cached, actAs } = jsonapiLeaf({ kind: "reference" });
-    // A corpus writer below the view-private rung creating a private row:
-    // the create committed, so it answers the row's identifier and version.
-    const created = await run(
-      actAs(
-        as(contributor),
-        handlers.create({ payload: { title: "Draft", visibility: "private" } }),
-      ),
-    );
-    expect(created.data).toEqual({ type: "posts", id: created.data.id, meta: { version: "0" } });
-    expect(MutableHashMap.has(cached, created.data.id)).toBe(false);
-    // The same writer flipping a cached public row private: the stale public
-    // resource is evicted, and the update answers the committed version.
-    const shown = await run(
-      actAs(
-        as(contributor),
-        handlers.create({ payload: { title: "Quercus", visibility: "public" } }),
-      ),
-    );
-    const id = shown.data.id;
-    expect(MutableHashMap.has(cached, id)).toBe(true);
-    const hidden = await run(
-      actAs(
-        as(contributor),
-        handlers.update({ params: { id }, payload: { id, visibility: "private" } }),
-      ),
-    );
-    expect(hidden).toEqual({
-      data: { type: "posts", id, meta: { version: "1" } },
-      jsonapi: { version: "1.1" },
-    });
-    expect(MutableHashMap.has(cached, id)).toBe(false);
-    // A reader who still can read it gets the full resource from `get`.
-    expect((await run(actAs(as(admin), handlers.get({ params: { id } })))).data.attributes).toEqual(
-      { title: "Quercus", visibility: "private" },
-    );
-  });
+  it.effect(
+    "answers a write hidden from its writer with the committed identifier, not a 404, and evicts",
+    () =>
+      Effect.gen(function* () {
+        const { handlers, cached, actAs } = jsonapiLeaf({ kind: "reference" });
+        // A corpus writer below the view-private rung creating a private row:
+        // the create committed, so it answers the row's identifier and version.
+        const created = yield* actAs(
+          as(contributor),
+          handlers.create({ payload: { title: "Draft", visibility: "private" } }),
+        );
+        expect(created.data).toEqual({
+          type: "posts",
+          id: created.data.id,
+          meta: { version: "0" },
+        });
+        expect(MutableHashMap.has(cached, created.data.id)).toBe(false);
+        // The same writer flipping a cached public row private: the stale public
+        // resource is evicted, and the update answers the committed version.
+        const shown = yield* actAs(
+          as(contributor),
+          handlers.create({ payload: { title: "Quercus", visibility: "public" } }),
+        );
+        const id = shown.data.id;
+        expect(MutableHashMap.has(cached, id)).toBe(true);
+        const hidden = yield* actAs(
+          as(contributor),
+          handlers.update({ params: { id }, payload: { id, visibility: "private" } }),
+        );
+        expect(hidden).toEqual({
+          data: { type: "posts", id, meta: { version: "1" } },
+          jsonapi: { version: "1.1" },
+        });
+        expect(MutableHashMap.has(cached, id)).toBe(false);
+        // A reader who still can read it gets the full resource from `get`.
+        expect((yield* actAs(as(admin), handlers.get({ params: { id } }))).data.attributes).toEqual(
+          { title: "Quercus", visibility: "private" },
+        );
+      }),
+  );
 
-  it("keeps the read rule (SEC-AUTH-ENUM-001): a hidden row is NodeNotFound and left out of the page and its total", async () => {
-    const { handlers, actAs } = jsonapiLeaf();
-    const hidden = await run(
-      handlers.create({ payload: { title: "Mine", visibility: "private" } }),
-    );
-    expect(
-      await tagOf(actAs(as(otherMember), handlers.get({ params: { id: hidden.data.id } }))),
-    ).toEqual(Option.some("NodeNotFound"));
-    const list = await run(
-      actAs(as(otherMember), handlers.list({ query: { offset: 0, limit: 10 } })),
-    );
-    expect([list.data, list.meta.totalCount]).toEqual([[], 0]);
-    expect(
-      await tagOf(
-        actAs(
+  it.effect(
+    "keeps the read rule (SEC-AUTH-ENUM-001): a hidden row is NodeNotFound and left out of the page and its total",
+    () =>
+      Effect.gen(function* () {
+        const { handlers, actAs } = jsonapiLeaf();
+        const hidden = yield* handlers.create({
+          payload: { title: "Mine", visibility: "private" },
+        });
+        expect(
+          yield* tagOf(actAs(as(otherMember), handlers.get({ params: { id: hidden.data.id } }))),
+        ).toEqual(Option.some("NodeNotFound"));
+        const list = yield* actAs(
           as(otherMember),
-          handlers.update({
-            params: { id: hidden.data.id },
-            payload: { id: hidden.data.id, title: "x" },
-          }),
-        ),
-      ),
-    ).toEqual(Option.some("Forbidden"));
-  });
+          handlers.list({ query: { offset: 0, limit: 10 } }),
+        );
+        expect([list.data, list.meta.totalCount]).toEqual([[], 0]);
+        expect(
+          yield* tagOf(
+            actAs(
+              as(otherMember),
+              handlers.update({
+                params: { id: hidden.data.id },
+                payload: { id: hidden.data.id, title: "x" },
+              }),
+            ),
+          ),
+        ).toEqual(Option.some("Forbidden"));
+      }),
+  );
 });
 
 describe("search: the projection and gated hydration", () => {
@@ -4020,33 +4286,38 @@ describe("search: the projection and gated hydration", () => {
     ).not.toThrow();
   });
 
-  it("hydrates in rank order, drops a hidden or missing hit, and keeps a repeated id's first rank", async () => {
-    const { ops, actAs } = searchLeaf();
-    const create = (title: string, visibility: Visibility) =>
-      run(actAs(as(member), ops.create({ id: Option.none(), state: { title, visibility } }))).then(
-        ({ id }) => id,
-      );
-    const first = await create("first", "public");
-    const hidden = await create("hidden", "private");
-    const second = await create("second", "public");
-    const hits = [
-      { id: second, score: 0.9 },
-      { id: hidden, score: 0.8 },
-      { id: "missing", score: 0.7 },
-      { id: first, score: 0.6 },
-      { id: second, score: 0.1 },
-    ];
-    const hydrated = await run(actAs(as(otherMember), hydrateSearchHits(ops, hits)));
-    expect(hydrated).toEqual([
-      { hit: { id: second, score: 0.9 }, resource: { id: second, title: "second" } },
-      { hit: { id: first, score: 0.6 }, resource: { id: first, title: "first" } },
-    ]);
-    // The owner reads its own private row.
-    expect(
-      (await run(actAs(as(member), hydrateSearchHits(ops, hits)))).map(({ hit }) => hit.id),
-    ).toEqual([second, hidden, first]);
-    expect(await run(hydrateSearchHits(ops, []))).toEqual([]);
-  });
+  it.effect(
+    "hydrates in rank order, drops a hidden or missing hit, and keeps a repeated id's first rank",
+    () =>
+      Effect.gen(function* () {
+        const { ops, actAs } = searchLeaf();
+        const create = (title: string, visibility: Visibility) =>
+          Effect.map(
+            actAs(as(member), ops.create({ id: Option.none(), state: { title, visibility } })),
+            ({ id }) => id,
+          );
+        const first = yield* create("first", "public");
+        const hidden = yield* create("hidden", "private");
+        const second = yield* create("second", "public");
+        const hits = [
+          { id: second, score: 0.9 },
+          { id: hidden, score: 0.8 },
+          { id: "missing", score: 0.7 },
+          { id: first, score: 0.6 },
+          { id: second, score: 0.1 },
+        ];
+        const hydrated = yield* actAs(as(otherMember), hydrateSearchHits(ops, hits));
+        expect(hydrated).toEqual([
+          { hit: { id: second, score: 0.9 }, resource: { id: second, title: "second" } },
+          { hit: { id: first, score: 0.6 }, resource: { id: first, title: "first" } },
+        ]);
+        // The owner reads its own private row.
+        expect(
+          (yield* actAs(as(member), hydrateSearchHits(ops, hits))).map(({ hit }) => hit.id),
+        ).toEqual([second, hidden, first]);
+        expect(yield* hydrateSearchHits(ops, [])).toEqual([]);
+      }),
+  );
 });
 
 describe("the resource cache's compare-on-set", () => {
@@ -4105,168 +4376,184 @@ describe("the resource cache's compare-on-set", () => {
     return { handlers, rolledBack };
   };
 
-  it("a write nested in an outer transaction caches nothing, so the outer rollback leaves no cached entry", async () => {
-    const { ops, cache } = racingLeaf();
-    const { handlers, rolledBack } = nestableHandlers(ops, cache);
-    const outcome = await run(
+  it.effect(
+    "a write nested in an outer transaction caches nothing, so the outer rollback leaves no cached entry",
+    () =>
       Effect.gen(function* () {
-        const created = yield* handlers.create({
-          id: Option.none(),
-          state: { title: "v0", visibility: "public" },
+        const { ops, cache } = racingLeaf();
+        const { handlers, rolledBack } = nestableHandlers(ops, cache);
+        const outcome = yield* Effect.gen(function* () {
+          const created = yield* handlers.create({
+            id: Option.none(),
+            state: { title: "v0", visibility: "public" },
+          });
+          const committed = cache.get(created.id);
+          const rollback = yield* Effect.flip(
+            rolledBack(handlers.update({ id: created.id, patch: { title: "v1" } })),
+          );
+          const afterRollback = [cache.get(created.id), cache.versionOf(created.id)];
+          const nestedCreate = yield* Effect.flip(
+            rolledBack(
+              handlers.create({
+                id: Option.some("nested"),
+                state: { title: "n", visibility: "public" },
+              }),
+            ),
+          );
+          // Outside any outer transaction, the next write writes through again.
+          const next = yield* handlers.update({ id: created.id, patch: { title: "v2" } });
+          return {
+            committed,
+            rollback,
+            afterRollback,
+            nested: cache.get("nested"),
+            nestedCreate,
+            next,
+          };
         });
-        const committed = cache.get(created.id);
-        const rollback = yield* Effect.flip(
-          rolledBack(handlers.update({ id: created.id, patch: { title: "v1" } })),
-        );
-        const afterRollback = [cache.get(created.id), cache.versionOf(created.id)];
-        const nestedCreate = yield* Effect.flip(
-          rolledBack(
-            handlers.create({
-              id: Option.some("nested"),
-              state: { title: "n", visibility: "public" },
-            }),
-          ),
-        );
-        // Outside any outer transaction, the next write writes through again.
-        const next = yield* handlers.update({ id: created.id, patch: { title: "v2" } });
-        return {
-          committed,
-          rollback,
-          afterRollback,
-          nested: cache.get("nested"),
-          nestedCreate,
-          next,
-        };
+        expect(outcome.committed).toEqual(Option.some(expect.objectContaining({ title: "v0" })));
+        expect(outcome.rollback).toBe("rolled back");
+        expect(outcome.afterRollback).toEqual([Option.none(), Option.some(1n)]);
+        expect([outcome.nestedCreate, outcome.nested]).toEqual(["rolled back", Option.none()]);
+        expect(cache.get(outcome.next.id)).toEqual(outcome.next.resource);
       }),
-    );
-    expect(outcome.committed).toEqual(Option.some(expect.objectContaining({ title: "v0" })));
-    expect(outcome.rollback).toBe("rolled back");
-    expect(outcome.afterRollback).toEqual([Option.none(), Option.some(1n)]);
-    expect([outcome.nestedCreate, outcome.nested]).toEqual(["rolled back", Option.none()]);
-    expect(cache.get(outcome.next.id)).toEqual(outcome.next.resource);
-  });
+  );
 
-  it("a delete nested in an outer transaction evicts as any delete does", async () => {
-    const { ops, cache } = racingLeaf();
-    const { handlers, rolledBack } = nestableHandlers(ops, cache);
-    const id = await run(
-      Effect.map(
+  it.effect("a delete nested in an outer transaction evicts as any delete does", () =>
+    Effect.gen(function* () {
+      const { ops, cache } = racingLeaf();
+      const { handlers, rolledBack } = nestableHandlers(ops, cache);
+      const id = yield* Effect.map(
         handlers.create({ id: Option.none(), state: { title: "v0", visibility: "public" } }),
         (post) => post.id,
-      ),
-    );
-    await Effect.runPromiseExit(rolledBack(handlers.delete(id)));
-    expect([cache.get(id), cache.versionOf(id)]).toEqual([Option.none(), Option.some(1n)]);
-  });
+      );
+      yield* Effect.exit(rolledBack(handlers.delete(id)));
+      expect([cache.get(id), cache.versionOf(id)]).toEqual([Option.none(), Option.some(1n)]);
+    }),
+  );
 
-  it("a racing writer's late write-through of a public version never lands over a later hiding write's eviction", async () => {
-    const { ops, cache } = racingLeaf();
-    await run(
+  it.effect(
+    "a racing writer's late write-through of a public version never lands over a later hiding write's eviction",
+    () =>
       Effect.gen(function* () {
-        const arrived = yield* Deferred.make<Post>();
-        const release = yield* Deferred.make<void>();
-        // Writer A's write-through waits, holding the public resource it re-read.
-        const held = subtypeHandlers(ops, {
-          inTransaction: Effect.succeed(false),
-          transact: (effect) => effect,
-          cache: Option.some({
-            set: (id, resource, version) =>
-              Effect.andThen(
-                Effect.andThen(Deferred.succeed(arrived, resource), Deferred.await(release)),
-                cache.set(id, resource, version),
-              ),
-            delete: cache.delete,
-          }),
+        const { ops, cache } = racingLeaf();
+        yield* Effect.gen(function* () {
+          const arrived = yield* Deferred.make<Post>();
+          const release = yield* Deferred.make<void>();
+          // Writer A's write-through waits, holding the public resource it re-read.
+          const held = subtypeHandlers(ops, {
+            inTransaction: Effect.succeed(false),
+            transact: (effect) => effect,
+            cache: Option.some({
+              set: (id, resource, version) =>
+                Effect.andThen(
+                  Effect.andThen(Deferred.succeed(arrived, resource), Deferred.await(release)),
+                  cache.set(id, resource, version),
+                ),
+              delete: cache.delete,
+            }),
+          });
+          const direct = subtypeHandlers(ops, {
+            inTransaction: Effect.succeed(false),
+            transact: (effect) => effect,
+            cache: Option.some(cache),
+          });
+          const created = yield* direct.create({
+            id: Option.none(),
+            state: { title: "v0", visibility: "public" },
+          });
+          expect(cache.get(created.id)).toEqual(created.resource);
+          const writerA = yield* Effect.forkChild(
+            held.update({ id: created.id, patch: { title: "v1" } }),
+          );
+          const stale = yield* Deferred.await(arrived);
+          expect(stale).toEqual({ id: created.id, title: "v1", visibility: "public" });
+          // Writer B commits v2 private; its write-through refuses and evicts at 2.
+          yield* direct.update({ id: created.id, patch: { visibility: "private" } });
+          expect(cache.get(created.id)).toEqual(Option.none());
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(writerA);
+          // A's set of v1 came in below the eviction: nothing public is cached.
+          expect([cache.get(created.id), cache.versionOf(created.id)]).toEqual([
+            Option.none(),
+            Option.some(2n),
+          ]);
         });
-        const direct = subtypeHandlers(ops, {
+      }),
+  );
+
+  it.effect(
+    "a read-through fill that read before a hiding write never re-caches the stale public resource",
+    () =>
+      Effect.gen(function* () {
+        const { ops, cache } = racingLeaf();
+        const handlers = subtypeHandlers(ops, {
           inTransaction: Effect.succeed(false),
           transact: (effect) => effect,
           cache: Option.some(cache),
         });
-        const created = yield* direct.create({
+        const written = yield* ops.create({
           id: Option.none(),
           state: { title: "v0", visibility: "public" },
         });
-        expect(cache.get(created.id)).toEqual(created.resource);
-        const writerA = yield* Effect.forkChild(
-          held.update({ id: created.id, patch: { title: "v1" } }),
-        );
-        const stale = yield* Deferred.await(arrived);
-        expect(stale).toEqual({ id: created.id, title: "v1", visibility: "public" });
-        // Writer B commits v2 private; its write-through refuses and evicts at 2.
-        yield* direct.update({ id: created.id, patch: { visibility: "private" } });
-        expect(cache.get(created.id)).toEqual(Option.none());
-        yield* Deferred.succeed(release, undefined);
-        yield* Fiber.join(writerA);
-        // A's set of v1 came in below the eviction: nothing public is cached.
-        expect([cache.get(created.id), cache.versionOf(created.id)]).toEqual([
+        // The fill reads v0, public, and is about to set it.
+        const read = yield* ops.get(written.id);
+        // The hiding write commits first and evicts at its version.
+        yield* handlers.update({ id: written.id, patch: { visibility: "private" } });
+        yield* cache.set(written.id, read, written.version);
+        expect([cache.get(written.id), cache.versionOf(written.id)]).toEqual([
           Option.none(),
-          Option.some(2n),
+          Option.some(1n),
         ]);
       }),
-    );
-  });
+  );
 
-  it("a read-through fill that read before a hiding write never re-caches the stale public resource", async () => {
-    const { ops, cache } = racingLeaf();
-    const handlers = subtypeHandlers(ops, {
-      inTransaction: Effect.succeed(false),
-      transact: (effect) => effect,
-      cache: Option.some(cache),
-    });
-    const written = await run(
-      ops.create({ id: Option.none(), state: { title: "v0", visibility: "public" } }),
-    );
-    // The fill reads v0, public, and is about to set it.
-    const read = await run(ops.get(written.id));
-    // The hiding write commits first and evicts at its version.
-    await run(handlers.update({ id: written.id, patch: { visibility: "private" } }));
-    await run(cache.set(written.id, read, written.version));
-    expect([cache.get(written.id), cache.versionOf(written.id)]).toEqual([
-      Option.none(),
-      Option.some(1n),
-    ]);
-  });
+  it.effect(
+    "keeps the highest version either call gave it: a set below is a no-op, at or above it lands",
+    () =>
+      Effect.gen(function* () {
+        const cache = makeInMemoryResourceCache((resource: string) => resource !== "hidden");
+        yield* cache.set("a", "v2", 2n);
+        yield* cache.set("a", "v1", 1n);
+        expect(cache.get("a")).toEqual(Option.some("v2"));
+        yield* cache.set("a", "v2 again", 2n);
+        expect(cache.get("a")).toEqual(Option.some("v2 again"));
+        yield* cache.delete("a", 1n);
+        expect(cache.get("a")).toEqual(Option.some("v2 again"));
+        yield* cache.delete("a", 3n);
+        yield* cache.set("a", "v2", 2n);
+        expect([cache.get("a"), cache.versionOf("a")]).toEqual([Option.none(), Option.some(3n)]);
+        yield* cache.set("a", "hidden", 4n);
+        expect([cache.get("a"), cache.versionOf("a")]).toEqual([Option.none(), Option.some(4n)]);
+        yield* cache.set("a", "v5", 5n);
+        expect(cache.get("a")).toEqual(Option.some("v5"));
+        expect(cache.versionOf("b")).toEqual(Option.none());
+      }),
+  );
 
-  it("keeps the highest version either call gave it: a set below is a no-op, at or above it lands", async () => {
-    const cache = makeInMemoryResourceCache((resource: string) => resource !== "hidden");
-    await run(cache.set("a", "v2", 2n));
-    await run(cache.set("a", "v1", 1n));
-    expect(cache.get("a")).toEqual(Option.some("v2"));
-    await run(cache.set("a", "v2 again", 2n));
-    expect(cache.get("a")).toEqual(Option.some("v2 again"));
-    await run(cache.delete("a", 1n));
-    expect(cache.get("a")).toEqual(Option.some("v2 again"));
-    await run(cache.delete("a", 3n));
-    await run(cache.set("a", "v2", 2n));
-    expect([cache.get("a"), cache.versionOf("a")]).toEqual([Option.none(), Option.some(3n)]);
-    await run(cache.set("a", "hidden", 4n));
-    expect([cache.get("a"), cache.versionOf("a")]).toEqual([Option.none(), Option.some(4n)]);
-    await run(cache.set("a", "v5", 5n));
-    expect(cache.get("a")).toEqual(Option.some("v5"));
-    expect(cache.versionOf("b")).toEqual(Option.none());
-  });
-
-  it("evicts a failed re-read at the version the write landed at", async () => {
-    const { ops, cache } = racingLeaf();
-    const handlers = subtypeHandlers(
-      { ...ops, get: () => Effect.die("the re-read failed") },
-      {
-        inTransaction: Effect.succeed(false),
-        transact: (effect) => effect,
-        cache: Option.some(cache),
-      },
-    );
-    const written = await run(
-      ops.create({ id: Option.none(), state: { title: "v0", visibility: "public" } }),
-    );
-    await run(cache.set(written.id, await run(ops.get(written.id)), 0n));
-    await Effect.runPromiseExit(handlers.update({ id: written.id, patch: { title: "v1" } }));
-    expect([cache.get(written.id), cache.versionOf(written.id)]).toEqual([
-      Option.none(),
-      Option.some(1n),
-    ]);
-  });
+  it.effect("evicts a failed re-read at the version the write landed at", () =>
+    Effect.gen(function* () {
+      const { ops, cache } = racingLeaf();
+      const handlers = subtypeHandlers(
+        { ...ops, get: () => Effect.die("the re-read failed") },
+        {
+          inTransaction: Effect.succeed(false),
+          transact: (effect) => effect,
+          cache: Option.some(cache),
+        },
+      );
+      const written = yield* ops.create({
+        id: Option.none(),
+        state: { title: "v0", visibility: "public" },
+      });
+      yield* cache.set(written.id, yield* ops.get(written.id), 0n);
+      yield* Effect.exit(handlers.update({ id: written.id, patch: { title: "v1" } }));
+      expect([cache.get(written.id), cache.versionOf(written.id)]).toEqual([
+        Option.none(),
+        Option.some(1n),
+      ]);
+    }),
+  );
 });
 
 describe("defineSubtype — the live pointer", () => {
@@ -4331,296 +4618,317 @@ describe("defineSubtype — the live pointer", () => {
   };
 
   const atClock = <A, E>(effect: Effect.Effect<A, E>) =>
-    run(
-      Effect.andThen(TestClock.setTime(NOW.getTime()), effect).pipe(
-        Effect.provide(TestClock.layer()),
-      ),
-    );
+    Effect.andThen(TestClock.setTime(NOW.getTime()), effect);
 
   const titleSeen = <E>(effect: Effect.Effect<Post, E>) =>
     Effect.map(Effect.option(effect), (found) => Option.map(found, (resource) => resource.title));
 
-  it("a reader never sees an unpublished head; the owner and the rung do", async () => {
-    const { ops, actAs, publicationOps } = gatedPosts();
-    const seen = await atClock(
-      Effect.gen(function* () {
-        const { id } = yield* actAs(
-          as(member),
-          ops.create({
-            id: Option.none(),
-            state: { title: "v0", visibility: "public", draft: false },
-          }),
-        );
-        const listed = (who: Viewer) =>
-          Effect.map(
-            actAs(who, ops.list({ limit: 10, offset: 0, includeDeleted: false, where: always })),
-            (page) => page.rows.map((row) => row.title),
-          );
-        const before = {
-          anonymous: yield* titleSeen(actAs(anonymous, ops.get(id))),
-          stranger: yield* titleSeen(actAs(as(otherMember), ops.get(id))),
-          owner: yield* titleSeen(actAs(as(member), ops.get(id))),
-          rung: yield* titleSeen(actAs(as(moderator), ops.get(id))),
-          strangerList: yield* listed(as(otherMember)),
-          ownerList: yield* listed(as(member)),
-        };
-        yield* actAs(as(member), publicationOps.publish(id));
-        yield* actAs(as(member), ops.update({ id, patch: { title: "v1" } }));
-        const after = {
-          anonymous: yield* titleSeen(actAs(anonymous, ops.get(id))),
-          owner: yield* titleSeen(actAs(as(member), ops.get(id))),
-          rung: yield* titleSeen(actAs(as(moderator), ops.get(id))),
-          strangerList: yield* listed(as(otherMember)),
-          ownerList: yield* listed(as(member)),
-          many: [...HashMap.values(yield* actAs(anonymous, ops.getMany([id])))],
-          public: yield* ops.publicResource(id),
-          versions: {
-            anonymous: (yield* actAs(anonymous, ops.get(id))).version,
-            owner: (yield* actAs(as(member), ops.get(id))).version,
-          },
-        };
-        return { before, after };
-      }),
-    );
-    expect(seen.before).toEqual({
-      anonymous: Option.none(),
-      stranger: Option.none(),
-      owner: Option.some("v0"),
-      rung: Option.some("v0"),
-      strangerList: [],
-      ownerList: ["v0"],
-    });
-    expect(seen.after).toMatchObject({
-      anonymous: Option.some("v0"),
-      owner: Option.some("v1"),
-      rung: Option.some("v1"),
-      strangerList: ["v0"],
-      ownerList: ["v1"],
-      many: [{ title: "v0", version: 0n, draft: false }],
-      versions: { anonymous: 0n, owner: 1n },
-    });
-    expect(Option.map(seen.after.public, (resource) => resource.title)).toEqual(Option.some("v0"));
-  });
-
-  it("on a gated leaf, draft means no live version", async () => {
-    const { ops, actAs, publicationOps } = gatedPosts();
-    const draftStates = await atClock(
-      Effect.gen(function* () {
-        const { id } = yield* actAs(
-          as(member),
-          ops.create({
-            id: Option.none(),
-            state: { title: "t", visibility: "public", draft: false },
-          }),
-        );
-        const draftOf = Effect.map(actAs(as(member), ops.get(id)), (resource) => resource.draft);
-        const before = yield* draftOf;
-        yield* actAs(as(member), publicationOps.publish(id));
-        const published = yield* draftOf;
-        yield* actAs(as(member), publicationOps.unpublish(id));
-        return [before, published, yield* draftOf];
-      }),
-    );
-    expect(draftStates).toEqual([true, false, true]);
-  });
-
-  it("a scheduled version becomes visible at its stamp, with no write", async () => {
-    const { ops, actAs, publicationOps, chain } = gatedPosts();
-    const seen = await atClock(
-      Effect.gen(function* () {
-        const { id } = yield* actAs(
-          as(member),
-          ops.create({
-            id: Option.none(),
-            state: { title: "v0", visibility: "public", draft: false },
-          }),
-        );
-        yield* actAs(as(member), publicationOps.publish(id));
-        yield* actAs(as(member), ops.update({ id, patch: { title: "v1" } }));
-        const at = DateTime.toDate(DateTime.makeUnsafe(NOW.getTime() + 60_000));
-        yield* actAs(as(member), publicationOps.publish(id, { version: 1n, at }));
-        const early = yield* titleSeen(actAs(anonymous, ops.get(id)));
-        const rows = chain.rows().length;
-        yield* TestClock.adjust("1 minute");
-        const due = yield* titleSeen(actAs(anonymous, ops.get(id)));
-        return { early, due, wrote: chain.rows().length - rows };
-      }),
-    );
-    expect(seen).toEqual({ early: Option.some("v0"), due: Option.some("v1"), wrote: 0 });
-  });
-
-  it("scheduled reads the pending schedule per node, in one batch, for the head readers alone", async () => {
-    const { ops, actAs, publicationOps, handlers } = gatedPosts();
-    const hour = (count: number) =>
-      DateTime.toDate(DateTime.makeUnsafe(NOW.getTime() + count * 3_600_000));
-    const seen = await atClock(
-      Effect.gen(function* () {
-        const create = (visibility: string) =>
-          actAs(
-            as(member),
-            ops.create({ id: Option.none(), state: { title: "t", visibility, draft: false } }),
-          ).pipe(Effect.map(({ id }) => id));
-        const [soon, later, cancelled, unscheduled, tombstoned] = [
-          yield* create("public"),
-          yield* create("public"),
-          yield* create("public"),
-          yield* create("public"),
-          yield* create("public"),
-        ];
-        const schedule = (id: string, at: Date) =>
-          actAs(as(member), publicationOps.publish(id, { at }));
-        yield* schedule(soon, hour(1));
-        // Rescheduled: the latest record is the pending one.
-        yield* schedule(later, hour(2));
-        yield* schedule(later, hour(3));
-        // Cancelled: an unpublish recorded after the schedule overtakes it.
-        yield* schedule(cancelled, hour(1));
-        yield* actAs(as(member), publicationOps.unpublish(cancelled));
-        yield* schedule(tombstoned, hour(1));
-        yield* actAs(as(member), ops.delete(tombstoned));
-        const everyone = [soon, later, cancelled, unscheduled, tombstoned, "unknown"];
-        const atOf = (who: Viewer) =>
-          Effect.map(actAs(who, publicationOps.scheduled(everyone)), (found) =>
-            Arr.map(everyone, (id) =>
-              Option.getOrNull(Option.map(HashMap.get(found, id), (fact) => fact.at.getTime())),
-            ),
-          );
-        const owner = yield* atOf(as(member));
-        const rung = yield* atOf(as(moderator));
-        const stranger = yield* atOf(as(otherMember));
-        const reader = yield* atOf(anonymous);
-        const wrapped = yield* actAs(as(member), present(handlers.publication).scheduled([soon]));
-        yield* TestClock.adjust("90 minutes");
-        const arrived = yield* atOf(as(member));
-        return { owner, rung, stranger, reader, wrapped: HashMap.size(wrapped), arrived };
-      }),
-    );
-    const [one, , , , ,] = [hour(1).getTime()];
-    expect(seen.owner).toEqual([one, hour(3).getTime(), null, null, null, null]);
-    expect(seen.rung).toEqual(seen.owner);
-    // Below the head-reading rungs a schedule is not disclosed.
-    expect(seen.stranger).toEqual([null, null, null, null, null, null]);
-    expect(seen.reader).toEqual([null, null, null, null, null, null]);
-    expect(seen.wrapped).toBe(1);
-    // The first schedule has arrived and is live, not pending; the other is still ahead.
-    expect(seen.arrived).toEqual([null, hour(3).getTime(), null, null, null, null]);
-  });
-
-  it("discardDraft appends the live version's state and never rewrites", async () => {
-    const { ops, actAs, publicationOps, chain } = gatedPosts();
-    const result = await atClock(
-      Effect.gen(function* () {
-        const { id } = yield* actAs(
-          as(member),
-          ops.create({
-            id: Option.none(),
-            state: { title: "v0", visibility: "public", draft: false },
-          }),
-        );
-        const noLive = yield* Effect.flip(actAs(as(member), publicationOps.discardDraft(id)));
-        yield* actAs(as(member), publicationOps.publish(id));
-        const unchanged = yield* actAs(as(member), publicationOps.discardDraft(id));
-        yield* actAs(as(member), ops.update({ id, patch: { title: "draft" } }));
-        const before = chain.rows().map((row) => row.state["title"]);
-        const written = yield* actAs(as(member), publicationOps.discardDraft(id));
-        return { noLive: noLive._tag, unchanged, before, written, id };
-      }),
-    );
-    expect(result.noLive).toBe("NotPublished");
-    expect(result.unchanged).toEqual({ id: result.id, version: 0n });
-    expect(result.before).toEqual(["v0", "draft"]);
-    expect(result.written).toEqual({ id: result.id, version: 2n });
-    expect(chain.rows().map((row) => row.state["title"])).toEqual(["v0", "draft", "v0"]);
-  });
-
-  it("a preview grant widens get for exactly one node", async () => {
-    const { ops, actAs, preview } = gatedPosts();
-    const seen = await atClock(
-      Effect.gen(function* () {
-        const create = (title: string) =>
-          actAs(
+  it.effect("a reader never sees an unpublished head; the owner and the rung do", () =>
+    Effect.gen(function* () {
+      const { ops, actAs, publicationOps } = gatedPosts();
+      const seen = yield* atClock(
+        Effect.gen(function* () {
+          const { id } = yield* actAs(
             as(member),
             ops.create({
               id: Option.none(),
-              state: { title, visibility: "private", draft: false },
+              state: { title: "v0", visibility: "public", draft: false },
             }),
           );
-        const a = (yield* create("a")).id;
-        const b = (yield* create("b")).id;
-        preview(Option.some(a));
-        const granted = yield* titleSeen(actAs(anonymous, ops.get(a)));
-        const other = yield* titleSeen(actAs(anonymous, ops.get(b)));
-        const listed = yield* actAs(
-          anonymous,
-          ops.list({ limit: 10, offset: 0, includeDeleted: false, where: always }),
-        );
-        yield* actAs(as(member), ops.delete(a));
-        const tombstone = yield* titleSeen(actAs(anonymous, ops.get(a)));
-        return { granted, other, listed: listed.total, tombstone };
-      }),
-    );
-    expect(seen).toEqual({
-      granted: Option.some("a"),
-      other: Option.none(),
-      listed: 0,
-      tombstone: Option.none(),
-    });
-  });
+          const listed = (who: Viewer) =>
+            Effect.map(
+              actAs(who, ops.list({ limit: 10, offset: 0, includeDeleted: false, where: always })),
+              (page) => page.rows.map((row) => row.title),
+            );
+          const before = {
+            anonymous: yield* titleSeen(actAs(anonymous, ops.get(id))),
+            stranger: yield* titleSeen(actAs(as(otherMember), ops.get(id))),
+            owner: yield* titleSeen(actAs(as(member), ops.get(id))),
+            rung: yield* titleSeen(actAs(as(moderator), ops.get(id))),
+            strangerList: yield* listed(as(otherMember)),
+            ownerList: yield* listed(as(member)),
+          };
+          yield* actAs(as(member), publicationOps.publish(id));
+          yield* actAs(as(member), ops.update({ id, patch: { title: "v1" } }));
+          const after = {
+            anonymous: yield* titleSeen(actAs(anonymous, ops.get(id))),
+            owner: yield* titleSeen(actAs(as(member), ops.get(id))),
+            rung: yield* titleSeen(actAs(as(moderator), ops.get(id))),
+            strangerList: yield* listed(as(otherMember)),
+            ownerList: yield* listed(as(member)),
+            many: [...HashMap.values(yield* actAs(anonymous, ops.getMany([id])))],
+            public: yield* ops.publicResource(id),
+            versions: {
+              anonymous: (yield* actAs(anonymous, ops.get(id))).version,
+              owner: (yield* actAs(as(member), ops.get(id))).version,
+            },
+          };
+          return { before, after };
+        }),
+      );
+      expect(seen.before).toEqual({
+        anonymous: Option.none(),
+        stranger: Option.none(),
+        owner: Option.some("v0"),
+        rung: Option.some("v0"),
+        strangerList: [],
+        ownerList: ["v0"],
+      });
+      expect(seen.after).toMatchObject({
+        anonymous: Option.some("v0"),
+        owner: Option.some("v1"),
+        rung: Option.some("v1"),
+        strangerList: ["v0"],
+        ownerList: ["v1"],
+        many: [{ title: "v0", version: 0n, draft: false }],
+        versions: { anonymous: 0n, owner: 1n },
+      });
+      expect(Option.map(seen.after.public, (resource) => resource.title)).toEqual(
+        Option.some("v0"),
+      );
+    }),
+  );
 
-  it("publish and unpublish are gated like a write, record facts and fire their events; the cache only holds the live resource", async () => {
-    const { ops, actAs, handlers, cache, publication } = gatedPosts({ withCache: true });
-    const outcome = await atClock(
+  it.effect("on a gated leaf, draft means no live version", () =>
+    Effect.gen(function* () {
+      const { ops, actAs, publicationOps } = gatedPosts();
+      const draftStates = yield* atClock(
+        Effect.gen(function* () {
+          const { id } = yield* actAs(
+            as(member),
+            ops.create({
+              id: Option.none(),
+              state: { title: "t", visibility: "public", draft: false },
+            }),
+          );
+          const draftOf = Effect.map(actAs(as(member), ops.get(id)), (resource) => resource.draft);
+          const before = yield* draftOf;
+          yield* actAs(as(member), publicationOps.publish(id));
+          const published = yield* draftOf;
+          yield* actAs(as(member), publicationOps.unpublish(id));
+          return [before, published, yield* draftOf];
+        }),
+      );
+      expect(draftStates).toEqual([true, false, true]);
+    }),
+  );
+
+  it.effect("a scheduled version becomes visible at its stamp, with no write", () =>
+    Effect.gen(function* () {
+      const { ops, actAs, publicationOps, chain } = gatedPosts();
+      const seen = yield* atClock(
+        Effect.gen(function* () {
+          const { id } = yield* actAs(
+            as(member),
+            ops.create({
+              id: Option.none(),
+              state: { title: "v0", visibility: "public", draft: false },
+            }),
+          );
+          yield* actAs(as(member), publicationOps.publish(id));
+          yield* actAs(as(member), ops.update({ id, patch: { title: "v1" } }));
+          const at = DateTime.toDate(DateTime.makeUnsafe(NOW.getTime() + 60_000));
+          yield* actAs(as(member), publicationOps.publish(id, { version: 1n, at }));
+          const early = yield* titleSeen(actAs(anonymous, ops.get(id)));
+          const rows = chain.rows().length;
+          yield* TestClock.adjust("1 minute");
+          const due = yield* titleSeen(actAs(anonymous, ops.get(id)));
+          return { early, due, wrote: chain.rows().length - rows };
+        }),
+      );
+      expect(seen).toEqual({ early: Option.some("v0"), due: Option.some("v1"), wrote: 0 });
+    }),
+  );
+
+  it.effect(
+    "scheduled reads the pending schedule per node, in one batch, for the head readers alone",
+    () =>
       Effect.gen(function* () {
-        const { id } = yield* actAs(
-          as(member),
-          ops.create({
-            id: Option.none(),
-            state: { title: "v0", visibility: "public", draft: false },
+        const { ops, actAs, publicationOps, handlers } = gatedPosts();
+        const hour = (count: number) =>
+          DateTime.toDate(DateTime.makeUnsafe(NOW.getTime() + count * 3_600_000));
+        const seen = yield* atClock(
+          Effect.gen(function* () {
+            const create = (visibility: string) =>
+              actAs(
+                as(member),
+                ops.create({ id: Option.none(), state: { title: "t", visibility, draft: false } }),
+              ).pipe(Effect.map(({ id }) => id));
+            const [soon, later, cancelled, unscheduled, tombstoned] = [
+              yield* create("public"),
+              yield* create("public"),
+              yield* create("public"),
+              yield* create("public"),
+              yield* create("public"),
+            ];
+            const schedule = (id: string, at: Date) =>
+              actAs(as(member), publicationOps.publish(id, { at }));
+            yield* schedule(soon, hour(1));
+            // Rescheduled: the latest record is the pending one.
+            yield* schedule(later, hour(2));
+            yield* schedule(later, hour(3));
+            // Cancelled: an unpublish recorded after the schedule overtakes it.
+            yield* schedule(cancelled, hour(1));
+            yield* actAs(as(member), publicationOps.unpublish(cancelled));
+            yield* schedule(tombstoned, hour(1));
+            yield* actAs(as(member), ops.delete(tombstoned));
+            const everyone = [soon, later, cancelled, unscheduled, tombstoned, "unknown"];
+            const atOf = (who: Viewer) =>
+              Effect.map(actAs(who, publicationOps.scheduled(everyone)), (found) =>
+                Arr.map(everyone, (id) =>
+                  Option.getOrNull(Option.map(HashMap.get(found, id), (fact) => fact.at.getTime())),
+                ),
+              );
+            const owner = yield* atOf(as(member));
+            const rung = yield* atOf(as(moderator));
+            const stranger = yield* atOf(as(otherMember));
+            const reader = yield* atOf(anonymous);
+            const wrapped = yield* actAs(
+              as(member),
+              present(handlers.publication).scheduled([soon]),
+            );
+            yield* TestClock.adjust("90 minutes");
+            const arrived = yield* atOf(as(member));
+            return { owner, rung, stranger, reader, wrapped: HashMap.size(wrapped), arrived };
           }),
         );
-        const publishing = present(handlers.publication);
-        const refused = yield* Effect.flip(actAs(as(otherMember), publishing.publish(id)));
-        const missingVersion = yield* Effect.flip(
-          actAs(as(member), publishing.publish(id, { version: 7n })),
-        );
-        yield* actAs(as(member), handlers.update({ id, patch: { title: "head" } }));
-        const cachedBefore = cache.get(id);
-        yield* actAs(as(member), publishing.publish(id, { version: 0n }));
-        const cachedLive = cache.get(id);
-        yield* actAs(as(member), handlers.update({ id, patch: { title: "head 2" } }));
-        const cachedAfterEdit = cache.get(id);
-        // Publishing the newer head (2) lands: a publication event is stamped at the
-        // head, so the cache's compare-on-set orders it after the edits.
-        yield* actAs(as(member), publishing.publish(id));
-        const cachedRepublished = cache.get(id);
-        yield* actAs(as(member), publishing.unpublish(id));
-        const facts = yield* actAs(as(member), publishing.facts(id));
-        return {
-          refused: refused._tag,
-          missingVersion: missingVersion._tag,
-          cachedBefore,
-          cachedLive,
-          cachedAfterEdit,
-          cachedRepublished,
-          cachedAfterUnpublish: [cache.get(id), cache.versionOf(id)],
-          facts: facts.map((fact) => Option.getOrNull(fact.version)),
-          recorded: publication.recorded().length,
-        };
+        const [one, , , , ,] = [hour(1).getTime()];
+        expect(seen.owner).toEqual([one, hour(3).getTime(), null, null, null, null]);
+        expect(seen.rung).toEqual(seen.owner);
+        // Below the head-reading rungs a schedule is not disclosed.
+        expect(seen.stranger).toEqual([null, null, null, null, null, null]);
+        expect(seen.reader).toEqual([null, null, null, null, null, null]);
+        expect(seen.wrapped).toBe(1);
+        // The first schedule has arrived and is live, not pending; the other is still ahead.
+        expect(seen.arrived).toEqual([null, hour(3).getTime(), null, null, null, null]);
       }),
-    );
-    expect(outcome.refused).toBe("Forbidden");
-    expect(outcome.missingVersion).toBe("VersionNotFound");
-    // Never the head: nothing live yet, then the live v0 through every head edit, then gone.
-    expect(outcome.cachedBefore).toEqual(Option.none());
-    expect(outcome.cachedLive).toEqual(Option.some(expect.objectContaining({ title: "v0" })));
-    expect(outcome.cachedAfterEdit).toEqual(Option.some(expect.objectContaining({ title: "v0" })));
-    expect(outcome.cachedRepublished).toEqual(
-      Option.some(expect.objectContaining({ title: "head 2", version: 2n })),
-    );
-    expect(outcome.cachedAfterUnpublish).toEqual([Option.none(), Option.some(2n)]);
-    expect(outcome.facts).toEqual([0n, 2n, null]);
-    expect(outcome.recorded).toBe(3);
-  });
+  );
+
+  it.effect("discardDraft appends the live version's state and never rewrites", () =>
+    Effect.gen(function* () {
+      const { ops, actAs, publicationOps, chain } = gatedPosts();
+      const result = yield* atClock(
+        Effect.gen(function* () {
+          const { id } = yield* actAs(
+            as(member),
+            ops.create({
+              id: Option.none(),
+              state: { title: "v0", visibility: "public", draft: false },
+            }),
+          );
+          const noLive = yield* Effect.flip(actAs(as(member), publicationOps.discardDraft(id)));
+          yield* actAs(as(member), publicationOps.publish(id));
+          const unchanged = yield* actAs(as(member), publicationOps.discardDraft(id));
+          yield* actAs(as(member), ops.update({ id, patch: { title: "draft" } }));
+          const before = chain.rows().map((row) => row.state["title"]);
+          const written = yield* actAs(as(member), publicationOps.discardDraft(id));
+          return { noLive: noLive._tag, unchanged, before, written, id };
+        }),
+      );
+      expect(result.noLive).toBe("NotPublished");
+      expect(result.unchanged).toEqual({ id: result.id, version: 0n });
+      expect(result.before).toEqual(["v0", "draft"]);
+      expect(result.written).toEqual({ id: result.id, version: 2n });
+      expect(chain.rows().map((row) => row.state["title"])).toEqual(["v0", "draft", "v0"]);
+    }),
+  );
+
+  it.effect("a preview grant widens get for exactly one node", () =>
+    Effect.gen(function* () {
+      const { ops, actAs, preview } = gatedPosts();
+      const seen = yield* atClock(
+        Effect.gen(function* () {
+          const create = (title: string) =>
+            actAs(
+              as(member),
+              ops.create({
+                id: Option.none(),
+                state: { title, visibility: "private", draft: false },
+              }),
+            );
+          const a = (yield* create("a")).id;
+          const b = (yield* create("b")).id;
+          preview(Option.some(a));
+          const granted = yield* titleSeen(actAs(anonymous, ops.get(a)));
+          const other = yield* titleSeen(actAs(anonymous, ops.get(b)));
+          const listed = yield* actAs(
+            anonymous,
+            ops.list({ limit: 10, offset: 0, includeDeleted: false, where: always }),
+          );
+          yield* actAs(as(member), ops.delete(a));
+          const tombstone = yield* titleSeen(actAs(anonymous, ops.get(a)));
+          return { granted, other, listed: listed.total, tombstone };
+        }),
+      );
+      expect(seen).toEqual({
+        granted: Option.some("a"),
+        other: Option.none(),
+        listed: 0,
+        tombstone: Option.none(),
+      });
+    }),
+  );
+
+  it.effect(
+    "publish and unpublish are gated like a write, record facts and fire their events; the cache only holds the live resource",
+    () =>
+      Effect.gen(function* () {
+        const { ops, actAs, handlers, cache, publication } = gatedPosts({ withCache: true });
+        const outcome = yield* atClock(
+          Effect.gen(function* () {
+            const { id } = yield* actAs(
+              as(member),
+              ops.create({
+                id: Option.none(),
+                state: { title: "v0", visibility: "public", draft: false },
+              }),
+            );
+            const publishing = present(handlers.publication);
+            const refused = yield* Effect.flip(actAs(as(otherMember), publishing.publish(id)));
+            const missingVersion = yield* Effect.flip(
+              actAs(as(member), publishing.publish(id, { version: 7n })),
+            );
+            yield* actAs(as(member), handlers.update({ id, patch: { title: "head" } }));
+            const cachedBefore = cache.get(id);
+            yield* actAs(as(member), publishing.publish(id, { version: 0n }));
+            const cachedLive = cache.get(id);
+            yield* actAs(as(member), handlers.update({ id, patch: { title: "head 2" } }));
+            const cachedAfterEdit = cache.get(id);
+            // Publishing the newer head (2) lands: a publication event is stamped at the
+            // head, so the cache's compare-on-set orders it after the edits.
+            yield* actAs(as(member), publishing.publish(id));
+            const cachedRepublished = cache.get(id);
+            yield* actAs(as(member), publishing.unpublish(id));
+            const facts = yield* actAs(as(member), publishing.facts(id));
+            return {
+              refused: refused._tag,
+              missingVersion: missingVersion._tag,
+              cachedBefore,
+              cachedLive,
+              cachedAfterEdit,
+              cachedRepublished,
+              cachedAfterUnpublish: [cache.get(id), cache.versionOf(id)],
+              facts: facts.map((fact) => Option.getOrNull(fact.version)),
+              recorded: publication.recorded().length,
+            };
+          }),
+        );
+        expect(outcome.refused).toBe("Forbidden");
+        expect(outcome.missingVersion).toBe("VersionNotFound");
+        // Never the head: nothing live yet, then the live v0 through every head edit, then gone.
+        expect(outcome.cachedBefore).toEqual(Option.none());
+        expect(outcome.cachedLive).toEqual(Option.some(expect.objectContaining({ title: "v0" })));
+        expect(outcome.cachedAfterEdit).toEqual(
+          Option.some(expect.objectContaining({ title: "v0" })),
+        );
+        expect(outcome.cachedRepublished).toEqual(
+          Option.some(expect.objectContaining({ title: "head 2", version: 2n })),
+        );
+        expect(outcome.cachedAfterUnpublish).toEqual([Option.none(), Option.some(2n)]);
+        expect(outcome.facts).toEqual([0n, 2n, null]);
+        expect(outcome.recorded).toBe(3);
+      }),
+  );
 
   /**
    * A publish whose cache write-through is held until released, and an
@@ -4676,75 +4984,85 @@ describe("defineSubtype — the live pointer", () => {
       return { live, cached: cache.get(id), version: cache.versionOf(id) };
     });
 
-  it("a publish and an unpublish on one head, serialised per node, leave the cache as the live state", async () => {
-    const outcome = await atClock(publicationRace(true));
-    // The unpublish ran after the publish's write-through: nothing live, nothing cached.
-    expect(outcome.live).toEqual(Option.none());
-    expect([outcome.cached, outcome.version]).toEqual([Option.none(), Option.some(0n)]);
-  });
-
-  it("unserialised, the publish's late write-through re-caches past the unpublish: the accepted gap", async () => {
-    const outcome = await atClock(publicationRace(false));
-    // Both stamp the same head, so compare-on-set admits the late `set`. The
-    // docs/seams.md makes serialising publication per node the store's job.
-    expect(outcome.live).toEqual(Option.none());
-    expect(outcome.cached).toEqual(Option.some(expect.objectContaining({ title: "v0" })));
-  });
-
-  it("a before hook can refuse a publish, and is shown the head", async () => {
-    const chain = makeInMemoryVersionChain("posts");
-    const heads = makeInMemoryLeafStore(chain, { columns: ["title", "visibility", "draft"] });
-    const publication = makeInMemoryPublication({ chain, leaves: heads });
-    const shown: Array<string> = [];
-    const ops = defineSubtype<LeafRow, LeafRow, Following, never, never>({
-      type: "posts",
-      access: ownedAccess({ draft: true }),
-      chain,
-      leaves: publication.leaves,
-      viewer: Effect.succeed(as(member)),
-      policy: gardeneriaPolicy,
-      followers: follows,
-      toResource: (row) => row,
-      publication: { live: publication.live, facts: publication.facts },
-      hooks: Effect.succeed({
-        before: [
-          {
-            name: "approval",
-            run: (event) => {
-              shown.push(
-                `${event.action}:${Option.map(event.prior, (prior) => prior.version).pipe(Option.getOrNull)}`,
-              );
-              return event.action === "publish"
-                ? Effect.fail(
-                    new WriteRejected({
-                      type: event.type,
-                      id: event.id,
-                      action: event.action,
-                      reason: "unapproved",
-                    }),
-                  )
-                : Effect.succeed(event.patch);
-            },
-          },
-        ],
-        after: [],
-      }),
-    });
-    const tag = await atClock(
+  it.effect(
+    "a publish and an unpublish on one head, serialised per node, leave the cache as the live state",
+    () =>
       Effect.gen(function* () {
-        const { id } = yield* ops.create({
-          id: Option.none(),
-          state: { title: "t", visibility: "public", draft: false },
-        });
-        return (yield* Effect.flip(present(ops.publication).publish(id)))._tag;
+        const outcome = yield* atClock(publicationRace(true));
+        // The unpublish ran after the publish's write-through: nothing live, nothing cached.
+        expect(outcome.live).toEqual(Option.none());
+        expect([outcome.cached, outcome.version]).toEqual([Option.none(), Option.some(0n)]);
       }),
-    );
-    expect(tag).toBe("WriteRejected");
-    expect(shown).toEqual(["create:null", "publish:0"]);
-    expect(publication.recorded()).toEqual([]);
-  });
+  );
 
-  it("a leaf without the live pointer has no publication operations, and reads its head as before", async () => {
+  it.effect(
+    "unserialised, the publish's late write-through re-caches past the unpublish: the accepted gap",
+    () =>
+      Effect.gen(function* () {
+        const outcome = yield* atClock(publicationRace(false));
+        // Both stamp the same head, so compare-on-set admits the late `set`. The
+        // docs/seams.md makes serialising publication per node the store's job.
+        expect(outcome.live).toEqual(Option.none());
+        expect(outcome.cached).toEqual(Option.some(expect.objectContaining({ title: "v0" })));
+      }),
+  );
+
+  it.effect("a before hook can refuse a publish, and is shown the head", () =>
+    Effect.gen(function* () {
+      const chain = makeInMemoryVersionChain("posts");
+      const heads = makeInMemoryLeafStore(chain, { columns: ["title", "visibility", "draft"] });
+      const publication = makeInMemoryPublication({ chain, leaves: heads });
+      const shown: Array<string> = [];
+      const ops = defineSubtype<LeafRow, LeafRow, Following, never, never>({
+        type: "posts",
+        access: ownedAccess({ draft: true }),
+        chain,
+        leaves: publication.leaves,
+        viewer: Effect.succeed(as(member)),
+        policy: gardeneriaPolicy,
+        followers: follows,
+        toResource: (row) => row,
+        publication: { live: publication.live, facts: publication.facts },
+        hooks: Effect.succeed({
+          before: [
+            {
+              name: "approval",
+              run: (event) => {
+                shown.push(
+                  `${event.action}:${Option.map(event.prior, (prior) => prior.version).pipe(Option.getOrNull)}`,
+                );
+                return event.action === "publish"
+                  ? Effect.fail(
+                      new WriteRejected({
+                        type: event.type,
+                        id: event.id,
+                        action: event.action,
+                        reason: "unapproved",
+                      }),
+                    )
+                  : Effect.succeed(event.patch);
+              },
+            },
+          ],
+          after: [],
+        }),
+      });
+      const tag = yield* atClock(
+        Effect.gen(function* () {
+          const { id } = yield* ops.create({
+            id: Option.none(),
+            state: { title: "t", visibility: "public", draft: false },
+          });
+          return (yield* Effect.flip(present(ops.publication).publish(id)))._tag;
+        }),
+      );
+      expect(tag).toBe("WriteRejected");
+      expect(shown).toEqual(["create:null", "publish:0"]);
+      expect(publication.recorded()).toEqual([]);
+    }),
+  );
+
+  it("a leaf without the live pointer has no publication operations, and reads its head as before", () => {
     const { ops } = ownedPosts();
     expect(Option.isNone(ops.publication)).toBe(true);
   });

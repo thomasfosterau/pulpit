@@ -2253,9 +2253,10 @@ export interface InMemoryPurgeStoreOptions {
   /**
    * What else `eraseNode` deletes for the node: the rows other fakes keep
    * for it (an owner stamp through `InMemoryLeafStore.dropOwner`, working
-   * copies, edges, …), as a real store's `ON DELETE CASCADE` would.
+   * copies, edges, …), as a real store's `ON DELETE CASCADE` would. Each
+   * runs in order, after the chains' rows are read.
    */
-  readonly dependents?: ReadonlyArray<(id: string) => void>;
+  readonly dependents?: ReadonlyArray<(id: string) => Effect.Effect<void>>;
 }
 
 /** The string values `columns` hold across `rows`, each once. */
@@ -2301,12 +2302,18 @@ export const makeInMemoryPurgeStore = (
         const erased = Arr.flatMap(options.chains, (chain) =>
           chain.rows().filter((row) => row.id === id),
         );
-        Arr.forEach(options.dependents ?? [], (dependent) => dependent(id));
         return {
           documents: hashesIn(erased, documentColumns),
           blobs: hashesIn(erased, blobColumns),
         };
-      }),
+      }).pipe(
+        Effect.tap(() =>
+          Effect.forEach(options.dependents ?? [], (dependent) => dependent(id), {
+            concurrency: 1,
+            discard: true,
+          }),
+        ),
+      ),
     deleteUnreferencedDocuments: (hashes) =>
       Effect.sync(() => {
         if (options.documents === undefined) return [];

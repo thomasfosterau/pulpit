@@ -137,6 +137,7 @@
     "@effect/language-service": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
+    "@effect/vitest": "catalog:",
     "@thomasfosterau/effect-drizzle-ext": "catalog:",
     "@thomasfosterau/effect-drizzle-ext-pg": "catalog:",
     "@thomasfosterau/pulpit": "workspace:*",

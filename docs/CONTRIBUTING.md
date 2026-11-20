@@ -38,7 +38,7 @@ A pnpm workspace: the kernel (`packages/pulpit`), its optional packages (`packag
 - **No application vocabulary.** `page`, `post` and `album` are leaves an application binds; the kernel ships capabilities and recipes. Seams come before dependencies: persistence, transports and models are behind ports the application fills.
 - **Lints.** Fix findings in code. A rule is relaxed only in `vite.config.ts`, scoped to the files it can't apply to, with the reason.
 - **Comments.** A file comment only for non-obvious context, under 50 words. TSDoc where it helps a consumer in their editor: what an export is for, its error channel and the invariant IDs it honours ([SECURITY.md](SECURITY.md#invariant-ids)); don't restate the signature. Every export and module header carries `@since <version>`, and every `@example` is a complete program that docgen runs (import the package by name, no `declare const`, must not throw). Inline comments only for what the code can't say. Never cite issues, PRs or CI runs; stable external documentation links are fine.
-- **Tests** live in each package's `tests/`, mirroring the module they cover, and import from `vite-plus/test`. `tests/*.types.ts` hold compile-time assertions. Test logic that can break; don't test what the type system or a lint already checks.
+- **Tests** live in each package's `tests/`, mirroring the module they cover. They take `it` from `@effect/vitest` and the rest from `vite-plus/test`; a test that runs an Effect is `it.effect` (its `TestClock` starts at 0), or `it.live` for real time, as the PostgreSQL suite uses. `tests/*.types.ts` hold compile-time assertions. Test logic that can break; don't test what the type system or a lint already checks.
 
 ## Before pushing
 

@@ -8,7 +8,8 @@
  * @module tests/edge-validity
  */
 
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -31,13 +32,13 @@ import {
 } from "../src/testing.ts";
 import { gardeneriaPolicy, member, moderator, NOW } from "./fixtures.ts";
 
-const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
-const tagOf = async <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) => {
-  const exit = await Effect.runPromiseExit(effect);
-  return Exit.isFailure(exit)
-    ? Option.map(Exit.findErrorOption(exit), (e) => e._tag)
-    : Option.none();
-};
+const tagOf = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.exit(effect);
+    return Exit.isFailure(exit)
+      ? Option.map(Exit.findErrorOption(exit), (e) => e._tag)
+      : Option.none();
+  });
 const day = (iso: string) => DateTime.toDate(DateTime.makeUnsafe(`${iso}T00:00:00Z`));
 const validity = { from: "validFrom", to: "validTo" };
 
@@ -92,106 +93,124 @@ const offices = () => {
 };
 
 describe("edge validity intervals", () => {
-  it("counts maxEdges only over the edges valid at the same time", async () => {
-    const { hold } = offices();
-    await run(hold("p-1", Option.some(day("2010-01-01")), Option.some(day("2013-06-24"))));
-    // A successor after the first term ends: no overlap, so the office's one slot is free.
-    expect((await run(hold("p-2", Option.some(day("2013-06-24")), Option.none()))).created).toBe(
-      true,
-    );
-    // An overlapping holding is refused.
-    expect(await tagOf(hold("p-1", Option.some(day("2015-01-01")), Option.none()))).toEqual(
-      Option.some("EdgeCardinalityExceeded"),
-    );
-    expect(await tagOf(hold("p-1", Option.none(), Option.some(day("2010-06-01"))))).toEqual(
-      Option.some("EdgeCardinalityExceeded"),
-    );
-    // Before every holding: free.
-    expect(
-      (await run(hold("p-1", Option.some(day("2000-01-01")), Option.some(day("2005-01-01")))))
-        .created,
-    ).toBe(true);
-  });
-
-  it("refuses an interval that starts after it ends, or a bound that is not a date", async () => {
-    const { ops, hold } = offices();
-    expect(
-      await tagOf(hold("p-1", Option.some(day("2020-01-01")), Option.some(day("2019-01-01")))),
-    ).toEqual(Option.some("InvalidValidity"));
-    expect(
-      await tagOf(
-        ops.create({ officeId: "o-pm", personId: "p-1", validFrom: "yesterday", validTo: null }),
-      ),
-    ).toEqual(Option.some("InvalidValidity"));
-  });
-
-  it("lists the edges valid at an instant through validAt", async () => {
-    const { ops, hold } = offices();
-    await run(hold("p-1", Option.some(day("2010-01-01")), Option.some(day("2013-06-24"))));
-    await run(hold("p-2", Option.some(day("2013-06-24")), Option.none()));
-    const holderAt = async (at: Date) =>
-      (await run(ops.list({ limit: 10, offset: 0, where: validAt(validity, at) }))).rows.map(
-        (row) => row["personId"],
+  it.effect("counts maxEdges only over the edges valid at the same time", () =>
+    Effect.gen(function* () {
+      const { hold } = offices();
+      yield* hold("p-1", Option.some(day("2010-01-01")), Option.some(day("2013-06-24")));
+      // A successor after the first term ends: no overlap, so the office's one slot is free.
+      expect((yield* hold("p-2", Option.some(day("2013-06-24")), Option.none())).created).toBe(
+        true,
       );
-    expect(await holderAt(day("2012-01-01"))).toEqual(["p-1"]);
-    expect(await holderAt(day("2013-06-24"))).toEqual(["p-2"]);
-    expect(await holderAt(day("2009-01-01"))).toEqual([]);
-  });
+      // An overlapping holding is refused.
+      expect(yield* tagOf(hold("p-1", Option.some(day("2015-01-01")), Option.none()))).toEqual(
+        Option.some("EdgeCardinalityExceeded"),
+      );
+      expect(yield* tagOf(hold("p-1", Option.none(), Option.some(day("2010-06-01"))))).toEqual(
+        Option.some("EdgeCardinalityExceeded"),
+      );
+      // Before every holding: free.
+      expect(
+        (yield* hold("p-1", Option.some(day("2000-01-01")), Option.some(day("2005-01-01"))))
+          .created,
+      ).toBe(true);
+    }),
+  );
 
-  it("closes an open interval, updating only its end, and frees the slot after it", async () => {
-    const { ops, store, hold } = offices();
-    const { id } = await run(hold("p-1", Option.some(day("2010-01-01")), Option.none()));
-    const before = store.rows().find((row) => row.id === id);
-    await run(ops.closeValidity(id, day("2013-06-24")));
-    const after = store.rows().find((row) => row.id === id);
-    expect(after).toEqual({ ...before, validTo: day("2013-06-24") });
-    expect((await run(hold("p-2", Option.some(day("2013-06-24")), Option.none()))).created).toBe(
-      true,
-    );
-  });
+  it.effect("refuses an interval that starts after it ends, or a bound that is not a date", () =>
+    Effect.gen(function* () {
+      const { ops, hold } = offices();
+      expect(
+        yield* tagOf(hold("p-1", Option.some(day("2020-01-01")), Option.some(day("2019-01-01")))),
+      ).toEqual(Option.some("InvalidValidity"));
+      expect(
+        yield* tagOf(
+          ops.create({ officeId: "o-pm", personId: "p-1", validFrom: "yesterday", validTo: null }),
+        ),
+      ).toEqual(Option.some("InvalidValidity"));
+    }),
+  );
 
-  it("only narrows: never past a closed end, nor before the start (EDGE-002)", async () => {
-    const { ops, hold } = offices();
-    const { id } = await run(
-      hold("p-1", Option.some(day("2010-01-01")), Option.some(day("2013-01-01"))),
-    );
-    expect(await tagOf(ops.closeValidity(id, day("2014-01-01")))).toEqual(
-      Option.some("InvalidValidity"),
-    );
-    expect(await tagOf(ops.closeValidity(id, day("2009-01-01")))).toEqual(
-      Option.some("InvalidValidity"),
-    );
-    await run(ops.closeValidity(id, day("2012-01-01")));
-  });
+  it.effect("lists the edges valid at an instant through validAt", () =>
+    Effect.gen(function* () {
+      const { ops, hold } = offices();
+      yield* hold("p-1", Option.some(day("2010-01-01")), Option.some(day("2013-06-24")));
+      yield* hold("p-2", Option.some(day("2013-06-24")), Option.none());
+      const holderAt = (at: Date) =>
+        Effect.gen(function* () {
+          return (yield* ops.list({ limit: 10, offset: 0, where: validAt(validity, at) })).rows.map(
+            (row) => row["personId"],
+          );
+        });
+      expect(yield* holderAt(day("2012-01-01"))).toEqual(["p-1"]);
+      expect(yield* holderAt(day("2013-06-24"))).toEqual(["p-2"]);
+      expect(yield* holderAt(day("2009-01-01"))).toEqual([]);
+    }),
+  );
 
-  it("gates a close: missing is EdgeNotFound, a refused writer is Forbidden", async () => {
-    const { ops, as, hold } = offices();
-    const { id } = await run(hold("p-1", Option.some(day("2010-01-01")), Option.none()));
-    expect(await tagOf(ops.closeValidity("nope", day("2011-01-01")))).toEqual(
-      Option.some("EdgeNotFound"),
-    );
-    expect(await tagOf(as(Option.some(member), ops.closeValidity(id, day("2011-01-01"))))).toEqual(
-      Option.some("Forbidden"),
-    );
-  });
+  it.effect("closes an open interval, updating only its end, and frees the slot after it", () =>
+    Effect.gen(function* () {
+      const { ops, store, hold } = offices();
+      const { id } = yield* hold("p-1", Option.some(day("2010-01-01")), Option.none());
+      const before = store.rows().find((row) => row.id === id);
+      yield* ops.closeValidity(id, day("2013-06-24"));
+      const after = store.rows().find((row) => row.id === id);
+      expect(after).toEqual({ ...before, validTo: day("2013-06-24") });
+      expect((yield* hold("p-2", Option.some(day("2013-06-24")), Option.none())).created).toBe(
+        true,
+      );
+    }),
+  );
 
-  it("refuses a close on a family without an interval", async () => {
-    const { ends, store } = offices();
-    const plain = defineEdgeOps({
-      type: "links",
-      ends,
-      edges: store,
-      viewer: Effect.succeedSome(moderator),
-      policy: gardeneriaPolicy,
-      followers: makeInMemoryFollowers([]),
-      values: (input: EdgeValues) => input,
-      toResource: (row: EdgeRow) => row,
-    });
-    const { id } = await run(plain.create({ officeId: "o-pm", personId: "p-1" }));
-    expect(await tagOf(plain.closeValidity(id, day("2011-01-01")))).toEqual(
-      Option.some("InvalidValidity"),
-    );
-  });
+  it.effect("only narrows: never past a closed end, nor before the start (EDGE-002)", () =>
+    Effect.gen(function* () {
+      const { ops, hold } = offices();
+      const { id } = yield* hold(
+        "p-1",
+        Option.some(day("2010-01-01")),
+        Option.some(day("2013-01-01")),
+      );
+      expect(yield* tagOf(ops.closeValidity(id, day("2014-01-01")))).toEqual(
+        Option.some("InvalidValidity"),
+      );
+      expect(yield* tagOf(ops.closeValidity(id, day("2009-01-01")))).toEqual(
+        Option.some("InvalidValidity"),
+      );
+      yield* ops.closeValidity(id, day("2012-01-01"));
+    }),
+  );
+
+  it.effect("gates a close: missing is EdgeNotFound, a refused writer is Forbidden", () =>
+    Effect.gen(function* () {
+      const { ops, as, hold } = offices();
+      const { id } = yield* hold("p-1", Option.some(day("2010-01-01")), Option.none());
+      expect(yield* tagOf(ops.closeValidity("nope", day("2011-01-01")))).toEqual(
+        Option.some("EdgeNotFound"),
+      );
+      expect(
+        yield* tagOf(as(Option.some(member), ops.closeValidity(id, day("2011-01-01")))),
+      ).toEqual(Option.some("Forbidden"));
+    }),
+  );
+
+  it.effect("refuses a close on a family without an interval", () =>
+    Effect.gen(function* () {
+      const { ends, store } = offices();
+      const plain = defineEdgeOps({
+        type: "links",
+        ends,
+        edges: store,
+        viewer: Effect.succeedSome(moderator),
+        policy: gardeneriaPolicy,
+        followers: makeInMemoryFollowers([]),
+        values: (input: EdgeValues) => input,
+        toResource: (row: EdgeRow) => row,
+      });
+      const { id } = yield* plain.create({ officeId: "o-pm", personId: "p-1" });
+      expect(yield* tagOf(plain.closeValidity(id, day("2011-01-01")))).toEqual(
+        Option.some("InvalidValidity"),
+      );
+    }),
+  );
 
   it("throws at declaration for one column named twice, or a store without closeValidity", () => {
     const { ends, store } = offices();

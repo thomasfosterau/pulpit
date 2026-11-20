@@ -54,7 +54,8 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import * as Str from "effect/String";
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { beforeAll, it } from "@effect/vitest";
+import { afterAll, describe, expect } from "vite-plus/test";
 import { makeLeafStores } from "../../src/LeafStore.ts";
 import { makeVersionChains } from "../../src/VersionChain.ts";
 import { owners, tables, tree, views } from "../fixtures/tree.ts";
@@ -76,7 +77,7 @@ const runtime = ManagedRuntime.make(
 afterAll(() => runtime.dispose());
 
 const run = <A, E>(effect: Effect.Effect<A, E, typeof CurrentTransaction.Identifier>) =>
-  runtime.runPromise(transact(effect));
+  Effect.flatMap(runtime.contextEffect, (context) => Effect.provide(transact(effect), context));
 
 const chains = makeVersionChains({ tree, tables, CurrentTransaction });
 const stores = makeLeafStores({ tree, tables, views, owners, CurrentTransaction });
@@ -199,79 +200,82 @@ const viewers: ReadonlyArray<readonly [string, Viewer]> = [
 ];
 const access = ownedAccess({ draft: true, group: true });
 
-beforeAll(async () => {
-  await run(
-    Effect.gen(function* () {
-      const tx = yield* CurrentTransaction;
-      yield* tx.execute(
-        sql.raw(
-          `TRUNCATE pulpit_test.${getTableName(tables.root.identity)}, pulpit_test.follows, pulpit_test.memberships CASCADE`,
-        ),
-      );
-      yield* Effect.forEach(
-        R.toEntries(followsOf),
-        ([follower, followed]) =>
-          Effect.forEach(
-            followed,
-            (owner) =>
-              tx.execute(
-                sql`INSERT INTO pulpit_test.follows (follower_id, owner_id) VALUES (${follower}, ${owner})`,
-              ),
-            { concurrency: 1 },
+beforeAll(() =>
+  Effect.gen(function* () {
+    yield* run(
+      Effect.gen(function* () {
+        const tx = yield* CurrentTransaction;
+        yield* tx.execute(
+          sql.raw(
+            `TRUNCATE pulpit_test.${getTableName(tables.root.identity)}, pulpit_test.follows, pulpit_test.memberships CASCADE`,
           ),
+        );
+        yield* Effect.forEach(
+          R.toEntries(followsOf),
+          ([follower, followed]) =>
+            Effect.forEach(
+              followed,
+              (owner) =>
+                tx.execute(
+                  sql`INSERT INTO pulpit_test.follows (follower_id, owner_id) VALUES (${follower}, ${owner})`,
+                ),
+              { concurrency: 1 },
+            ),
+          { concurrency: 1 },
+        );
+        yield* Effect.forEach(
+          R.toEntries(groupsOf),
+          ([account, groups]) =>
+            Effect.forEach(
+              groups,
+              (group) =>
+                tx.execute(
+                  sql`INSERT INTO pulpit_test.memberships (account_id, group_id) VALUES (${account}, ${group})`,
+                ),
+              { concurrency: 1 },
+            ),
+          { concurrency: 1 },
+        );
+      }),
+    );
+    yield* run(
+      Effect.forEach(
+        seeds,
+        (seed) =>
+          Effect.gen(function* () {
+            const input = { id: Option.some(id(seed.n)), state: seed.state, actorId: seed.owner };
+            yield* chains.posts.create(input);
+            yield* memoryChain.create(input);
+            if (Option.isSome(seed.owner)) {
+              yield* store.stampOwner(id(seed.n), seed.owner.value);
+              yield* memory.stampOwner(id(seed.n), seed.owner.value);
+            }
+            if (seed.deleted) {
+              yield* chains.posts.delete(id(seed.n), seed.owner);
+              yield* memoryChain.delete(id(seed.n), seed.owner);
+            }
+          }),
         { concurrency: 1 },
-      );
-      yield* Effect.forEach(
-        R.toEntries(groupsOf),
-        ([account, groups]) =>
-          Effect.forEach(
-            groups,
-            (group) =>
-              tx.execute(
-                sql`INSERT INTO pulpit_test.memberships (account_id, group_id) VALUES (${account}, ${group})`,
-              ),
-            { concurrency: 1 },
-          ),
-        { concurrency: 1 },
-      );
-    }),
-  );
-  await run(
-    Effect.forEach(
-      seeds,
-      (seed) =>
-        Effect.gen(function* () {
-          const input = { id: Option.some(id(seed.n)), state: seed.state, actorId: seed.owner };
-          yield* chains.posts.create(input);
-          yield* memoryChain.create(input);
-          if (Option.isSome(seed.owner)) {
-            yield* store.stampOwner(id(seed.n), seed.owner.value);
-            yield* memory.stampOwner(id(seed.n), seed.owner.value);
-          }
-          if (seed.deleted) {
-            yield* chains.posts.delete(id(seed.n), seed.owner);
-            yield* memoryChain.delete(id(seed.n), seed.owner);
-          }
-        }),
-      { concurrency: 1 },
-    ),
-  );
-});
+      ),
+    );
+  }),
+);
 
 /** The ids `list` reads in both stores, under `where` and `orderBy`, and their totals. */
-const listBoth = async (
+const listBoth = (
   sqlWhere: ListFilter<SQLWrapper>,
   memoryWhere: ListFilter<InMemoryFollowing>,
   orderBy: ReadonlyArray<ListOrder> = [],
   page: { readonly limit: number; readonly offset: number } = { limit: 100, offset: 0 },
-) => {
-  const fromSql = await run(store.list({ where: sqlWhere, orderBy, ...page }));
-  const fromMemory = await Effect.runPromise(memory.list({ where: memoryWhere, orderBy, ...page }));
-  return {
-    sql: { ids: Arr.map(fromSql.rows, (row) => row.id), total: fromSql.total },
-    memory: { ids: Arr.map(fromMemory.rows, (row) => row.id), total: fromMemory.total },
-  };
-};
+) =>
+  Effect.gen(function* () {
+    const fromSql = yield* run(store.list({ where: sqlWhere, orderBy, ...page }));
+    const fromMemory = yield* memory.list({ where: memoryWhere, orderBy, ...page });
+    return {
+      sql: { ids: Arr.map(fromSql.rows, (row) => row.id), total: fromSql.total },
+      memory: { ids: Arr.map(fromMemory.rows, (row) => row.id), total: fromMemory.total },
+    };
+  });
 
 /** A filter that names no seam set, in both readings at once. */
 const plain = (filter: ListFilter<never>) => listBoth(filter, filter);
@@ -281,72 +285,82 @@ describe("LeafStore over PostgreSQL agrees with the in-memory store", () => {
     const matrix = Arr.flatMap(viewers, ([name, viewer]) =>
       Arr.map([false, true], (includeDeleted) => [name, includeDeleted, viewer] as const),
     );
-    it.each(matrix)("%s, includeDeleted %s", async (_name, includeDeleted, viewer) => {
-      const scope = <F>(columns: HashSet.HashSet<string>, followers: FollowerSeam<F, unknown>) =>
-        searchScopeFilter({ access, columns, policy, followers }, viewer, {
-          includeDeleted,
-          where: always,
-        });
-      const result = await listBoth(
-        scope(store.columns, sqlSeam),
-        scope(memory.columns, memorySeam),
-      );
-      expect(result.sql).toEqual(result.memory);
-    });
-
-    it("reads the expected rows at the extremes (so agreement is not vacuous)", async () => {
-      const scope = (viewer: Viewer, includeDeleted: boolean) =>
-        searchScopeFilter({ access, columns: store.columns, policy, followers: sqlSeam }, viewer, {
-          includeDeleted,
-          where: always,
-        });
-      const anonymous = await run(
-        store.list({ where: scope(Option.none(), false), orderBy: [], limit: 100, offset: 0 }),
-      );
-      expect(Arr.map(anonymous.rows, (row) => row.id)).toEqual([id(1)]);
-      const admin = await run(
-        store.list({
-          where: scope(Option.some({ id: "u-9", role: "admin" }), true),
-          orderBy: [],
-          limit: 100,
-          offset: 0,
-        }),
-      );
-      expect(admin.total).toBe(seeds.length);
-      const member = await run(
-        store.list({
-          where: scope(Option.some({ id: "u-1", role: "member" }), false),
-          orderBy: [],
-          limit: 100,
-          offset: 0,
-        }),
-      );
-      // Own rows (1, 2, 11), u-2's published followers row (3), g-1's group row (6).
-      expect(Arr.map(member.rows, (row) => row.id)).toEqual([id(1), id(2), id(3), id(6), id(11)]);
-    });
-
-    it("fails closed without the group seam: no group row lists by membership", async () => {
-      const { groups: _sqlGroups, isMember: _sqlMember, ...noGroupsSql } = sqlSeam;
-      const { groups: _memGroups, isMember: _memMember, ...noGroupsMemory } = memorySeam;
-      const viewer: Viewer = Option.some({ id: "u-1", role: "member" });
-      const result = await listBoth(
-        searchScopeFilter(
-          { access, columns: store.columns, policy, followers: noGroupsSql },
-          viewer,
-          {
-            includeDeleted: false,
+    it.live.each(matrix)("%s, includeDeleted %s", ([_name, includeDeleted, viewer]) =>
+      Effect.gen(function* () {
+        const scope = <F>(columns: HashSet.HashSet<string>, followers: FollowerSeam<F, unknown>) =>
+          searchScopeFilter({ access, columns, policy, followers }, viewer, {
+            includeDeleted,
             where: always,
-          },
-        ),
-        searchScopeFilter(
-          { access, columns: memory.columns, policy, followers: noGroupsMemory },
-          viewer,
-          { includeDeleted: false, where: always },
-        ),
-      );
-      expect(result.sql).toEqual(result.memory);
-      expect(result.sql.ids).not.toContain(id(6));
-    });
+          });
+        const result = yield* listBoth(
+          scope(store.columns, sqlSeam),
+          scope(memory.columns, memorySeam),
+        );
+        expect(result.sql).toEqual(result.memory);
+      }),
+    );
+
+    it.live("reads the expected rows at the extremes (so agreement is not vacuous)", () =>
+      Effect.gen(function* () {
+        const scope = (viewer: Viewer, includeDeleted: boolean) =>
+          searchScopeFilter(
+            { access, columns: store.columns, policy, followers: sqlSeam },
+            viewer,
+            {
+              includeDeleted,
+              where: always,
+            },
+          );
+        const anonymous = yield* run(
+          store.list({ where: scope(Option.none(), false), orderBy: [], limit: 100, offset: 0 }),
+        );
+        expect(Arr.map(anonymous.rows, (row) => row.id)).toEqual([id(1)]);
+        const admin = yield* run(
+          store.list({
+            where: scope(Option.some({ id: "u-9", role: "admin" }), true),
+            orderBy: [],
+            limit: 100,
+            offset: 0,
+          }),
+        );
+        expect(admin.total).toBe(seeds.length);
+        const member = yield* run(
+          store.list({
+            where: scope(Option.some({ id: "u-1", role: "member" }), false),
+            orderBy: [],
+            limit: 100,
+            offset: 0,
+          }),
+        );
+        // Own rows (1, 2, 11), u-2's published followers row (3), g-1's group row (6).
+        expect(Arr.map(member.rows, (row) => row.id)).toEqual([id(1), id(2), id(3), id(6), id(11)]);
+      }),
+    );
+
+    it.live("fails closed without the group seam: no group row lists by membership", () =>
+      Effect.gen(function* () {
+        const { groups: _sqlGroups, isMember: _sqlMember, ...noGroupsSql } = sqlSeam;
+        const { groups: _memGroups, isMember: _memMember, ...noGroupsMemory } = memorySeam;
+        const viewer: Viewer = Option.some({ id: "u-1", role: "member" });
+        const result = yield* listBoth(
+          searchScopeFilter(
+            { access, columns: store.columns, policy, followers: noGroupsSql },
+            viewer,
+            {
+              includeDeleted: false,
+              where: always,
+            },
+          ),
+          searchScopeFilter(
+            { access, columns: memory.columns, policy, followers: noGroupsMemory },
+            viewer,
+            { includeDeleted: false, where: always },
+          ),
+        );
+        expect(result.sql).toEqual(result.memory);
+        expect(result.sql.ids).not.toContain(id(6));
+      }),
+    );
   });
 
   describe("every node of the filter contract", () => {
@@ -383,24 +397,28 @@ describe("LeafStore over PostgreSQL agrees with the in-memory store", () => {
       ["and / or", or(and(eq("visibility", "group"), isNull("groupId")), eq("rank", 9))],
       ["the tombstones", eq("action", "delete")],
     ];
-    it.each(cases)("%s", async (_name, filter) => {
-      const result = await plain(filter);
-      expect(result.sql).toEqual(result.memory);
-    });
+    it.live.each(cases)("%s", ([_name, filter]) =>
+      Effect.gen(function* () {
+        const result = yield* plain(filter);
+        expect(result.sql).toEqual(result.memory);
+      }),
+    );
 
-    it("in / notIn over a subquery partition every row, a NULL column included", async () => {
-      const both = await listBoth(
-        isIn("groupId", sqlSeam.groups?.("u-1") ?? sql`select null`),
-        isIn("groupId", memorySeam.groups?.("u-1") ?? HashSet.empty()),
-      );
-      const complement = await listBoth(
-        isNotIn("groupId", sqlSeam.groups?.("u-1") ?? sql`select null`),
-        isNotIn("groupId", memorySeam.groups?.("u-1") ?? HashSet.empty()),
-      );
-      expect(both.sql).toEqual(both.memory);
-      expect(complement.sql).toEqual(complement.memory);
-      expect(both.sql.total + complement.sql.total).toBe(seeds.length);
-    });
+    it.live("in / notIn over a subquery partition every row, a NULL column included", () =>
+      Effect.gen(function* () {
+        const both = yield* listBoth(
+          isIn("groupId", sqlSeam.groups?.("u-1") ?? sql`select null`),
+          isIn("groupId", memorySeam.groups?.("u-1") ?? HashSet.empty()),
+        );
+        const complement = yield* listBoth(
+          isNotIn("groupId", sqlSeam.groups?.("u-1") ?? sql`select null`),
+          isNotIn("groupId", memorySeam.groups?.("u-1") ?? HashSet.empty()),
+        );
+        expect(both.sql).toEqual(both.memory);
+        expect(complement.sql).toEqual(complement.memory);
+        expect(both.sql.total + complement.sql.total).toBe(seeds.length);
+      }),
+    );
   });
 
   describe("the list order contract", () => {
@@ -421,88 +439,103 @@ describe("LeafStore over PostgreSQL agrees with the in-memory store", () => {
       ["a boolean", [{ column: "draft", direction: "asc" }]],
       ["the joined owner", [{ column: "ownerId", direction: "desc" }]],
     ];
-    it.each(orders)("%s, NULLS LAST and the closing id", async (_name, orderBy) => {
-      const result = await listBoth(always, always, orderBy);
-      expect(result.sql).toEqual(result.memory);
-    });
+    it.live.each(orders)("%s, NULLS LAST and the closing id", ([_name, orderBy]) =>
+      Effect.gen(function* () {
+        const result = yield* listBoth(always, always, orderBy);
+        expect(result.sql).toEqual(result.memory);
+      }),
+    );
 
-    it("pages by LIMIT / OFFSET over the same order, with the unpaged total", async () => {
-      const orderBy: ReadonlyArray<ListOrder> = [{ column: "rank", direction: "desc" }];
-      const page = await listBoth(always, always, orderBy, {
-        limit: 4,
-        offset: 3,
-      });
-      expect(page.sql).toEqual(page.memory);
-      expect(page.sql.total).toBe(seeds.length);
-    });
+    it.live("pages by LIMIT / OFFSET over the same order, with the unpaged total", () =>
+      Effect.gen(function* () {
+        const orderBy: ReadonlyArray<ListOrder> = [{ column: "rank", direction: "desc" }];
+        const page = yield* listBoth(always, always, orderBy, {
+          limit: 4,
+          offset: 3,
+        });
+        expect(page.sql).toEqual(page.memory);
+        expect(page.sql.total).toBe(seeds.length);
+      }),
+    );
   });
 
   describe("distinct", () => {
-    it.each(["title", "visibility", "groupId", "ownerId", "rank", "missing"])(
+    it.live.each(["title", "visibility", "groupId", "ownerId", "rank", "missing"])(
       "over %s",
-      async (column) => {
-        const query = { column, where: ne("action", "delete"), limit: 100, offset: 0 } as const;
-        const fromSql = await run(store.distinct(query));
-        const fromMemory = await Effect.runPromise(memory.distinct(query));
-        expect(fromSql).toEqual(fromMemory);
-      },
+      (column) =>
+        Effect.gen(function* () {
+          const query = { column, where: ne("action", "delete"), limit: 100, offset: 0 } as const;
+          const fromSql = yield* run(store.distinct(query));
+          const fromMemory = yield* memory.distinct(query);
+          expect(fromSql).toEqual(fromMemory);
+        }),
     );
 
-    it("pages the distinct values", async () => {
-      const query = { column: "title", where: always, limit: 3, offset: 2 } as const;
-      expect(await run(store.distinct(query))).toEqual(
-        await Effect.runPromise(memory.distinct(query)),
-      );
-    });
+    it.live("pages the distinct values", () =>
+      Effect.gen(function* () {
+        const query = { column: "title", where: always, limit: 3, offset: 2 } as const;
+        expect(yield* run(store.distinct(query))).toEqual(yield* memory.distinct(query));
+      }),
+    );
   });
 
   describe("the id-keyed reads and the owner stamp", () => {
-    it("get reads one row with its owner, head version and action", async () => {
-      const row = Option.getOrUndefined(await run(store.get(id(12))));
-      expect(row).toMatchObject({
-        id: id(12),
-        version: 1n,
-        action: "delete",
-        ownerId: "u-1",
-        rank: 9,
-      });
-      expect(Option.isNone(await run(store.get(id(99))))).toBe(true);
-      expect(Option.isNone(await run(store.get("not-a-uuid")))).toBe(true);
-    });
+    it.live("get reads one row with its owner, head version and action", () =>
+      Effect.gen(function* () {
+        const row = Option.getOrUndefined(yield* run(store.get(id(12))));
+        expect(row).toMatchObject({
+          id: id(12),
+          version: 1n,
+          action: "delete",
+          ownerId: "u-1",
+          rank: 9,
+        });
+        expect(Option.isNone(yield* run(store.get(id(99))))).toBe(true);
+        expect(Option.isNone(yield* run(store.get("not-a-uuid")))).toBe(true);
+      }),
+    );
 
-    it("getMany reads each node once, skipping unknown and malformed ids", async () => {
-      const rows = await run(store.getMany([id(1), id(2), id(1), "nope", id(99)]));
-      expect(
-        Arr.sort(
-          Arr.map(rows, (row) => row.id),
-          Str.Order,
-        ),
-      ).toEqual([id(1), id(2)]);
-      expect(await run(store.getMany([]))).toEqual([]);
-    });
+    it.live("getMany reads each node once, skipping unknown and malformed ids", () =>
+      Effect.gen(function* () {
+        const rows = yield* run(store.getMany([id(1), id(2), id(1), "nope", id(99)]));
+        expect(
+          Arr.sort(
+            Arr.map(rows, (row) => row.id),
+            Str.Order,
+          ),
+        ).toEqual([id(1), id(2)]);
+        expect(yield* run(store.getMany([]))).toEqual([]);
+      }),
+    );
 
-    it("ownerOf reads the stamp; an ownerless or malformed id has none", async () => {
-      expect(await run(store.ownerOf(id(3)))).toEqual(Option.some("u-2"));
-      expect(await run(store.ownerOf(id(10)))).toEqual(Option.none());
-      expect(await run(store.ownerOf("x"))).toEqual(Option.none());
-    });
+    it.live("ownerOf reads the stamp; an ownerless or malformed id has none", () =>
+      Effect.gen(function* () {
+        expect(yield* run(store.ownerOf(id(3)))).toEqual(Option.some("u-2"));
+        expect(yield* run(store.ownerOf(id(10)))).toEqual(Option.none());
+        expect(yield* run(store.ownerOf("x"))).toEqual(Option.none());
+      }),
+    );
 
-    it("a store reads only its own leaf's nodes", async () => {
-      expect(Option.isNone(await run(stores.notes.get(id(1))))).toBe(true);
-    });
+    it.live("a store reads only its own leaf's nodes", () =>
+      Effect.gen(function* () {
+        expect(Option.isNone(yield* run(stores.notes.get(id(1))))).toBe(true);
+      }),
+    );
 
-    it("listLocalised over an unlocalised view reads none", async () => {
-      expect(
-        await run(
-          store.listLocalised({
-            where: always,
-            orderBy: [],
-            limit: 10,
-            offset: 0,
-            locales: ["en"],
-          }),
-        ),
-      ).toEqual({ rows: [], total: 0 });
-    });
+    it.live("listLocalised over an unlocalised view reads none", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* run(
+            store.listLocalised({
+              where: always,
+              orderBy: [],
+              limit: 10,
+              offset: 0,
+              locales: ["en"],
+            }),
+          ),
+        ).toEqual({ rows: [], total: 0 });
+      }),
+    );
   });
 });
