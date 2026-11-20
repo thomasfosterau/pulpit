@@ -168,6 +168,36 @@ const moderation = defineModeration({ target: comments, declaration, viewer, pol
   - **A content decision settles the reports.** `withReports(...).moderate(id, decision)` is `moderate`, then closes the target's open reports as `reportOutcomeOf(decision)` says: `rejected` upholds them (`resolved`), `approved` dismisses them, and `pending` (a re-review) leaves them open. Its gate and errors are `moderate`'s, and a refused decision closes nothing.
   - Both writes run in the caller's transaction, so wrap the call in one for the decision and the closes to land together.
   - Without `moderation`, the two are independent, and acting on the node is a separate call.
+- **Reports never change content on their own.** `file` writes only the report: a reporter can't write the target, so the kernel has no path that hides content because members reported it. An application that wants approved content re-reviewed after N open reports adds that write itself, after `file`, under an account it names. The re-review goes through the leaf's own `moderate` with the viewer seam answering that account for the one call, because `moderate` and the target's `update` both read the viewer, so the moderation hook admits and stamps it and the version chain records who made it:
+
+  ```ts
+  import { and, eq } from "@thomasfosterau/pulpit/filter";
+  import * as Effect from "effect/Effect";
+
+  // `moderation` is the leaf's `defineModeration`. `asSystem` is the application's: it runs an
+  // effect with its viewer seam answering the system account (at the moderate rung) instead of
+  // the reporter, e.g. `Effect.provideService(CurrentViewer, systemViewer)`.
+  const fileReport = (input: Parameters<typeof reports.file>[0]) =>
+    reports.file(input).pipe(
+      Effect.tap(() =>
+        reportStore
+          .list({
+            where: and(eq("targetId", input.targetId), eq("status", "open")),
+            limit: 0,
+            offset: 0,
+          })
+          .pipe(
+            Effect.flatMap(({ total }) =>
+              total >= RE_REVIEW_AT
+                ? asSystem(moderation.moderate(input.targetId, "pending"))
+                : Effect.void,
+            ),
+          ),
+      ),
+    );
+  ```
+
+  Run it in one transaction with the report. Moving to `pending` hides the node under a declared moderation column and puts it in the review queue, and the open reports stay open for the moderator who picks it up. A target that is already `pending` is left as it is, because the patch echoes its state. Read the state first if a `rejected` node shouldn't go back into the queue. The system account can then hide any member's content, so give it its own id and audit it like any other moderator.
 
 Which rows a viewer below the moderate rung may _read_ in each state (gardeneria shows an unapproved comment to its author and the rung only) is still the application's read rule, as `PUB-005` records; `isPubliclyServeable` already refuses every state but `approved` from the cache.
 
