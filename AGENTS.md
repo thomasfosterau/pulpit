@@ -29,7 +29,7 @@ The five default triage roles, each label equal to its name (`needs-triage`, `ne
 
 ### Domain docs
 
-Single-context: one root `CONTEXT.md` and `docs/adr/`, beside the module guides in `docs/`. See `docs/agents/domain.md`.
+No `CONTEXT.md` or `docs/adr/`: the module guides in `docs/`, SECURITY.md's invariant IDs and each export's TSDoc are the domain docs. See `docs/agents/domain.md`.
 
 ## Fallow
 
