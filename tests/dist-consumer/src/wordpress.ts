@@ -119,14 +119,12 @@ export type _WireIdMode = Assert<
   >
 >;
 
-/* oxlint-disable effect/prefer-option-over-null -- the assertion must spell the emitted option exactly, and the workspace's optional fields are `?: T | undefined` */
 export type _StringIds = Assert<
   Equals<typeof stringIds, (options?: StringIdsOptions) => WireIds<string, never, never, never>>
 >;
 export type _StringIdsOptions = Assert<
-  Equals<StringIdsOptions["isNodeId"], ((wireId: string) => boolean) | undefined>
+  Equals<Required<StringIdsOptions>["isNodeId"], (wireId: string) => boolean>
 >;
-/* oxlint-enable effect/prefer-option-over-null */
 
 export type _UnencodableTag = Assert<Equals<UnencodableNodeId["_tag"], "UnencodableNodeId">>;
 export type _UnencodableFields = Assert<

@@ -175,8 +175,6 @@ export type PostStatus = "publish" | "future" | "draft" | "private" | "trash" | 
  */
 export const MAX_LIST_PARAMETER = 100;
 
-/* oxlint-disable effect/prefer-option-over-null -- optional fields are `?: T | undefined`, so a caller can forward its own `undefined`; an absent field is its documented default */
-
 /**
  * The fields of one item, read off the application's own resource by its
  * binding's `fields`. Whatever WordPress has that pulpit doesn't model
@@ -208,7 +206,7 @@ export interface PostFields {
   readonly visibility: Visibility;
   readonly deleted: boolean;
   /** An attachment's media fields (`fileMediaFields` maps a file leaf's); absent for a post or page. */
-  readonly media?: MediaFields | undefined;
+  readonly media?: MediaFields;
 }
 
 /**
@@ -232,7 +230,7 @@ export interface MediaFields {
    * left out of every list, and is never a `featured_media` or `_embed`
    * target, until the bytes are there. Absent, the item is shown.
    */
-  readonly bytesPending?: boolean | undefined;
+  readonly bytesPending?: boolean;
 }
 
 /**
@@ -248,24 +246,22 @@ export interface PostColumns {
   readonly slug: string;
   readonly date: string;
   readonly modified: string;
-  readonly id?: string | undefined;
-  readonly title?: string | undefined;
-  readonly author?: string | undefined;
-  readonly parent?: string | undefined;
-  readonly menuOrder?: string | undefined;
-  readonly draft?: string | undefined;
-  readonly visibility?: string | undefined;
-  readonly mimeType?: string | undefined;
-  readonly mediaType?: string | undefined;
+  readonly id?: string;
+  readonly title?: string;
+  readonly author?: string;
+  readonly parent?: string;
+  readonly menuOrder?: string;
+  readonly draft?: string;
+  readonly visibility?: string;
+  readonly mimeType?: string;
+  readonly mediaType?: string;
   /**
    * A file leaf's `bytesPending` column: when declared, a list
    * reads only the rows whose bytes are confirmed (`bytesPending = false`),
    * so its total never counts a pending item.
    */
-  readonly bytesPending?: string | undefined;
+  readonly bytesPending?: string;
 }
-
-/* oxlint-enable effect/prefer-option-over-null */
 
 /**
  * One application leaf bound to a WordPress post type: its read operations
@@ -455,8 +451,7 @@ export const fileMediaFields = <E, R>(
     readonly caption: ColumnValue;
     readonly description: ColumnValue;
     readonly altText: string;
-    // oxlint-disable-next-line effect/prefer-option-over-null -- an optional field is `?: T | undefined`; the omitted key is `{}`
-    readonly mediaDetails?: Schema.JsonObject | undefined;
+    readonly mediaDetails?: Schema.JsonObject;
   },
 ): MediaFields => {
   const topLevel = file.mediaType.split("/")[0] ?? "";
@@ -587,8 +582,6 @@ export interface TermFields {
   readonly parent: Option.Option<string>;
 }
 
-/* oxlint-disable effect/prefer-option-over-null -- optional fields are `?: T | undefined`; an absent column has its documented default */
-
 /**
  * The term leaf's view columns the term parameters filter and sort by.
  * `orderby=id` sorts by the node id unless `id` names a column holding the
@@ -599,8 +592,8 @@ export interface TermFields {
 export interface TermColumns {
   readonly name: string;
   readonly slug: string;
-  readonly id?: string | undefined;
-  readonly parent?: string | undefined;
+  readonly id?: string;
+  readonly parent?: string;
 }
 
 /**
@@ -645,10 +638,8 @@ export interface TaxonomyBinding<Term, Edge, E, R, Following = never> {
   readonly ends: { readonly post: AssignmentEnd; readonly term: AssignmentEnd };
   /** One assignment's item and term node ids. */
   readonly assignment: (edge: Edge) => { readonly post: string; readonly term: string };
-  readonly postTypes?: ReadonlyArray<PostType> | undefined;
+  readonly postTypes?: ReadonlyArray<PostType>;
 }
-
-/* oxlint-enable effect/prefer-option-over-null */
 
 /**
  * One term the read gate let through, as the adapter holds it.
@@ -817,8 +808,6 @@ export interface Site {
   readonly timezone: string;
 }
 
-/* oxlint-disable effect/prefer-option-over-null -- optional fields are `?: T | undefined`; an absent prefix is the default, an absent type has no route */
-
 /**
  * A `wp/v2` read API's declaration.
  *
@@ -827,7 +816,7 @@ export interface Site {
 export interface WordPressConfig<R, Following = never> {
   readonly site: Site;
   /** The REST prefix (`/wp-json`, the default). */
-  readonly prefix?: string | undefined;
+  readonly prefix?: string;
   /** The node id mode: `integerIds(codec)` or `stringIds()` from `./Ids`. */
   readonly ids: WireIds<WireId, unknown, unknown, R>;
   /** The request's viewer, as the bound leaves read it. */
@@ -841,15 +830,11 @@ export interface WordPressConfig<R, Following = never> {
   /** An item's public URL. */
   readonly link: (type: PostType, fields: PostFields) => string;
   /** The leaves bound to each post type; an unbound type has no route. */
-  readonly types: { readonly [Type in PostType]?: BoundPostType<R, Following> | undefined };
+  readonly types: { readonly [Type in PostType]?: BoundPostType<R, Following> };
   /** The leaves bound to each taxonomy (phase 2); an unbound taxonomy has no route. */
-  readonly taxonomies?:
-    | { readonly [Tax in Taxonomy]?: BoundTaxonomy<R, Following> | undefined }
-    | undefined;
+  readonly taxonomies?: { readonly [Tax in Taxonomy]?: BoundTaxonomy<R, Following> };
   readonly authors: AuthorSeam<R>;
 }
-
-/* oxlint-enable effect/prefer-option-over-null */
 
 /**
  * One request, as the adapter reads it: the method, the path from the site
