@@ -7,10 +7,12 @@
  * answers in.
  */
 
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as HashSet from "effect/HashSet";
@@ -76,19 +78,6 @@ import {
   WP_TERM_LINK_FORM,
   type WireForm,
 } from "./fixtures/wordpress-forms.ts";
-
-const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
-
-/** Run `step` over `items` one at a time: the fakes' one viewer is swapped per call. */
-const inSequence = async <A, B>(
-  items: ReadonlyArray<A>,
-  step: (item: A) => Promise<B>,
-): Promise<ReadonlyArray<B>> => {
-  const [first, ...rest] = items;
-  if (first === undefined) return [];
-  const head = await step(first);
-  return [head, ...(await inSequence(rest, step))];
-};
 
 const member: ViewerAccount = { id: "u-member", role: "user" };
 const stranger: ViewerAccount = { id: "u-stranger", role: "user" };
@@ -190,6 +179,18 @@ const termFieldsOf = (row: LeafRow): TermFields => ({
 });
 
 /** A site over three in-memory leaves (posts, pages, media), all owned, with a draft column. */
+/** The in-memory title branch over `rows`: a shorter title matching the text ranks higher. */
+const titleBranch = (rows: ReadonlyArray<LeafRow>) =>
+  makeInMemorySearchBranch({
+    name: "title",
+    rows: () => rows,
+    score: (row, text) => {
+      const title = P.isString(row["title"]) ? row["title"] : "";
+      return title.includes(text) ? Option.some(1 / title.length) : Option.none();
+    },
+    now: NOW,
+  });
+
 const site = (options: SiteOptions = {}) => {
   let viewer: Viewer = Option.none();
   const followers = makeInMemoryFollowers([]);
@@ -341,39 +342,31 @@ const site = (options: SiteOptions = {}) => {
       ? { ...ops.posts, list: () => Effect.fail("the store is down") }
       : ops.posts;
   /** The posts' view rows, as the in-memory search branch reads them. */
-  const postRows = () =>
-    Effect.runSync(
-      leafStores.posts.leaves.list({ where: always, orderBy: [], limit: 10_000, offset: 0 }),
-    ).rows;
-  const titleBranch = makeInMemorySearchBranch({
-    name: "title",
-    rows: postRows,
-    // A shorter title matching the text ranks higher.
-    score: (row, text) => {
-      const title = P.isString(row["title"]) ? row["title"] : "";
-      return title.includes(text) ? Option.some(1 / title.length) : Option.none();
-    },
-    now: NOW,
-  });
+  const postRows = Effect.map(
+    leafStores.posts.leaves.list({ where: always, orderBy: [], limit: 10_000, offset: 0 }),
+    (page) => page.rows,
+  );
   const searchPosts = (request: SearchRequest<InMemoryFollowing>) =>
-    Effect.flatMap(viewerSeam, (who): Effect.Effect<ReadonlyArray<{ readonly id: string }>> =>
-      options.search === "stale"
-        ? Effect.succeed(postRows())
-        : hybridSearch({ branches: [titleBranch] })({
-            query: request.query,
-            limit: request.limit,
-            scope: searchScopeFilter(
-              {
-                access: ownedAccess({ draft: true }),
-                columns: leafStores.posts.leaves.columns,
-                policy,
-                followers,
-              },
-              who,
-              request,
-            ),
-            headFor: searchHeadFor({ access: ownedAccess({ draft: true }), policy }, who),
-          }),
+    Effect.flatMap(
+      Effect.all([viewerSeam, postRows], { concurrency: 1 }),
+      ([who, rows]): Effect.Effect<ReadonlyArray<{ readonly id: string }>> =>
+        options.search === "stale"
+          ? Effect.succeed(rows)
+          : hybridSearch({ branches: [titleBranch(rows)] })({
+              query: request.query,
+              limit: request.limit,
+              scope: searchScopeFilter(
+                {
+                  access: ownedAccess({ draft: true }),
+                  columns: leafStores.posts.leaves.columns,
+                  policy,
+                  followers,
+                },
+                who,
+                request,
+              ),
+              headFor: searchHeadFor({ access: ownedAccess({ draft: true }), policy }, who),
+            }),
     );
   const postBinding = {
     ops: {
@@ -473,14 +466,14 @@ const site = (options: SiteOptions = {}) => {
         viewer = Option.none();
       }),
     );
-  const create = async (
+  const create = (
     target: Target,
     state: { readonly [column: string]: ColumnValue },
     owner: ViewerAccount = member,
     locales: LocaleStates = {},
-  ) => {
-    const { id } = await run(
-      as(
+  ) =>
+    Effect.gen(function* () {
+      const { id } = yield* as(
         Option.some(owner),
         ops[target].create({
           id: Option.none(),
@@ -498,10 +491,9 @@ const site = (options: SiteOptions = {}) => {
             ...state,
           },
         }),
-      ),
-    );
-    return { id, wireId: nodes.assign(id) };
-  };
+      );
+      return { id, wireId: nodes.assign(id) };
+    });
   const get = (
     path: string,
     query: ReadonlyArray<readonly [string, string]> = [],
@@ -509,39 +501,33 @@ const site = (options: SiteOptions = {}) => {
     method = "GET",
     ifNoneMatch: Option.Option<string> = Option.none(),
   ) =>
-    run(
-      as(
-        who,
-        api.handle({
-          method,
-          path: `/wp-json${path}`,
-          query,
-          ...Option.match(ifNoneMatch, {
-            onNone: () => ({}),
-            onSome: (value) => ({ ifNoneMatch: value }),
-          }),
+    as(
+      who,
+      api.handle({
+        method,
+        path: `/wp-json${path}`,
+        query,
+        ...Option.match(ifNoneMatch, {
+          onNone: () => ({}),
+          onSome: (value) => ({ ifNoneMatch: value }),
         }),
-      ),
+      }),
     );
   /** A term, created by a moderator (a reference leaf's writer). */
-  const createTerm = async (
-    taxonomy: Taxonomy,
-    state: { readonly [column: string]: ColumnValue } = {},
-  ) => {
-    const { id } = await run(
-      as(
+  const createTerm = (taxonomy: Taxonomy, state: { readonly [column: string]: ColumnValue } = {}) =>
+    Effect.gen(function* () {
+      const { id } = yield* as(
         Option.some(moderator),
         terms[taxonomy].create({
           id: Option.none(),
           state: { name: "A term", slug: "a-term", description: "", ...state },
         }),
-      ),
-    );
-    return { id, wireId: nodes.assign(id) };
-  };
+      );
+      return { id, wireId: nodes.assign(id) };
+    });
   /** Assign a post a term, as a moderator. */
   const assign = (taxonomy: Taxonomy, postId: string, termId: string) =>
-    run(as(Option.some(moderator), assignments[taxonomy].create({ postId, termId })));
+    as(Option.some(moderator), assignments[taxonomy].create({ postId, termId }));
   return {
     api,
     ops,
@@ -607,298 +593,385 @@ describe("the wp/v2 read API — the read rule (SEC-AUTH-ENUM-001)", () => {
     ["a moderator", Option.some(moderator)],
   ] as const;
 
-  it.each(viewers)(
+  it.effect.each(viewers)(
     "answers a row %s can't read as 404 rest_post_invalid_id and omits it, never 401 or 403",
-    async (_, who) => {
-      const wp = site();
-      const rows = await inSequence(states, (state) => wp.create("posts", state));
-      const unknown = await wp.get("/wp/v2/posts/9999", [], who);
-      expect([unknown.status, codeOf(unknown)]).toEqual([404, "rest_post_invalid_id"]);
-      const reads = await inSequence(
-        rows,
-        async ({ wireId }) => (await wp.get(`/wp/v2/posts/${wireId}`, [], who)).status,
-      );
-      // Each row reads exactly when the kernel's own get serves it to this viewer.
-      const kernel = await inSequence(rows, ({ id }) =>
-        Effect.runPromiseExit(wp.as(who, wp.ops.posts.get(id))).then(Exit.isSuccess),
-      );
-      expect(reads).toEqual(kernel.map((readable) => (readable ? 200 : 404)));
-      // A list never shows a row the item route hides, nor counts it.
-      const list = await wp.get("/wp/v2/posts", [["status", "publish"]], who);
-      const shown = listed(list);
-      const readableIds = Arr.filter(rows, (_row, index) => reads[index] === 200).map(
-        ({ wireId }) => wireId,
-      );
-      expect(Arr.every(shown, (id) => Arr.contains(readableIds, id))).toBe(true);
-      expect(list.headers["x-wp-total"]).toBe(String(shown.length));
-    },
+    ([_, who]) =>
+      Effect.gen(function* () {
+        const wp = site();
+        const rows = yield* Effect.forEach(states, (state) => wp.create("posts", state), {
+          concurrency: 1,
+        });
+        const unknown = yield* wp.get("/wp/v2/posts/9999", [], who);
+        expect([unknown.status, codeOf(unknown)]).toEqual([404, "rest_post_invalid_id"]);
+        const reads = yield* Effect.forEach(
+          rows,
+          ({ wireId }) =>
+            Effect.map(wp.get(`/wp/v2/posts/${wireId}`, [], who), (response) => response.status),
+          { concurrency: 1 },
+        );
+        // Each row reads exactly when the kernel's own get serves it to this viewer.
+        const kernel = yield* Effect.forEach(
+          rows,
+          ({ id }) => Effect.map(Effect.exit(wp.as(who, wp.ops.posts.get(id))), Exit.isSuccess),
+          { concurrency: 1 },
+        );
+        expect(reads).toEqual(kernel.map((readable) => (readable ? 200 : 404)));
+        // A list never shows a row the item route hides, nor counts it.
+        const list = yield* wp.get("/wp/v2/posts", [["status", "publish"]], who);
+        const shown = listed(list);
+        const readableIds = Arr.filter(rows, (_row, index) => reads[index] === 200).map(
+          ({ wireId }) => wireId,
+        );
+        expect(Arr.every(shown, (id) => Arr.contains(readableIds, id))).toBe(true);
+        expect(list.headers["x-wp-total"]).toBe(String(shown.length));
+      }),
   );
 
-  it("answers a hidden row exactly as a missing one, body and headers", async () => {
-    const wp = site();
-    const hidden = await wp.create("posts", { visibility: "private" });
-    const missing = await wp.get("/wp/v2/posts/9999");
-    expect(await wp.get(`/wp/v2/posts/${hidden.wireId}`)).toEqual(missing);
-  });
+  it.effect("answers a hidden row exactly as a missing one, body and headers", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const hidden = yield* wp.create("posts", { visibility: "private" });
+      const missing = yield* wp.get("/wp/v2/posts/9999");
+      expect(yield* wp.get(`/wp/v2/posts/${hidden.wireId}`)).toEqual(missing);
+    }),
+  );
 
-  it("answers a path id that is no integer as rest_no_route, and one the codec doesn't know as the 404", async () => {
-    const wp = site();
-    expect(codeOf(await wp.get("/wp/v2/posts/abc"))).toBe("rest_no_route");
-    expect(codeOf(await wp.get("/wp/v2/posts/0"))).toBe("rest_post_invalid_id");
-  });
+  it.effect(
+    "answers a path id that is no integer as rest_no_route, and one the codec doesn't know as the 404",
+    () =>
+      Effect.gen(function* () {
+        const wp = site();
+        expect(codeOf(yield* wp.get("/wp/v2/posts/abc"))).toBe("rest_no_route");
+        expect(codeOf(yield* wp.get("/wp/v2/posts/0"))).toBe("rest_post_invalid_id");
+      }),
+  );
 
-  it("answers a status beyond the scope with rest_forbidden_status, which names no row", async () => {
-    const wp = site();
-    const anonymous = await wp.get("/wp/v2/posts", [["status", "draft"]]);
-    expect([anonymous.status, codeOf(anonymous)]).toEqual([401, "rest_forbidden_status"]);
-    const trash = await wp.get("/wp/v2/posts", [["status", "trash"]], Option.some(member));
-    expect([trash.status, codeOf(trash)]).toEqual([403, "rest_forbidden_status"]);
-    // The owner lists their own drafts; a stranger lists none of them.
-    const draft = await wp.create("posts", { draft: true });
-    expect(
-      listed(await wp.get("/wp/v2/posts", [["status", "draft"]], Option.some(member))),
-    ).toEqual([draft.wireId]);
-    expect(
-      listed(await wp.get("/wp/v2/posts", [["status", "draft"]], Option.some(stranger))),
-    ).toEqual([]);
-  });
+  it.effect(
+    "answers a status beyond the scope with rest_forbidden_status, which names no row",
+    () =>
+      Effect.gen(function* () {
+        const wp = site();
+        const anonymous = yield* wp.get("/wp/v2/posts", [["status", "draft"]]);
+        expect([anonymous.status, codeOf(anonymous)]).toEqual([401, "rest_forbidden_status"]);
+        const trash = yield* wp.get("/wp/v2/posts", [["status", "trash"]], Option.some(member));
+        expect([trash.status, codeOf(trash)]).toEqual([403, "rest_forbidden_status"]);
+        // The owner lists their own drafts; a stranger lists none of them.
+        const draft = yield* wp.create("posts", { draft: true });
+        expect(
+          listed(yield* wp.get("/wp/v2/posts", [["status", "draft"]], Option.some(member))),
+        ).toEqual([draft.wireId]);
+        expect(
+          listed(yield* wp.get("/wp/v2/posts", [["status", "draft"]], Option.some(stranger))),
+        ).toEqual([]);
+      }),
+  );
 
-  it("refuses context=edit after the 404, so the refusal never confirms a row", async () => {
-    const wp = site();
-    const hidden = await wp.create("posts", { visibility: "private" });
-    const shown = await wp.create("posts", {});
-    expect(codeOf(await wp.get(`/wp/v2/posts/${hidden.wireId}`, [["context", "edit"]]))).toBe(
-      "rest_post_invalid_id",
-    );
-    const refused = await wp.get(`/wp/v2/posts/${shown.wireId}`, [["context", "edit"]]);
-    expect([refused.status, codeOf(refused)]).toEqual([401, "rest_forbidden_context"]);
-  });
+  it.effect("refuses context=edit after the 404, so the refusal never confirms a row", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const hidden = yield* wp.create("posts", { visibility: "private" });
+      const shown = yield* wp.create("posts", {});
+      expect(codeOf(yield* wp.get(`/wp/v2/posts/${hidden.wireId}`, [["context", "edit"]]))).toBe(
+        "rest_post_invalid_id",
+      );
+      const refused = yield* wp.get(`/wp/v2/posts/${shown.wireId}`, [["context", "edit"]]);
+      expect([refused.status, codeOf(refused)]).toEqual([401, "rest_forbidden_context"]);
+    }),
+  );
 
-  it("derives status: publish, future, draft, private, and trash for the view-deleted rung", async () => {
-    const wp = site();
-    const rows = await inSequence(
-      [{}, { publishedAt: FUTURE }, { draft: true }, { visibility: "followers" }],
-      (state) => wp.create("posts", state),
-    );
-    const statuses = await inSequence(
-      rows,
-      async ({ wireId }) =>
-        itemOf(await wp.get(`/wp/v2/posts/${wireId}`, [], Option.some(member))).status,
-    );
-    expect(statuses).toEqual(["publish", "future", "draft", "private"]);
-    const deleted = await wp.create("posts", {});
-    await run(wp.as(Option.some(member), wp.ops.posts.delete(deleted.id)));
-    const trash = await wp.get("/wp/v2/posts", [["status", "trash"]], Option.some(moderator));
-    expect(decodeBody(Schema.Array(Item))(trash).map(({ id, status }) => [id, status])).toEqual([
-      [deleted.wireId, "trash"],
-    ]);
-  });
+  it.effect(
+    "derives status: publish, future, draft, private, and trash for the view-deleted rung",
+    () =>
+      Effect.gen(function* () {
+        // Between PAST and FUTURE, as a publication's schedule reads the clock.
+        yield* TestClock.setTime(NOW.getTime());
+        const wp = site();
+        const rows = yield* Effect.forEach(
+          [{}, { publishedAt: FUTURE }, { draft: true }, { visibility: "followers" }],
+          (state) => wp.create("posts", state),
+          { concurrency: 1 },
+        );
+        const statuses = yield* Effect.forEach(
+          rows,
+          ({ wireId }) =>
+            Effect.gen(function* () {
+              return itemOf(yield* wp.get(`/wp/v2/posts/${wireId}`, [], Option.some(member)))
+                .status;
+            }),
+          { concurrency: 1 },
+        );
+        expect(statuses).toEqual(["publish", "future", "draft", "private"]);
+        const deleted = yield* wp.create("posts", {});
+        yield* wp.as(Option.some(member), wp.ops.posts.delete(deleted.id));
+        const trash = yield* wp.get("/wp/v2/posts", [["status", "trash"]], Option.some(moderator));
+        expect(decodeBody(Schema.Array(Item))(trash).map(({ id, status }) => [id, status])).toEqual(
+          [[deleted.wireId, "trash"]],
+        );
+      }),
+  );
 });
 
 describe("the wp/v2 read API — collections", () => {
-  const seed = async (count: number) => {
-    const wp = site();
-    const rows = await inSequence(Arr.range(0, count - 1), (index) =>
-      wp.create("posts", {
-        slug: `post-${index}`,
-        publishedAt: at(`2026-01-01T00:0${index}:00.000Z`),
+  const seed = (count: number) =>
+    Effect.gen(function* () {
+      const wp = site();
+      const rows = yield* Effect.forEach(
+        Arr.range(0, count - 1),
+        (index) =>
+          wp.create("posts", {
+            slug: `post-${index}`,
+            publishedAt: at(`2026-01-01T00:0${index}:00.000Z`),
+          }),
+        { concurrency: 1 },
+      );
+      return { wp, ids: rows.map(({ wireId }) => wireId) };
+    });
+
+  it.effect(
+    "sets X-WP-Total, X-WP-TotalPages and the prev / next Link for the first, middle and last pages",
+    () =>
+      Effect.gen(function* () {
+        const { wp } = yield* seed(5);
+        const pages = yield* Effect.forEach(
+          [1, 2, 3],
+          (n) =>
+            wp.get("/wp/v2/posts", [
+              ["per_page", "2"],
+              ["page", String(n)],
+            ]),
+          { concurrency: 1 },
+        );
+        expect(
+          pages.map((response) => [
+            response.headers["x-wp-total"],
+            response.headers["x-wp-totalpages"],
+          ]),
+        ).toEqual([
+          ["5", "3"],
+          ["5", "3"],
+          ["5", "3"],
+        ]);
+        const api = '<https://example.org/wp-json/>; rel="https://api.w.org/"';
+        const href = (n: number) =>
+          `<https://example.org/wp-json/wp/v2/posts?per_page=2&page=${n}>`;
+        expect(pages.map((response) => response.headers["link"])).toEqual([
+          `${api}, ${href(2)}; rel="next"`,
+          `${api}, ${href(1)}; rel="prev", ${href(3)}; rel="next"`,
+          `${api}, ${href(2)}; rel="prev"`,
+        ]);
+        expect(pages.map((response) => listed(response).length)).toEqual([2, 2, 1]);
       }),
-    );
-    return { wp, ids: rows.map(({ wireId }) => wireId) };
-  };
+  );
 
-  it("sets X-WP-Total, X-WP-TotalPages and the prev / next Link for the first, middle and last pages", async () => {
-    const { wp } = await seed(5);
-    const pages = await inSequence([1, 2, 3], (n) =>
-      wp.get("/wp/v2/posts", [
-        ["per_page", "2"],
-        ["page", String(n)],
-      ]),
-    );
-    expect(
-      pages.map((response) => [
-        response.headers["x-wp-total"],
-        response.headers["x-wp-totalpages"],
-      ]),
-    ).toEqual([
-      ["5", "3"],
-      ["5", "3"],
-      ["5", "3"],
-    ]);
-    const api = '<https://example.org/wp-json/>; rel="https://api.w.org/"';
-    const href = (n: number) => `<https://example.org/wp-json/wp/v2/posts?per_page=2&page=${n}>`;
-    expect(pages.map((response) => response.headers["link"])).toEqual([
-      `${api}, ${href(2)}; rel="next"`,
-      `${api}, ${href(1)}; rel="prev", ${href(3)}; rel="next"`,
-      `${api}, ${href(2)}; rel="prev"`,
-    ]);
-    expect(pages.map((response) => listed(response).length)).toEqual([2, 2, 1]);
-  });
+  it.effect(
+    "answers a page past the end of a non-empty list as rest_post_invalid_page_number, and an empty list's as []",
+    () =>
+      Effect.gen(function* () {
+        const { wp } = yield* seed(3);
+        const past = yield* wp.get("/wp/v2/posts", [
+          ["per_page", "2"],
+          ["page", "3"],
+        ]);
+        expect([past.status, codeOf(past)]).toEqual([400, "rest_post_invalid_page_number"]);
+        const empty = yield* site().get("/wp/v2/posts", [["page", "4"]]);
+        expect([empty.status, listed(empty), empty.headers["x-wp-total"]]).toEqual([200, [], "0"]);
+      }),
+  );
 
-  it("answers a page past the end of a non-empty list as rest_post_invalid_page_number, and an empty list's as []", async () => {
-    const { wp } = await seed(3);
-    const past = await wp.get("/wp/v2/posts", [
-      ["per_page", "2"],
-      ["page", "3"],
-    ]);
-    expect([past.status, codeOf(past)]).toEqual([400, "rest_post_invalid_page_number"]);
-    const empty = await site().get("/wp/v2/posts", [["page", "4"]]);
-    expect([empty.status, listed(empty), empty.headers["x-wp-total"]]).toEqual([200, [], "0"]);
-  });
+  it.effect(
+    "orders by date descending by default, by slug, and by the include list with orderby=include",
+    () =>
+      Effect.gen(function* () {
+        const { wp, ids } = yield* seed(3);
+        expect(listed(yield* wp.get("/wp/v2/posts"))).toEqual(Arr.reverse(ids));
+        expect(
+          listed(
+            yield* wp.get("/wp/v2/posts", [
+              ["order", "asc"],
+              ["orderby", "slug"],
+            ]),
+          ),
+        ).toEqual(ids);
+        const picked = Arr.getSomes([Arr.get(ids, 2), Arr.get(ids, 0)]);
+        expect(
+          listed(
+            yield* wp.get("/wp/v2/posts", [
+              ["include", picked.join(",")],
+              ["orderby", "include"],
+            ]),
+          ),
+        ).toEqual(picked);
+        expect(codeOf(yield* wp.get("/wp/v2/posts", [["orderby", "include"]]))).toBe(
+          "rest_orderby_include_missing_include",
+        );
+      }),
+  );
 
-  it("orders by date descending by default, by slug, and by the include list with orderby=include", async () => {
-    const { wp, ids } = await seed(3);
-    expect(listed(await wp.get("/wp/v2/posts"))).toEqual(Arr.reverse(ids));
-    expect(
-      listed(
-        await wp.get("/wp/v2/posts", [
-          ["order", "asc"],
-          ["orderby", "slug"],
-        ]),
-      ),
-    ).toEqual(ids);
-    const picked = Arr.getSomes([Arr.get(ids, 2), Arr.get(ids, 0)]);
-    expect(
-      listed(
-        await wp.get("/wp/v2/posts", [
-          ["include", picked.join(",")],
-          ["orderby", "include"],
-        ]),
-      ),
-    ).toEqual(picked);
-    expect(codeOf(await wp.get("/wp/v2/posts", [["orderby", "include"]]))).toBe(
-      "rest_orderby_include_missing_include",
-    );
-  });
+  it.effect("filters by include, exclude, slug, after and before", () =>
+    Effect.gen(function* () {
+      const { wp, ids } = yield* seed(3);
+      const [first = 0, second = 0, third = 0] = ids;
+      expect(
+        listed(
+          yield* wp.get("/wp/v2/posts", [
+            ["include[]", String(first)],
+            ["include[]", "9999"],
+          ]),
+        ),
+      ).toEqual([first]);
+      expect(listed(yield* wp.get("/wp/v2/posts", [["exclude", `${first},${second}`]]))).toEqual([
+        third,
+      ]);
+      expect(listed(yield* wp.get("/wp/v2/posts", [["slug", "post-1"]]))).toEqual([second]);
+      // Sydney is UTC+11 in January: 11:00:30 local is 00:00:30 UTC.
+      expect(listed(yield* wp.get("/wp/v2/posts", [["after", "2026-01-01T11:00:30"]]))).toEqual([
+        third,
+        second,
+      ]);
+      expect(listed(yield* wp.get("/wp/v2/posts", [["before", "2026-01-01T00:00:30Z"]]))).toEqual([
+        first,
+      ]);
+    }),
+  );
 
-  it("filters by include, exclude, slug, after and before", async () => {
-    const { wp, ids } = await seed(3);
-    const [first = 0, second = 0, third = 0] = ids;
-    expect(
-      listed(
-        await wp.get("/wp/v2/posts", [
-          ["include[]", String(first)],
-          ["include[]", "9999"],
-        ]),
-      ),
-    ).toEqual([first]);
-    expect(listed(await wp.get("/wp/v2/posts", [["exclude", `${first},${second}`]]))).toEqual([
-      third,
-    ]);
-    expect(listed(await wp.get("/wp/v2/posts", [["slug", "post-1"]]))).toEqual([second]);
-    // Sydney is UTC+11 in January: 11:00:30 local is 00:00:30 UTC.
-    expect(listed(await wp.get("/wp/v2/posts", [["after", "2026-01-01T11:00:30"]]))).toEqual([
-      third,
-      second,
-    ]);
-    expect(listed(await wp.get("/wp/v2/posts", [["before", "2026-01-01T00:00:30Z"]]))).toEqual([
-      first,
-    ]);
-  });
-
-  it("refuses an id list past MAX_LIST_PARAMETER before decoding it, and a parameter it can't honour", async () => {
-    const { wp } = await seed(1);
-    const many = Arr.range(1, MAX_LIST_PARAMETER + 1).join(",");
-    const decodesBefore = wp.nodes.decodeCalls().length;
-    const exclude = await wp.get("/wp/v2/posts", [["exclude", many]]);
-    expect([exclude.status, codeOf(exclude)]).toEqual([400, "rest_invalid_param"]);
-    expect(wp.nodes.decodeCalls().length).toBe(decodesBefore);
-    const search = decodeBody(ErrorBody)(await wp.get("/wp/v2/posts", [["search", "hello"]]));
-    expect([search.code, search.data.params]).toEqual([
-      "rest_invalid_param",
-      { search: "search is not supported for this post type." },
-    ]);
-    expect(codeOf(await wp.get("/wp/v2/posts", [["per_page", "101"]]))).toBe("rest_invalid_param");
-    expect(codeOf(await wp.get("/wp/v2/posts", [["menu_order", "1"]]))).toBe("rest_invalid_param");
-  });
+  it.effect(
+    "refuses an id list past MAX_LIST_PARAMETER before decoding it, and a parameter it can't honour",
+    () =>
+      Effect.gen(function* () {
+        const { wp } = yield* seed(1);
+        const many = Arr.range(1, MAX_LIST_PARAMETER + 1).join(",");
+        const decodesBefore = wp.nodes.decodeCalls().length;
+        const exclude = yield* wp.get("/wp/v2/posts", [["exclude", many]]);
+        expect([exclude.status, codeOf(exclude)]).toEqual([400, "rest_invalid_param"]);
+        expect(wp.nodes.decodeCalls().length).toBe(decodesBefore);
+        const search = decodeBody(ErrorBody)(yield* wp.get("/wp/v2/posts", [["search", "hello"]]));
+        expect([search.code, search.data.params]).toEqual([
+          "rest_invalid_param",
+          { search: "search is not supported for this post type." },
+        ]);
+        expect(codeOf(yield* wp.get("/wp/v2/posts", [["per_page", "101"]]))).toBe(
+          "rest_invalid_param",
+        );
+        expect(codeOf(yield* wp.get("/wp/v2/posts", [["menu_order", "1"]]))).toBe(
+          "rest_invalid_param",
+        );
+      }),
+  );
 });
 
 describe("the wp/v2 read API — related nodes, _embed and _fields", () => {
   const embed = [["_embed", "1"]] as const;
 
-  it("zeroes a featured_media or parent the viewer can't read, and drops it from _links and _embedded", async () => {
-    const wp = site();
-    const shownMedia = await wp.create("media", { mimeType: "image/jpeg", slug: "shown" });
-    const hiddenMedia = await wp.create("media", { mimeType: "image/jpeg", visibility: "private" });
-    const hiddenParent = await wp.create("pages", { visibility: "private" });
-    const withShown = await wp.create("posts", { featuredMediaId: shownMedia.id });
-    const withHidden = await wp.create("posts", { featuredMediaId: hiddenMedia.id });
-    const child = await wp.create("pages", { parentId: hiddenParent.id });
+  it.effect(
+    "zeroes a featured_media or parent the viewer can't read, and drops it from _links and _embedded",
+    () =>
+      Effect.gen(function* () {
+        const wp = site();
+        const shownMedia = yield* wp.create("media", { mimeType: "image/jpeg", slug: "shown" });
+        const hiddenMedia = yield* wp.create("media", {
+          mimeType: "image/jpeg",
+          visibility: "private",
+        });
+        const hiddenParent = yield* wp.create("pages", { visibility: "private" });
+        const withShown = yield* wp.create("posts", { featuredMediaId: shownMedia.id });
+        const withHidden = yield* wp.create("posts", { featuredMediaId: hiddenMedia.id });
+        const child = yield* wp.create("pages", { parentId: hiddenParent.id });
 
-    const shown = itemOf(await wp.get(`/wp/v2/posts/${withShown.wireId}`, embed));
-    expect(shown.featured_media).toBe(shownMedia.wireId);
-    expect(R.has(shown._links, "wp:featuredmedia")).toBe(true);
-    expect(shown._embedded?.["wp:featuredmedia"]?.map(({ id }) => id)).toEqual([shownMedia.wireId]);
+        const shown = itemOf(yield* wp.get(`/wp/v2/posts/${withShown.wireId}`, embed));
+        expect(shown.featured_media).toBe(shownMedia.wireId);
+        expect(R.has(shown._links, "wp:featuredmedia")).toBe(true);
+        expect(shown._embedded?.["wp:featuredmedia"]?.map(({ id }) => id)).toEqual([
+          shownMedia.wireId,
+        ]);
 
-    const hidden = itemOf(await wp.get(`/wp/v2/posts/${withHidden.wireId}`, embed));
-    expect(hidden.featured_media).toBe(0);
-    expect(R.has(hidden._links, "wp:featuredmedia")).toBe(false);
-    expect(R.has(hidden._embedded ?? {}, "wp:featuredmedia")).toBe(false);
+        const hidden = itemOf(yield* wp.get(`/wp/v2/posts/${withHidden.wireId}`, embed));
+        expect(hidden.featured_media).toBe(0);
+        expect(R.has(hidden._links, "wp:featuredmedia")).toBe(false);
+        expect(R.has(hidden._embedded ?? {}, "wp:featuredmedia")).toBe(false);
 
-    const page = itemOf(await wp.get(`/wp/v2/pages/${child.wireId}`, embed));
-    expect([page.parent, R.has(page._links, "up")]).toEqual([0, false]);
-    // The owner reads the hidden page, so the parent is theirs to see.
-    const owned = itemOf(await wp.get(`/wp/v2/pages/${child.wireId}`, embed, Option.some(member)));
-    expect([owned.parent, owned._embedded?.["up"]?.map(({ id }) => id)]).toEqual([
-      hiddenParent.wireId,
-      [hiddenParent.wireId],
-    ]);
-  });
+        const page = itemOf(yield* wp.get(`/wp/v2/pages/${child.wireId}`, embed));
+        expect([page.parent, R.has(page._links, "up")]).toEqual([0, false]);
+        // The owner reads the hidden page, so the parent is theirs to see.
+        const owned = itemOf(
+          yield* wp.get(`/wp/v2/pages/${child.wireId}`, embed, Option.some(member)),
+        );
+        expect([owned.parent, owned._embedded?.["up"]?.map(({ id }) => id)]).toEqual([
+          hiddenParent.wireId,
+          [hiddenParent.wireId],
+        ]);
+      }),
+  );
 
-  it("reads each related kind once per response: one encode, one render, one author read, one media read", async () => {
-    const wp = site();
-    const media = await wp.create("media", { mimeType: "image/jpeg" });
-    await inSequence(Arr.range(0, 3), (n) =>
-      wp.create("posts", { slug: `p-${n}`, featuredMediaId: media.id }),
-    );
-    const encodes = wp.nodes.encodeCalls().length;
-    const response = await wp.get("/wp/v2/posts", embed);
-    expect(listed(response)).toHaveLength(4);
-    expect(wp.nodes.encodeCalls().length - encodes).toBe(1);
-    expect([wp.renders.length, wp.authorReads.length, wp.mediaReads.length]).toEqual([1, 1, 1]);
-  });
+  it.effect(
+    "reads each related kind once per response: one encode, one render, one author read, one media read",
+    () =>
+      Effect.gen(function* () {
+        const wp = site();
+        const media = yield* wp.create("media", { mimeType: "image/jpeg" });
+        yield* Effect.forEach(
+          Arr.range(0, 3),
+          (n) => wp.create("posts", { slug: `p-${n}`, featuredMediaId: media.id }),
+          { concurrency: 1 },
+        );
+        const encodes = wp.nodes.encodeCalls().length;
+        const response = yield* wp.get("/wp/v2/posts", embed);
+        expect(listed(response)).toHaveLength(4);
+        expect(wp.nodes.encodeCalls().length - encodes).toBe(1);
+        expect([wp.renders.length, wp.authorReads.length, wp.mediaReads.length]).toEqual([1, 1, 1]);
+      }),
+  );
 
-  it("embeds only the rels named, and keeps only the _fields asked for", async () => {
-    const wp = site();
-    const post = await wp.create("posts", {});
-    const authorOnly = itemOf(await wp.get(`/wp/v2/posts/${post.wireId}`, [["_embed", "author"]]));
-    expect(R.keys(authorOnly._embedded ?? {})).toEqual(["author"]);
-    expect(
-      objectOf(
-        await wp.get(`/wp/v2/posts/${post.wireId}`, [["_fields", "id,title.rendered,slug"]]),
-      ),
-    ).toEqual({
-      id: post.wireId,
-      title: { rendered: "<title>A title</title>" },
-      slug: "a-slug",
-    });
-  });
+  it.effect("embeds only the rels named, and keeps only the _fields asked for", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const post = yield* wp.create("posts", {});
+      const authorOnly = itemOf(
+        yield* wp.get(`/wp/v2/posts/${post.wireId}`, [["_embed", "author"]]),
+      );
+      expect(R.keys(authorOnly._embedded ?? {})).toEqual(["author"]);
+      expect(
+        objectOf(
+          yield* wp.get(`/wp/v2/posts/${post.wireId}`, [["_fields", "id,title.rendered,slug"]]),
+        ),
+      ).toEqual({
+        id: post.wireId,
+        title: { rendered: "<title>A title</title>" },
+        slug: "a-slug",
+      });
+    }),
+  );
 });
 
 describe("the wp/v2 read API — caching (CACHE-AUTH-005)", () => {
-  it("is public only for the anonymous when every item, embeds included, is serveable", async () => {
-    const wp = site();
-    const hiddenMedia = await wp.create("media", { mimeType: "image/jpeg", visibility: "private" });
-    const post = await wp.create("posts", { featuredMediaId: hiddenMedia.id });
-    await wp.create("posts", { draft: true });
-    const cacheOf = async (
-      path: string,
-      query: ReadonlyArray<readonly [string, string]>,
-      who: Viewer,
-    ) => (await wp.get(path, query, who)).headers["cache-control"];
-    expect(
-      await inSequence(
-        [
-          [`/wp/v2/posts/${post.wireId}`, [], Option.none()],
-          [`/wp/v2/posts/${post.wireId}`, [], Option.some(member)],
-          // The owner's embed reaches their private media: never public.
-          [`/wp/v2/posts/${post.wireId}`, [["_embed", "1"]], Option.some(member)],
-          ["/wp/v2/posts", [["status", "draft"]], Option.some(member)],
-        ] as const,
-        ([path, query, who]) => cacheOf(path, query, who),
-      ),
-    ).toEqual(["public", "private, no-store", "private, no-store", "private, no-store"]);
-  });
+  it.effect("is public only for the anonymous when every item, embeds included, is serveable", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const hiddenMedia = yield* wp.create("media", {
+        mimeType: "image/jpeg",
+        visibility: "private",
+      });
+      const post = yield* wp.create("posts", { featuredMediaId: hiddenMedia.id });
+      yield* wp.create("posts", { draft: true });
+      const cacheOf = (
+        path: string,
+        query: ReadonlyArray<readonly [string, string]>,
+        who: Viewer,
+      ) => Effect.map(wp.get(path, query, who), (response) => response.headers["cache-control"]);
+      expect(
+        yield* Effect.forEach(
+          [
+            [`/wp/v2/posts/${post.wireId}`, [], Option.none()],
+            [`/wp/v2/posts/${post.wireId}`, [], Option.some(member)],
+            // The owner's embed reaches their private media: never public.
+            [`/wp/v2/posts/${post.wireId}`, [["_embed", "1"]], Option.some(member)],
+            ["/wp/v2/posts", [["status", "draft"]], Option.some(member)],
+          ] as const,
+          ([path, query, who]) => cacheOf(path, query, who),
+          { concurrency: 1 },
+        ),
+      ).toEqual(["public", "private, no-store", "private, no-store", "private, no-store"]);
+    }),
+  );
 });
 
 describe("the wp/v2 read API — conditional reads", () => {
@@ -910,183 +983,229 @@ describe("the wp/v2 read API — conditional reads", () => {
     who: Viewer = Option.none(),
   ) => wp.get(path, query, who, "GET", Option.some(ifNoneMatch));
 
-  it("sends a weak ETag hashed from the body of an item, a term and a user, and none on a collection", async () => {
-    const wp = site({ terms: true });
-    const post = await wp.create("posts", {});
-    const category = await wp.createTerm("category");
-    const [item, term, user, list] = await Promise.all([
-      wp.get(`/wp/v2/posts/${post.wireId}`),
-      wp.get(`/wp/v2/categories/${category.wireId}`),
-      wp.get(`/wp/v2/users/${wp.accounts.assign(member.id)}`),
-      wp.get("/wp/v2/posts"),
-    ]);
-    expect(
-      [item, term, user].map((response) =>
-        /^W\/"[0-9a-f]{64}"$/.test(response.headers["etag"] ?? ""),
-      ),
-    ).toEqual([true, true, true]);
-    expect(list.headers["etag"]).toBeUndefined();
-    // The same body, the same tag; a HEAD carries it too.
-    expect((await wp.get(`/wp/v2/posts/${post.wireId}`)).headers["etag"]).toBe(
-      item.headers["etag"],
-    );
-    expect(
-      (await wp.get(`/wp/v2/posts/${post.wireId}`, [], Option.none(), "HEAD")).headers["etag"],
-    ).toBe(item.headers["etag"]);
-  });
+  it.effect(
+    "sends a weak ETag hashed from the body of an item, a term and a user, and none on a collection",
+    () =>
+      Effect.gen(function* () {
+        const wp = site({ terms: true });
+        const post = yield* wp.create("posts", {});
+        const category = yield* wp.createTerm("category");
+        const [item, term, user, list] = yield* Effect.all(
+          [
+            wp.get(`/wp/v2/posts/${post.wireId}`),
+            wp.get(`/wp/v2/categories/${category.wireId}`),
+            wp.get(`/wp/v2/users/${wp.accounts.assign(member.id)}`),
+            wp.get("/wp/v2/posts"),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(
+          [item, term, user].map((response) =>
+            /^W\/"[0-9a-f]{64}"$/.test(response.headers["etag"] ?? ""),
+          ),
+        ).toEqual([true, true, true]);
+        expect(list.headers["etag"]).toBeUndefined();
+        // The same body, the same tag; a HEAD carries it too.
+        expect((yield* wp.get(`/wp/v2/posts/${post.wireId}`)).headers["etag"]).toBe(
+          item.headers["etag"],
+        );
+        expect(
+          (yield* wp.get(`/wp/v2/posts/${post.wireId}`, [], Option.none(), "HEAD")).headers["etag"],
+        ).toBe(item.headers["etag"]);
+      }),
+  );
 
-  it("answers 304 with the tag and Cache-Control alone when If-None-Match matches", async () => {
-    const wp = site();
-    const post = await wp.create("posts", {});
-    const path = `/wp/v2/posts/${post.wireId}`;
-    const fresh = await wp.get(path);
-    const etag = fresh.headers["etag"] ?? "";
-    const matched = await conditional(wp, path, etag);
-    expect([matched.status, matched.headers, matched.body]).toEqual([
-      304,
-      { etag, "cache-control": "public" },
-      Option.none(),
-    ]);
-    // A strong spelling of the tag, a list holding it, and `*` all match (weak comparison).
-    const statuses = await Promise.all(
-      [etag.slice(2), `"other", ${etag}`, "*"].map(
-        async (header) => (await conditional(wp, path, header)).status,
-      ),
-    );
-    expect(statuses).toEqual([304, 304, 304]);
-    expect((await conditional(wp, path, '"other"')).status).toBe(200);
-  });
+  it.effect("answers 304 with the tag and Cache-Control alone when If-None-Match matches", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const post = yield* wp.create("posts", {});
+      const path = `/wp/v2/posts/${post.wireId}`;
+      const fresh = yield* wp.get(path);
+      const etag = fresh.headers["etag"] ?? "";
+      const matched = yield* conditional(wp, path, etag);
+      expect([matched.status, matched.headers, matched.body]).toEqual([
+        304,
+        { etag, "cache-control": "public" },
+        Option.none(),
+      ]);
+      // A strong spelling of the tag, a list holding it, and `*` all match (weak comparison).
+      const statuses = yield* Effect.forEach(
+        [etag.slice(2), `"other", ${etag}`, "*"],
+        (header) => Effect.map(conditional(wp, path, header), (response) => response.status),
+        { concurrency: "unbounded" },
+      );
+      expect(statuses).toEqual([304, 304, 304]);
+      expect((yield* conditional(wp, path, '"other"')).status).toBe(200);
+    }),
+  );
 
-  it("hashes the body asked for, so _embed, _fields and context each have their own tag", async () => {
-    const wp = site();
-    const post = await wp.create("posts", {});
-    const path = `/wp/v2/posts/${post.wireId}`;
-    const tags = await inSequence(
-      [[], [["_embed", "1"]], [["_fields", "id"]], [["context", "embed"]]] as const,
-      async (query) => (await wp.get(path, query)).headers["etag"],
-    );
-    expect(HashSet.size(HashSet.fromIterable(tags))).toBe(4);
-    const embedded = tags[1] ?? "";
-    expect((await conditional(wp, path, embedded, [["_embed", "1"]])).status).toBe(304);
-    expect((await conditional(wp, path, embedded)).status).toBe(200);
-  });
+  it.effect(
+    "hashes the body asked for, so _embed, _fields and context each have their own tag",
+    () =>
+      Effect.gen(function* () {
+        const wp = site();
+        const post = yield* wp.create("posts", {});
+        const path = `/wp/v2/posts/${post.wireId}`;
+        const tags = yield* Effect.forEach(
+          [[], [["_embed", "1"]], [["_fields", "id"]], [["context", "embed"]]] as const,
+          (query) => Effect.map(wp.get(path, query), (response) => response.headers["etag"]),
+          { concurrency: 1 },
+        );
+        expect(HashSet.size(HashSet.fromIterable(tags))).toBe(4);
+        const embedded = tags[1] ?? "";
+        expect((yield* conditional(wp, path, embedded, [["_embed", "1"]])).status).toBe(304);
+        expect((yield* conditional(wp, path, embedded)).status).toBe(200);
+      }),
+  );
 
-  it("changes the tag when the item or something it embeds changes", async () => {
-    const wp = site();
-    const media = await wp.create("media", { mimeType: "image/jpeg" });
-    const post = await wp.create("posts", { featuredMediaId: media.id });
-    const path = `/wp/v2/posts/${post.wireId}`;
-    const before = (await wp.get(path, [["_embed", "1"]])).headers["etag"] ?? "";
-    await run(
-      wp.as(Option.some(member), wp.ops.media.update({ id: media.id, patch: { slug: "renamed" } })),
-    );
-    expect((await conditional(wp, path, before, [["_embed", "1"]])).status).toBe(200);
-  });
+  it.effect("changes the tag when the item or something it embeds changes", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const media = yield* wp.create("media", { mimeType: "image/jpeg" });
+      const post = yield* wp.create("posts", { featuredMediaId: media.id });
+      const path = `/wp/v2/posts/${post.wireId}`;
+      const before = (yield* wp.get(path, [["_embed", "1"]])).headers["etag"] ?? "";
+      yield* wp.as(
+        Option.some(member),
+        wp.ops.media.update({ id: media.id, patch: { slug: "renamed" } }),
+      );
+      expect((yield* conditional(wp, path, before, [["_embed", "1"]])).status).toBe(200);
+    }),
+  );
 
-  it("never tags or conditions an error, so a hidden item still answers as a missing one", async () => {
-    const wp = site();
-    const hidden = await wp.create("posts", { visibility: "private" });
-    const missing = await wp.get("/wp/v2/posts/9999");
-    const answered = await conditional(wp, `/wp/v2/posts/${hidden.wireId}`, "*");
-    expect(answered).toEqual(missing);
-    expect(answered.headers["etag"]).toBeUndefined();
-  });
+  it.effect(
+    "never tags or conditions an error, so a hidden item still answers as a missing one",
+    () =>
+      Effect.gen(function* () {
+        const wp = site();
+        const hidden = yield* wp.create("posts", { visibility: "private" });
+        const missing = yield* wp.get("/wp/v2/posts/9999");
+        const answered = yield* conditional(wp, `/wp/v2/posts/${hidden.wireId}`, "*");
+        expect(answered).toEqual(missing);
+        expect(answered.headers["etag"]).toBeUndefined();
+      }),
+  );
 });
 
 describe("the wp/v2 read API — a publish-gated leaf", () => {
   /** `live` is published; `fresh` never was; `soon` is scheduled for later; `edited` is live with a newer version scheduled. */
-  const gatedSite = async () => {
-    const wp = site({ gated: true });
-    const publication = Option.match(wp.ops.posts.publication, {
-      onNone: () => expect.unreachable("a gated leaf has publication operations"),
-      onSome: (operations) => operations,
+  const gatedSite = () =>
+    Effect.gen(function* () {
+      const wp = site({ gated: true });
+      const publication = Option.match(wp.ops.posts.publication, {
+        onNone: () => expect.unreachable("a gated leaf has publication operations"),
+        onSome: (operations) => operations,
+      });
+      const publishAs = (id: string, options?: { readonly at: Date; readonly version: bigint }) =>
+        wp.as(Option.some(member), publication.publish(id, options));
+      const live = yield* wp.create("posts", { slug: "live", draft: true });
+      yield* publishAs(live.id);
+      const fresh = yield* wp.create("posts", { slug: "fresh", draft: true });
+      const soon = yield* wp.create("posts", { slug: "soon", draft: true });
+      yield* publishAs(soon.id, { at: FUTURE, version: 0n });
+      const edited = yield* wp.create("posts", { slug: "edited", draft: true });
+      yield* publishAs(edited.id);
+      yield* wp.as(
+        Option.some(member),
+        wp.ops.posts.update({ id: edited.id, patch: { title: "v2" } }),
+      );
+      yield* publishAs(edited.id, { at: FUTURE, version: 1n });
+      return { wp, live, fresh, soon, edited };
     });
-    const publishAs = (id: string, options?: { readonly at: Date; readonly version: bigint }) =>
-      run(wp.as(Option.some(member), publication.publish(id, options)));
-    const live = await wp.create("posts", { slug: "live", draft: true });
-    await publishAs(live.id);
-    const fresh = await wp.create("posts", { slug: "fresh", draft: true });
-    const soon = await wp.create("posts", { slug: "soon", draft: true });
-    await publishAs(soon.id, { at: FUTURE, version: 0n });
-    const edited = await wp.create("posts", { slug: "edited", draft: true });
-    await publishAs(edited.id);
-    await run(
-      wp.as(Option.some(member), wp.ops.posts.update({ id: edited.id, patch: { title: "v2" } })),
-    );
-    await publishAs(edited.id, { at: FUTURE, version: 1n });
-    return { wp, live, fresh, soon, edited };
-  };
   const statusAndDate = (response: WordPressResponse) =>
     decodeBody(Schema.Struct({ status: Schema.String, date_gmt: Schema.NullOr(Schema.String) }))(
       response,
     );
 
-  it("serves readers the live version only, and a writer's unpublished node as draft or future", async () => {
-    const { wp, live, fresh, soon, edited } = await gatedSite();
-    const read = async (post: { readonly wireId: number }, who: Viewer) => {
-      const response = await wp.get(`/wp/v2/posts/${post.wireId}`, [], who);
-      return response.status === 200 ? statusAndDate(response).status : response.status;
-    };
-    const asOwner = Option.some(member);
-    expect(
-      await inSequence([live, fresh, soon, edited], async (post) => [
-        await read(post, Option.none()),
-        await read(post, Option.some(stranger)),
-        await read(post, asOwner),
-        await read(post, Option.some(moderator)),
-      ]),
-    ).toEqual([
-      ["publish", "publish", "publish", "publish"],
-      [404, 404, "draft", "draft"],
-      [404, 404, "future", "future"],
-      ["publish", "publish", "publish", "publish"],
-    ]);
-    // The scheduled instant is the item's date.
-    const scheduled = statusAndDate(await wp.get(`/wp/v2/posts/${soon.wireId}`, [], asOwner));
-    expect(scheduled.date_gmt).toBe("2999-01-01T00:00:00");
-  });
+  it.effect(
+    "serves readers the live version only, and a writer's unpublished node as draft or future",
+    () =>
+      Effect.gen(function* () {
+        // Between PAST and FUTURE, as a publication's schedule reads the clock.
+        yield* TestClock.setTime(NOW.getTime());
+        const { wp, live, fresh, soon, edited } = yield* gatedSite();
+        const read = (post: { readonly wireId: number }, who: Viewer) =>
+          Effect.gen(function* () {
+            const response = yield* wp.get(`/wp/v2/posts/${post.wireId}`, [], who);
+            return response.status === 200 ? statusAndDate(response).status : response.status;
+          });
+        const asOwner = Option.some(member);
+        expect(
+          yield* Effect.forEach(
+            [live, fresh, soon, edited],
+            (post) =>
+              Effect.gen(function* () {
+                return [
+                  yield* read(post, Option.none()),
+                  yield* read(post, Option.some(stranger)),
+                  yield* read(post, asOwner),
+                  yield* read(post, Option.some(moderator)),
+                ];
+              }),
+            { concurrency: 1 },
+          ),
+        ).toEqual([
+          ["publish", "publish", "publish", "publish"],
+          [404, 404, "draft", "draft"],
+          [404, 404, "future", "future"],
+          ["publish", "publish", "publish", "publish"],
+        ]);
+        // The scheduled instant is the item's date.
+        const scheduled = statusAndDate(yield* wp.get(`/wp/v2/posts/${soon.wireId}`, [], asOwner));
+        expect(scheduled.date_gmt).toBe("2999-01-01T00:00:00");
+      }),
+  );
 
-  it("lists drafts and scheduled items for their writer, asking `scheduled` once per page, and never for a reader", async () => {
-    const { wp, soon, fresh } = await gatedSite();
-    const before = wp.scheduledReads.length;
-    const reader = await wp.get("/wp/v2/posts", [["status", "any"]]);
-    expect(reader.status).toBe(401);
-    const anonymous = await wp.get("/wp/v2/posts");
-    expect(listed(anonymous)).toHaveLength(2);
-    expect(wp.scheduledReads.length).toBe(before);
-    const own = await wp.get("/wp/v2/posts", [["status", "draft"]], Option.some(member));
-    expect(
-      decodeBody(Schema.Array(Schema.Struct({ id: Schema.Finite, status: Schema.String })))(own),
-    ).toEqual([
-      // Ordered by the stored stamp (equal here), not by the scheduled instant shown.
-      { id: fresh.wireId, status: "draft" },
-      { id: soon.wireId, status: "future" },
-    ]);
-    // One batch for the page, holding the writer's two undecided nodes.
-    expect(wp.scheduledReads.slice(before).map((ids) => ids.length)).toEqual([2]);
-    // A scheduled node is filed with the drafts: `status=future` selects by the stamp column, which it hasn't.
-    const future = await wp.get("/wp/v2/posts", [["status", "future"]], Option.some(member));
-    expect(listed(future)).toEqual([]);
-  });
+  it.effect(
+    "lists drafts and scheduled items for their writer, asking `scheduled` once per page, and never for a reader",
+    () =>
+      Effect.gen(function* () {
+        // Between PAST and FUTURE, as a publication's schedule reads the clock.
+        yield* TestClock.setTime(NOW.getTime());
+        const { wp, soon, fresh } = yield* gatedSite();
+        const before = wp.scheduledReads.length;
+        const reader = yield* wp.get("/wp/v2/posts", [["status", "any"]]);
+        expect(reader.status).toBe(401);
+        const anonymous = yield* wp.get("/wp/v2/posts");
+        expect(listed(anonymous)).toHaveLength(2);
+        expect(wp.scheduledReads.length).toBe(before);
+        const own = yield* wp.get("/wp/v2/posts", [["status", "draft"]], Option.some(member));
+        expect(
+          decodeBody(Schema.Array(Schema.Struct({ id: Schema.Finite, status: Schema.String })))(
+            own,
+          ),
+        ).toEqual([
+          // Ordered by the stored stamp (equal here), not by the scheduled instant shown.
+          { id: fresh.wireId, status: "draft" },
+          { id: soon.wireId, status: "future" },
+        ]);
+        // One batch for the page, holding the writer's two undecided nodes.
+        expect(wp.scheduledReads.slice(before).map((ids) => ids.length)).toEqual([2]);
+        // A scheduled node is filed with the drafts: `status=future` selects by the stamp column, which it hasn't.
+        const future = yield* wp.get("/wp/v2/posts", [["status", "future"]], Option.some(member));
+        expect(listed(future)).toEqual([]);
+      }),
+  );
 });
 
 describe("the wp/v2 read API — lang", () => {
   /** `hello` in en, pt and pt-BR; `plain` in en alone; `french` in fr alone; a draft in pt. */
-  const localisedSite = async () => {
-    const wp = site({ localised: true });
-    const title = (tag: string, text: string) => [tag, { title: text }] as const;
-    const hello = await wp.create("posts", {}, member, {
-      en: { title: "Hello" },
-      pt: { title: "Ola" },
-      "pt-BR": { title: "Oi" },
+  const localisedSite = () =>
+    Effect.gen(function* () {
+      const wp = site({ localised: true });
+      const title = (tag: string, text: string) => [tag, { title: text }] as const;
+      const hello = yield* wp.create("posts", {}, member, {
+        en: { title: "Hello" },
+        pt: { title: "Ola" },
+        "pt-BR": { title: "Oi" },
+      });
+      const plain = yield* wp.create("posts", {}, member, R.fromEntries([title("en", "Plain")]));
+      const french = yield* wp.create("posts", {}, member, R.fromEntries([title("fr", "Salut")]));
+      const draft = yield* wp.create("posts", { draft: true }, member, {
+        pt: { title: "Rascunho" },
+      });
+      return { wp, hello, plain, french, draft };
     });
-    const plain = await wp.create("posts", {}, member, R.fromEntries([title("en", "Plain")]));
-    const french = await wp.create("posts", {}, member, R.fromEntries([title("fr", "Salut")]));
-    const draft = await wp.create("posts", { draft: true }, member, {
-      pt: { title: "Rascunho" },
-    });
-    return { wp, hello, plain, french, draft };
-  };
   const titleOf = (response: WordPressResponse) =>
     decodeBody(Schema.Struct({ title: Schema.Struct({ rendered: Schema.String }) }))(response)
       .title;
@@ -1095,686 +1214,830 @@ describe("the wp/v2 read API — lang", () => {
       response,
     ).map(({ title }) => title.rendered);
 
-  it("serves an item in the requested locale, the best prefix of it, then the default, and says which", async () => {
-    const { wp, hello, plain } = await localisedSite();
-    const read = async (post: { readonly wireId: number }, lang: string) => {
-      const response = await wp.get(`/wp/v2/posts/${post.wireId}`, [["lang", lang]]);
-      return [
-        response.status,
-        response.headers["content-language"],
-        response.status === 200 ? titleOf(response).rendered : "",
-      ];
-    };
-    expect(
-      await inSequence(
+  it.effect(
+    "serves an item in the requested locale, the best prefix of it, then the default, and says which",
+    () =>
+      Effect.gen(function* () {
+        const { wp, hello, plain } = yield* localisedSite();
+        const read = (post: { readonly wireId: number }, lang: string) =>
+          Effect.gen(function* () {
+            const response = yield* wp.get(`/wp/v2/posts/${post.wireId}`, [["lang", lang]]);
+            return [
+              response.status,
+              response.headers["content-language"],
+              response.status === 200 ? titleOf(response).rendered : "",
+            ];
+          });
+        expect(
+          yield* Effect.forEach(
+            [
+              [hello, "pt-BR"],
+              [hello, "pt-PT"],
+              [hello, "pt"],
+              [hello, "de"],
+              [plain, "pt-BR"],
+              [plain, "en"],
+            ] as const,
+            ([post, lang]) => read(post, lang),
+            { concurrency: 1 },
+          ),
+        ).toEqual([
+          [200, "pt-BR", "<title>Oi</title>"],
+          [200, "pt", "<title>Ola</title>"],
+          [200, "pt", "<title>Ola</title>"],
+          [200, "en", "<title>Hello</title>"],
+          [200, "en", "<title>Plain</title>"],
+          [200, "en", "<title>Plain</title>"],
+        ]);
+      }),
+  );
+
+  it.effect(
+    "answers an item carrying none of the order, and a hidden one, as 404 rest_post_invalid_id",
+    () =>
+      Effect.gen(function* () {
+        const { wp, french, draft } = yield* localisedSite();
+        const missing = yield* wp.get("/wp/v2/posts/9999", [["lang", "pt"]]);
+        const none = yield* wp.get(`/wp/v2/posts/${french.wireId}`, [["lang", "pt"]]);
+        const hidden = yield* wp.get(`/wp/v2/posts/${draft.wireId}`, [["lang", "pt"]]);
+        expect([none.status, codeOf(none), hidden]).toEqual([404, "rest_post_invalid_id", missing]);
+        // The owner reads their draft, in the locale it carries.
+        const own = yield* wp.get(
+          `/wp/v2/posts/${draft.wireId}`,
+          [["lang", "pt"]],
+          Option.some(member),
+        );
+        expect(titleOf(own).rendered).toBe("<title>Rascunho</title>");
+      }),
+  );
+
+  it.effect("lists each node once, in its best locale, with a total and pages over nodes", () =>
+    Effect.gen(function* () {
+      const { wp, hello, plain, french } = yield* localisedSite();
+      const pt = yield* wp.get("/wp/v2/posts", [
+        ["lang", "pt-BR"],
+        ["orderby", "id"],
+        ["order", "asc"],
+      ]);
+      expect([listed(pt), titlesOf(pt), pt.headers["x-wp-total"]]).toEqual([
+        [hello.wireId, plain.wireId],
+        ["<title>Oi</title>", "<title>Plain</title>"],
+        "2",
+      ]);
+      const fr = yield* wp.get("/wp/v2/posts", [
+        ["lang", "fr"],
+        ["orderby", "id"],
+        ["order", "asc"],
+      ]);
+      expect([listed(fr), titlesOf(fr)]).toEqual([
+        [hello.wireId, plain.wireId, french.wireId],
+        ["<title>Hello</title>", "<title>Plain</title>", "<title>Salut</title>"],
+      ]);
+      const second = yield* wp.get("/wp/v2/posts", [
+        ["lang", "fr"],
+        ["orderby", "id"],
+        ["order", "asc"],
+        ["per_page", "2"],
+        ["page", "2"],
+      ]);
+      expect([
+        listed(second),
+        second.headers["x-wp-total"],
+        second.headers["x-wp-totalpages"],
+      ]).toEqual([[french.wireId], "3", "2"]);
+      // A viewer sees the same set their gate allows: the draft counts for its owner alone.
+      const own = yield* wp.get(
+        "/wp/v2/posts",
         [
-          [hello, "pt-BR"],
-          [hello, "pt-PT"],
-          [hello, "pt"],
-          [hello, "de"],
-          [plain, "pt-BR"],
-          [plain, "en"],
-        ] as const,
-        ([post, lang]) => read(post, lang),
-      ),
-    ).toEqual([
-      [200, "pt-BR", "<title>Oi</title>"],
-      [200, "pt", "<title>Ola</title>"],
-      [200, "pt", "<title>Ola</title>"],
-      [200, "en", "<title>Hello</title>"],
-      [200, "en", "<title>Plain</title>"],
-      [200, "en", "<title>Plain</title>"],
-    ]);
-  });
+          ["lang", "pt"],
+          ["status", "draft"],
+        ],
+        Option.some(member),
+      );
+      expect(titlesOf(own)).toEqual(["<title>Rascunho</title>"]);
+    }),
+  );
 
-  it("answers an item carrying none of the order, and a hidden one, as 404 rest_post_invalid_id", async () => {
-    const { wp, french, draft } = await localisedSite();
-    const missing = await wp.get("/wp/v2/posts/9999", [["lang", "pt"]]);
-    const none = await wp.get(`/wp/v2/posts/${french.wireId}`, [["lang", "pt"]]);
-    const hidden = await wp.get(`/wp/v2/posts/${draft.wireId}`, [["lang", "pt"]]);
-    expect([none.status, codeOf(none), hidden]).toEqual([404, "rest_post_invalid_id", missing]);
-    // The owner reads their draft, in the locale it carries.
-    const own = await wp.get(`/wp/v2/posts/${draft.wireId}`, [["lang", "pt"]], Option.some(member));
-    expect(titleOf(own).rendered).toBe("<title>Rascunho</title>");
-  });
-
-  it("lists each node once, in its best locale, with a total and pages over nodes", async () => {
-    const { wp, hello, plain, french } = await localisedSite();
-    const pt = await wp.get("/wp/v2/posts", [
-      ["lang", "pt-BR"],
-      ["orderby", "id"],
-      ["order", "asc"],
-    ]);
-    expect([listed(pt), titlesOf(pt), pt.headers["x-wp-total"]]).toEqual([
-      [hello.wireId, plain.wireId],
-      ["<title>Oi</title>", "<title>Plain</title>"],
-      "2",
-    ]);
-    const fr = await wp.get("/wp/v2/posts", [
-      ["lang", "fr"],
-      ["orderby", "id"],
-      ["order", "asc"],
-    ]);
-    expect([listed(fr), titlesOf(fr)]).toEqual([
-      [hello.wireId, plain.wireId, french.wireId],
-      ["<title>Hello</title>", "<title>Plain</title>", "<title>Salut</title>"],
-    ]);
-    const second = await wp.get("/wp/v2/posts", [
-      ["lang", "fr"],
-      ["orderby", "id"],
-      ["order", "asc"],
-      ["per_page", "2"],
-      ["page", "2"],
-    ]);
-    expect([
-      listed(second),
-      second.headers["x-wp-total"],
-      second.headers["x-wp-totalpages"],
-    ]).toEqual([[french.wireId], "3", "2"]);
-    // A viewer sees the same set their gate allows: the draft counts for its owner alone.
-    const own = await wp.get(
-      "/wp/v2/posts",
-      [
+  it.effect("orders by the resolved row's own column", () =>
+    Effect.gen(function* () {
+      const { wp } = yield* localisedSite();
+      const response = yield* wp.get("/wp/v2/posts", [
         ["lang", "pt"],
-        ["status", "draft"],
-      ],
-      Option.some(member),
-    );
-    expect(titlesOf(own)).toEqual(["<title>Rascunho</title>"]);
-  });
+        ["orderby", "title"],
+        ["order", "asc"],
+      ]);
+      expect(titlesOf(response)).toEqual(["<title>Ola</title>", "<title>Plain</title>"]);
+    }),
+  );
 
-  it("orders by the resolved row's own column", async () => {
-    const { wp } = await localisedSite();
-    const response = await wp.get("/wp/v2/posts", [
-      ["lang", "pt"],
-      ["orderby", "title"],
-      ["order", "asc"],
-    ]);
-    expect(titlesOf(response)).toEqual(["<title>Ola</title>", "<title>Plain</title>"]);
-  });
-
-  it("refuses a malformed tag, and a type that declares no default locale, as rest_invalid_param", async () => {
-    const { wp, hello } = await localisedSite();
-    const refused = await inSequence(
-      [
-        ["/wp/v2/posts", "en_US"],
-        [`/wp/v2/posts/${hello.wireId}`, "en_US"],
-        ["/wp/v2/pages", "en"],
-        ["/wp/v2/pages/1", "en"],
-      ] as const,
-      async ([path, lang]) => {
-        const response = await wp.get(path, [["lang", lang]]);
-        return [response.status, codeOf(response)];
-      },
-    );
-    expect(refused).toEqual([
-      [400, "rest_invalid_param"],
-      [400, "rest_invalid_param"],
-      [400, "rest_invalid_param"],
-      [400, "rest_invalid_param"],
-    ]);
-  });
+  it.effect(
+    "refuses a malformed tag, and a type that declares no default locale, as rest_invalid_param",
+    () =>
+      Effect.gen(function* () {
+        const { wp, hello } = yield* localisedSite();
+        const refused = yield* Effect.forEach(
+          [
+            ["/wp/v2/posts", "en_US"],
+            [`/wp/v2/posts/${hello.wireId}`, "en_US"],
+            ["/wp/v2/pages", "en"],
+            ["/wp/v2/pages/1", "en"],
+          ] as const,
+          ([path, lang]) =>
+            Effect.gen(function* () {
+              const response = yield* wp.get(path, [["lang", lang]]);
+              return [response.status, codeOf(response)];
+            }),
+          { concurrency: 1 },
+        );
+        expect(refused).toEqual([
+          [400, "rest_invalid_param"],
+          [400, "rest_invalid_param"],
+          [400, "rest_invalid_param"],
+          [400, "rest_invalid_param"],
+        ]);
+      }),
+  );
 });
 
 describe("the wp/v2 read API — search", () => {
-  const searchSite = async (search: "scoped" | "stale" = "scoped") => {
-    const wp = site({ search });
-    const post = (title: string, state: { readonly [column: string]: ColumnValue } = {}) =>
-      wp.create("posts", { title, slug: title.replaceAll(" ", "-"), ...state });
-    const soup = await post("tomato soup recipe");
-    const short = await post("tomato");
-    const basil = await post("basil");
-    const secret = await post("tomato secret", { visibility: "private" });
-    const draft = await post("tomato draft", { draft: true });
-    return { wp, soup, short, basil, secret, draft };
-  };
+  const searchSite = (search: "scoped" | "stale" = "scoped") =>
+    Effect.gen(function* () {
+      const wp = site({ search });
+      const post = (title: string, state: { readonly [column: string]: ColumnValue } = {}) =>
+        wp.create("posts", { title, slug: title.replaceAll(" ", "-"), ...state });
+      const soup = yield* post("tomato soup recipe");
+      const short = yield* post("tomato");
+      const basil = yield* post("basil");
+      const secret = yield* post("tomato secret", { visibility: "private" });
+      const draft = yield* post("tomato draft", { draft: true });
+      return { wp, soup, short, basil, secret, draft };
+    });
   const slugsOf = (response: WordPressResponse) =>
     decodeBody(Schema.Array(Schema.Struct({ slug: Schema.String })))(response).map(
       ({ slug }) => slug,
     );
 
-  it("orders by relevance by default, and counts the hydrated hits", async () => {
-    const { wp } = await searchSite();
-    const found = await wp.get("/wp/v2/posts", [["search", "tomato"]]);
-    expect([slugsOf(found), found.headers["x-wp-total"], found.headers["x-wp-totalpages"]]).toEqual(
-      [["tomato", "tomato-soup-recipe"], "2", "1"],
-    );
-    // `order` does not reverse relevance; an explicit orderby=relevance is the same.
-    const explicit = await wp.get("/wp/v2/posts", [
-      ["search", "tomato"],
-      ["orderby", "relevance"],
-      ["order", "asc"],
-    ]);
-    expect(slugsOf(explicit)).toEqual(["tomato", "tomato-soup-recipe"]);
-  });
+  it.effect("orders by relevance by default, and counts the hydrated hits", () =>
+    Effect.gen(function* () {
+      const { wp } = yield* searchSite();
+      const found = yield* wp.get("/wp/v2/posts", [["search", "tomato"]]);
+      expect([
+        slugsOf(found),
+        found.headers["x-wp-total"],
+        found.headers["x-wp-totalpages"],
+      ]).toEqual([["tomato", "tomato-soup-recipe"], "2", "1"]);
+      // `order` does not reverse relevance; an explicit orderby=relevance is the same.
+      const explicit = yield* wp.get("/wp/v2/posts", [
+        ["search", "tomato"],
+        ["orderby", "relevance"],
+        ["order", "asc"],
+      ]);
+      expect(slugsOf(explicit)).toEqual(["tomato", "tomato-soup-recipe"]);
+    }),
+  );
 
-  it("re-sorts the hits by any other orderby, and ignores a blank search", async () => {
-    const { wp, soup, short } = await searchSite();
-    const by = async (orderby: string, order: string) =>
-      listed(
-        await wp.get("/wp/v2/posts", [
+  it.effect("re-sorts the hits by any other orderby, and ignores a blank search", () =>
+    Effect.gen(function* () {
+      const { wp, soup, short } = yield* searchSite();
+      const by = (orderby: string, order: string) =>
+        Effect.gen(function* () {
+          return listed(
+            yield* wp.get("/wp/v2/posts", [
+              ["search", "tomato"],
+              ["orderby", orderby],
+              ["order", order],
+            ]),
+          );
+        });
+      expect(yield* by("title", "asc")).toEqual([short.wireId, soup.wireId]);
+      expect(yield* by("title", "desc")).toEqual([soup.wireId, short.wireId]);
+      expect(yield* by("slug", "desc")).toEqual([soup.wireId, short.wireId]);
+      expect(yield* by("id", "asc")).toEqual([soup.wireId, short.wireId]);
+      expect((yield* wp.get("/wp/v2/posts", [["search", "  "]])).headers["x-wp-total"]).toBe("3");
+    }),
+  );
+
+  it.effect("applies the request's other filters inside the search scope", () =>
+    Effect.gen(function* () {
+      const { wp, soup } = yield* searchSite();
+      const filtered = yield* wp.get("/wp/v2/posts", [
+        ["search", "tomato"],
+        ["slug", "tomato-soup-recipe"],
+      ]);
+      expect(listed(filtered)).toEqual([soup.wireId]);
+      const draft = yield* wp.get(
+        "/wp/v2/posts",
+        [
           ["search", "tomato"],
-          ["orderby", orderby],
-          ["order", order],
-        ]),
+          ["status", "draft"],
+        ],
+        Option.some(member),
       );
-    expect(await by("title", "asc")).toEqual([short.wireId, soup.wireId]);
-    expect(await by("title", "desc")).toEqual([soup.wireId, short.wireId]);
-    expect(await by("slug", "desc")).toEqual([soup.wireId, short.wireId]);
-    expect(await by("id", "asc")).toEqual([soup.wireId, short.wireId]);
-    expect((await wp.get("/wp/v2/posts", [["search", "  "]])).headers["x-wp-total"]).toBe("3");
-  });
+      expect(slugsOf(draft)).toEqual(["tomato-draft"]);
+    }),
+  );
 
-  it("applies the request's other filters inside the search scope", async () => {
-    const { wp, soup } = await searchSite();
-    const filtered = await wp.get("/wp/v2/posts", [
-      ["search", "tomato"],
-      ["slug", "tomato-soup-recipe"],
-    ]);
-    expect(listed(filtered)).toEqual([soup.wireId]);
-    const draft = await wp.get(
-      "/wp/v2/posts",
-      [
+  it.effect(
+    "shows each viewer only what their gate reads, even from a stale index (SEC-AUTH-ENUM-001)",
+    () =>
+      Effect.gen(function* () {
+        const { wp } = yield* searchSite("stale");
+        const anonymous = yield* wp.get("/wp/v2/posts", [["search", "tomato"]]);
+        // The index returned every post; hydration dropped the private and the draft, and the total follows.
+        expect([slugsOf(anonymous).length, anonymous.headers["x-wp-total"]]).toEqual([3, "3"]);
+        const owner = yield* wp.get("/wp/v2/posts", [["search", "tomato"]], Option.some(member));
+        expect(owner.headers["x-wp-total"]).toBe("5");
+        const other = yield* wp.get("/wp/v2/posts", [["search", "tomato"]], Option.some(stranger));
+        expect(other.headers["x-wp-total"]).toBe("3");
+      }),
+  );
+
+  it.effect(
+    "pages in memory, and answers a page past the hits as rest_post_invalid_page_number",
+    () =>
+      Effect.gen(function* () {
+        const { wp, soup, short } = yield* searchSite();
+        const second = yield* wp.get("/wp/v2/posts", [
+          ["search", "tomato"],
+          ["per_page", "1"],
+          ["page", "2"],
+        ]);
+        expect([
+          listed(second),
+          second.headers["x-wp-total"],
+          second.headers["x-wp-totalpages"],
+        ]).toEqual([[soup.wireId], "2", "2"]);
+        const offset = yield* wp.get("/wp/v2/posts", [
+          ["search", "tomato"],
+          ["offset", "1"],
+        ]);
+        expect(listed(offset)).toEqual([soup.wireId]);
+        const past = yield* wp.get("/wp/v2/posts", [
+          ["search", "tomato"],
+          ["page", "3"],
+          ["per_page", "1"],
+        ]);
+        expect([past.status, codeOf(past)]).toEqual([400, "rest_post_invalid_page_number"]);
+        const none = yield* wp.get("/wp/v2/posts", [["search", "zucchini"]]);
+        expect([listed(none), none.headers["x-wp-total"]]).toEqual([[], "0"]);
+        expect(short.wireId).toBeGreaterThan(0);
+      }),
+  );
+
+  it.effect("shows a scheduled item found by search as future, with its scheduled date", () =>
+    Effect.gen(function* () {
+      const wp = site({ gated: true, search: "scoped" });
+      const publication = Option.match(wp.ops.posts.publication, {
+        onNone: () => expect.unreachable("a gated leaf has publication operations"),
+        onSome: (operations) => operations,
+      });
+      const soon = yield* wp.create("posts", { title: "tomato soon", draft: true });
+      yield* wp.as(Option.some(member), publication.publish(soon.id, { at: FUTURE, version: 0n }));
+      const found = yield* wp.get(
+        "/wp/v2/posts",
+        [
+          ["search", "tomato"],
+          ["status", "draft"],
+        ],
+        Option.some(member),
+      );
+      expect(
+        decodeBody(
+          Schema.Array(
+            Schema.Struct({ status: Schema.String, date_gmt: Schema.NullOr(Schema.String) }),
+          ),
+        )(found),
+      ).toEqual([{ status: "future", date_gmt: "2999-01-01T00:00:00" }]);
+    }),
+  );
+
+  it.effect("refuses lang with search as rest_invalid_param, which names lang", () =>
+    Effect.gen(function* () {
+      const wp = site({ localised: true, search: "scoped" });
+      yield* wp.create("posts", {}, member, { en: { title: "tomato" } });
+      const both = yield* wp.get("/wp/v2/posts", [
         ["search", "tomato"],
-        ["status", "draft"],
-      ],
-      Option.some(member),
-    );
-    expect(slugsOf(draft)).toEqual(["tomato-draft"]);
-  });
+        ["lang", "en"],
+      ]);
+      expect([both.status, codeOf(both), decodeBody(ErrorBody)(both).data.params]).toEqual([
+        400,
+        "rest_invalid_param",
+        { lang: "lang cannot be combined with search." },
+      ]);
+      // Either alone is served.
+      expect((yield* wp.get("/wp/v2/posts", [["lang", "en"]])).status).toBe(200);
+      expect((yield* wp.get("/wp/v2/posts", [["search", "tomato"]])).status).toBe(200);
+    }),
+  );
 
-  it("shows each viewer only what their gate reads, even from a stale index (SEC-AUTH-ENUM-001)", async () => {
-    const { wp } = await searchSite("stale");
-    const anonymous = await wp.get("/wp/v2/posts", [["search", "tomato"]]);
-    // The index returned every post; hydration dropped the private and the draft, and the total follows.
-    expect([slugsOf(anonymous).length, anonymous.headers["x-wp-total"]]).toEqual([3, "3"]);
-    const owner = await wp.get("/wp/v2/posts", [["search", "tomato"]], Option.some(member));
-    expect(owner.headers["x-wp-total"]).toBe("5");
-    const other = await wp.get("/wp/v2/posts", [["search", "tomato"]], Option.some(stranger));
-    expect(other.headers["x-wp-total"]).toBe("3");
-  });
-
-  it("pages in memory, and answers a page past the hits as rest_post_invalid_page_number", async () => {
-    const { wp, soup, short } = await searchSite();
-    const second = await wp.get("/wp/v2/posts", [
-      ["search", "tomato"],
-      ["per_page", "1"],
-      ["page", "2"],
-    ]);
-    expect([
-      listed(second),
-      second.headers["x-wp-total"],
-      second.headers["x-wp-totalpages"],
-    ]).toEqual([[soup.wireId], "2", "2"]);
-    const offset = await wp.get("/wp/v2/posts", [
-      ["search", "tomato"],
-      ["offset", "1"],
-    ]);
-    expect(listed(offset)).toEqual([soup.wireId]);
-    const past = await wp.get("/wp/v2/posts", [
-      ["search", "tomato"],
-      ["page", "3"],
-      ["per_page", "1"],
-    ]);
-    expect([past.status, codeOf(past)]).toEqual([400, "rest_post_invalid_page_number"]);
-    const none = await wp.get("/wp/v2/posts", [["search", "zucchini"]]);
-    expect([listed(none), none.headers["x-wp-total"]]).toEqual([[], "0"]);
-    expect(short.wireId).toBeGreaterThan(0);
-  });
-
-  it("shows a scheduled item found by search as future, with its scheduled date", async () => {
-    const wp = site({ gated: true, search: "scoped" });
-    const publication = Option.match(wp.ops.posts.publication, {
-      onNone: () => expect.unreachable("a gated leaf has publication operations"),
-      onSome: (operations) => operations,
-    });
-    const soon = await wp.create("posts", { title: "tomato soon", draft: true });
-    await run(
-      wp.as(Option.some(member), publication.publish(soon.id, { at: FUTURE, version: 0n })),
-    );
-    const found = await wp.get(
-      "/wp/v2/posts",
-      [
-        ["search", "tomato"],
-        ["status", "draft"],
-      ],
-      Option.some(member),
-    );
-    expect(
-      decodeBody(
-        Schema.Array(
-          Schema.Struct({ status: Schema.String, date_gmt: Schema.NullOr(Schema.String) }),
-        ),
-      )(found),
-    ).toEqual([{ status: "future", date_gmt: "2999-01-01T00:00:00" }]);
-  });
-
-  it("refuses lang with search as rest_invalid_param, which names lang", async () => {
-    const wp = site({ localised: true, search: "scoped" });
-    await wp.create("posts", {}, member, { en: { title: "tomato" } });
-    const both = await wp.get("/wp/v2/posts", [
-      ["search", "tomato"],
-      ["lang", "en"],
-    ]);
-    expect([both.status, codeOf(both), decodeBody(ErrorBody)(both).data.params]).toEqual([
-      400,
-      "rest_invalid_param",
-      { lang: "lang cannot be combined with search." },
-    ]);
-    // Either alone is served.
-    expect((await wp.get("/wp/v2/posts", [["lang", "en"]])).status).toBe(200);
-    expect((await wp.get("/wp/v2/posts", [["search", "tomato"]])).status).toBe(200);
-  });
-
-  it("is rest_invalid_param on a type that binds no search, and for search_columns", async () => {
-    const { wp } = await searchSite();
-    const refused = await inSequence(
-      [
-        ["/wp/v2/pages", [["search", "tomato"]]],
-        ["/wp/v2/posts", [["search_columns", "post_title"]]],
-        ["/wp/v2/users", [["search", "tomato"]]],
-      ] as const,
-      async ([path, query]) => {
-        const response = await wp.get(path, query);
-        return [response.status, codeOf(response)];
-      },
-    );
-    expect(refused).toEqual(Array.from({ length: 3 }, () => [400, "rest_invalid_param"]));
-  });
+  it.effect("is rest_invalid_param on a type that binds no search, and for search_columns", () =>
+    Effect.gen(function* () {
+      const { wp } = yield* searchSite();
+      const refused = yield* Effect.forEach(
+        [
+          ["/wp/v2/pages", [["search", "tomato"]]],
+          ["/wp/v2/posts", [["search_columns", "post_title"]]],
+          ["/wp/v2/users", [["search", "tomato"]]],
+        ] as const,
+        ([path, query]) =>
+          Effect.gen(function* () {
+            const response = yield* wp.get(path, query);
+            return [response.status, codeOf(response)];
+          }),
+        { concurrency: 1 },
+      );
+      expect(refused).toEqual(Array.from({ length: 3 }, () => [400, "rest_invalid_param"]));
+    }),
+  );
 });
 
 describe("the wp/v2 read API — routes", () => {
-  it("answers every write method, and an unbound or unknown route, as rest_no_route", async () => {
-    const wp = site();
-    const post = await wp.create("posts", {});
-    const answers = await inSequence(["POST", "PUT", "PATCH", "DELETE"], (method) =>
-      wp.get(`/wp/v2/posts/${post.wireId}`, [], Option.none(), method),
-    );
-    expect(answers.map((response) => [response.status, codeOf(response)])).toEqual(
-      answers.map(() => [404, "rest_no_route"]),
-    );
-    expect(codeOf(await wp.get("/wp/v2/comments"))).toBe("rest_no_route");
-    expect(codeOf(await wp.get("/wp/v2/settings"))).toBe("rest_no_route");
-    // A taxonomy the site doesn't bind has no route.
-    expect(codeOf(await wp.get("/wp/v2/categories"))).toBe("rest_no_route");
-  });
+  it.effect("answers every write method, and an unbound or unknown route, as rest_no_route", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const post = yield* wp.create("posts", {});
+      const answers = yield* Effect.forEach(
+        ["POST", "PUT", "PATCH", "DELETE"],
+        (method) => wp.get(`/wp/v2/posts/${post.wireId}`, [], Option.none(), method),
+        { concurrency: 1 },
+      );
+      expect(answers.map((response) => [response.status, codeOf(response)])).toEqual(
+        answers.map(() => [404, "rest_no_route"]),
+      );
+      expect(codeOf(yield* wp.get("/wp/v2/comments"))).toBe("rest_no_route");
+      expect(codeOf(yield* wp.get("/wp/v2/settings"))).toBe("rest_no_route");
+      // A taxonomy the site doesn't bind has no route.
+      expect(codeOf(yield* wp.get("/wp/v2/categories"))).toBe("rest_no_route");
+    }),
+  );
 
-  it("serves the discovery index and the namespace, with the api.w.org Link on every response", async () => {
-    const wp = site();
-    const index = decodeBody(
-      Schema.Struct({
-        namespaces: Schema.Array(Schema.String),
-        routes: Schema.Record(Schema.String, Schema.Json),
-        gmt_offset: Schema.String,
+  it.effect(
+    "serves the discovery index and the namespace, with the api.w.org Link on every response",
+    () =>
+      Effect.gen(function* () {
+        const wp = site();
+        const index = decodeBody(
+          Schema.Struct({
+            namespaces: Schema.Array(Schema.String),
+            routes: Schema.Record(Schema.String, Schema.Json),
+            gmt_offset: Schema.String,
+          }),
+        )(yield* wp.get("/"));
+        expect(index.namespaces).toEqual(["wp/v2"]);
+        expect(R.keys(index.routes)).toEqual([
+          "/wp/v2/posts",
+          "/wp/v2/posts/(?P<id>[\\d]+)",
+          "/wp/v2/pages",
+          "/wp/v2/pages/(?P<id>[\\d]+)",
+          "/wp/v2/media",
+          "/wp/v2/media/(?P<id>[\\d]+)",
+          "/wp/v2/users",
+          "/wp/v2/users/(?P<id>[\\d]+)",
+        ]);
+        expect(["10", "11"]).toContain(index.gmt_offset);
+        expect((yield* wp.get("/wp/v2")).status).toBe(200);
+        expect((yield* wp.get("/wp/v2/nothing")).headers["link"]).toBe(
+          '<https://example.org/wp-json/>; rel="https://api.w.org/"',
+        );
       }),
-    )(await wp.get("/"));
-    expect(index.namespaces).toEqual(["wp/v2"]);
-    expect(R.keys(index.routes)).toEqual([
-      "/wp/v2/posts",
-      "/wp/v2/posts/(?P<id>[\\d]+)",
-      "/wp/v2/pages",
-      "/wp/v2/pages/(?P<id>[\\d]+)",
-      "/wp/v2/media",
-      "/wp/v2/media/(?P<id>[\\d]+)",
-      "/wp/v2/users",
-      "/wp/v2/users/(?P<id>[\\d]+)",
-    ]);
-    expect(["10", "11"]).toContain(index.gmt_offset);
-    expect((await wp.get("/wp/v2")).status).toBe(200);
-    expect((await wp.get("/wp/v2/nothing")).headers["link"]).toBe(
-      '<https://example.org/wp-json/>; rel="https://api.w.org/"',
-    );
-  });
+  );
 
-  it("answers HEAD with GET's status and headers and no body", async () => {
-    const wp = site();
-    await wp.create("posts", {});
-    const head = await wp.get("/wp/v2/posts", [], Option.none(), "HEAD");
-    const get = await wp.get("/wp/v2/posts");
-    expect([head.status, head.headers, head.body]).toEqual([
-      get.status,
-      get.headers,
-      Option.none(),
-    ]);
-  });
+  it.effect("answers HEAD with GET's status and headers and no body", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      yield* wp.create("posts", {});
+      const head = yield* wp.get("/wp/v2/posts", [], Option.none(), "HEAD");
+      const get = yield* wp.get("/wp/v2/posts");
+      expect([head.status, head.headers, head.body]).toEqual([
+        get.status,
+        get.headers,
+        Option.none(),
+      ]);
+    }),
+  );
 });
 
 describe("the wp/v2 read API — every parameter's check", () => {
   /** The names `rest_invalid_param` lists for a query, or none for another answer. */
-  const refused = async (
-    path: string,
-    query: ReadonlyArray<readonly [string, string]>,
-    wp = site(),
-  ) => {
-    const body = decodeBody(ErrorBody)(await wp.get(path, query));
-    return [body.code, R.keys(body.data.params ?? {})];
-  };
-
-  it("names each bad value: a non-integer, an out-of-range one, an unknown enum, a bad date, context and status", async () => {
-    expect(
-      await refused("/wp/v2/posts", [
-        ["page", "two"],
-        ["per_page", "0"],
-        ["offset", "-1"],
-        ["order", "sideways"],
-        ["orderby", "parent"],
-        ["after", "yesterday"],
-        ["modified_before", "2026-13-45T99:00:00"],
-        ["context", "print"],
-        ["status", "publish,unknown"],
-      ]),
-    ).toEqual([
-      "rest_invalid_param",
-      [
-        "context",
-        "status",
-        "page",
-        "per_page",
-        "offset",
-        "order",
-        "orderby",
-        "after",
-        "modified_before",
-      ],
-    ]);
-    const bounds = decodeBody(ErrorBody)(
-      await site().get("/wp/v2/posts", [
-        ["page", "0"],
-        ["per_page", "500"],
-      ]),
-    );
-    expect(bounds.data.params).toEqual({
-      page: "page must be greater than or equal to 1",
-      per_page: "per_page must be between 1 (inclusive) and 100 (inclusive)",
+  const refused = (path: string, query: ReadonlyArray<readonly [string, string]>, wp = site()) =>
+    Effect.gen(function* () {
+      const body = decodeBody(ErrorBody)(yield* wp.get(path, query));
+      return [body.code, R.keys(body.data.params ?? {})];
     });
-  });
 
-  it("refuses a parameter the post type doesn't take, or whose column the binding leaves out", async () => {
-    expect(await refused("/wp/v2/posts", [["parent", "1"]])).toEqual([
-      "rest_invalid_param",
-      ["parent"],
-    ]);
-    expect(
-      await refused("/wp/v2/media", [
-        ["media_type", "hologram"],
-        ["menu_order", "1"],
-      ]),
-    ).toEqual(["rest_invalid_param", ["menu_order", "media_type"]]);
-    const narrow = site({ columns: { slug: "slug", date: "publishedAt", modified: "updatedAt" } });
-    expect(
-      await refused(
-        "/wp/v2/pages",
-        [
-          ["author", "1"],
-          ["parent", "1"],
-        ],
-        narrow,
-      ),
-    ).toEqual(["rest_invalid_param", ["author", "parent"]]);
-  });
+  it.effect(
+    "names each bad value: a non-integer, an out-of-range one, an unknown enum, a bad date, context and status",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* refused("/wp/v2/posts", [
+            ["page", "two"],
+            ["per_page", "0"],
+            ["offset", "-1"],
+            ["order", "sideways"],
+            ["orderby", "parent"],
+            ["after", "yesterday"],
+            ["modified_before", "2026-13-45T99:00:00"],
+            ["context", "print"],
+            ["status", "publish,unknown"],
+          ]),
+        ).toEqual([
+          "rest_invalid_param",
+          [
+            "context",
+            "status",
+            "page",
+            "per_page",
+            "offset",
+            "order",
+            "orderby",
+            "after",
+            "modified_before",
+          ],
+        ]);
+        const bounds = decodeBody(ErrorBody)(
+          yield* site().get("/wp/v2/posts", [
+            ["page", "0"],
+            ["per_page", "500"],
+          ]),
+        );
+        expect(bounds.data.params).toEqual({
+          page: "page must be greater than or equal to 1",
+          per_page: "per_page must be between 1 (inclusive) and 100 (inclusive)",
+        });
+      }),
+  );
 
-  it("refuses context=edit on a collection, as core does for a caller who can't edit", async () => {
-    const wp = site();
-    const anonymous = await wp.get("/wp/v2/posts", [["context", "edit"]]);
-    expect([anonymous.status, codeOf(anonymous)]).toEqual([401, "rest_forbidden_context"]);
-    const signedIn = await wp.get("/wp/v2/posts", [["context", "edit"]], Option.some(member));
-    expect([signedIn.status, codeOf(signedIn)]).toEqual([403, "rest_forbidden_context"]);
-  });
+  it.effect(
+    "refuses a parameter the post type doesn't take, or whose column the binding leaves out",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* refused("/wp/v2/posts", [["parent", "1"]])).toEqual([
+          "rest_invalid_param",
+          ["parent"],
+        ]);
+        expect(
+          yield* refused("/wp/v2/media", [
+            ["media_type", "hologram"],
+            ["menu_order", "1"],
+          ]),
+        ).toEqual(["rest_invalid_param", ["menu_order", "media_type"]]);
+        const narrow = site({
+          columns: { slug: "slug", date: "publishedAt", modified: "updatedAt" },
+        });
+        expect(
+          yield* refused(
+            "/wp/v2/pages",
+            [
+              ["author", "1"],
+              ["parent", "1"],
+            ],
+            narrow,
+          ),
+        ).toEqual(["rest_invalid_param", ["author", "parent"]]);
+      }),
+  );
 
-  it("answers an orderby whose column is unbound or unsortable as rest_invalid_param", async () => {
-    const narrow = site({ columns: { slug: "slug", date: "publishedAt", modified: "updatedAt" } });
-    expect(
-      decodeBody(ErrorBody)(await narrow.get("/wp/v2/posts", [["orderby", "title"]])).data.params,
-    ).toEqual({ orderby: "orderby title is not supported for this post type." });
-    const unsortable = site({
-      columns: { slug: "slug", date: "publishedAt", modified: "updatedAt", title: "subtitle" },
-    });
-    expect(
-      decodeBody(ErrorBody)(await unsortable.get("/wp/v2/posts", [["orderby", "title"]])).data
-        .params,
-    ).toEqual({ orderby: "orderby title is not sortable for this post type." });
-  });
+  it.effect("refuses context=edit on a collection, as core does for a caller who can't edit", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const anonymous = yield* wp.get("/wp/v2/posts", [["context", "edit"]]);
+      expect([anonymous.status, codeOf(anonymous)]).toEqual([401, "rest_forbidden_context"]);
+      const signedIn = yield* wp.get("/wp/v2/posts", [["context", "edit"]], Option.some(member));
+      expect([signedIn.status, codeOf(signedIn)]).toEqual([403, "rest_forbidden_context"]);
+    }),
+  );
+
+  it.effect("answers an orderby whose column is unbound or unsortable as rest_invalid_param", () =>
+    Effect.gen(function* () {
+      const narrow = site({
+        columns: { slug: "slug", date: "publishedAt", modified: "updatedAt" },
+      });
+      expect(
+        decodeBody(ErrorBody)(yield* narrow.get("/wp/v2/posts", [["orderby", "title"]])).data
+          .params,
+      ).toEqual({ orderby: "orderby title is not supported for this post type." });
+      const unsortable = site({
+        columns: { slug: "slug", date: "publishedAt", modified: "updatedAt", title: "subtitle" },
+      });
+      expect(
+        decodeBody(ErrorBody)(yield* unsortable.get("/wp/v2/posts", [["orderby", "title"]])).data
+          .params,
+      ).toEqual({ orderby: "orderby title is not sortable for this post type." });
+    }),
+  );
 });
 
 describe("the wp/v2 read API — every filter and order", () => {
-  it("lists media under the inherit default, and filters it by mime_type and media_type", async () => {
-    const wp = site();
-    const jpeg = await wp.create("media", { mimeType: "image/jpeg" });
-    await wp.create("media", { mimeType: "image/png" });
-    expect(listed(await wp.get("/wp/v2/media", [["mime_type", "image/jpeg"]]))).toEqual([
-      jpeg.wireId,
-    ]);
-    // The in-memory leaf has no media-type column; a binding that names one filters on it.
-    const typed = site({
-      columns: { slug: "slug", date: "publishedAt", modified: "updatedAt", mediaType: "mimeType" },
-    });
-    const image = await typed.create("media", { mimeType: "image" });
-    expect(listed(await typed.get("/wp/v2/media", [["media_type", "image"]]))).toEqual([
-      image.wireId,
-    ]);
-    // An attachment is never `publish` or `future`, and a post is never `inherit`.
-    expect(
-      listed(await wp.get("/wp/v2/media", [["status", "publish,future"]], Option.some(member))),
-    ).toEqual([]);
-    expect(
-      listed(await wp.get("/wp/v2/posts", [["status", "inherit"]], Option.some(member))),
-    ).toEqual([]);
-  });
+  it.effect(
+    "lists media under the inherit default, and filters it by mime_type and media_type",
+    () =>
+      Effect.gen(function* () {
+        const wp = site();
+        const jpeg = yield* wp.create("media", { mimeType: "image/jpeg" });
+        yield* wp.create("media", { mimeType: "image/png" });
+        expect(listed(yield* wp.get("/wp/v2/media", [["mime_type", "image/jpeg"]]))).toEqual([
+          jpeg.wireId,
+        ]);
+        // The in-memory leaf has no media-type column; a binding that names one filters on it.
+        const typed = site({
+          columns: {
+            slug: "slug",
+            date: "publishedAt",
+            modified: "updatedAt",
+            mediaType: "mimeType",
+          },
+        });
+        const image = yield* typed.create("media", { mimeType: "image" });
+        expect(listed(yield* typed.get("/wp/v2/media", [["media_type", "image"]]))).toEqual([
+          image.wireId,
+        ]);
+        // An attachment is never `publish` or `future`, and a post is never `inherit`.
+        expect(
+          listed(
+            yield* wp.get("/wp/v2/media", [["status", "publish,future"]], Option.some(member)),
+          ),
+        ).toEqual([]);
+        expect(
+          listed(yield* wp.get("/wp/v2/posts", [["status", "inherit"]], Option.some(member))),
+        ).toEqual([]);
+      }),
+  );
 
-  it("filters pages by author, author_exclude, parent, parent_exclude and menu_order", async () => {
-    const wp = site();
-    const top = await wp.create("pages", { slug: "top", menuOrder: 1 });
-    const child = await wp.create("pages", { slug: "child", parentId: top.id, menuOrder: 2 });
-    const theirs = await wp.create("pages", { slug: "theirs", parentId: child.id }, stranger);
-    const memberWire = 1;
-    const strangerWire = 2;
-    const of = (query: ReadonlyArray<readonly [string, string]>) =>
-      wp.get("/wp/v2/pages", [["orderby", "slug"], ["order", "asc"], ...query]).then(listed);
-    expect(await of([["author", String(memberWire)]])).toEqual([child.wireId, top.wireId]);
-    expect(await of([["author_exclude", String(memberWire)]])).toEqual([theirs.wireId]);
-    expect(await of([["author", String(strangerWire)]])).toEqual([theirs.wireId]);
-    expect(await of([["parent", String(top.wireId)]])).toEqual([child.wireId]);
-    // `top` has no parent, which WordPress stores as `post_parent = 0` and keeps.
-    expect(await of([["parent_exclude", String(top.wireId)]])).toEqual([theirs.wireId, top.wireId]);
-    expect(await of([["menu_order", "2"]])).toEqual([child.wireId]);
-  });
+  it.effect("filters pages by author, author_exclude, parent, parent_exclude and menu_order", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const top = yield* wp.create("pages", { slug: "top", menuOrder: 1 });
+      const child = yield* wp.create("pages", { slug: "child", parentId: top.id, menuOrder: 2 });
+      const theirs = yield* wp.create("pages", { slug: "theirs", parentId: child.id }, stranger);
+      const memberWire = 1;
+      const strangerWire = 2;
+      const of = (query: ReadonlyArray<readonly [string, string]>) =>
+        Effect.map(
+          wp.get("/wp/v2/pages", [["orderby", "slug"], ["order", "asc"], ...query]),
+          listed,
+        );
+      expect(yield* of([["author", String(memberWire)]])).toEqual([child.wireId, top.wireId]);
+      expect(yield* of([["author_exclude", String(memberWire)]])).toEqual([theirs.wireId]);
+      expect(yield* of([["author", String(strangerWire)]])).toEqual([theirs.wireId]);
+      expect(yield* of([["parent", String(top.wireId)]])).toEqual([child.wireId]);
+      // `top` has no parent, which WordPress stores as `post_parent = 0` and keeps.
+      expect(yield* of([["parent_exclude", String(top.wireId)]])).toEqual([
+        theirs.wireId,
+        top.wireId,
+      ]);
+      expect(yield* of([["menu_order", "2"]])).toEqual([child.wireId]);
+    }),
+  );
 
-  it("keeps every top-level page under parent_exclude, as WordPress does", async () => {
-    const wp = site();
-    const top = await wp.create("pages", { slug: "top" });
-    const child = await wp.create("pages", { slug: "child", parentId: top.id });
-    const theirs = await wp.create("pages", { slug: "theirs" }, stranger);
-    const of = (query: ReadonlyArray<readonly [string, string]>) =>
-      wp.get("/wp/v2/pages", [["orderby", "slug"], ["order", "asc"], ...query]).then(listed);
-    expect(await of([["parent_exclude", String(top.wireId)]])).toEqual([theirs.wireId, top.wireId]);
-    expect(await of([["parent_exclude", String(child.wireId)]])).toEqual([
-      child.wireId,
-      theirs.wireId,
-      top.wireId,
-    ]);
-  });
+  it.effect("keeps every top-level page under parent_exclude, as WordPress does", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const top = yield* wp.create("pages", { slug: "top" });
+      const child = yield* wp.create("pages", { slug: "child", parentId: top.id });
+      const theirs = yield* wp.create("pages", { slug: "theirs" }, stranger);
+      const of = (query: ReadonlyArray<readonly [string, string]>) =>
+        Effect.map(
+          wp.get("/wp/v2/pages", [["orderby", "slug"], ["order", "asc"], ...query]),
+          listed,
+        );
+      expect(yield* of([["parent_exclude", String(top.wireId)]])).toEqual([
+        theirs.wireId,
+        top.wireId,
+      ]);
+      expect(yield* of([["parent_exclude", String(child.wireId)]])).toEqual([
+        child.wireId,
+        theirs.wireId,
+        top.wireId,
+      ]);
+    }),
+  );
 
-  it("filters by modified_after and modified_before, and skips offset rows", async () => {
-    const wp = site();
-    const old = await wp.create("posts", { slug: "old", updatedAt: PAST });
-    const recent = await wp.create("posts", { slug: "recent", updatedAt: NOW });
-    expect(
-      listed(await wp.get("/wp/v2/posts", [["modified_after", "2026-06-01T00:00:00Z"]])),
-    ).toEqual([recent.wireId]);
-    expect(
-      listed(await wp.get("/wp/v2/posts", [["modified_before", "2026-06-01T00:00:00Z"]])),
-    ).toEqual([old.wireId]);
-    expect(
-      listed(
-        await wp.get("/wp/v2/posts", [
-          ["orderby", "slug"],
-          ["offset", "1"],
-        ]),
-      ),
-    ).toEqual([old.wireId]);
-  });
+  it.effect("filters by modified_after and modified_before, and skips offset rows", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const old = yield* wp.create("posts", { slug: "old", updatedAt: PAST });
+      const recent = yield* wp.create("posts", { slug: "recent", updatedAt: NOW });
+      expect(
+        listed(yield* wp.get("/wp/v2/posts", [["modified_after", "2026-06-01T00:00:00Z"]])),
+      ).toEqual([recent.wireId]);
+      expect(
+        listed(yield* wp.get("/wp/v2/posts", [["modified_before", "2026-06-01T00:00:00Z"]])),
+      ).toEqual([old.wireId]);
+      expect(
+        listed(
+          yield* wp.get("/wp/v2/posts", [
+            ["orderby", "slug"],
+            ["offset", "1"],
+          ]),
+        ),
+      ).toEqual([old.wireId]);
+    }),
+  );
 
-  it("orders by author, id, modified, title, parent and menu_order", async () => {
-    const wp = site();
-    const first = await wp.create("pages", {
-      slug: "b",
-      title: "Beta",
-      menuOrder: 2,
-      updatedAt: NOW,
-    });
-    const second = await wp.create("pages", {
-      slug: "a",
-      title: "Alpha",
-      menuOrder: 1,
-      parentId: first.id,
-      updatedAt: PAST,
-    });
-    const orderedBy = (orderby: string) =>
-      wp
-        .get("/wp/v2/pages", [
-          ["orderby", orderby],
-          ["order", "asc"],
-        ])
-        .then(listed);
-    const sorted = await inSequence(
-      ["author", "id", "modified", "title", "parent", "menu_order"],
-      async (orderby) => [orderby, (await orderedBy(orderby)).length],
-    );
-    expect(sorted).toEqual([
-      ["author", 2],
-      ["id", 2],
-      ["modified", 2],
-      ["title", 2],
-      ["parent", 2],
-      ["menu_order", 2],
-    ]);
-    expect(await orderedBy("title")).toEqual([second.wireId, first.wireId]);
-    expect(await orderedBy("menu_order")).toEqual([second.wireId, first.wireId]);
-    expect(await orderedBy("modified")).toEqual([second.wireId, first.wireId]);
-  });
+  it.effect("orders by author, id, modified, title, parent and menu_order", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const first = yield* wp.create("pages", {
+        slug: "b",
+        title: "Beta",
+        menuOrder: 2,
+        updatedAt: NOW,
+      });
+      const second = yield* wp.create("pages", {
+        slug: "a",
+        title: "Alpha",
+        menuOrder: 1,
+        parentId: first.id,
+        updatedAt: PAST,
+      });
+      const orderedBy = (orderby: string) =>
+        Effect.map(
+          wp.get("/wp/v2/pages", [
+            ["orderby", orderby],
+            ["order", "asc"],
+          ]),
+          listed,
+        );
+      const sorted = yield* Effect.forEach(
+        ["author", "id", "modified", "title", "parent", "menu_order"],
+        (orderby) =>
+          Effect.gen(function* () {
+            return [orderby, (yield* orderedBy(orderby)).length];
+          }),
+        { concurrency: 1 },
+      );
+      expect(sorted).toEqual([
+        ["author", 2],
+        ["id", 2],
+        ["modified", 2],
+        ["title", 2],
+        ["parent", 2],
+        ["menu_order", 2],
+      ]);
+      expect(yield* orderedBy("title")).toEqual([second.wireId, first.wireId]);
+      expect(yield* orderedBy("menu_order")).toEqual([second.wireId, first.wireId]);
+      expect(yield* orderedBy("modified")).toEqual([second.wireId, first.wireId]);
+    }),
+  );
 
-  it("lists status=any and status=private for the owner, and pending as nothing", async () => {
-    const wp = site();
-    const shown = await wp.create("posts", { slug: "shown" });
-    const drafted = await wp.create("posts", { slug: "drafted", draft: true });
-    const hidden = await wp.create("posts", { slug: "hidden", visibility: "private" });
-    // A `group` row is non-public, so its status is `private` too.
-    const shared = await wp.create("posts", { slug: "shared", visibility: "group" });
-    const owner = Option.some(member);
-    const asc = [
-      ["orderby", "slug"],
-      ["order", "asc"],
-    ] as const;
-    expect(listed(await wp.get("/wp/v2/posts", [...asc, ["status", "any"]], owner))).toEqual([
-      drafted.wireId,
-      hidden.wireId,
-      shared.wireId,
-      shown.wireId,
-    ]);
-    expect(listed(await wp.get("/wp/v2/posts", [...asc, ["status", "private"]], owner))).toEqual([
-      hidden.wireId,
-      shared.wireId,
-    ]);
-    expect(itemOf(await wp.get(`/wp/v2/posts/${shared.wireId}`, [], owner)).status).toBe("private");
-    expect(listed(await wp.get("/wp/v2/posts", [["status", "pending"]], owner))).toEqual([]);
-  });
+  it.effect("lists status=any and status=private for the owner, and pending as nothing", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const shown = yield* wp.create("posts", { slug: "shown" });
+      const drafted = yield* wp.create("posts", { slug: "drafted", draft: true });
+      const hidden = yield* wp.create("posts", { slug: "hidden", visibility: "private" });
+      // A `group` row is non-public, so its status is `private` too.
+      const shared = yield* wp.create("posts", { slug: "shared", visibility: "group" });
+      const owner = Option.some(member);
+      const asc = [
+        ["orderby", "slug"],
+        ["order", "asc"],
+      ] as const;
+      expect(listed(yield* wp.get("/wp/v2/posts", [...asc, ["status", "any"]], owner))).toEqual([
+        drafted.wireId,
+        hidden.wireId,
+        shared.wireId,
+        shown.wireId,
+      ]);
+      expect(listed(yield* wp.get("/wp/v2/posts", [...asc, ["status", "private"]], owner))).toEqual(
+        [hidden.wireId, shared.wireId],
+      );
+      expect(itemOf(yield* wp.get(`/wp/v2/posts/${shared.wireId}`, [], owner)).status).toBe(
+        "private",
+      );
+      expect(listed(yield* wp.get("/wp/v2/posts", [["status", "pending"]], owner))).toEqual([]);
+    }),
+  );
 
-  it("selects nothing by draft or private, and everything live by publish, without those columns", async () => {
-    const wp = site({ columns: { slug: "slug", date: "publishedAt", modified: "updatedAt" } });
-    const post = await wp.create("posts", {});
-    const owner = Option.some(member);
-    expect(listed(await wp.get("/wp/v2/posts", [["status", "draft,private"]], owner))).toEqual([]);
-    expect(listed(await wp.get("/wp/v2/posts", [], owner))).toEqual([post.wireId]);
-  });
+  it.effect(
+    "selects nothing by draft or private, and everything live by publish, without those columns",
+    () =>
+      Effect.gen(function* () {
+        const wp = site({ columns: { slug: "slug", date: "publishedAt", modified: "updatedAt" } });
+        const post = yield* wp.create("posts", {});
+        const owner = Option.some(member);
+        expect(listed(yield* wp.get("/wp/v2/posts", [["status", "draft,private"]], owner))).toEqual(
+          [],
+        );
+        expect(listed(yield* wp.get("/wp/v2/posts", [], owner))).toEqual([post.wireId]);
+      }),
+  );
 });
 
 describe("the wp/v2 read API — item forms and failures", () => {
-  it("answers context=embed for an item and a list, with an attachment's media fields only when it has media", async () => {
-    const wp = site();
-    const bare = await wp.create("media", { slug: "bare" });
-    const withMedia = await wp.create("media", { mimeType: "image/jpeg", slug: "photo" });
-    const embedOf = async (wireId: number) =>
-      R.keys(objectOf(await wp.get(`/wp/v2/media/${wireId}`, [["context", "embed"]])));
-    expect(await embedOf(bare.wireId)).not.toContain("source_url");
-    expect(await embedOf(withMedia.wireId)).toContain("source_url");
-    const embedded = decodeBody(Schema.Array(Schema.Record(Schema.String, Schema.Json)))(
-      await wp.get("/wp/v2/media", [["context", "embed"]]),
-    );
-    expect(embedded.map((item) => R.has(item, "description"))).toEqual([false, false]);
-    const post = await wp.create("posts", {});
-    expect(
-      R.keys(objectOf(await wp.get(`/wp/v2/posts/${post.wireId}`, [["context", "embed"]]))),
-    ).not.toContain("content");
-  });
+  it.effect(
+    "answers context=embed for an item and a list, with an attachment's media fields only when it has media",
+    () =>
+      Effect.gen(function* () {
+        const wp = site();
+        const bare = yield* wp.create("media", { slug: "bare" });
+        const withMedia = yield* wp.create("media", { mimeType: "image/jpeg", slug: "photo" });
+        const embedOf = (wireId: number) =>
+          Effect.gen(function* () {
+            return R.keys(
+              objectOf(yield* wp.get(`/wp/v2/media/${wireId}`, [["context", "embed"]])),
+            );
+          });
+        expect(yield* embedOf(bare.wireId)).not.toContain("source_url");
+        expect(yield* embedOf(withMedia.wireId)).toContain("source_url");
+        const embedded = decodeBody(Schema.Array(Schema.Record(Schema.String, Schema.Json)))(
+          yield* wp.get("/wp/v2/media", [["context", "embed"]]),
+        );
+        expect(embedded.map((item) => R.has(item, "description"))).toEqual([false, false]);
+        const post = yield* wp.create("posts", {});
+        expect(
+          R.keys(objectOf(yield* wp.get(`/wp/v2/posts/${post.wireId}`, [["context", "embed"]]))),
+        ).not.toContain("content");
+      }),
+  );
 
-  it("answers an attachment without media with empty file fields, and its post as post", async () => {
-    const wp = site();
-    const post = await wp.create("posts", {});
-    const media = await wp.create("media", { slug: "bare", parentId: post.id });
-    const body = objectOf(await wp.get(`/wp/v2/media/${media.wireId}`));
-    expect([body["source_url"], body["filename"], body["filesize"], body["post"]]).toEqual([
-      "",
-      "",
-      null,
-      post.wireId,
-    ]);
-  });
+  it.effect(
+    "answers an attachment without media with empty file fields, and its post as post",
+    () =>
+      Effect.gen(function* () {
+        const wp = site();
+        const post = yield* wp.create("posts", {});
+        const media = yield* wp.create("media", { slug: "bare", parentId: post.id });
+        const body = objectOf(yield* wp.get(`/wp/v2/media/${media.wireId}`));
+        expect([body["source_url"], body["filename"], body["filesize"], body["post"]]).toEqual([
+          "",
+          "",
+          null,
+          post.wireId,
+        ]);
+      }),
+  );
 
-  it("falls back to the modified date for an item with no published date", async () => {
-    const wp = site();
-    const post = await wp.create("posts", { publishedAt: null, updatedAt: NOW });
-    expect(objectOf(await wp.get(`/wp/v2/posts/${post.wireId}`))["date"]).toBe(
-      "2026-10-22T11:00:00",
-    );
-  });
+  it.effect("falls back to the modified date for an item with no published date", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const post = yield* wp.create("posts", { publishedAt: null, updatedAt: NOW });
+      expect(objectOf(yield* wp.get(`/wp/v2/posts/${post.wireId}`))["date"]).toBe(
+        "2026-10-22T11:00:00",
+      );
+    }),
+  );
 
-  it("keeps a whole field asked for twice, a scalar asked for by a sub-field, and skips a missing one", async () => {
-    const wp = site();
-    const post = await wp.create("posts", {});
-    expect(
-      objectOf(
-        await wp.get(`/wp/v2/posts/${post.wireId}`, [
-          ["_fields", "title,title.rendered,slug.part,nothing"],
-        ]),
-      ),
-    ).toEqual({ title: { rendered: "<title>A title</title>" }, slug: "a-slug" });
-  });
+  it.effect(
+    "keeps a whole field asked for twice, a scalar asked for by a sub-field, and skips a missing one",
+    () =>
+      Effect.gen(function* () {
+        const wp = site();
+        const post = yield* wp.create("posts", {});
+        expect(
+          objectOf(
+            yield* wp.get(`/wp/v2/posts/${post.wireId}`, [
+              ["_fields", "title,title.rendered,slug.part,nothing"],
+            ]),
+          ),
+        ).toEqual({ title: { rendered: "<title>A title</title>" }, slug: "a-slug" });
+      }),
+  );
 
-  it("is public for the anonymous when an embedded parent is serveable", async () => {
-    const wp = site();
-    const parent = await wp.create("pages", { slug: "parent" });
-    const child = await wp.create("pages", { slug: "child", parentId: parent.id });
-    const response = await wp.get(`/wp/v2/pages/${child.wireId}`, [["_embed", "up"]]);
-    expect(response.headers["cache-control"]).toBe("public");
-  });
+  it.effect("is public for the anonymous when an embedded parent is serveable", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const parent = yield* wp.create("pages", { slug: "parent" });
+      const child = yield* wp.create("pages", { slug: "child", parentId: parent.id });
+      const response = yield* wp.get(`/wp/v2/pages/${child.wireId}`, [["_embed", "up"]]);
+      expect(response.headers["cache-control"]).toBe("public");
+    }),
+  );
 
-  it("reads no related node of an unbound type", async () => {
-    const wp = site({ bound: ["post"] });
-    const media = await wp.create("media", { mimeType: "image/jpeg" });
-    const post = await wp.create("posts", { featuredMediaId: media.id });
-    expect(itemOf(await wp.get(`/wp/v2/posts/${post.wireId}`)).featured_media).toBe(0);
-    expect(codeOf(await wp.get(`/wp/v2/media/${media.wireId}`))).toBe("rest_no_route");
-  });
+  it.effect("reads no related node of an unbound type", () =>
+    Effect.gen(function* () {
+      const wp = site({ bound: ["post"] });
+      const media = yield* wp.create("media", { mimeType: "image/jpeg" });
+      const post = yield* wp.create("posts", { featuredMediaId: media.id });
+      expect(itemOf(yield* wp.get(`/wp/v2/posts/${post.wireId}`)).featured_media).toBe(0);
+      expect(codeOf(yield* wp.get(`/wp/v2/media/${media.wireId}`))).toBe("rest_no_route");
+    }),
+  );
 
-  it("answers a failing renderer, store or codec as 500 internal_server_error", async () => {
-    const rendering = site({ failing: "render" });
-    const post = await rendering.create("posts", {});
-    const failed = await rendering.get(`/wp/v2/posts/${post.wireId}`);
-    expect([failed.status, codeOf(failed)]).toEqual([500, "internal_server_error"]);
-    const listing = await site({ failing: "list" }).get("/wp/v2/posts");
-    expect([listing.status, codeOf(listing)]).toEqual([500, "internal_server_error"]);
-    // The author codec knows only the accounts assigned it, as a real codec's table does.
-    const wp = site();
-    const outsider: ViewerAccount = { id: "u-outsider", role: "user" };
-    const theirs = await wp.create("posts", {}, outsider);
-    expect(codeOf(await wp.get(`/wp/v2/posts/${theirs.wireId}`))).toBe("internal_server_error");
-  });
+  it.effect("answers a failing renderer, store or codec as 500 internal_server_error", () =>
+    Effect.gen(function* () {
+      const rendering = site({ failing: "render" });
+      const post = yield* rendering.create("posts", {});
+      const failed = yield* rendering.get(`/wp/v2/posts/${post.wireId}`);
+      expect([failed.status, codeOf(failed)]).toEqual([500, "internal_server_error"]);
+      const listing = yield* site({ failing: "list" }).get("/wp/v2/posts");
+      expect([listing.status, codeOf(listing)]).toEqual([500, "internal_server_error"]);
+      // The author codec knows only the accounts assigned it, as a real codec's table does.
+      const wp = site();
+      const outsider: ViewerAccount = { id: "u-outsider", role: "user" };
+      const theirs = yield* wp.create("posts", {}, outsider);
+      expect(codeOf(yield* wp.get(`/wp/v2/posts/${theirs.wireId}`))).toBe("internal_server_error");
+    }),
+  );
 
-  it("answers a path outside the prefix as rest_no_route", async () => {
-    const wp = site();
-    const response = await run(wp.api.handle({ method: "GET", path: "/elsewhere", query: [] }));
-    expect(codeOf(response)).toBe("rest_no_route");
-  });
+  it.effect("answers a path outside the prefix as rest_no_route", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const response = yield* wp.api.handle({ method: "GET", path: "/elsewhere", query: [] });
+      expect(codeOf(response)).toBe("rest_no_route");
+    }),
+  );
 });
 
 // ── The wire forms WordPress core answers in (golden) ───────────────────
@@ -1810,45 +2073,53 @@ const adjusted = (form: WireForm): WireForm =>
 const withoutLinks = (response: WordPressResponse) => R.remove(objectOf(response), "_links");
 
 describe("the wp/v2 read API — the wire forms WordPress core answers in (golden)", () => {
-  it("answers /posts and /posts/{id} in core's post form", async () => {
-    const wp = site();
-    const post = await wp.create("posts", {});
-    const [first] = decodeBody(Schema.Array(Schema.Record(Schema.String, Schema.Json)))(
-      await wp.get("/wp/v2/posts"),
-    );
-    expect(formOf(R.remove(first ?? {}, "_links"))).toEqual(adjusted(POST_FORM));
-    const item = await wp.get(`/wp/v2/posts/${post.wireId}`);
-    expect(formOf(withoutLinks(item))).toEqual(adjusted(POST_FORM));
-    const links = itemOf(item)._links;
-    expect(
-      formOf(
-        R.filter(links, (_, rel) => Arr.contains(["self", "collection", "about", "curies"], rel)),
-      ),
-    ).toEqual(LINKS_FORM);
-  });
+  it.effect("answers /posts and /posts/{id} in core's post form", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const post = yield* wp.create("posts", {});
+      const [first] = decodeBody(Schema.Array(Schema.Record(Schema.String, Schema.Json)))(
+        yield* wp.get("/wp/v2/posts"),
+      );
+      expect(formOf(R.remove(first ?? {}, "_links"))).toEqual(adjusted(POST_FORM));
+      const item = yield* wp.get(`/wp/v2/posts/${post.wireId}`);
+      expect(formOf(withoutLinks(item))).toEqual(adjusted(POST_FORM));
+      const links = itemOf(item)._links;
+      expect(
+        formOf(
+          R.filter(links, (_, rel) => Arr.contains(["self", "collection", "about", "curies"], rel)),
+        ),
+      ).toEqual(LINKS_FORM);
+    }),
+  );
 
-  it("answers /pages/{id} in core's page form", async () => {
-    const wp = site();
-    const page = await wp.create("pages", {});
-    expect(formOf(withoutLinks(await wp.get(`/wp/v2/pages/${page.wireId}`)))).toEqual(
-      adjusted(PAGE_FORM),
-    );
-  });
+  it.effect("answers /pages/{id} in core's page form", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const page = yield* wp.create("pages", {});
+      expect(formOf(withoutLinks(yield* wp.get(`/wp/v2/pages/${page.wireId}`)))).toEqual(
+        adjusted(PAGE_FORM),
+      );
+    }),
+  );
 
-  it("answers /media/{id} in core's attachment form", async () => {
-    const wp = site();
-    const media = await wp.create("media", { mimeType: "image/jpeg" });
-    expect(formOf(withoutLinks(await wp.get(`/wp/v2/media/${media.wireId}`)))).toEqual(
-      adjusted(ATTACHMENT_FORM),
-    );
-  });
+  it.effect("answers /media/{id} in core's attachment form", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const media = yield* wp.create("media", { mimeType: "image/jpeg" });
+      expect(formOf(withoutLinks(yield* wp.get(`/wp/v2/media/${media.wireId}`)))).toEqual(
+        adjusted(ATTACHMENT_FORM),
+      );
+    }),
+  );
 
-  it("formats date in the site's time zone and date_gmt in UTC, as core does", async () => {
-    const wp = site();
-    const post = await wp.create("posts", {});
-    const item = itemOf(await wp.get(`/wp/v2/posts/${post.wireId}`));
-    expect([item.date, item.date_gmt]).toEqual(["2026-01-01T11:00:00", "2026-01-01T00:00:00"]);
-  });
+  it.effect("formats date in the site's time zone and date_gmt in UTC, as core does", () =>
+    Effect.gen(function* () {
+      const wp = site();
+      const post = yield* wp.create("posts", {});
+      const item = itemOf(yield* wp.get(`/wp/v2/posts/${post.wireId}`));
+      expect([item.date, item.date_gmt]).toEqual(["2026-01-01T11:00:00", "2026-01-01T00:00:00"]);
+    }),
+  );
 });
 
 // ── Phase 2: taxonomies and authors ─────────────────────────────────────
@@ -1872,320 +2143,393 @@ const sorted = (values: ReadonlyArray<number>) => Arr.sort(values, Order.Number)
  * their draft in `news` and `sport`, and a stranger's public post tagged
  * `hot`; a moderator owns only a draft.
  */
-const taxonomySite = async () => {
-  const wp = site({ terms: true });
-  const news = await wp.createTerm("category", { name: "News", slug: "news" });
-  const sport = await wp.createTerm("category", {
-    name: "Sport",
-    slug: "sport",
-    parentId: news.id,
+const taxonomySite = () =>
+  Effect.gen(function* () {
+    const wp = site({ terms: true });
+    const news = yield* wp.createTerm("category", { name: "News", slug: "news" });
+    const sport = yield* wp.createTerm("category", {
+      name: "Sport",
+      slug: "sport",
+      parentId: news.id,
+    });
+    const hot = yield* wp.createTerm("post_tag", { name: "Hot", slug: "hot" });
+    const open = yield* wp.create("posts", { slug: "open" });
+    const draft = yield* wp.create("posts", { slug: "draft", draft: true });
+    const theirs = yield* wp.create("posts", { slug: "theirs" }, stranger);
+    yield* wp.create("posts", { slug: "moderated", draft: true }, moderator);
+    yield* wp.assign("category", open.id, news.id);
+    yield* wp.assign("category", draft.id, news.id);
+    yield* wp.assign("category", draft.id, sport.id);
+    yield* wp.assign("post_tag", theirs.id, hot.id);
+    return { wp, news, sport, hot, open, draft, theirs };
   });
-  const hot = await wp.createTerm("post_tag", { name: "Hot", slug: "hot" });
-  const open = await wp.create("posts", { slug: "open" });
-  const draft = await wp.create("posts", { slug: "draft", draft: true });
-  const theirs = await wp.create("posts", { slug: "theirs" }, stranger);
-  await wp.create("posts", { slug: "moderated", draft: true }, moderator);
-  await wp.assign("category", open.id, news.id);
-  await wp.assign("category", draft.id, news.id);
-  await wp.assign("category", draft.id, sport.id);
-  await wp.assign("post_tag", theirs.id, hot.id);
-  return { wp, news, sport, hot, open, draft, theirs };
-};
 
 describe("the wp/v2 read API — taxonomies (phase 2)", () => {
-  it("counts only the assignments the viewer can read (EDGE-001), and hide_empty drops the rest", async () => {
-    const { wp, news, sport } = await taxonomySite();
-    const counts = async (who: Viewer, query: ReadonlyArray<readonly [string, string]> = []) =>
-      termsOf(await wp.get("/wp/v2/categories", query, who)).map(({ id, count }) => [id, count]);
-    expect(await counts(Option.none())).toEqual([
-      [news.wireId, 1],
-      [sport.wireId, 0],
-    ]);
-    expect(await counts(Option.some(member))).toEqual([
-      [news.wireId, 2],
-      [sport.wireId, 1],
-    ]);
-    expect(await counts(Option.none(), [["hide_empty", "true"]])).toEqual([[news.wireId, 1]]);
-    expect(await counts(Option.some(member), [["hide_empty", "1"]])).toHaveLength(2);
-    expect(
-      await counts(Option.some(member), [
-        ["orderby", "count"],
-        ["order", "asc"],
-      ]),
-    ).toEqual([
-      [sport.wireId, 1],
-      [news.wireId, 2],
-    ]);
-  });
+  it.effect(
+    "counts only the assignments the viewer can read (EDGE-001), and hide_empty drops the rest",
+    () =>
+      Effect.gen(function* () {
+        const { wp, news, sport } = yield* taxonomySite();
+        const counts = (who: Viewer, query: ReadonlyArray<readonly [string, string]> = []) =>
+          Effect.gen(function* () {
+            return termsOf(yield* wp.get("/wp/v2/categories", query, who)).map(({ id, count }) => [
+              id,
+              count,
+            ]);
+          });
+        expect(yield* counts(Option.none())).toEqual([
+          [news.wireId, 1],
+          [sport.wireId, 0],
+        ]);
+        expect(yield* counts(Option.some(member))).toEqual([
+          [news.wireId, 2],
+          [sport.wireId, 1],
+        ]);
+        expect(yield* counts(Option.none(), [["hide_empty", "true"]])).toEqual([[news.wireId, 1]]);
+        expect(yield* counts(Option.some(member), [["hide_empty", "1"]])).toHaveLength(2);
+        expect(
+          yield* counts(Option.some(member), [
+            ["orderby", "count"],
+            ["order", "asc"],
+          ]),
+        ).toEqual([
+          [sport.wireId, 1],
+          [news.wireId, 2],
+        ]);
+      }),
+  );
 
-  it("answers the total and the paging headers, with an empty page past the end as core does", async () => {
-    const { wp } = await taxonomySite();
-    const first = await wp.get("/wp/v2/categories", [["per_page", "1"]]);
-    expect([first.headers["x-wp-total"], first.headers["x-wp-totalpages"]]).toEqual(["2", "2"]);
-    expect(first.headers["link"]).toContain('rel="next"');
-    const past = await wp.get("/wp/v2/categories", [["page", "9"]]);
-    expect([past.status, termsOf(past)]).toEqual([200, []]);
-  });
+  it.effect(
+    "answers the total and the paging headers, with an empty page past the end as core does",
+    () =>
+      Effect.gen(function* () {
+        const { wp } = yield* taxonomySite();
+        const first = yield* wp.get("/wp/v2/categories", [["per_page", "1"]]);
+        expect([first.headers["x-wp-total"], first.headers["x-wp-totalpages"]]).toEqual(["2", "2"]);
+        expect(first.headers["link"]).toContain('rel="next"');
+        const past = yield* wp.get("/wp/v2/categories", [["page", "9"]]);
+        expect([past.status, termsOf(past)]).toEqual([200, []]);
+      }),
+  );
 
-  it("filters terms by include, exclude, slug, parent and post", async () => {
-    const { wp, news, sport, open, draft } = await taxonomySite();
-    const ids = async (
-      query: ReadonlyArray<readonly [string, string]>,
-      who: Viewer = Option.none(),
-    ) => termsOf(await wp.get("/wp/v2/categories", query, who)).map(({ id }) => id);
-    expect(await ids([["slug", "sport"]])).toEqual([sport.wireId]);
-    expect(await ids([["exclude", String(news.wireId)]])).toEqual([sport.wireId]);
-    expect(await ids([["parent", "0"]])).toEqual([news.wireId]);
-    expect(await ids([["parent", String(news.wireId)]])).toEqual([sport.wireId]);
-    expect(await ids([["post", String(open.wireId)]])).toEqual([news.wireId]);
-    expect(await ids([["post", String(draft.wireId)]], Option.some(member))).toEqual([
-      news.wireId,
-      sport.wireId,
-    ]);
-    expect(
-      await ids([
-        ["include", `${sport.wireId},${news.wireId}`],
-        ["orderby", "include"],
-      ]),
-    ).toEqual([sport.wireId, news.wireId]);
-  });
+  it.effect("filters terms by include, exclude, slug, parent and post", () =>
+    Effect.gen(function* () {
+      const { wp, news, sport, open, draft } = yield* taxonomySite();
+      const ids = (query: ReadonlyArray<readonly [string, string]>, who: Viewer = Option.none()) =>
+        Effect.gen(function* () {
+          return termsOf(yield* wp.get("/wp/v2/categories", query, who)).map(({ id }) => id);
+        });
+      expect(yield* ids([["slug", "sport"]])).toEqual([sport.wireId]);
+      expect(yield* ids([["exclude", String(news.wireId)]])).toEqual([sport.wireId]);
+      expect(yield* ids([["parent", "0"]])).toEqual([news.wireId]);
+      expect(yield* ids([["parent", String(news.wireId)]])).toEqual([sport.wireId]);
+      expect(yield* ids([["post", String(open.wireId)]])).toEqual([news.wireId]);
+      expect(yield* ids([["post", String(draft.wireId)]], Option.some(member))).toEqual([
+        news.wireId,
+        sport.wireId,
+      ]);
+      expect(
+        yield* ids([
+          ["include", `${sport.wireId},${news.wireId}`],
+          ["orderby", "include"],
+        ]),
+      ).toEqual([sport.wireId, news.wireId]);
+    }),
+  );
 
-  it("answers post= for a post the viewer can't read as an unknown post (SEC-AUTH-ENUM-001)", async () => {
-    const { wp, draft } = await taxonomySite();
-    const hidden = await wp.get("/wp/v2/categories", [["post", String(draft.wireId)]]);
-    const unknown = await wp.get("/wp/v2/categories", [["post", "999"]]);
-    expect([hidden.status, codeOf(hidden)]).toEqual([400, "rest_post_invalid_id"]);
-    expect([unknown.status, codeOf(unknown)]).toEqual([400, "rest_post_invalid_id"]);
-  });
+  it.effect(
+    "answers post= for a post the viewer can't read as an unknown post (SEC-AUTH-ENUM-001)",
+    () =>
+      Effect.gen(function* () {
+        const { wp, draft } = yield* taxonomySite();
+        const hidden = yield* wp.get("/wp/v2/categories", [["post", String(draft.wireId)]]);
+        const unknown = yield* wp.get("/wp/v2/categories", [["post", "999"]]);
+        expect([hidden.status, codeOf(hidden)]).toEqual([400, "rest_post_invalid_id"]);
+        expect([unknown.status, codeOf(unknown)]).toEqual([400, "rest_post_invalid_id"]);
+      }),
+  );
 
-  it("answers one term, its readable parent, and 404 rest_term_invalid for an unknown id", async () => {
-    const { wp, news, sport, hot } = await taxonomySite();
-    const child = termOf(await wp.get(`/wp/v2/categories/${sport.wireId}`));
-    expect(child.parent).toBe(news.wireId);
-    expect(R.has(child._links, "up")).toBe(true);
-    expect(termOf(await wp.get(`/wp/v2/tags/${hot.wireId}`)).parent).toBeUndefined();
-    const missing = await wp.get("/wp/v2/categories/999");
-    expect([missing.status, codeOf(missing)]).toEqual([404, "rest_term_invalid"]);
-    const edit = await wp.get(`/wp/v2/tags/${hot.wireId}`, [["context", "edit"]]);
-    expect([edit.status, codeOf(edit)]).toEqual([401, "rest_forbidden_context"]);
-  });
+  it.effect(
+    "answers one term, its readable parent, and 404 rest_term_invalid for an unknown id",
+    () =>
+      Effect.gen(function* () {
+        const { wp, news, sport, hot } = yield* taxonomySite();
+        const child = termOf(yield* wp.get(`/wp/v2/categories/${sport.wireId}`));
+        expect(child.parent).toBe(news.wireId);
+        expect(R.has(child._links, "up")).toBe(true);
+        expect(termOf(yield* wp.get(`/wp/v2/tags/${hot.wireId}`)).parent).toBeUndefined();
+        const missing = yield* wp.get("/wp/v2/categories/999");
+        expect([missing.status, codeOf(missing)]).toEqual([404, "rest_term_invalid"]);
+        const edit = yield* wp.get(`/wp/v2/tags/${hot.wireId}`, [["context", "edit"]]);
+        expect([edit.status, codeOf(edit)]).toEqual([401, "rest_forbidden_context"]);
+      }),
+  );
 
-  it("refuses the term parameters it can't honour", async () => {
-    const { wp } = await taxonomySite();
-    const refused = await inSequence(
-      [
-        ["/wp/v2/categories", "search", "news"],
-        ["/wp/v2/categories", "orderby", "term_group"],
-        ["/wp/v2/tags", "parent", "1"],
-        ["/wp/v2/tags", "hide_empty", "maybe"],
-      ] as const,
-      ([path, name, value]) => wp.get(path, [[name, value]]),
-    );
-    expect(refused.map(codeOf)).toEqual(refused.map(() => "rest_invalid_param"));
-  });
+  it.effect("refuses the term parameters it can't honour", () =>
+    Effect.gen(function* () {
+      const { wp } = yield* taxonomySite();
+      const refused = yield* Effect.forEach(
+        [
+          ["/wp/v2/categories", "search", "news"],
+          ["/wp/v2/categories", "orderby", "term_group"],
+          ["/wp/v2/tags", "parent", "1"],
+          ["/wp/v2/tags", "hide_empty", "maybe"],
+        ] as const,
+        ([path, name, value]) => wp.get(path, [[name, value]]),
+        { concurrency: 1 },
+      );
+      expect(refused.map(codeOf)).toEqual(refused.map(() => "rest_invalid_param"));
+    }),
+  );
 });
 
 describe("the wp/v2 read API — items and their terms (phase 2)", () => {
-  it("lists the members of a term through memberFilter, joined by tax_relation", async () => {
-    const { wp, news, sport, hot, open, theirs } = await taxonomySite();
-    const ids = async (query: ReadonlyArray<readonly [string, string]>) =>
-      sorted(listed(await wp.get("/wp/v2/posts", query)));
-    expect(await ids([["categories", String(news.wireId)]])).toEqual([open.wireId]);
-    // The only post in `sport` is a draft: nothing an anonymous viewer can read.
-    expect(await ids([["categories", String(sport.wireId)]])).toEqual([]);
-    expect(await ids([["tags", String(hot.wireId)]])).toEqual([theirs.wireId]);
-    expect(
-      await ids([
-        ["categories", String(news.wireId)],
-        ["tags", String(hot.wireId)],
-      ]),
-    ).toEqual([]);
-    expect(
-      await ids([
-        ["categories", String(news.wireId)],
-        ["tags", String(hot.wireId)],
-        ["tax_relation", "OR"],
-      ]),
-    ).toEqual(sorted([open.wireId, theirs.wireId]));
-    expect(await ids([["categories", "999"]])).toEqual([]);
-  });
+  it.effect("lists the members of a term through memberFilter, joined by tax_relation", () =>
+    Effect.gen(function* () {
+      const { wp, news, sport, hot, open, theirs } = yield* taxonomySite();
+      const ids = (query: ReadonlyArray<readonly [string, string]>) =>
+        Effect.gen(function* () {
+          return sorted(listed(yield* wp.get("/wp/v2/posts", query)));
+        });
+      expect(yield* ids([["categories", String(news.wireId)]])).toEqual([open.wireId]);
+      // The only post in `sport` is a draft: nothing an anonymous viewer can read.
+      expect(yield* ids([["categories", String(sport.wireId)]])).toEqual([]);
+      expect(yield* ids([["tags", String(hot.wireId)]])).toEqual([theirs.wireId]);
+      expect(
+        yield* ids([
+          ["categories", String(news.wireId)],
+          ["tags", String(hot.wireId)],
+        ]),
+      ).toEqual([]);
+      expect(
+        yield* ids([
+          ["categories", String(news.wireId)],
+          ["tags", String(hot.wireId)],
+          ["tax_relation", "OR"],
+        ]),
+      ).toEqual(sorted([open.wireId, theirs.wireId]));
+      expect(yield* ids([["categories", "999"]])).toEqual([]);
+    }),
+  );
 
-  it("excludes a term's readable members through nonMemberFilter, joined by tax_relation", async () => {
-    const { wp, news, sport, hot, open, theirs } = await taxonomySite();
-    const ids = async (query: ReadonlyArray<readonly [string, string]>) =>
-      sorted(listed(await wp.get("/wp/v2/posts", query)));
-    expect(await ids([["categories_exclude", String(news.wireId)]])).toEqual([theirs.wireId]);
-    expect(await ids([["tags_exclude", String(hot.wireId)]])).toEqual([open.wireId]);
-    // `sport`'s only post is a draft the anonymous viewer can't read: its assignment excludes nothing.
-    expect(await ids([["categories_exclude", String(sport.wireId)]])).toEqual(
-      sorted([open.wireId, theirs.wireId]),
-    );
-    // An unknown term excludes nothing, as an absent one doesn't.
-    expect(await ids([["categories_exclude", "999"]])).toEqual(
-      sorted([open.wireId, theirs.wireId]),
-    );
-    expect(
-      await ids([
-        ["categories", String(news.wireId)],
-        ["tags_exclude", String(hot.wireId)],
-      ]),
-    ).toEqual([open.wireId]);
-    const both = [
-      ["categories_exclude", String(news.wireId)],
-      ["tags_exclude", String(hot.wireId)],
-    ] as const;
-    expect(await ids(both)).toEqual([]);
-    expect(await ids([...both, ["tax_relation", "OR"]])).toEqual(
-      sorted([open.wireId, theirs.wireId]),
-    );
-  });
-
-  it("refuses an _exclude list past the cap and a taxonomy the post type doesn't take", async () => {
-    const { wp, news } = await taxonomySite();
-    const tooMany = Array.from({ length: MAX_LIST_PARAMETER + 1 }, (_, index) =>
-      String(index + 1),
-    ).join(",");
-    const responses = await Promise.all([
-      wp.get("/wp/v2/posts", [["categories_exclude", tooMany]]),
-      wp.get("/wp/v2/pages", [["categories", String(news.wireId)]]),
-      wp.get("/wp/v2/pages", [["categories_exclude", String(news.wireId)]]),
-    ]);
-    expect(responses.map(codeOf)).toEqual(responses.map(() => "rest_invalid_param"));
-  });
-
-  it("shows an item's readable terms, its wp:term link and its embedded terms, one read per taxonomy", async () => {
-    const { wp, news, hot, open, theirs } = await taxonomySite();
-    const Shown = Schema.Struct({
-      id: Schema.Finite,
-      categories: Schema.Array(Schema.Finite),
-      tags: Schema.Array(Schema.Finite),
-      _links: Schema.Struct({
-        "wp:term": Schema.Array(Schema.Struct({ taxonomy: Schema.String })),
+  it.effect(
+    "excludes a term's readable members through nonMemberFilter, joined by tax_relation",
+    () =>
+      Effect.gen(function* () {
+        const { wp, news, sport, hot, open, theirs } = yield* taxonomySite();
+        const ids = (query: ReadonlyArray<readonly [string, string]>) =>
+          Effect.gen(function* () {
+            return sorted(listed(yield* wp.get("/wp/v2/posts", query)));
+          });
+        expect(yield* ids([["categories_exclude", String(news.wireId)]])).toEqual([theirs.wireId]);
+        expect(yield* ids([["tags_exclude", String(hot.wireId)]])).toEqual([open.wireId]);
+        // `sport`'s only post is a draft the anonymous viewer can't read: its assignment excludes nothing.
+        expect(yield* ids([["categories_exclude", String(sport.wireId)]])).toEqual(
+          sorted([open.wireId, theirs.wireId]),
+        );
+        // An unknown term excludes nothing, as an absent one doesn't.
+        expect(yield* ids([["categories_exclude", "999"]])).toEqual(
+          sorted([open.wireId, theirs.wireId]),
+        );
+        expect(
+          yield* ids([
+            ["categories", String(news.wireId)],
+            ["tags_exclude", String(hot.wireId)],
+          ]),
+        ).toEqual([open.wireId]);
+        const both = [
+          ["categories_exclude", String(news.wireId)],
+          ["tags_exclude", String(hot.wireId)],
+        ] as const;
+        expect(yield* ids(both)).toEqual([]);
+        expect(yield* ids([...both, ["tax_relation", "OR"]])).toEqual(
+          sorted([open.wireId, theirs.wireId]),
+        );
       }),
-      _embedded: Schema.Struct({
-        "wp:term": Schema.Array(Schema.Array(Schema.Struct({ id: Schema.Finite }))),
-      }),
-    });
-    const before = wp.termReads.length;
-    const items = decodeBody(Schema.Array(Shown))(
-      await wp.get("/wp/v2/posts", [["_embed", "wp:term"]]),
-    );
-    const byId = (id: number) => items.find((item) => item.id === id);
-    expect([byId(open.wireId)?.categories, byId(open.wireId)?.tags]).toEqual([[news.wireId], []]);
-    expect([byId(theirs.wireId)?.categories, byId(theirs.wireId)?.tags]).toEqual([
-      [],
-      [hot.wireId],
-    ]);
-    expect(byId(open.wireId)?._links["wp:term"].map(({ taxonomy }) => taxonomy)).toEqual([
-      "category",
-      "post_tag",
-    ]);
-    expect(
-      byId(open.wireId)?._embedded["wp:term"].map((terms) => terms.map(({ id }) => id)),
-    ).toEqual([[news.wireId], []]);
-    expect(wp.termReads.slice(before).map(([taxonomy]) => taxonomy)).toEqual([
-      "category",
-      "post_tag",
-    ]);
-  });
+  );
 
-  it("never shows a term through an item the viewer can't read", async () => {
-    const { wp, draft } = await taxonomySite();
-    expect(codeOf(await wp.get(`/wp/v2/posts/${draft.wireId}`))).toBe("rest_post_invalid_id");
-    const own = decodeBody(Schema.Struct({ categories: Schema.Array(Schema.Finite) }))(
-      await wp.get(`/wp/v2/posts/${draft.wireId}`, [], Option.some(member)),
-    );
-    expect(own.categories).toHaveLength(2);
-  });
+  it.effect("refuses an _exclude list past the cap and a taxonomy the post type doesn't take", () =>
+    Effect.gen(function* () {
+      const { wp, news } = yield* taxonomySite();
+      const tooMany = Array.from({ length: MAX_LIST_PARAMETER + 1 }, (_, index) =>
+        String(index + 1),
+      ).join(",");
+      const responses = yield* Effect.all(
+        [
+          wp.get("/wp/v2/posts", [["categories_exclude", tooMany]]),
+          wp.get("/wp/v2/pages", [["categories", String(news.wireId)]]),
+          wp.get("/wp/v2/pages", [["categories_exclude", String(news.wireId)]]),
+        ],
+        { concurrency: "unbounded" },
+      );
+      expect(responses.map(codeOf)).toEqual(responses.map(() => "rest_invalid_param"));
+    }),
+  );
+
+  it.effect(
+    "shows an item's readable terms, its wp:term link and its embedded terms, one read per taxonomy",
+    () =>
+      Effect.gen(function* () {
+        const { wp, news, hot, open, theirs } = yield* taxonomySite();
+        const Shown = Schema.Struct({
+          id: Schema.Finite,
+          categories: Schema.Array(Schema.Finite),
+          tags: Schema.Array(Schema.Finite),
+          _links: Schema.Struct({
+            "wp:term": Schema.Array(Schema.Struct({ taxonomy: Schema.String })),
+          }),
+          _embedded: Schema.Struct({
+            "wp:term": Schema.Array(Schema.Array(Schema.Struct({ id: Schema.Finite }))),
+          }),
+        });
+        const before = wp.termReads.length;
+        const items = decodeBody(Schema.Array(Shown))(
+          yield* wp.get("/wp/v2/posts", [["_embed", "wp:term"]]),
+        );
+        const byId = (id: number) => items.find((item) => item.id === id);
+        expect([byId(open.wireId)?.categories, byId(open.wireId)?.tags]).toEqual([
+          [news.wireId],
+          [],
+        ]);
+        expect([byId(theirs.wireId)?.categories, byId(theirs.wireId)?.tags]).toEqual([
+          [],
+          [hot.wireId],
+        ]);
+        expect(byId(open.wireId)?._links["wp:term"].map(({ taxonomy }) => taxonomy)).toEqual([
+          "category",
+          "post_tag",
+        ]);
+        expect(
+          byId(open.wireId)?._embedded["wp:term"].map((terms) => terms.map(({ id }) => id)),
+        ).toEqual([[news.wireId], []]);
+        expect(wp.termReads.slice(before).map(([taxonomy]) => taxonomy)).toEqual([
+          "category",
+          "post_tag",
+        ]);
+      }),
+  );
+
+  it.effect("never shows a term through an item the viewer can't read", () =>
+    Effect.gen(function* () {
+      const { wp, draft } = yield* taxonomySite();
+      expect(codeOf(yield* wp.get(`/wp/v2/posts/${draft.wireId}`))).toBe("rest_post_invalid_id");
+      const own = decodeBody(Schema.Struct({ categories: Schema.Array(Schema.Finite) }))(
+        yield* wp.get(`/wp/v2/posts/${draft.wireId}`, [], Option.some(member)),
+      );
+      expect(own.categories).toHaveLength(2);
+    }),
+  );
 });
 
 describe("the wp/v2 read API — authors (phase 2)", () => {
-  it("lists only the authors of an item the viewer can read (SEC-AUTH-ENUM-001)", async () => {
-    const { wp } = await taxonomySite();
-    const slugs = async (who: Viewer, query: ReadonlyArray<readonly [string, string]> = []) =>
-      usersOf(await wp.get("/wp/v2/users", query, who)).map(({ slug }) => slug);
-    expect(await slugs(Option.none())).toEqual([member.id, stranger.id]);
-    expect(await slugs(Option.some(moderator))).toEqual([member.id, moderator.id, stranger.id]);
-    expect(await slugs(Option.none(), [["slug", stranger.id]])).toEqual([stranger.id]);
-    expect(
-      await slugs(Option.none(), [["exclude", String(wp.accounts.assign(member.id))]]),
-    ).toEqual([stranger.id]);
-    expect(await slugs(Option.none(), [["order", "desc"]])).toEqual([stranger.id, member.id]);
-    const response = await wp.get("/wp/v2/users");
-    expect([response.headers["x-wp-total"], response.headers["cache-control"]]).toEqual([
-      "2",
-      "private, no-store",
-    ]);
-  });
+  it.effect("lists only the authors of an item the viewer can read (SEC-AUTH-ENUM-001)", () =>
+    Effect.gen(function* () {
+      const { wp } = yield* taxonomySite();
+      const slugs = (who: Viewer, query: ReadonlyArray<readonly [string, string]> = []) =>
+        Effect.gen(function* () {
+          return usersOf(yield* wp.get("/wp/v2/users", query, who)).map(({ slug }) => slug);
+        });
+      expect(yield* slugs(Option.none())).toEqual([member.id, stranger.id]);
+      expect(yield* slugs(Option.some(moderator))).toEqual([member.id, moderator.id, stranger.id]);
+      expect(yield* slugs(Option.none(), [["slug", stranger.id]])).toEqual([stranger.id]);
+      expect(
+        yield* slugs(Option.none(), [["exclude", String(wp.accounts.assign(member.id))]]),
+      ).toEqual([stranger.id]);
+      expect(yield* slugs(Option.none(), [["order", "desc"]])).toEqual([stranger.id, member.id]);
+      const response = yield* wp.get("/wp/v2/users");
+      expect([response.headers["x-wp-total"], response.headers["cache-control"]]).toEqual([
+        "2",
+        "private, no-store",
+      ]);
+    }),
+  );
 
-  it("answers an account with no readable item as 404 rest_user_invalid_id, exactly as an unknown one", async () => {
-    const { wp } = await taxonomySite();
-    const hidden = await wp.get(`/wp/v2/users/${wp.accounts.assign(moderator.id)}`);
-    const unknown = await wp.get("/wp/v2/users/999");
-    expect([hidden.status, codeOf(hidden)]).toEqual([404, "rest_user_invalid_id"]);
-    expect([unknown.status, codeOf(unknown)]).toEqual([404, "rest_user_invalid_id"]);
-    const shown = await wp.get(
-      `/wp/v2/users/${wp.accounts.assign(moderator.id)}`,
-      [],
-      Option.some(moderator),
-    );
-    expect(shown.status).toBe(200);
-  });
+  it.effect(
+    "answers an account with no readable item as 404 rest_user_invalid_id, exactly as an unknown one",
+    () =>
+      Effect.gen(function* () {
+        const { wp } = yield* taxonomySite();
+        const hidden = yield* wp.get(`/wp/v2/users/${wp.accounts.assign(moderator.id)}`);
+        const unknown = yield* wp.get("/wp/v2/users/999");
+        expect([hidden.status, codeOf(hidden)]).toEqual([404, "rest_user_invalid_id"]);
+        expect([unknown.status, codeOf(unknown)]).toEqual([404, "rest_user_invalid_id"]);
+        const shown = yield* wp.get(
+          `/wp/v2/users/${wp.accounts.assign(moderator.id)}`,
+          [],
+          Option.some(moderator),
+        );
+        expect(shown.status).toBe(200);
+      }),
+  );
 
-  it("answers an order core reserves for list_users as rest_forbidden_orderby, and refuses search", async () => {
-    const { wp } = await taxonomySite();
-    const email = await wp.get("/wp/v2/users", [["orderby", "email"]]);
-    expect([email.status, codeOf(email)]).toEqual([401, "rest_forbidden_orderby"]);
-    expect(codeOf(await wp.get("/wp/v2/users", [["search", "a"]]))).toBe("rest_invalid_param");
-  });
+  it.effect(
+    "answers an order core reserves for list_users as rest_forbidden_orderby, and refuses search",
+    () =>
+      Effect.gen(function* () {
+        const { wp } = yield* taxonomySite();
+        const email = yield* wp.get("/wp/v2/users", [["orderby", "email"]]);
+        expect([email.status, codeOf(email)]).toEqual([401, "rest_forbidden_orderby"]);
+        expect(codeOf(yield* wp.get("/wp/v2/users", [["search", "a"]]))).toBe("rest_invalid_param");
+      }),
+  );
 });
 
 describe("the wp/v2 read API — phase 2 wire forms (golden)", () => {
-  it("answers terms and users in core's forms", async () => {
-    const { wp, news, hot, open } = await taxonomySite();
-    const category = await wp.get(`/wp/v2/categories/${news.wireId}`);
-    expect(formOf(withoutLinks(category))).toEqual(adjusted(CATEGORY_FORM));
-    expect(formOf(termOf(category)._links)).toEqual(TERM_LINKS_FORM);
-    expect(formOf(withoutLinks(await wp.get(`/wp/v2/tags/${hot.wireId}`)))).toEqual(
-      adjusted(TAG_FORM),
-    );
-    expect(
-      formOf(withoutLinks(await wp.get(`/wp/v2/users/${wp.accounts.assign(member.id)}`))),
-    ).toEqual(adjusted(USER_FORM));
-    const links = itemOf(await wp.get(`/wp/v2/posts/${open.wireId}`))._links;
-    expect(formOf(links["wp:term"] ?? null)).toEqual(WP_TERM_LINK_FORM);
-  });
+  it.effect("answers terms and users in core's forms", () =>
+    Effect.gen(function* () {
+      const { wp, news, hot, open } = yield* taxonomySite();
+      const category = yield* wp.get(`/wp/v2/categories/${news.wireId}`);
+      expect(formOf(withoutLinks(category))).toEqual(adjusted(CATEGORY_FORM));
+      expect(formOf(termOf(category)._links)).toEqual(TERM_LINKS_FORM);
+      expect(formOf(withoutLinks(yield* wp.get(`/wp/v2/tags/${hot.wireId}`)))).toEqual(
+        adjusted(TAG_FORM),
+      );
+      expect(
+        formOf(withoutLinks(yield* wp.get(`/wp/v2/users/${wp.accounts.assign(member.id)}`))),
+      ).toEqual(adjusted(USER_FORM));
+      const links = itemOf(yield* wp.get(`/wp/v2/posts/${open.wireId}`))._links;
+      expect(formOf(links["wp:term"] ?? null)).toEqual(WP_TERM_LINK_FORM);
+    }),
+  );
 
-  it("lists the bound taxonomies in the discovery index", async () => {
-    const { wp } = await taxonomySite();
-    const index = decodeBody(Schema.Struct({ routes: Schema.Record(Schema.String, Schema.Json) }))(
-      await wp.get("/"),
-    );
-    expect(R.keys(index.routes)).toEqual(
-      expect.arrayContaining(["/wp/v2/categories", "/wp/v2/tags/(?P<id>[\\d]+)", "/wp/v2/users"]),
-    );
-  });
+  it.effect("lists the bound taxonomies in the discovery index", () =>
+    Effect.gen(function* () {
+      const { wp } = yield* taxonomySite();
+      const index = decodeBody(
+        Schema.Struct({ routes: Schema.Record(Schema.String, Schema.Json) }),
+      )(yield* wp.get("/"));
+      expect(R.keys(index.routes)).toEqual(
+        expect.arrayContaining(["/wp/v2/categories", "/wp/v2/tags/(?P<id>[\\d]+)", "/wp/v2/users"]),
+      );
+    }),
+  );
 });
 
 describe("the wp/v2 read API — media from a file leaf", () => {
-  it("reads a file whose bytes are pending as missing: 404, out of lists and totals, never featured", async () => {
-    const wp = site();
-    const ready = await wp.create("media", { mimeType: "image/jpeg", slug: "ready" });
-    const pending = await wp.create("media", { mimeType: "image/jpeg", bytesPending: true });
-    const post = await wp.create("posts", { featuredMediaId: pending.id });
+  it.effect(
+    "reads a file whose bytes are pending as missing: 404, out of lists and totals, never featured",
+    () =>
+      Effect.gen(function* () {
+        const wp = site();
+        const ready = yield* wp.create("media", { mimeType: "image/jpeg", slug: "ready" });
+        const pending = yield* wp.create("media", { mimeType: "image/jpeg", bytesPending: true });
+        const post = yield* wp.create("posts", { featuredMediaId: pending.id });
 
-    expect(codeOf(await wp.get(`/wp/v2/media/${pending.wireId}`))).toBe("rest_post_invalid_id");
-    const list = await wp.get("/wp/v2/media");
-    expect(listed(list)).toEqual([ready.wireId]);
-    expect(list.headers["x-wp-total"]).toBe("1");
-    const item = itemOf(await wp.get(`/wp/v2/posts/${post.wireId}`, [["_embed", "1"]]));
-    expect(item.featured_media).toBe(0);
-    expect(R.has(item._embedded ?? {}, "wp:featuredmedia")).toBe(false);
-    // Its owner, too, reads it as missing until the bytes are there.
-    expect(codeOf(await wp.get(`/wp/v2/media/${pending.wireId}`, [], Option.some(member)))).toBe(
-      "rest_post_invalid_id",
-    );
-  });
+        expect(codeOf(yield* wp.get(`/wp/v2/media/${pending.wireId}`))).toBe(
+          "rest_post_invalid_id",
+        );
+        const list = yield* wp.get("/wp/v2/media");
+        expect(listed(list)).toEqual([ready.wireId]);
+        expect(list.headers["x-wp-total"]).toBe("1");
+        const item = itemOf(yield* wp.get(`/wp/v2/posts/${post.wireId}`, [["_embed", "1"]]));
+        expect(item.featured_media).toBe(0);
+        expect(R.has(item._embedded ?? {}, "wp:featuredmedia")).toBe(false);
+        // Its owner, too, reads it as missing until the bytes are there.
+        expect(
+          codeOf(yield* wp.get(`/wp/v2/media/${pending.wireId}`, [], Option.some(member))),
+        ).toBe("rest_post_invalid_id");
+      }),
+  );
 
   it("maps a file version onto the media fields", () => {
     const file = {
@@ -2229,43 +2573,48 @@ describe("the wp/v2 read API — a routable leaf's paths", () => {
     return { wp, paths, posts };
   };
 
-  it("finds a renamed post by its canonical path only: an alias neither matches ?slug= nor redirects", async () => {
-    const { wp, paths, posts } = routed();
-    const { id } = await run(
-      wp.as(
-        Option.some(member),
-        posts.create({
-          id: Option.none(),
-          state: {
-            title: "T",
-            content: "",
-            excerpt: "",
-            slug: "old",
-            publishedAt: PAST,
-            updatedAt: PAST,
-            visibility: "public",
-            draft: false,
-          },
-        }),
-      ),
-    );
-    await run(wp.as(Option.some(member), posts.update({ id, patch: { slug: "new" } })));
-    const wireId = wp.nodes.assign(id);
-    // The path table keeps "old" as an alias of the node.
-    const canonical = (path: string) =>
-      Option.map(HashMap.get(paths.entries(), path), (entry) => entry.canonical);
-    expect([canonical("new"), canonical("old")]).toEqual([Option.some(true), Option.some(false)]);
-    expect(listed(await wp.get("/wp/v2/posts", [["slug", "new"]]))).toEqual([wireId]);
-    expect(listed(await wp.get("/wp/v2/posts", [["slug", "old"]]))).toEqual([]);
-    // `link` is built from the canonical path the slug column holds.
-    const item = objectOf(await wp.get(`/wp/v2/posts/${wireId}`));
-    expect([item["slug"], item["link"]]).toEqual(["new", "https://example.org/post/new"]);
-  });
+  it.effect(
+    "finds a renamed post by its canonical path only: an alias neither matches ?slug= nor redirects",
+    () =>
+      Effect.gen(function* () {
+        const { wp, paths, posts } = routed();
+        const { id } = yield* wp.as(
+          Option.some(member),
+          posts.create({
+            id: Option.none(),
+            state: {
+              title: "T",
+              content: "",
+              excerpt: "",
+              slug: "old",
+              publishedAt: PAST,
+              updatedAt: PAST,
+              visibility: "public",
+              draft: false,
+            },
+          }),
+        );
+        yield* wp.as(Option.some(member), posts.update({ id, patch: { slug: "new" } }));
+        const wireId = wp.nodes.assign(id);
+        // The path table keeps "old" as an alias of the node.
+        const canonical = (path: string) =>
+          Option.map(HashMap.get(paths.entries(), path), (entry) => entry.canonical);
+        expect([canonical("new"), canonical("old")]).toEqual([
+          Option.some(true),
+          Option.some(false),
+        ]);
+        expect(listed(yield* wp.get("/wp/v2/posts", [["slug", "new"]]))).toEqual([wireId]);
+        expect(listed(yield* wp.get("/wp/v2/posts", [["slug", "old"]]))).toEqual([]);
+        // `link` is built from the canonical path the slug column holds.
+        const item = objectOf(yield* wp.get(`/wp/v2/posts/${wireId}`));
+        expect([item["slug"], item["link"]]).toEqual(["new", "https://example.org/post/new"]);
+      }),
+  );
 
-  it("reveals nothing of a hidden node through its path or its alias", async () => {
-    const { wp, posts } = routed();
-    const { id } = await run(
-      wp.as(
+  it.effect("reveals nothing of a hidden node through its path or its alias", () =>
+    Effect.gen(function* () {
+      const { wp, posts } = routed();
+      const { id } = yield* wp.as(
         Option.some(member),
         posts.create({
           id: Option.none(),
@@ -2280,30 +2629,32 @@ describe("the wp/v2 read API — a routable leaf's paths", () => {
             draft: false,
           },
         }),
-      ),
-    );
-    await run(wp.as(Option.some(member), posts.update({ id, patch: { slug: "secret-2" } })));
-    const wireId = wp.nodes.assign(id);
-    const anonymous = await inSequence(["secret", "secret-2"], (slug) =>
-      wp.get("/wp/v2/posts", [["slug", slug]]),
-    );
-    expect(anonymous.map((response) => [listed(response), response.headers["x-wp-total"]])).toEqual(
-      [
-        [[], "0"],
-        [[], "0"],
-      ],
-    );
-    // Its owner finds it by its canonical path, never by the alias.
-    const owned = (slug: string) =>
-      wp.get(
-        "/wp/v2/posts",
-        [
-          ["slug", slug],
-          ["status", "private"],
-        ],
-        Option.some(member),
       );
-    expect(listed(await owned("secret-2"))).toEqual([wireId]);
-    expect(listed(await owned("secret"))).toEqual([]);
-  });
+      yield* wp.as(Option.some(member), posts.update({ id, patch: { slug: "secret-2" } }));
+      const wireId = wp.nodes.assign(id);
+      const anonymous = yield* Effect.forEach(
+        ["secret", "secret-2"],
+        (slug) => wp.get("/wp/v2/posts", [["slug", slug]]),
+        { concurrency: 1 },
+      );
+      expect(
+        anonymous.map((response) => [listed(response), response.headers["x-wp-total"]]),
+      ).toEqual([
+        [[], "0"],
+        [[], "0"],
+      ]);
+      // Its owner finds it by its canonical path, never by the alias.
+      const owned = (slug: string) =>
+        wp.get(
+          "/wp/v2/posts",
+          [
+            ["slug", slug],
+            ["status", "private"],
+          ],
+          Option.some(member),
+        );
+      expect(listed(yield* owned("secret-2"))).toEqual([wireId]);
+      expect(listed(yield* owned("secret"))).toEqual([]);
+    }),
+  );
 });

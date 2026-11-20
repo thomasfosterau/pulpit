@@ -12,7 +12,8 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import {
   defineReferenceImport,
   MAX_IMPORT_BATCH,
@@ -81,7 +82,7 @@ const world = (options: { readonly hooks?: ReadonlyArray<BeforeWriteHook<never, 
     as: (account: Viewer) => {
       viewer = account;
     },
-    row: (id: string) => Effect.runSync(leaves.get(id)),
+    row: (id: string) => leaves.get(id),
   };
 };
 
@@ -94,11 +95,12 @@ const batch = (
   records: Arr.map(records, ([externalId, values]) => ({ externalId, values })),
 });
 
-const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runSync(effect);
 const failure = <A, E>(effect: Effect.Effect<A, E>) =>
-  Exit.match(Effect.runSyncExit(effect), {
-    onSuccess: () => "succeeded",
-    onFailure: (cause) => String(cause),
+  Effect.gen(function* () {
+    return Exit.match(yield* Effect.exit(effect), {
+      onSuccess: () => "succeeded",
+      onFailure: (cause) => String(cause),
+    });
   });
 
 /** The external id's node, as linked. */
@@ -156,259 +158,294 @@ describe("defineReferenceImport's declaration", () => {
 });
 
 describe("the upsert", () => {
-  it("creates a node as the actor and links it, then appends nothing for identical data", () => {
-    const { chain, ids, imports, row } = world();
-    const feed = batch([["36", { name: "Greens", abbreviation: "GRN" }]]);
-    const first = run(imports.run(feed));
-    expect(first).toMatchObject({ created: 1, updated: 0, unchanged: 0, conflicts: [] });
-    const id = nodeOf(ids, "36");
-    expect(first.written).toEqual([{ externalId: "36", id, version: 0n, action: "created" }]);
-    expect(Arr.map(chain.rows(), (version) => version.actorId)).toEqual([Option.some(bot.id)]);
-    expect(row(id)).toEqual(
-      Option.some(expect.objectContaining({ name: "Greens", abbreviation: "GRN" })),
-    );
+  it.effect(
+    "creates a node as the actor and links it, then appends nothing for identical data",
+    () =>
+      Effect.gen(function* () {
+        const { chain, ids, imports, row } = world();
+        const feed = batch([["36", { name: "Greens", abbreviation: "GRN" }]]);
+        const first = yield* imports.run(feed);
+        expect(first).toMatchObject({ created: 1, updated: 0, unchanged: 0, conflicts: [] });
+        const id = nodeOf(ids, "36");
+        expect(first.written).toEqual([{ externalId: "36", id, version: 0n, action: "created" }]);
+        expect(Arr.map(chain.rows(), (version) => version.actorId)).toEqual([Option.some(bot.id)]);
+        expect(yield* row(id)).toEqual(
+          Option.some(expect.objectContaining({ name: "Greens", abbreviation: "GRN" })),
+        );
 
-    const again = run(imports.run(feed));
-    expect(again).toMatchObject({ created: 0, updated: 0, unchanged: 1, written: [] });
-    expect(chain.rows()).toHaveLength(1);
-  });
+        const again = yield* imports.run(feed);
+        expect(again).toMatchObject({ created: 0, updated: 0, unchanged: 1, written: [] });
+        expect(chain.rows()).toHaveLength(1);
+      }),
+  );
 
-  it("updates only what changed, against the head it read, and ignores undeclared keys", () => {
-    const { chain, ids, imports, row } = world();
-    run(imports.run(batch([["36", { name: "Greens", abbreviation: "GRN" }]])));
-    const id = nodeOf(ids, "36");
-    const second = run(imports.run(batch([["36", { name: "The Greens", notes: "not declared" }]])));
-    expect(second).toMatchObject({ updated: 1, unchanged: 0 });
-    expect(Arr.map(chain.rows(), (version) => version.state)).toEqual([
-      { name: "Greens", abbreviation: "GRN" },
-      { name: "The Greens", abbreviation: "GRN" },
-    ]);
-    expect(Option.map(row(id), (party) => party["notes"])).toEqual(Option.some(undefined));
-  });
+  it.effect(
+    "updates only what changed, against the head it read, and ignores undeclared keys",
+    () =>
+      Effect.gen(function* () {
+        const { chain, ids, imports, row } = world();
+        yield* imports.run(batch([["36", { name: "Greens", abbreviation: "GRN" }]]));
+        const id = nodeOf(ids, "36");
+        const second = yield* imports.run(
+          batch([["36", { name: "The Greens", notes: "not declared" }]]),
+        );
+        expect(second).toMatchObject({ updated: 1, unchanged: 0 });
+        expect(Arr.map(chain.rows(), (version) => version.state)).toEqual([
+          { name: "Greens", abbreviation: "GRN" },
+          { name: "The Greens", abbreviation: "GRN" },
+        ]);
+        expect(Option.map(yield* row(id), (party) => party["notes"])).toEqual(
+          Option.some(undefined),
+        );
+      }),
+  );
 
-  it("overwrite replaces and clears; coalesce keeps the node's value on null; an absent key carries", () => {
-    const { ids, imports, row } = world();
-    run(imports.run(batch([["36", { name: "Greens", abbreviation: "GRN" }]])));
-    const id = nodeOf(ids, "36");
-    run(imports.run(batch([["36", { name: null, abbreviation: null }]])));
-    expect(row(id)).toEqual(
-      Option.some(expect.objectContaining({ name: null, abbreviation: "GRN" })),
-    );
-    run(imports.run(batch([["36", { abbreviation: "AG" }]])));
-    expect(row(id)).toEqual(
-      Option.some(expect.objectContaining({ name: null, abbreviation: "AG" })),
-    );
-  });
+  it.effect(
+    "overwrite replaces and clears; coalesce keeps the node's value on null; an absent key carries",
+    () =>
+      Effect.gen(function* () {
+        const { ids, imports, row } = world();
+        yield* imports.run(batch([["36", { name: "Greens", abbreviation: "GRN" }]]));
+        const id = nodeOf(ids, "36");
+        yield* imports.run(batch([["36", { name: null, abbreviation: null }]]));
+        expect(yield* row(id)).toEqual(
+          Option.some(expect.objectContaining({ name: null, abbreviation: "GRN" })),
+        );
+        yield* imports.run(batch([["36", { abbreviation: "AG" }]]));
+        expect(yield* row(id)).toEqual(
+          Option.some(expect.objectContaining({ name: null, abbreviation: "AG" })),
+        );
+      }),
+  );
 
-  it("curated-wins keeps a value someone else wrote since the last import, and follows the feed otherwise", () => {
-    const { ids, imports, ops, row } = world();
-    run(imports.run(batch([["36", { name: "Greens", colour: "green" }]])));
-    const id = nodeOf(ids, "36");
-    // The feed changes the colour, nobody curated it: the feed wins.
-    run(imports.run(batch([["36", { colour: "lime" }]])));
-    expect(Option.map(row(id), (party) => party["colour"])).toEqual(Option.some("lime"));
-    // A curator edits it; the next import keeps the curator's value.
-    run(ops.update({ id, patch: { colour: "#10a020" } }));
-    const after = run(imports.run(batch([["36", { colour: "olive", name: "The Greens" }]])));
-    expect(after.updated).toBe(1);
-    expect(row(id)).toEqual(
-      Option.some(expect.objectContaining({ colour: "#10a020", name: "The Greens" })),
-    );
-  });
+  it.effect(
+    "curated-wins keeps a value someone else wrote since the last import, and follows the feed otherwise",
+    () =>
+      Effect.gen(function* () {
+        const { ids, imports, ops, row } = world();
+        yield* imports.run(batch([["36", { name: "Greens", colour: "green" }]]));
+        const id = nodeOf(ids, "36");
+        // The feed changes the colour, nobody curated it: the feed wins.
+        yield* imports.run(batch([["36", { colour: "lime" }]]));
+        expect(Option.map(yield* row(id), (party) => party["colour"])).toEqual(Option.some("lime"));
+        // A curator edits it; the next import keeps the curator's value.
+        yield* ops.update({ id, patch: { colour: "#10a020" } });
+        const after = yield* imports.run(batch([["36", { colour: "olive", name: "The Greens" }]]));
+        expect(after.updated).toBe(1);
+        expect(yield* row(id)).toEqual(
+          Option.some(expect.objectContaining({ colour: "#10a020", name: "The Greens" })),
+        );
+      }),
+  );
 });
 
 describe("a pre-attached id", () => {
-  it("links a curated node, which the next import updates instead of duplicating", () => {
-    const { chain, imports, ops, row } = world();
-    const { id } = run(
-      ops.create({ id: Option.none(), state: { name: "Curated Greens", colour: "#10a020" } }),
-    );
-    expect(run(imports.attach({ authority: "aec", externalId: "36", id }))).toEqual({
-      changed: true,
-    });
-    expect(run(imports.attach({ authority: "aec", externalId: "36", id }))).toEqual({
-      changed: false,
-    });
-    const summary = run(
-      imports.run(batch([["36", { name: "Greens", abbreviation: "GRN", colour: "green" }]])),
-    );
-    expect(summary).toMatchObject({ created: 0, updated: 1 });
-    // No baseline yet: the curated colour is kept, the empty abbreviation filled,
-    // and `overwrite` takes the name.
-    expect(row(id)).toEqual(
-      Option.some(
-        expect.objectContaining({ name: "Greens", abbreviation: "GRN", colour: "#10a020" }),
-      ),
-    );
-    expect(Arr.dedupe(Arr.map(chain.rows(), (version) => version.id))).toEqual([id]);
-  });
+  it.effect("links a curated node, which the next import updates instead of duplicating", () =>
+    Effect.gen(function* () {
+      const { chain, imports, ops, row } = world();
+      const { id } = yield* ops.create({
+        id: Option.none(),
+        state: { name: "Curated Greens", colour: "#10a020" },
+      });
+      expect(yield* imports.attach({ authority: "aec", externalId: "36", id })).toEqual({
+        changed: true,
+      });
+      expect(yield* imports.attach({ authority: "aec", externalId: "36", id })).toEqual({
+        changed: false,
+      });
+      const summary = yield* imports.run(
+        batch([["36", { name: "Greens", abbreviation: "GRN", colour: "green" }]]),
+      );
+      expect(summary).toMatchObject({ created: 0, updated: 1 });
+      // No baseline yet: the curated colour is kept, the empty abbreviation filled,
+      // and `overwrite` takes the name.
+      expect(yield* row(id)).toEqual(
+        Option.some(
+          expect.objectContaining({ name: "Greens", abbreviation: "GRN", colour: "#10a020" }),
+        ),
+      );
+      expect(Arr.dedupe(Arr.map(chain.rows(), (version) => version.id))).toEqual([id]);
+    }),
+  );
 
-  it("is gated like a write to the node, and an id names one node per authority", () => {
-    const { imports, ops, as } = world();
-    const first = run(ops.create({ id: Option.none(), state: { name: "One" } })).id;
-    const second = run(ops.create({ id: Option.none(), state: { name: "Two" } })).id;
-    run(imports.attach({ authority: "aec", externalId: "1", id: first }));
-    expect(failure(imports.attach({ authority: "aec", externalId: "1", id: second }))).toContain(
-      "ExternalIdTaken",
-    );
-    expect(failure(imports.attach({ authority: "aec", externalId: "2", id: first }))).toContain(
-      "ExternalIdTaken",
-    );
-    // Another authority may name the same node, and reuse the same id string.
-    expect(run(imports.attach({ authority: "wikidata", externalId: "1", id: second }))).toEqual({
-      changed: true,
-    });
-    expect(failure(imports.attach({ authority: "isbn", externalId: "1", id: first }))).toContain(
-      "UnknownAuthority",
-    );
-    expect(failure(imports.attach({ authority: "aec", externalId: "3", id: "missing" }))).toContain(
-      "NodeNotFound",
-    );
-    as(Option.some(member));
-    expect(failure(imports.attach({ authority: "aec", externalId: "3", id: second }))).toContain(
-      "Forbidden",
-    );
-    as(Option.none());
-    expect(failure(imports.attach({ authority: "aec", externalId: "3", id: second }))).toContain(
-      "Unauthorized",
-    );
-  });
+  it.effect("is gated like a write to the node, and an id names one node per authority", () =>
+    Effect.gen(function* () {
+      const { imports, ops, as } = world();
+      const first = (yield* ops.create({ id: Option.none(), state: { name: "One" } })).id;
+      const second = (yield* ops.create({ id: Option.none(), state: { name: "Two" } })).id;
+      yield* imports.attach({ authority: "aec", externalId: "1", id: first });
+      expect(
+        yield* failure(imports.attach({ authority: "aec", externalId: "1", id: second })),
+      ).toContain("ExternalIdTaken");
+      expect(
+        yield* failure(imports.attach({ authority: "aec", externalId: "2", id: first })),
+      ).toContain("ExternalIdTaken");
+      // Another authority may name the same node, and reuse the same id string.
+      expect(yield* imports.attach({ authority: "wikidata", externalId: "1", id: second })).toEqual(
+        {
+          changed: true,
+        },
+      );
+      expect(
+        yield* failure(imports.attach({ authority: "isbn", externalId: "1", id: first })),
+      ).toContain("UnknownAuthority");
+      expect(
+        yield* failure(imports.attach({ authority: "aec", externalId: "3", id: "missing" })),
+      ).toContain("NodeNotFound");
+      as(Option.some(member));
+      expect(
+        yield* failure(imports.attach({ authority: "aec", externalId: "3", id: second })),
+      ).toContain("Forbidden");
+      as(Option.none());
+      expect(
+        yield* failure(imports.attach({ authority: "aec", externalId: "3", id: second })),
+      ).toContain("Unauthorized");
+    }),
+  );
 });
 
 describe("a batch", () => {
-  it("counts every outcome, and a repeated id is a conflict against the earlier record", () => {
-    const { imports } = world();
-    run(
-      imports.run(
-        batch([
-          ["1", { name: "One" }],
-          ["2", { name: "Two" }],
-        ]),
-      ),
-    );
-    const summary = run(
-      imports.run(
-        batch([
-          ["1", { name: "One" }],
-          ["2", { name: "Deux" }],
-          ["3", { name: "Three" }],
-          ["3", { name: "Trois" }],
-        ]),
-      ),
-    );
-    expect(summary).toMatchObject({
-      created: 1,
-      updated: 1,
-      unchanged: 1,
-      conflicts: [{ externalId: "3", reason: "duplicate" }],
-    });
-  });
+  it.effect(
+    "counts every outcome, and a repeated id is a conflict against the earlier record",
+    () =>
+      Effect.gen(function* () {
+        const { imports } = world();
+        yield* imports.run(
+          batch([
+            ["1", { name: "One" }],
+            ["2", { name: "Two" }],
+          ]),
+        );
+        const summary = yield* imports.run(
+          batch([
+            ["1", { name: "One" }],
+            ["2", { name: "Deux" }],
+            ["3", { name: "Three" }],
+            ["3", { name: "Trois" }],
+          ]),
+        );
+        expect(summary).toMatchObject({
+          created: 1,
+          updated: 1,
+          unchanged: 1,
+          conflicts: [{ externalId: "3", reason: "duplicate" }],
+        });
+      }),
+  );
 
-  it("keeps ids apart by authority", () => {
-    const { ids, imports } = world();
-    run(imports.run(batch([["36", { name: "AEC party" }]], "aec")));
-    run(imports.run(batch([["36", { name: "Wikidata item" }]], "wikidata")));
-    expect(Arr.map(ids.links(), (link) => link.authority)).toEqual(["aec", "wikidata"]);
-    expect(ids.links()[0]?.nodeId).not.toBe(ids.links()[1]?.nodeId);
-  });
+  it.effect("keeps ids apart by authority", () =>
+    Effect.gen(function* () {
+      const { ids, imports } = world();
+      yield* imports.run(batch([["36", { name: "AEC party" }]], "aec"));
+      yield* imports.run(batch([["36", { name: "Wikidata item" }]], "wikidata"));
+      expect(Arr.map(ids.links(), (link) => link.authority)).toEqual(["aec", "wikidata"]);
+      expect(ids.links()[0]?.nodeId).not.toBe(ids.links()[1]?.nodeId);
+    }),
+  );
 
-  it("refuses an unknown authority and an oversized batch before reading anything", () => {
-    const { chain, imports } = world();
-    expect(failure(imports.run(batch([["1", { name: "One" }]], "isbn")))).toContain(
-      "UnknownAuthority",
-    );
-    const oversized = batch(
-      Arr.makeBy(MAX_IMPORT_BATCH + 1, (index) => [String(index), { name: "x" }] as const),
-    );
-    expect(failure(imports.run(oversized))).toContain("ImportBatchTooLarge");
-    expect(chain.rows()).toEqual([]);
-  });
+  it.effect("refuses an unknown authority and an oversized batch before reading anything", () =>
+    Effect.gen(function* () {
+      const { chain, imports } = world();
+      expect(yield* failure(imports.run(batch([["1", { name: "One" }]], "isbn")))).toContain(
+        "UnknownAuthority",
+      );
+      const oversized = batch(
+        Arr.makeBy(MAX_IMPORT_BATCH + 1, (index) => [String(index), { name: "x" }] as const),
+      );
+      expect(yield* failure(imports.run(oversized))).toContain("ImportBatchTooLarge");
+      expect(chain.rows()).toEqual([]);
+    }),
+  );
 
-  it("settles a concurrent edit, a tombstone and a hook's refusal as conflicts, and writes the rest", () => {
-    const refuse: BeforeWriteHook<never, never> = {
-      name: "refuse-rejected",
-      run: (event) =>
-        event.patch["name"] === "rejected"
-          ? Effect.fail(
-              new WriteRejected({
-                type: event.type,
-                id: event.id,
-                action: event.action,
-                reason: "no",
-              }),
-            )
-          : Effect.succeed(event.patch),
-    };
-    const { chain, ids, imports, ops } = world({ hooks: [refuse] });
-    run(
-      imports.run(
-        batch([
-          ["raced", { name: "Raced" }],
-          ["gone", { name: "Gone" }],
-          ["fine", { name: "Fine" }],
-        ]),
-      ),
-    );
-    chain.raceNextAppend(nodeOf(ids, "raced"));
-    run(ops.delete(nodeOf(ids, "gone")));
-    const summary = run(
-      imports.run(
-        batch([
-          ["raced", { name: "Raced again" }],
-          ["gone", { name: "Gone again" }],
-          ["fine", { name: "Fine again" }],
-          ["new", { name: "rejected" }],
-        ]),
-      ),
-    );
-    expect(summary).toMatchObject({
-      created: 0,
-      updated: 1,
-      conflicts: [
-        { externalId: "raced", reason: "stale" },
-        { externalId: "gone", reason: "deleted" },
-        { externalId: "new", reason: "rejected" },
-      ],
-    });
-  });
+  it.effect(
+    "settles a concurrent edit, a tombstone and a hook's refusal as conflicts, and writes the rest",
+    () =>
+      Effect.gen(function* () {
+        const refuse: BeforeWriteHook<never, never> = {
+          name: "refuse-rejected",
+          run: (event) =>
+            event.patch["name"] === "rejected"
+              ? Effect.fail(
+                  new WriteRejected({
+                    type: event.type,
+                    id: event.id,
+                    action: event.action,
+                    reason: "no",
+                  }),
+                )
+              : Effect.succeed(event.patch),
+        };
+        const { chain, ids, imports, ops } = world({ hooks: [refuse] });
+        yield* imports.run(
+          batch([
+            ["raced", { name: "Raced" }],
+            ["gone", { name: "Gone" }],
+            ["fine", { name: "Fine" }],
+          ]),
+        );
+        chain.raceNextAppend(nodeOf(ids, "raced"));
+        yield* ops.delete(nodeOf(ids, "gone"));
+        const summary = yield* imports.run(
+          batch([
+            ["raced", { name: "Raced again" }],
+            ["gone", { name: "Gone again" }],
+            ["fine", { name: "Fine again" }],
+            ["new", { name: "rejected" }],
+          ]),
+        );
+        expect(summary).toMatchObject({
+          created: 0,
+          updated: 1,
+          conflicts: [
+            { externalId: "raced", reason: "stale" },
+            { externalId: "gone", reason: "deleted" },
+            { externalId: "new", reason: "rejected" },
+          ],
+        });
+      }),
+  );
 
-  it("completes a link whose create never landed, under the linked id", () => {
-    const { ids, imports, row } = world();
-    run(ids.link("aec", "36", "node-from-a-failed-create"));
-    const summary = run(imports.run(batch([["36", { name: "Greens" }]])));
-    expect(summary.created).toBe(1);
-    expect(row("node-from-a-failed-create")).toEqual(
-      Option.some(expect.objectContaining({ name: "Greens" })),
-    );
-  });
+  it.effect("completes a link whose create never landed, under the linked id", () =>
+    Effect.gen(function* () {
+      const { ids, imports, row } = world();
+      yield* ids.link("aec", "36", "node-from-a-failed-create");
+      const summary = yield* imports.run(batch([["36", { name: "Greens" }]]));
+      expect(summary.created).toBe(1);
+      expect(yield* row("node-from-a-failed-create")).toEqual(
+        Option.some(expect.objectContaining({ name: "Greens" })),
+      );
+    }),
+  );
 
-  it("reports a lost link race as taken, creating nothing", () => {
-    const { chain, ids, imports } = world();
-    const racing = {
-      ...ids,
-      lookup: () => Effect.succeed(run(ids.lookup("aec", []))),
-      link: () => Effect.succeed("taken" as const),
-    };
-    const raced = defineReferenceImport({
-      leaf: {
-        type: "parties",
-        access: { kind: "reference" },
-        chain,
-        leaves: makeInMemoryLeafStore(chain, { columns: ["name"], now: NOW }),
-        viewer: Effect.succeedNone,
-        policy: gardeneriaPolicy,
-        followers: makeInMemoryFollowers([]),
-        toResource: (party: LeafRow) => party,
-      },
-      ids: racing,
-      authorities: ["aec"],
-      actor: bot,
-      fields: { name: "overwrite" },
-    });
-    expect(run(raced.run(batch([["36", { name: "Greens" }]]))).conflicts).toEqual([
-      { externalId: "36", reason: "taken" },
-    ]);
-    expect(run(imports.run(batch([]))).written).toEqual([]);
-    expect(chain.rows()).toEqual([]);
-  });
+  it.effect("reports a lost link race as taken, creating nothing", () =>
+    Effect.gen(function* () {
+      const { chain, ids, imports } = world();
+      const racing = {
+        ...ids,
+        lookup: () => ids.lookup("aec", []),
+        link: () => Effect.succeed("taken" as const),
+      };
+      const raced = defineReferenceImport({
+        leaf: {
+          type: "parties",
+          access: { kind: "reference" },
+          chain,
+          leaves: makeInMemoryLeafStore(chain, { columns: ["name"], now: NOW }),
+          viewer: Effect.succeedNone,
+          policy: gardeneriaPolicy,
+          followers: makeInMemoryFollowers([]),
+          toResource: (party: LeafRow) => party,
+        },
+        ids: racing,
+        authorities: ["aec"],
+        actor: bot,
+        fields: { name: "overwrite" },
+      });
+      expect((yield* raced.run(batch([["36", { name: "Greens" }]]))).conflicts).toEqual([
+        { externalId: "36", reason: "taken" },
+      ]);
+      expect((yield* imports.run(batch([]))).written).toEqual([]);
+      expect(chain.rows()).toEqual([]);
+    }),
+  );
 });

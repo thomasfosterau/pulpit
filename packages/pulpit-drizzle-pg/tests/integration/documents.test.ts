@@ -17,7 +17,8 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { beforeAll, it } from "@effect/vitest";
+import { afterAll, describe, expect } from "vite-plus/test";
 import { makeDocumentStore } from "../../src/Documents.ts";
 import { documents } from "../fixtures/tree.ts";
 
@@ -38,7 +39,7 @@ const runtime = ManagedRuntime.make(
 afterAll(() => runtime.dispose());
 
 const run = <A, E>(effect: Effect.Effect<A, E, typeof CurrentTransaction.Identifier>) =>
-  runtime.runPromise(transact(effect));
+  Effect.flatMap(runtime.contextEffect, (context) => Effect.provide(transact(effect), context));
 
 const store = makeDocumentStore({ table: documents, document: Schema.Json, CurrentTransaction });
 const memory = makeInMemoryDocumentStore<Schema.Json>();
@@ -62,37 +63,43 @@ beforeAll(() =>
 );
 
 describe("DocumentStore over PostgreSQL", () => {
-  it.each(samples)("%s hashes as the kernel's canonical text does", async (_name, document) => {
-    const fromSql = await run(store.put(document));
-    const fromMemory = await Effect.runPromise(memory.put(document));
-    expect(fromSql).toEqual(fromMemory);
-    expect(await run(store.get(fromSql.hash))).toEqual(Option.some(document));
-  });
+  it.live.each(samples)("%s hashes as the kernel's canonical text does", ([_name, document]) =>
+    Effect.gen(function* () {
+      const fromSql = yield* run(store.put(document));
+      const fromMemory = yield* memory.put(document);
+      expect(fromSql).toEqual(fromMemory);
+      expect(yield* run(store.get(fromSql.hash))).toEqual(Option.some(document));
+    }),
+  );
 
-  it("never rewrites a stored row: a repeat, or a reordering, writes nothing (DOC-001)", async () => {
-    const first = await run(store.put({ a: 1, b: [1, 2] }));
-    const again = await run(store.put({ b: [1, 2], a: 1 }));
-    expect(again).toEqual({ hash: first.hash, inserted: false });
-    const rows = await run(
-      Effect.flatMap(CurrentTransaction, (tx) => tx.select({ n: count() }).from(documents)),
-    );
-    expect(Arr.map(rows, (row) => row.n)).toEqual([samples.length + 1]);
-  });
+  it.live("never rewrites a stored row: a repeat, or a reordering, writes nothing (DOC-001)", () =>
+    Effect.gen(function* () {
+      const first = yield* run(store.put({ a: 1, b: [1, 2] }));
+      const again = yield* run(store.put({ b: [1, 2], a: 1 }));
+      expect(again).toEqual({ hash: first.hash, inserted: false });
+      const rows = yield* run(
+        Effect.flatMap(CurrentTransaction, (tx) => tx.select({ n: count() }).from(documents)),
+      );
+      expect(Arr.map(rows, (row) => row.n)).toEqual([samples.length + 1]);
+    }),
+  );
 
-  it("getMany reads every stored hash once, skipping unknown and malformed ones", async () => {
-    const hashes = await run(
-      Effect.forEach(
-        samples,
-        ([, document]) => Effect.map(store.put(document), (put) => put.hash),
-        {
-          concurrency: 1,
-        },
-      ),
-    );
-    const found = await run(store.getMany([...hashes, "0".repeat(64), "not-a-hash"]));
-    expect(HashMap.size(found)).toBe(samples.length);
-    expect(HashMap.get(found, hashes[3] ?? "")).toEqual(Option.some(samples[3]?.[1]));
-    expect(await run(store.get("not-a-hash"))).toEqual(Option.none());
-    expect(HashMap.size(await run(store.getMany([])))).toBe(0);
-  });
+  it.live("getMany reads every stored hash once, skipping unknown and malformed ones", () =>
+    Effect.gen(function* () {
+      const hashes = yield* run(
+        Effect.forEach(
+          samples,
+          ([, document]) => Effect.map(store.put(document), (put) => put.hash),
+          {
+            concurrency: 1,
+          },
+        ),
+      );
+      const found = yield* run(store.getMany([...hashes, "0".repeat(64), "not-a-hash"]));
+      expect(HashMap.size(found)).toBe(samples.length);
+      expect(HashMap.get(found, hashes[3] ?? "")).toEqual(Option.some(samples[3]?.[1]));
+      expect(yield* run(store.get("not-a-hash"))).toEqual(Option.none());
+      expect(HashMap.size(yield* run(store.getMany([])))).toBe(0);
+    }),
+  );
 });

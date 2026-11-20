@@ -19,7 +19,8 @@ import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
 import * as R from "effect/Record";
 import * as TestClock from "effect/testing/TestClock";
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import { defineCollection, MAX_COLLECTION_SIZE } from "../src/Collections.ts";
 import { LOCALE_COLUMN } from "../src/Filter.ts";
 import { DEFAULT_LINK_DEPTH, defineLinkList, type Link, type LinkTarget } from "../src/Links.ts";
@@ -188,12 +189,10 @@ const site = (declared: { readonly maxDepth?: number } = {}) => {
 };
 
 const runAtNow = <A, E>(effect: Effect.Effect<A, E>) =>
-  Effect.runPromise(
-    Effect.gen(function* () {
-      yield* TestClock.setTime(NOW.getTime());
-      return yield* effect;
-    }).pipe(Effect.provide(TestClock.layer())),
-  );
+  Effect.gen(function* () {
+    yield* TestClock.setTime(NOW.getTime());
+    return yield* effect;
+  });
 
 /** A menu of one entry per page state, in a fixed order, with the visible ones interleaved. */
 const seeded = Effect.fn(function* (ops: ReturnType<typeof site>) {
@@ -226,176 +225,207 @@ const seeded = Effect.fn(function* (ops: ReturnType<typeof site>) {
 });
 
 describe("defineLinkList", () => {
-  it("omits entries to a private, unpublished, scheduled or tombstoned page, or an unclaimed path, in order and without a gap", async () => {
-    const ops = site();
-    const [anon, stranger, indices] = await runAtNow(
+  it.effect(
+    "omits entries to a private, unpublished, scheduled or tombstoned page, or an unclaimed path, in order and without a gap",
+    () =>
       Effect.gen(function* () {
-        const { menuId } = yield* seeded(ops);
-        return [
-          yield* ops.labels(anonymous, menuId),
-          yield* ops.labels(as(otherMember), menuId),
-          Arr.map(yield* ops.read(anonymous, menuId), (link) => link.index),
-        ] as const;
+        const ops = site();
+        const [anon, stranger, indices] = yield* runAtNow(
+          Effect.gen(function* () {
+            const { menuId } = yield* seeded(ops);
+            return [
+              yield* ops.labels(anonymous, menuId),
+              yield* ops.labels(as(otherMember), menuId),
+              Arr.map(yield* ops.read(anonymous, menuId), (link) => link.index),
+            ] as const;
+          }),
+        );
+        expect(anon).toEqual(["Home", "Contact"]);
+        expect(stranger).toEqual(["Home", "Contact"]);
+        expect(indices).toEqual([0, 1]);
       }),
-    );
-    expect(anon).toEqual(["Home", "Contact"]);
-    expect(stranger).toEqual(["Home", "Contact"]);
-    expect(indices).toEqual([0, 1]);
-  });
+  );
 
-  it("shows the owner and the view-private rung the entries readers can't see, still in order", async () => {
-    const ops = site();
-    const [owner, rung] = await runAtNow(
+  it.effect(
+    "shows the owner and the view-private rung the entries readers can't see, still in order",
+    () =>
       Effect.gen(function* () {
-        const { menuId } = yield* seeded(ops);
-        return [
-          yield* ops.labels(as(member), menuId),
-          yield* ops.labels(as(moderator), menuId),
-        ] as const;
+        const ops = site();
+        const [owner, rung] = yield* runAtNow(
+          Effect.gen(function* () {
+            const { menuId } = yield* seeded(ops);
+            return [
+              yield* ops.labels(as(member), menuId),
+              yield* ops.labels(as(moderator), menuId),
+            ] as const;
+          }),
+        );
+        // The tombstoned page freed its path, so it is unclaimed for everyone.
+        const expected = ["Home", "Secret", "Draft", "Scheduled", "Contact"];
+        expect(owner).toEqual(expected);
+        expect(rung).toEqual(expected);
       }),
-    );
-    // The tombstoned page freed its path, so it is unclaimed for everyone.
-    const expected = ["Home", "Secret", "Draft", "Scheduled", "Contact"];
-    expect(owner).toEqual(expected);
-    expect(rung).toEqual(expected);
-  });
+  );
 
-  it("keeps the order a move gives, among the visible entries", async () => {
-    const ops = site();
-    const read = await runAtNow(
-      Effect.gen(function* () {
-        const { menuId, ids } = yield* seeded(ops);
-        yield* ops.collection.move(menuId, ids.contact, 0);
-        yield* ops.collection.move(menuId, ids.secret, 99);
-        return yield* ops.labels(anonymous, menuId);
-      }),
-    );
-    expect(read).toEqual(["Contact", "Home"]);
-  });
+  it.effect("keeps the order a move gives, among the visible entries", () =>
+    Effect.gen(function* () {
+      const ops = site();
+      const read = yield* runAtNow(
+        Effect.gen(function* () {
+          const { menuId, ids } = yield* seeded(ops);
+          yield* ops.collection.move(menuId, ids.contact, 0);
+          yield* ops.collection.move(menuId, ids.secret, 99);
+          return yield* ops.labels(anonymous, menuId);
+        }),
+      );
+      expect(read).toEqual(["Contact", "Home"]);
+    }),
+  );
 
-  it("reveals neither an omitted entry's id nor its target", async () => {
-    const ops = site();
-    const [found, ids, pageIds, json] = await runAtNow(
-      Effect.gen(function* () {
-        const seed = yield* seeded(ops);
-        const links = yield* ops.read(anonymous, seed.menuId);
-        return [links, seed.ids, seed.pageIds, Formatter.formatJson(links)] as const;
-      }),
-    );
-    expect(Arr.map(found, (link) => link.entryId)).toEqual([ids.home, ids.contact]);
-    expect(Arr.map(found, (link) => link.target.id)).toEqual([pageIds.home.id, pageIds.contact.id]);
-    expect(json).not.toContain("secret");
-  });
+  it.effect("reveals neither an omitted entry's id nor its target", () =>
+    Effect.gen(function* () {
+      const ops = site();
+      const [found, ids, pageIds, json] = yield* runAtNow(
+        Effect.gen(function* () {
+          const seed = yield* seeded(ops);
+          const links = yield* ops.read(anonymous, seed.menuId);
+          return [links, seed.ids, seed.pageIds, Formatter.formatJson(links)] as const;
+        }),
+      );
+      expect(Arr.map(found, (link) => link.entryId)).toEqual([ids.home, ids.contact]);
+      expect(Arr.map(found, (link) => link.target.id)).toEqual([
+        pageIds.home.id,
+        pageIds.contact.id,
+      ]);
+      expect(json).not.toContain("secret");
+    }),
+  );
 
-  it("falls back from the requested locale to its base language, then the default", async () => {
-    const ops = site();
-    const [exact, base, fallback, byTarget] = await runAtNow(
-      Effect.gen(function* () {
-        const about = yield* ops.page("about", "public", { en: "About", pt: "Sobre" });
-        yield* ops.publish(about.id);
-        const menuId = yield* ops.menu();
-        yield* ops.entry(menuId, { en: "About us", pt: "Sobre nós" }, { path: "about" });
-        yield* ops.entry(menuId, { en: "Only English" }, { path: "about" });
-        yield* ops.entry(menuId, { fr: "Seulement" }, { path: "about" });
-        return [
-          yield* ops.read(anonymous, menuId, "pt"),
-          yield* ops.read(anonymous, menuId, "pt-BR"),
-          yield* ops.read(anonymous, menuId, "de"),
-          yield* ops.labels(anonymous, menuId, "fr"),
-        ] as const;
-      }),
-    );
-    expect(Arr.map(exact, (link) => [link.locale, link.entry.label])).toEqual([
-      ["pt", "Sobre nós"],
-      ["en", "Only English"],
-    ]);
-    expect(Arr.map(base, (link) => link.locale)).toEqual(["pt", "en"]);
-    // An entry with none of the fallback locales is omitted, without a gap.
-    expect(Arr.map(fallback, (link) => [link.index, link.entry.label])).toEqual([
-      [0, "About us"],
-      [1, "Only English"],
-    ]);
+  it.effect("falls back from the requested locale to its base language, then the default", () =>
+    Effect.gen(function* () {
+      const ops = site();
+      const [exact, base, fallback, byTarget] = yield* runAtNow(
+        Effect.gen(function* () {
+          const about = yield* ops.page("about", "public", { en: "About", pt: "Sobre" });
+          yield* ops.publish(about.id);
+          const menuId = yield* ops.menu();
+          yield* ops.entry(menuId, { en: "About us", pt: "Sobre nós" }, { path: "about" });
+          yield* ops.entry(menuId, { en: "Only English" }, { path: "about" });
+          yield* ops.entry(menuId, { fr: "Seulement" }, { path: "about" });
+          return [
+            yield* ops.read(anonymous, menuId, "pt"),
+            yield* ops.read(anonymous, menuId, "pt-BR"),
+            yield* ops.read(anonymous, menuId, "de"),
+            yield* ops.labels(anonymous, menuId, "fr"),
+          ] as const;
+        }),
+      );
+      expect(Arr.map(exact, (link) => [link.locale, link.entry.label])).toEqual([
+        ["pt", "Sobre nós"],
+        ["en", "Only English"],
+      ]);
+      expect(Arr.map(base, (link) => link.locale)).toEqual(["pt", "en"]);
+      // An entry with none of the fallback locales is omitted, without a gap.
+      expect(Arr.map(fallback, (link) => [link.index, link.entry.label])).toEqual([
+        [0, "About us"],
+        [1, "Only English"],
+      ]);
 
-    // The page falls back to `en`, and each entry reads in the first locale it carries.
-    expect(byTarget).toEqual(["About us", "Only English", "Seulement"]);
-  });
+      // The page falls back to `en`, and each entry reads in the first locale it carries.
+      expect(byTarget).toEqual(["About us", "Only English", "Seulement"]);
+    }),
+  );
 
-  it("omits an entry whose page carries none of the fallback locales", async () => {
-    const ops = site();
-    const shown = await runAtNow(
-      Effect.gen(function* () {
-        const bonjour = yield* ops.page("bonjour", "public", { fr: "Bonjour" });
-        yield* ops.publish(bonjour.id);
-        const menuId = yield* ops.menu();
-        yield* ops.entry(menuId, { en: "Bonjour" }, { path: "bonjour" });
-        return yield* ops.labels(anonymous, menuId, "de");
-      }),
-    );
-    expect(shown).toEqual([]);
-  });
+  it.effect("omits an entry whose page carries none of the fallback locales", () =>
+    Effect.gen(function* () {
+      const ops = site();
+      const shown = yield* runAtNow(
+        Effect.gen(function* () {
+          const bonjour = yield* ops.page("bonjour", "public", { fr: "Bonjour" });
+          yield* ops.publish(bonjour.id);
+          const menuId = yield* ops.menu();
+          yield* ops.entry(menuId, { en: "Bonjour" }, { path: "bonjour" });
+          return yield* ops.labels(anonymous, menuId, "de");
+        }),
+      );
+      expect(shown).toEqual([]);
+    }),
+  );
 
-  it("follows an alias to the canonical path, and omits an alias to a hidden node", async () => {
-    const ops = site();
-    const [anon, owner] = await runAtNow(
-      Effect.gen(function* () {
-        const about = yield* ops.page("about", "public");
-        yield* ops.publish(about.id);
-        yield* ops.pages.update({ id: about.id, patch: { slug: "about-us" } });
-        const secret = yield* ops.page("hush", "private");
-        yield* ops.publish(secret.id);
-        yield* ops.pages.update({ id: secret.id, patch: { slug: "hush-now" } });
-        const menuId = yield* ops.menu();
-        yield* ops.entry(menuId, { en: "Old about" }, { path: "about" });
-        yield* ops.entry(menuId, { en: "Old hush" }, { path: "hush" });
-        return [yield* ops.read(anonymous, menuId), yield* ops.read(as(member), menuId)] as const;
-      }),
-    );
-    expect(
-      Arr.map(anon, (link) => [link.entry.label, link.target.kind === "path" && link.target.path]),
-    ).toEqual([["Old about", "about-us"]]);
-    expect(Arr.map(owner, (link) => link.target.kind === "path" && link.target.path)).toEqual([
-      "about-us",
-      "hush-now",
-    ]);
-  });
+  it.effect("follows an alias to the canonical path, and omits an alias to a hidden node", () =>
+    Effect.gen(function* () {
+      const ops = site();
+      const [anon, owner] = yield* runAtNow(
+        Effect.gen(function* () {
+          const about = yield* ops.page("about", "public");
+          yield* ops.publish(about.id);
+          yield* ops.pages.update({ id: about.id, patch: { slug: "about-us" } });
+          const secret = yield* ops.page("hush", "private");
+          yield* ops.publish(secret.id);
+          yield* ops.pages.update({ id: secret.id, patch: { slug: "hush-now" } });
+          const menuId = yield* ops.menu();
+          yield* ops.entry(menuId, { en: "Old about" }, { path: "about" });
+          yield* ops.entry(menuId, { en: "Old hush" }, { path: "hush" });
+          return [yield* ops.read(anonymous, menuId), yield* ops.read(as(member), menuId)] as const;
+        }),
+      );
+      expect(
+        Arr.map(anon, (link) => [
+          link.entry.label,
+          link.target.kind === "path" && link.target.path,
+        ]),
+      ).toEqual([["Old about", "about-us"]]);
+      expect(Arr.map(owner, (link) => link.target.kind === "path" && link.target.path)).toEqual([
+        "about-us",
+        "hush-now",
+      ]);
+    }),
+  );
 
-  it("gates a node target by its leaf, and omits an entry with no target", async () => {
-    const ops = site();
-    const [anon, owner] = await runAtNow(
-      Effect.gen(function* () {
-        const open = yield* ops.page("open", "public");
-        yield* ops.publish(open.id);
-        const closed = yield* ops.page("closed", "private");
-        yield* ops.publish(closed.id);
-        const menuId = yield* ops.menu();
-        yield* ops.entry(menuId, { en: "Open" }, { nodeId: open.id });
-        yield* ops.entry(menuId, { en: "Closed" }, { nodeId: closed.id });
-        yield* ops.entry(menuId, { en: "Missing" }, { nodeId: "no-such-node" });
-        yield* ops.entry(menuId, { en: "Bare" }, {});
-        return [yield* ops.read(anonymous, menuId), yield* ops.labels(as(member), menuId)] as const;
-      }),
-    );
-    expect(Arr.map(anon, (link) => link.target.kind)).toEqual(["node"]);
-    expect(Arr.map(anon, (link) => link.entry.label)).toEqual(["Open"]);
-    expect(owner).toEqual(["Open", "Closed"]);
-  });
+  it.effect("gates a node target by its leaf, and omits an entry with no target", () =>
+    Effect.gen(function* () {
+      const ops = site();
+      const [anon, owner] = yield* runAtNow(
+        Effect.gen(function* () {
+          const open = yield* ops.page("open", "public");
+          yield* ops.publish(open.id);
+          const closed = yield* ops.page("closed", "private");
+          yield* ops.publish(closed.id);
+          const menuId = yield* ops.menu();
+          yield* ops.entry(menuId, { en: "Open" }, { nodeId: open.id });
+          yield* ops.entry(menuId, { en: "Closed" }, { nodeId: closed.id });
+          yield* ops.entry(menuId, { en: "Missing" }, { nodeId: "no-such-node" });
+          yield* ops.entry(menuId, { en: "Bare" }, {});
+          return [
+            yield* ops.read(anonymous, menuId),
+            yield* ops.labels(as(member), menuId),
+          ] as const;
+        }),
+      );
+      expect(Arr.map(anon, (link) => link.target.kind)).toEqual(["node"]);
+      expect(Arr.map(anon, (link) => link.entry.label)).toEqual(["Open"]);
+      expect(owner).toEqual(["Open", "Closed"]);
+    }),
+  );
 
-  it("answers a menu the viewer can't read as not found, and an empty one as empty", async () => {
-    const ops = site();
-    const [hidden, empty] = await runAtNow(
-      Effect.gen(function* () {
-        const secret = yield* ops.menu("private");
-        const bare = yield* ops.menu();
-        const outcome = yield* Effect.match(ops.read(anonymous, secret), {
-          onFailure: (error) => error._tag,
-          onSuccess: () => "found",
-        });
-        return [outcome, yield* ops.read(anonymous, bare)] as const;
-      }),
-    );
-    expect(hidden).toBe("NodeNotFound");
-    expect(empty).toEqual([]);
-  });
+  it.effect("answers a menu the viewer can't read as not found, and an empty one as empty", () =>
+    Effect.gen(function* () {
+      const ops = site();
+      const [hidden, empty] = yield* runAtNow(
+        Effect.gen(function* () {
+          const secret = yield* ops.menu("private");
+          const bare = yield* ops.menu();
+          const outcome = yield* Effect.match(ops.read(anonymous, secret), {
+            onFailure: (error) => error._tag,
+            onSuccess: () => "found",
+          });
+          return [outcome, yield* ops.read(anonymous, bare)] as const;
+        }),
+      );
+      expect(hidden).toBe("NodeNotFound");
+      expect(empty).toEqual([]);
+    }),
+  );
 });
 
 /** A read as nested labels: a nested list's label carries its own links'. */
@@ -407,161 +437,178 @@ const outlineOf = (links: ReadonlyArray<Link<Entry>>): ReadonlyArray<Outline> =>
   });
 
 describe("defineLinkList — nested lists", () => {
-  it("reads a nested list in place, in order, and omits a hidden or empty one without a gap", async () => {
-    const ops = site();
-    const [anon, owner, indices] = await runAtNow(
+  it.effect(
+    "reads a nested list in place, in order, and omits a hidden or empty one without a gap",
+    () =>
       Effect.gen(function* () {
-        const home = yield* ops.page("home", "public");
-        yield* ops.publish(home.id);
-        const secret = yield* ops.page("secret", "private");
-        yield* ops.publish(secret.id);
+        const ops = site();
+        const [anon, owner, indices] = yield* runAtNow(
+          Effect.gen(function* () {
+            const home = yield* ops.page("home", "public");
+            yield* ops.publish(home.id);
+            const secret = yield* ops.page("secret", "private");
+            yield* ops.publish(secret.id);
 
-        const top = yield* ops.menu();
-        const about = yield* ops.menu();
-        const hidden = yield* ops.menu("private");
-        const empty = yield* ops.menu();
-        const bare = yield* ops.menu();
-        yield* ops.entry(about, { en: "Secret" }, { path: "secret" });
-        yield* ops.entry(about, { en: "Home again" }, { path: "home" });
-        yield* ops.entry(hidden, { en: "Behind" }, { path: "home" });
-        yield* ops.entry(empty, { en: "Only secret" }, { path: "secret" });
+            const top = yield* ops.menu();
+            const about = yield* ops.menu();
+            const hidden = yield* ops.menu("private");
+            const empty = yield* ops.menu();
+            const bare = yield* ops.menu();
+            yield* ops.entry(about, { en: "Secret" }, { path: "secret" });
+            yield* ops.entry(about, { en: "Home again" }, { path: "home" });
+            yield* ops.entry(hidden, { en: "Behind" }, { path: "home" });
+            yield* ops.entry(empty, { en: "Only secret" }, { path: "secret" });
 
-        yield* ops.entry(top, { en: "Hidden" }, { listId: hidden });
-        yield* ops.entry(top, { en: "Home" }, { path: "home" });
-        yield* ops.entry(top, { en: "Empty" }, { listId: empty });
-        yield* ops.entry(top, { en: "About" }, { listId: about });
-        yield* ops.entry(top, { en: "Bare" }, { listId: bare });
-        yield* ops.entry(top, { en: "Missing" }, { listId: "no-such-menu" });
-        const read = yield* ops.read(anonymous, top);
-        return [
-          outlineOf(read),
-          outlineOf(yield* ops.read(as(member), top)),
-          Arr.map(read, (link) =>
-            link.target.kind === "list"
-              ? [link.index, Arr.map(link.target.links, (nested) => nested.index)]
-              : link.index,
+            yield* ops.entry(top, { en: "Hidden" }, { listId: hidden });
+            yield* ops.entry(top, { en: "Home" }, { path: "home" });
+            yield* ops.entry(top, { en: "Empty" }, { listId: empty });
+            yield* ops.entry(top, { en: "About" }, { listId: about });
+            yield* ops.entry(top, { en: "Bare" }, { listId: bare });
+            yield* ops.entry(top, { en: "Missing" }, { listId: "no-such-menu" });
+            const read = yield* ops.read(anonymous, top);
+            return [
+              outlineOf(read),
+              outlineOf(yield* ops.read(as(member), top)),
+              Arr.map(read, (link) =>
+                link.target.kind === "list"
+                  ? [link.index, Arr.map(link.target.links, (nested) => nested.index)]
+                  : link.index,
+              ),
+            ] as const;
+          }),
+        );
+        expect(anon).toEqual(["Home", ["About", ["Home again"]]]);
+        expect(indices).toEqual([0, [1, [0]]]);
+        // The owner reads the private menu and the private page; a list with no entries stays out.
+        expect(owner).toEqual([
+          ["Hidden", ["Behind"]],
+          "Home",
+          ["Empty", ["Only secret"]],
+          ["About", ["Secret", "Home again"]],
+        ]);
+      }),
+  );
+
+  it.effect("reveals neither a hidden nested list's id nor its entries", () =>
+    Effect.gen(function* () {
+      const ops = site();
+      const [json, hiddenId] = yield* runAtNow(
+        Effect.gen(function* () {
+          const home = yield* ops.page("home", "public");
+          yield* ops.publish(home.id);
+          const top = yield* ops.menu();
+          const hidden = yield* ops.menu("private");
+          yield* ops.entry(hidden, { en: "Behind" }, { path: "home" });
+          yield* ops.entry(top, { en: "Hidden" }, { listId: hidden });
+          yield* ops.entry(top, { en: "Home" }, { path: "home" });
+          return [Formatter.formatJson(yield* ops.read(anonymous, top)), hidden] as const;
+        }),
+      );
+      expect(json).not.toContain(hiddenId);
+      expect(json).not.toContain("Behind");
+    }),
+  );
+
+  it.effect("cuts a cycle: an entry to its own list or one above it is omitted", () =>
+    Effect.gen(function* () {
+      const ops = site({ maxDepth: 10 });
+      const [fromA, fromB] = yield* runAtNow(
+        Effect.gen(function* () {
+          const home = yield* ops.page("home", "public");
+          yield* ops.publish(home.id);
+          const a = yield* ops.menu();
+          const b = yield* ops.menu();
+          yield* ops.entry(a, { en: "A home" }, { path: "home" });
+          yield* ops.entry(a, { en: "To B" }, { listId: b });
+          yield* ops.entry(a, { en: "To A" }, { listId: a });
+          yield* ops.entry(b, { en: "B home" }, { path: "home" });
+          yield* ops.entry(b, { en: "Back to A" }, { listId: a });
+          return [
+            yield* ops.labels(anonymous, a),
+            outlineOf(yield* ops.read(anonymous, b)),
+          ] as const;
+        }),
+      );
+      expect(fromA).toEqual(["A home", "To B"]);
+      expect(fromB).toEqual(["B home", ["Back to A", ["A home"]]]);
+    }),
+  );
+
+  it.effect(
+    "nests to DEFAULT_LINK_DEPTH levels, or the declared maxDepth, and omits what lies deeper",
+    () =>
+      Effect.gen(function* () {
+        const chainOf = (ops: ReturnType<typeof site>) =>
+          Effect.gen(function* () {
+            const home = yield* ops.page("home", "public");
+            yield* ops.publish(home.id);
+            const lists = yield* Effect.forEach(Arr.range(1, 5), () => ops.menu(), {
+              concurrency: 1,
+            });
+            yield* Effect.forEach(
+              lists,
+              (id, at) =>
+                Effect.gen(function* () {
+                  yield* ops.entry(id, { en: `Level ${at + 1}` }, { path: "home" });
+                  const next = Arr.get(lists, at + 1);
+                  if (Option.isSome(next)) {
+                    yield* ops.entry(id, { en: `Into ${at + 2}` }, { listId: next.value });
+                  }
+                }),
+              { concurrency: 1 },
+            );
+            return outlineOf(yield* ops.read(anonymous, Arr.headNonEmpty(lists)));
+          });
+        const [byDefault, flat, deep] = yield* runAtNow(
+          Effect.all(
+            [chainOf(site()), chainOf(site({ maxDepth: 1 })), chainOf(site({ maxDepth: 5 }))],
+            {
+              concurrency: 1,
+            },
           ),
-        ] as const;
-      }),
-    );
-    expect(anon).toEqual(["Home", ["About", ["Home again"]]]);
-    expect(indices).toEqual([0, [1, [0]]]);
-    // The owner reads the private menu and the private page; a list with no entries stays out.
-    expect(owner).toEqual([
-      ["Hidden", ["Behind"]],
-      "Home",
-      ["Empty", ["Only secret"]],
-      ["About", ["Secret", "Home again"]],
-    ]);
-  });
-
-  it("reveals neither a hidden nested list's id nor its entries", async () => {
-    const ops = site();
-    const [json, hiddenId] = await runAtNow(
-      Effect.gen(function* () {
-        const home = yield* ops.page("home", "public");
-        yield* ops.publish(home.id);
-        const top = yield* ops.menu();
-        const hidden = yield* ops.menu("private");
-        yield* ops.entry(hidden, { en: "Behind" }, { path: "home" });
-        yield* ops.entry(top, { en: "Hidden" }, { listId: hidden });
-        yield* ops.entry(top, { en: "Home" }, { path: "home" });
-        return [Formatter.formatJson(yield* ops.read(anonymous, top)), hidden] as const;
-      }),
-    );
-    expect(json).not.toContain(hiddenId);
-    expect(json).not.toContain("Behind");
-  });
-
-  it("cuts a cycle: an entry to its own list or one above it is omitted", async () => {
-    const ops = site({ maxDepth: 10 });
-    const [fromA, fromB] = await runAtNow(
-      Effect.gen(function* () {
-        const home = yield* ops.page("home", "public");
-        yield* ops.publish(home.id);
-        const a = yield* ops.menu();
-        const b = yield* ops.menu();
-        yield* ops.entry(a, { en: "A home" }, { path: "home" });
-        yield* ops.entry(a, { en: "To B" }, { listId: b });
-        yield* ops.entry(a, { en: "To A" }, { listId: a });
-        yield* ops.entry(b, { en: "B home" }, { path: "home" });
-        yield* ops.entry(b, { en: "Back to A" }, { listId: a });
-        return [yield* ops.labels(anonymous, a), outlineOf(yield* ops.read(anonymous, b))] as const;
-      }),
-    );
-    expect(fromA).toEqual(["A home", "To B"]);
-    expect(fromB).toEqual(["B home", ["Back to A", ["A home"]]]);
-  });
-
-  it("nests to DEFAULT_LINK_DEPTH levels, or the declared maxDepth, and omits what lies deeper", async () => {
-    const chainOf = (ops: ReturnType<typeof site>) =>
-      Effect.gen(function* () {
-        const home = yield* ops.page("home", "public");
-        yield* ops.publish(home.id);
-        const lists = yield* Effect.forEach(Arr.range(1, 5), () => ops.menu(), {
-          concurrency: 1,
-        });
-        yield* Effect.forEach(
-          lists,
-          (id, at) =>
-            Effect.gen(function* () {
-              yield* ops.entry(id, { en: `Level ${at + 1}` }, { path: "home" });
-              const next = Arr.get(lists, at + 1);
-              if (Option.isSome(next)) {
-                yield* ops.entry(id, { en: `Into ${at + 2}` }, { listId: next.value });
-              }
-            }),
-          { concurrency: 1 },
         );
-        return outlineOf(yield* ops.read(anonymous, Arr.headNonEmpty(lists)));
-      });
-    const [byDefault, flat, deep] = await runAtNow(
-      Effect.all(
-        [chainOf(site()), chainOf(site({ maxDepth: 1 })), chainOf(site({ maxDepth: 5 }))],
-        {
-          concurrency: 1,
-        },
-      ),
-    );
-    expect(DEFAULT_LINK_DEPTH).toBe(3);
-    expect(byDefault).toEqual(["Level 1", ["Into 2", ["Level 2", ["Into 3", ["Level 3"]]]]]);
-    expect(flat).toEqual(["Level 1"]);
-    expect(deep).toEqual([
-      "Level 1",
-      [
-        "Into 2",
-        ["Level 2", ["Into 3", ["Level 3", ["Into 4", ["Level 4", ["Into 5", ["Level 5"]]]]]]],
-      ],
-    ]);
-  });
-
-  it("reads at most MAX_COLLECTION_SIZE entries over every level, in reading order", async () => {
-    const ops = site();
-    const sizes = await runAtNow(
-      Effect.gen(function* () {
-        const home = yield* ops.page("home", "public");
-        yield* ops.publish(home.id);
-        const top = yield* ops.menu();
-        const wide = yield* ops.menu();
-        yield* Effect.forEach(
-          Arr.range(1, 25),
-          (n) => ops.entry(wide, { en: `Wide ${n}` }, { nodeId: home.id }),
-          { concurrency: 1 },
-        );
-        yield* Effect.forEach(
-          Arr.range(1, 40),
-          (n) => ops.entry(top, { en: `Into ${n}` }, { listId: wide }),
-          { concurrency: 1 },
-        );
-        const read = yield* ops.read(anonymous, top);
-        return Arr.map(read, (link) =>
-          link.target.kind === "list" ? link.target.links.length : 0,
-        );
+        expect(DEFAULT_LINK_DEPTH).toBe(3);
+        expect(byDefault).toEqual(["Level 1", ["Into 2", ["Level 2", ["Into 3", ["Level 3"]]]]]);
+        expect(flat).toEqual(["Level 1"]);
+        expect(deep).toEqual([
+          "Level 1",
+          [
+            "Into 2",
+            ["Level 2", ["Into 3", ["Level 3", ["Into 4", ["Level 4", ["Into 5", ["Level 5"]]]]]]],
+          ],
+        ]);
       }),
-    );
-    // The top list's 40 entries leave 960: 38 nested reads of 25, one of the 10
-    // left, and none for the last entry, whose list is left empty.
-    expect(MAX_COLLECTION_SIZE).toBe(1000);
-    expect(sizes).toEqual([...Arr.replicate(25, 38), 10]);
-  });
+  );
+
+  it.effect("reads at most MAX_COLLECTION_SIZE entries over every level, in reading order", () =>
+    Effect.gen(function* () {
+      const ops = site();
+      const sizes = yield* runAtNow(
+        Effect.gen(function* () {
+          const home = yield* ops.page("home", "public");
+          yield* ops.publish(home.id);
+          const top = yield* ops.menu();
+          const wide = yield* ops.menu();
+          yield* Effect.forEach(
+            Arr.range(1, 25),
+            (n) => ops.entry(wide, { en: `Wide ${n}` }, { nodeId: home.id }),
+            { concurrency: 1 },
+          );
+          yield* Effect.forEach(
+            Arr.range(1, 40),
+            (n) => ops.entry(top, { en: `Into ${n}` }, { listId: wide }),
+            { concurrency: 1 },
+          );
+          const read = yield* ops.read(anonymous, top);
+          return Arr.map(read, (link) =>
+            link.target.kind === "list" ? link.target.links.length : 0,
+          );
+        }),
+      );
+      // The top list's 40 entries leave 960: 38 nested reads of 25, one of the 10
+      // left, and none for the last entry, whose list is left empty.
+      expect(MAX_COLLECTION_SIZE).toBe(1000);
+      expect(sizes).toEqual([...Arr.replicate(25, 38), 10]);
+    }),
+  );
 });

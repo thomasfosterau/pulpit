@@ -19,13 +19,14 @@ import { getTableName, sql } from "drizzle-orm";
 import * as Arr from "effect/Array";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { beforeAll, it } from "@effect/vitest";
+import { afterAll, describe, expect } from "vite-plus/test";
 import { makeLeafStores } from "../../src/LeafStore.ts";
 import { makeProposalStore } from "../../src/Proposals.ts";
 import { makeVersionChains } from "../../src/VersionChain.ts";
@@ -47,14 +48,8 @@ const runtime = ManagedRuntime.make(
 );
 afterAll(() => runtime.dispose());
 
-/** The second transaction's probe could not even run (its promise rejected). */
-class LockProbeFailed extends Schema.TaggedError<
-  LockProbeFailed,
-  { readonly brand: unique symbol }
->()("LockProbeFailed", {}) {}
-
 const run = <A, E>(effect: Effect.Effect<A, E, typeof CurrentTransaction.Identifier>) =>
-  runtime.runPromise(transact(effect));
+  Effect.flatMap(runtime.contextEffect, (context) => Effect.provide(transact(effect), context));
 
 const chains = makeVersionChains({ tree, tables, CurrentTransaction });
 const stores = makeLeafStores({ tree, tables, views, owners, CurrentTransaction });
@@ -112,79 +107,84 @@ const rows: ReadonlyArray<ProposalRow> = [
   proposal(6, 1, "u-4", 3),
 ];
 
-beforeAll(async () => {
-  await run(
-    Effect.gen(function* () {
-      const tx = yield* CurrentTransaction;
-      yield* tx.execute(
-        sql.raw(`TRUNCATE pulpit_test.${getTableName(tables.root.identity)} CASCADE`),
-      );
-    }),
-  );
-  await run(
-    Effect.forEach(
-      [
-        [1, Option.some("u-1"), 2],
-        [2, Option.some("u-9"), 0],
-        [3, Option.none<string>(), 1],
-      ] as const,
-      ([n, owner, updates]) =>
-        Effect.gen(function* () {
-          const create = { id: Option.some(node(n)), state: postState, actorId: owner };
-          yield* chains.posts.create(create);
-          yield* memoryChain.create(create);
-          yield* Effect.forEach(
-            Arr.range(1, updates),
-            (version) => {
-              const update = {
-                id: node(n),
-                patch: { title: `v${String(version)}` },
-                actorId: owner,
-              };
-              return Effect.andThen(chains.posts.update(update), memoryChain.update(update));
-            },
-            { concurrency: 1 },
-          );
-          yield* Effect.forEach(
-            Option.toArray(owner),
-            (ownerId) =>
-              Effect.andThen(
-                stores.posts.stampOwner(node(n), ownerId),
-                memoryLeaves.stampOwner(node(n), ownerId),
-              ),
-            { concurrency: 1 },
-          );
-        }),
-      { concurrency: 1 },
-    ),
-  );
-  await run(
-    Effect.forEach(rows, (row) => Effect.andThen(store.insert(row), memory.insert(row)), {
-      concurrency: 1,
-    }),
-  );
-});
+beforeAll(() =>
+  Effect.gen(function* () {
+    yield* run(
+      Effect.gen(function* () {
+        const tx = yield* CurrentTransaction;
+        yield* tx.execute(
+          sql.raw(`TRUNCATE pulpit_test.${getTableName(tables.root.identity)} CASCADE`),
+        );
+      }),
+    );
+    yield* run(
+      Effect.forEach(
+        [
+          [1, Option.some("u-1"), 2],
+          [2, Option.some("u-9"), 0],
+          [3, Option.none<string>(), 1],
+        ] as const,
+        ([n, owner, updates]) =>
+          Effect.gen(function* () {
+            const create = { id: Option.some(node(n)), state: postState, actorId: owner };
+            yield* chains.posts.create(create);
+            yield* memoryChain.create(create);
+            yield* Effect.forEach(
+              Arr.range(1, updates),
+              (version) => {
+                const update = {
+                  id: node(n),
+                  patch: { title: `v${String(version)}` },
+                  actorId: owner,
+                };
+                return Effect.andThen(chains.posts.update(update), memoryChain.update(update));
+              },
+              { concurrency: 1 },
+            );
+            yield* Effect.forEach(
+              Option.toArray(owner),
+              (ownerId) =>
+                Effect.andThen(
+                  stores.posts.stampOwner(node(n), ownerId),
+                  memoryLeaves.stampOwner(node(n), ownerId),
+                ),
+              { concurrency: 1 },
+            );
+          }),
+        { concurrency: 1 },
+      ),
+    );
+    yield* run(
+      Effect.forEach(rows, (row) => Effect.andThen(store.insert(row), memory.insert(row)), {
+        concurrency: 1,
+      }),
+    );
+  }),
+);
 
-const listBoth = async (where: ListFilter<never>, limit = 100, offset = 0) => {
-  const query = { where, limit, offset };
-  return {
-    sql: await run(store.list(query)),
-    memory: await Effect.runPromise(memory.list(query)),
-  };
-};
+const listBoth = (where: ListFilter<never>, limit = 100, offset = 0) =>
+  Effect.gen(function* () {
+    const query = { where, limit, offset };
+    return {
+      sql: yield* run(store.list(query)),
+      memory: yield* memory.list(query),
+    };
+  });
 
 describe("ProposalStore over PostgreSQL agrees with the in-memory store", () => {
-  it("get reads the row with its target's head version; an unknown or malformed id none", async () => {
-    const ids = Arr.map([1, 2, 3, 4, 5], proposalId);
-    expect(await run(Effect.forEach(ids, store.get, { concurrency: 1 }))).toEqual(
-      await Effect.runPromise(Effect.forEach(ids, memory.get, { concurrency: 1 })),
-    );
-    expect(Option.map(await run(store.get(proposalId(1))), (l) => l.targetVersion)).toEqual(
-      Option.some(Option.some(2n)),
-    );
-    expect(await run(store.get(proposalId(99)))).toEqual(Option.none());
-    expect(await run(store.get("not-a-uuid"))).toEqual(Option.none());
-  });
+  it.live("get reads the row with its target's head version; an unknown or malformed id none", () =>
+    Effect.gen(function* () {
+      const ids = Arr.map([1, 2, 3, 4, 5], proposalId);
+      expect(yield* run(Effect.forEach(ids, store.get, { concurrency: 1 }))).toEqual(
+        yield* Effect.forEach(ids, memory.get, { concurrency: 1 }),
+      );
+      expect(Option.map(yield* run(store.get(proposalId(1))), (l) => l.targetVersion)).toEqual(
+        Option.some(Option.some(2n)),
+      );
+      expect(yield* run(store.get(proposalId(99)))).toEqual(Option.none());
+      expect(yield* run(store.get("not-a-uuid"))).toEqual(Option.none());
+    }),
+  );
 
   const filters: ReadonlyArray<readonly [string, ListFilter<never>]> = [
     ["every row", always],
@@ -196,131 +196,151 @@ describe("ProposalStore over PostgreSQL agrees with the in-memory store", () => 
     ["an ownerless target", isNull("targetOwnerId")],
     ["a conjunction", and(eq("authorId", "u-3"), eq("targetOwnerId", "u-9"))],
   ];
-  it.each(filters)("list, newest first with the total: %s", async (_name, where) => {
-    const both = await listBoth(where);
-    expect(both.sql).toEqual(both.memory);
-  });
+  it.live.each(filters)("list, newest first with the total: %s", ([_name, where]) =>
+    Effect.gen(function* () {
+      const both = yield* listBoth(where);
+      expect(both.sql).toEqual(both.memory);
+    }),
+  );
 
-  it("list pages, the total unpaged (so agreement is not vacuous)", async () => {
-    const both = await listBoth(always, 2, 1);
-    expect(both.sql).toEqual(both.memory);
-    expect(both.sql.total).toBe(6);
-    // Newest first, `id DESC` on the 00:07 tie.
-    const all = await run(store.list({ where: always, limit: 100, offset: 0 }));
-    expect(Arr.map(all.rows, (l) => l.row.id)).toEqual(Arr.map([5, 3, 2, 1, 6, 4], proposalId));
-  });
+  it.live("list pages, the total unpaged (so agreement is not vacuous)", () =>
+    Effect.gen(function* () {
+      const both = yield* listBoth(always, 2, 1);
+      expect(both.sql).toEqual(both.memory);
+      expect(both.sql.total).toBe(6);
+      // Newest first, `id DESC` on the 00:07 tie.
+      const all = yield* run(store.list({ where: always, limit: 100, offset: 0 }));
+      expect(Arr.map(all.rows, (l) => l.row.id)).toEqual(Arr.map([5, 3, 2, 1, 6, 4], proposalId));
+    }),
+  );
 
-  it("close writes a pending row's decision once; a closed row stays as it was", async () => {
-    const accept = {
-      status: "accepted" as const,
-      decidedAt: at(20),
-      decidedBy: "u-1",
-      decisionNote: Option.some("thanks"),
-      appliedVersion: Option.some(2n),
-    };
-    const reject = {
-      status: "rejected" as const,
-      decidedAt: at(21),
-      decidedBy: "u-2",
-      decisionNote: Option.none(),
-      appliedVersion: Option.none(),
-    };
-    const decisions = [
-      [proposalId(1), accept],
-      [proposalId(1), reject],
-      [proposalId(3), reject],
-    ] as const;
-    await run(
-      Effect.forEach(decisions, ([id, decision]) => store.close(id, decision), { concurrency: 1 }),
-    );
-    await Effect.runPromise(
-      Effect.forEach(decisions, ([id, decision]) => memory.close(id, decision), { concurrency: 1 }),
-    );
-    const both = await listBoth(always);
-    expect(both.sql).toEqual(both.memory);
-    expect(Option.map(await run(store.get(proposalId(1))), (l) => l.row.status)).toEqual(
-      Option.some("accepted"),
-    );
-  });
-
-  it("refuses an applied version the target's chain lacks (the composite foreign key)", async () => {
-    const exit = await runtime.runPromiseExit(
-      transact(
-        store.close(proposalId(5), {
-          status: "accepted",
-          decidedAt: at(22),
-          decidedBy: "u-1",
-          decisionNote: Option.none(),
-          appliedVersion: Option.some(9n),
+  it.live("close writes a pending row's decision once; a closed row stays as it was", () =>
+    Effect.gen(function* () {
+      const accept = {
+        status: "accepted" as const,
+        decidedAt: at(20),
+        decidedBy: "u-1",
+        decisionNote: Option.some("thanks"),
+        appliedVersion: Option.some(2n),
+      };
+      const reject = {
+        status: "rejected" as const,
+        decidedAt: at(21),
+        decidedBy: "u-2",
+        decisionNote: Option.none(),
+        appliedVersion: Option.none(),
+      };
+      const decisions = [
+        [proposalId(1), accept],
+        [proposalId(1), reject],
+        [proposalId(3), reject],
+      ] as const;
+      yield* run(
+        Effect.forEach(decisions, ([id, decision]) => store.close(id, decision), {
+          concurrency: 1,
         }),
-      ),
-    );
-    expect(Exit.isFailure(exit)).toBe(true);
-  });
+      );
+      yield* Effect.forEach(decisions, ([id, decision]) => memory.close(id, decision), {
+        concurrency: 1,
+      });
+      const both = yield* listBoth(always);
+      expect(both.sql).toEqual(both.memory);
+      expect(Option.map(yield* run(store.get(proposalId(1))), (l) => l.row.status)).toEqual(
+        Option.some("accepted"),
+      );
+    }),
+  );
 
-  it("lock holds the row FOR UPDATE against a second transaction", async () => {
-    // Run once the first transaction holds the lock: `NOWAIT` fails on a locked row.
-    const lockElsewhere = () =>
-      runtime.runPromiseExit(
-        transact(
-          Effect.gen(function* () {
-            const tx = yield* CurrentTransaction;
-            yield* tx.execute(
-              sql`SELECT 1 FROM ${proposals} WHERE ${proposals.id} = ${proposalId(2)} FOR UPDATE NOWAIT`,
-            );
-          }),
+  it.live("refuses an applied version the target's chain lacks (the composite foreign key)", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        Effect.provide(
+          transact(
+            store.close(proposalId(5), {
+              status: "accepted",
+              decidedAt: at(22),
+              decidedBy: "u-1",
+              decisionNote: Option.none(),
+              appliedVersion: Option.some(9n),
+            }),
+          ),
+          yield* runtime.contextEffect,
         ),
       );
-    const outcome = await run(
+      expect(Exit.isFailure(exit)).toBe(true);
+    }),
+  );
+
+  it.live("lock holds the row FOR UPDATE against a second transaction", () =>
+    Effect.gen(function* () {
+      // Run once the first transaction holds the lock: `NOWAIT` fails on a locked row.
+      /** The same lock on a connection of its own, outside the test's transaction. */
+      const lockElsewhere = () =>
+        Effect.exit(
+          run(
+            Effect.gen(function* () {
+              const tx = yield* CurrentTransaction;
+              yield* tx.execute(
+                sql`SELECT 1 FROM ${proposals} WHERE ${proposals.id} = ${proposalId(2)} FOR UPDATE NOWAIT`,
+              );
+            }),
+          ),
+        ).pipe(
+          // A fresh context: no open transaction, so `run` takes a second connection.
+          Effect.updateContext((_: Context.Context<never>) => Context.empty()),
+        );
+      const outcome = yield* run(
+        Effect.gen(function* () {
+          const locked = yield* store.lock(proposalId(2));
+          const elsewhere = yield* lockElsewhere();
+          return { locked, elsewhere };
+        }),
+      );
+      expect(Option.map(outcome.locked, (row) => row.id)).toEqual(Option.some(proposalId(2)));
+      expect(outcome.locked).toEqual(yield* memory.lock(proposalId(2)));
+      expect(Exit.isFailure(outcome.elsewhere)).toBe(true);
+      // Once the first transaction commits, the row is free again.
+      expect(Exit.isSuccess(yield* lockElsewhere())).toBe(true);
+    }),
+  );
+
+  it.live(
+    "eraseAuthor deletes the account's open rows, rewrites the rest, in batches of limit",
+    () =>
       Effect.gen(function* () {
-        const locked = yield* store.lock(proposalId(2));
-        const elsewhere = yield* Effect.tryPromise({
-          try: lockElsewhere,
-          catch: () => new LockProbeFailed(),
-        });
-        return { locked, elsewhere };
+        const query = { accountId: "u-2", replacement: "erased", limit: 1 };
+        const counts = {
+          sql: yield* run(
+            Effect.forEach(Arr.range(1, 4), () => store.eraseAuthor(query), { concurrency: 1 }),
+          ),
+          memory: yield* Effect.forEach(Arr.range(1, 4), () => memory.eraseAuthor(query), {
+            concurrency: 1,
+          }),
+        };
+        expect(counts.sql).toEqual(counts.memory);
+        // u-2 wrote 1 (accepted: rewritten), 3 (rejected: deleted) and 5 (pending: deleted), and decided 3.
+        expect(counts.sql).toEqual([1, 1, 1, 0]);
+        const both = yield* listBoth(always);
+        expect(both.sql).toEqual(both.memory);
+        expect(
+          Arr.map(both.sql.rows, (l) => [l.row.id, l.row.authorId] as const).find(
+            ([id]) => id === proposalId(1),
+          ),
+        ).toEqual([proposalId(1), "erased"]);
+        // A decider's id is rewritten on the row they decided, whoever wrote it.
+        expect(
+          yield* run(store.eraseAuthor({ accountId: "u-1", replacement: "gone", limit: 10 })),
+        ).toBe(yield* memory.eraseAuthor({ accountId: "u-1", replacement: "gone", limit: 10 }));
+        const after = yield* listBoth(always);
+        expect(after.sql).toEqual(after.memory);
       }),
-    );
-    expect(Option.map(outcome.locked, (row) => row.id)).toEqual(Option.some(proposalId(2)));
-    expect(outcome.locked).toEqual(await Effect.runPromise(memory.lock(proposalId(2))));
-    expect(Exit.isFailure(outcome.elsewhere)).toBe(true);
-    // Once the first transaction commits, the row is free again.
-    expect(Exit.isSuccess(await lockElsewhere())).toBe(true);
-  });
+  );
 
-  it("eraseAuthor deletes the account's open rows, rewrites the rest, in batches of limit", async () => {
-    const query = { accountId: "u-2", replacement: "erased", limit: 1 };
-    const counts = {
-      sql: await run(
-        Effect.forEach(Arr.range(1, 4), () => store.eraseAuthor(query), { concurrency: 1 }),
-      ),
-      memory: await Effect.runPromise(
-        Effect.forEach(Arr.range(1, 4), () => memory.eraseAuthor(query), { concurrency: 1 }),
-      ),
-    };
-    expect(counts.sql).toEqual(counts.memory);
-    // u-2 wrote 1 (accepted: rewritten), 3 (rejected: deleted) and 5 (pending: deleted), and decided 3.
-    expect(counts.sql).toEqual([1, 1, 1, 0]);
-    const both = await listBoth(always);
-    expect(both.sql).toEqual(both.memory);
-    expect(
-      Arr.map(both.sql.rows, (l) => [l.row.id, l.row.authorId] as const).find(
-        ([id]) => id === proposalId(1),
-      ),
-    ).toEqual([proposalId(1), "erased"]);
-    // A decider's id is rewritten on the row they decided, whoever wrote it.
-    expect(await run(store.eraseAuthor({ accountId: "u-1", replacement: "gone", limit: 10 }))).toBe(
-      await Effect.runPromise(
-        memory.eraseAuthor({ accountId: "u-1", replacement: "gone", limit: 10 }),
-      ),
-    );
-    const after = await listBoth(always);
-    expect(after.sql).toEqual(after.memory);
-  });
-
-  it("mintId mints a fresh UUID", async () => {
-    const [a, b] = await run(Effect.all([store.mintId, store.mintId], { concurrency: 1 }));
-    expect(a).toMatch(/^[0-9a-f-]{36}$/u);
-    expect(a).not.toBe(b);
-  });
+  it.live("mintId mints a fresh UUID", () =>
+    Effect.gen(function* () {
+      const [a, b] = yield* run(Effect.all([store.mintId, store.mintId], { concurrency: 1 }));
+      expect(a).toMatch(/^[0-9a-f-]{36}$/u);
+      expect(a).not.toBe(b);
+    }),
+  );
 });

@@ -16,7 +16,8 @@ import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
 import * as TestClock from "effect/testing/TestClock";
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import { localeFallbacks, resolveLocalised, type LocalisedResolution } from "../src/Pages.ts";
 import { routable } from "../src/Paths.ts";
 import {
@@ -100,12 +101,10 @@ const site = () => {
 };
 
 const runAtNow = <A, E>(effect: Effect.Effect<A, E>) =>
-  Effect.runPromise(
-    Effect.gen(function* () {
-      yield* TestClock.setTime(NOW.getTime());
-      return yield* effect;
-    }).pipe(Effect.provide(TestClock.layer())),
-  );
+  Effect.gen(function* () {
+    yield* TestClock.setTime(NOW.getTime());
+    return yield* effect;
+  });
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -123,73 +122,81 @@ describe("localeFallbacks", () => {
 });
 
 describe("resolveLocalised", () => {
-  it("resolves a published page in the requested locale, its base language, or the default", async () => {
-    const { pages, answer, publish } = site();
-    const [id, exact, base, fallback, none] = await runAtNow(
+  it.effect(
+    "resolves a published page in the requested locale, its base language, or the default",
+    () =>
       Effect.gen(function* () {
-        const { id: pageId } = yield* pages.create({
-          id: Option.none(),
-          state: { slug: "about", visibility: "public", draft: false },
-          locales: { en: { title: "About" }, pt: { title: "Sobre" } },
+        const { pages, answer, publish } = site();
+        const [id, exact, base, fallback, none] = yield* runAtNow(
+          Effect.gen(function* () {
+            const { id: pageId } = yield* pages.create({
+              id: Option.none(),
+              state: { slug: "about", visibility: "public", draft: false },
+              locales: { en: { title: "About" }, pt: { title: "Sobre" } },
+            });
+            yield* publish(pageId);
+            return [
+              pageId,
+              yield* answer(anonymous, "about", "pt"),
+              yield* answer(anonymous, "about", "pt-BR"),
+              yield* answer(anonymous, "about", "de"),
+              yield* answer(anonymous, "nowhere", "en"),
+            ] as const;
+          }),
+        );
+        expect(exact).toEqual({
+          kind: "node",
+          id,
+          locale: "pt",
+          resource: { locale: "pt", title: "Sobre" },
         });
-        yield* publish(pageId);
-        return [
-          pageId,
-          yield* answer(anonymous, "about", "pt"),
-          yield* answer(anonymous, "about", "pt-BR"),
-          yield* answer(anonymous, "about", "de"),
-          yield* answer(anonymous, "nowhere", "en"),
-        ] as const;
+        expect(base).toEqual(exact);
+        expect(fallback).toEqual({
+          kind: "node",
+          id,
+          locale: "en",
+          resource: { locale: "en", title: "About" },
+        });
+        expect(none).toBe("PathNotFound");
       }),
-    );
-    expect(exact).toEqual({
-      kind: "node",
-      id,
-      locale: "pt",
-      resource: { locale: "pt", title: "Sobre" },
-    });
-    expect(base).toEqual(exact);
-    expect(fallback).toEqual({
-      kind: "node",
-      id,
-      locale: "en",
-      resource: { locale: "en", title: "About" },
-    });
-    expect(none).toBe("PathNotFound");
-  });
+  );
 
-  it("answers a page in none of the fallback locales as not-found", async () => {
-    const { pages, answer, publish } = site();
-    const outcome = await runAtNow(
-      Effect.gen(function* () {
-        const { id } = yield* pages.create({
-          id: Option.none(),
-          state: { slug: "bonjour", visibility: "public", draft: false },
-          locales: { fr: { title: "Bonjour" } },
-        });
-        yield* publish(id);
-        return yield* answer(anonymous, "bonjour", "de");
-      }),
-    );
-    expect(outcome).toBe("PathNotFound");
-  });
+  it.effect("answers a page in none of the fallback locales as not-found", () =>
+    Effect.gen(function* () {
+      const { pages, answer, publish } = site();
+      const outcome = yield* runAtNow(
+        Effect.gen(function* () {
+          const { id } = yield* pages.create({
+            id: Option.none(),
+            state: { slug: "bonjour", visibility: "public", draft: false },
+            locales: { fr: { title: "Bonjour" } },
+          });
+          yield* publish(id);
+          return yield* answer(anonymous, "bonjour", "de");
+        }),
+      );
+      expect(outcome).toBe("PathNotFound");
+    }),
+  );
 
-  it("redirects from an alias to the canonical path, without reading a locale", async () => {
-    const { pages, answer, publish } = site();
-    const [id, redirected] = await runAtNow(
-      Effect.gen(function* () {
-        const { id: pageId } = yield* pages.create({
-          id: Option.none(),
-          state: { slug: "about", visibility: "public", draft: false },
-          locales: { en: { title: "About" } },
-        });
-        yield* pages.update({ id: pageId, patch: { slug: "about-us" } });
-        yield* publish(pageId);
-        return [pageId, yield* answer(anonymous, "about", "xx")] as const;
-      }),
-    );
-    expect(redirected).toEqual({ kind: "redirect", id, path: "about-us" });
-  });
+  it.effect("redirects from an alias to the canonical path, without reading a locale", () =>
+    Effect.gen(function* () {
+      const { pages, answer, publish } = site();
+      const [id, redirected] = yield* runAtNow(
+        Effect.gen(function* () {
+          const { id: pageId } = yield* pages.create({
+            id: Option.none(),
+            state: { slug: "about", visibility: "public", draft: false },
+            locales: { en: { title: "About" } },
+          });
+          yield* pages.update({ id: pageId, patch: { slug: "about-us" } });
+          yield* publish(pageId);
+          return [pageId, yield* answer(anonymous, "about", "xx")] as const;
+        }),
+      );
+      expect(redirected).toEqual({ kind: "redirect", id, path: "about-us" });
+    }),
+  );
 
   /** A page in each hidden state, by the path it claims. */
   const hidden = Effect.fn(function* (ops: ReturnType<typeof site>) {
@@ -212,7 +219,7 @@ describe("resolveLocalised", () => {
 
   const hiddenPaths = ["secret", "unpublished", "scheduled", "gone", "never-claimed"] as const;
 
-  it.each(
+  it.effect.each(
     Arr.map(
       [
         ["anonymous", anonymous],
@@ -222,44 +229,47 @@ describe("resolveLocalised", () => {
     ),
   )(
     "hides a private, unpublished, scheduled or tombstoned page from $label as a missing path",
-    async ({ viewer }) => {
-      const ops = site();
-      const outcomes = await runAtNow(
-        Effect.gen(function* () {
-          yield* hidden(ops);
-          return yield* Effect.forEach(hiddenPaths, (path) => ops.answer(viewer, path, "en"), {
-            concurrency: 1,
-          });
-        }),
-      );
-      expect(outcomes).toEqual(Arr.map(hiddenPaths, () => "PathNotFound"));
-    },
+    ({ viewer }) =>
+      Effect.gen(function* () {
+        const ops = site();
+        const outcomes = yield* runAtNow(
+          Effect.gen(function* () {
+            yield* hidden(ops);
+            return yield* Effect.forEach(hiddenPaths, (path) => ops.answer(viewer, path, "en"), {
+              concurrency: 1,
+            });
+          }),
+        );
+        expect(outcomes).toEqual(Arr.map(hiddenPaths, () => "PathNotFound"));
+      }),
   );
 
-  it("serves the owner and the view-private rung the head of a page readers can't see", async () => {
-    const ops = site();
-    const [owner, rung, gone] = await runAtNow(
-      Effect.gen(function* () {
-        yield* hidden(ops);
-        return [
-          yield* Effect.forEach(
-            ["secret", "unpublished", "scheduled"],
-            (path) => ops.answer(as(member), path, "en"),
-            { concurrency: 1 },
-          ),
-          yield* Effect.forEach(
-            ["secret", "unpublished", "scheduled"],
-            (path) => ops.answer(as(moderator), path, "en"),
-            { concurrency: 1 },
-          ),
-          yield* ops.answer(as(member), "gone", "en"),
-        ] as const;
-      }),
-    );
-    expect(
-      Arr.map([...owner, ...rung], (outcome) => (P.isString(outcome) ? outcome : outcome.kind)),
-    ).toEqual(Arr.replicate("node", 6));
-    // A tombstone frees its path: it is gone for its owner too.
-    expect(gone).toBe("PathNotFound");
-  });
+  it.effect("serves the owner and the view-private rung the head of a page readers can't see", () =>
+    Effect.gen(function* () {
+      const ops = site();
+      const [owner, rung, gone] = yield* runAtNow(
+        Effect.gen(function* () {
+          yield* hidden(ops);
+          return [
+            yield* Effect.forEach(
+              ["secret", "unpublished", "scheduled"],
+              (path) => ops.answer(as(member), path, "en"),
+              { concurrency: 1 },
+            ),
+            yield* Effect.forEach(
+              ["secret", "unpublished", "scheduled"],
+              (path) => ops.answer(as(moderator), path, "en"),
+              { concurrency: 1 },
+            ),
+            yield* ops.answer(as(member), "gone", "en"),
+          ] as const;
+        }),
+      );
+      expect(
+        Arr.map([...owner, ...rung], (outcome) => (P.isString(outcome) ? outcome : outcome.kind)),
+      ).toEqual(Arr.replicate("node", 6));
+      // A tombstone frees its path: it is gone for its owner too.
+      expect(gone).toBe("PathNotFound");
+    }),
+  );
 });

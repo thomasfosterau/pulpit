@@ -194,6 +194,9 @@ catalogs:
     '@effect/tsgo':
       specifier: 0.69.0
       version: 0.69.0
+    '@effect/vitest':
+      specifier: 4.1.4
+      version: 4.1.4
     '@enfect/oxlint':
       specifier: ^0.10.0
       version: 0.10.0
@@ -294,6 +297,9 @@ importers:
       '@effect/language-service':
         specifier: 'catalog:'
         version: 0.87.5
+      '@effect/vitest':
+        specifier: 'catalog:'
+        version: 4.1.4(effect@4.1.4)(vitest@5.1.0)
       '@thomasfosterau/effect-auth':
         specifier: 'catalog:'
         version: 0.5.2(@thomasfosterau/effect-jsonapi@0.22.1(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(effect@4.1.4))(effect@4.1.4)
@@ -327,6 +333,9 @@ importers:
       '@effect/sql-pg':
         specifier: 'catalog:'
         version: 4.1.4(effect@4.1.4)
+      '@effect/vitest':
+        specifier: 'catalog:'
+        version: 4.1.4(effect@4.1.4)(vitest@5.1.0)
       '@thomasfosterau/effect-drizzle-ext':
         specifier: 'catalog:'
         version: 0.5.0(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(@thomasfosterau/effect-jsonapi@0.22.1(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(effect@4.1.4))(drizzle-orm@1.0.0-rc.5(@effect/sql-pg@4.1.4(effect@4.1.4))(effect@4.1.4))(effect@4.1.4)
@@ -363,6 +372,9 @@ importers:
       '@effect/language-service':
         specifier: 'catalog:'
         version: 0.87.5
+      '@effect/vitest':
+        specifier: 'catalog:'
+        version: 4.1.4(effect@4.1.4)(vitest@5.1.0)
       '@thomasfosterau/pulpit':
         specifier: workspace:*
         version: link:../pulpit
@@ -592,6 +604,12 @@ packages:
   '@effect/tsgo@0.69.0':
     resolution: {integrity: sha512-ypgO19woAyrfAG0LzU2QwQnprMpV2G30nEo9ffd4Bc0ow0vXupcx0mcSLG1EfvmRGl0jhiQ3yAbsCuJhqwnRhg==}
     hasBin: true
+
+  '@effect/vitest@4.1.4':
+    resolution: {integrity: sha512-AKpZ6zKihCRhY7hDbiQ2yp/krw+afIkxDRjFMwwzMiyhd0iYk0WaHa9J6GGC7TUF/C7HP2dZyMVq5xC0Qm/2/g==}
+    peerDependencies:
+      effect: 4.1.4
+      vitest: 5.1.0
 
   '@emnapi/core@2.0.0-beta.2':
     resolution: {integrity: sha512-MzCVoWtcg4Pm2B3je5mMvYMvj3MmBKw+fU7vbsJc9/iT8ip6/eYIHo/Dsm/mr+wsHB6SEyJDuxB09Yy6r/8+4A==}
@@ -2882,6 +2900,11 @@ snapshots:
       '@effect/tsgo-linux-x64': 0.69.0
       '@effect/tsgo-win32-arm64': 0.69.0
       '@effect/tsgo-win32-x64': 0.69.0
+
+  '@effect/vitest@4.1.4(effect@4.1.4)(vitest@5.1.0)':
+    dependencies:
+      effect: 4.1.4
+      vitest: 5.1.0(@types/node@26.6.6)(@vitest/browser-preview@5.1.0)(@vitest/coverage-istanbul@5.1.0)(@vitest/ui@5.1.0)(@voidzero-dev/vite-plus-core@1.6.0(@types/node@26.6.6)(@typescript/typescript6@6.0.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
 
   '@emnapi/core@2.0.0-beta.2':
     dependencies:

@@ -44,7 +44,8 @@ import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import * as Result from "effect/Result";
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import { ne, never } from "../src/Filter.ts";
 import { referenceRowOf } from "../src/internal/delegated-access.ts";
 import { canViewReferenceRow } from "../src/internal/reference-columns.ts";
@@ -122,12 +123,10 @@ const run = <A>(
   effect: Effect.Effect<A, never, CurrentViewer | OwnedAccess.IsFollower>,
   viewer: Viewer,
   seam: FollowerSeam<OwnedAccess.FollowingSet, never>,
-): A =>
-  Effect.runSync(
-    effect.pipe(
-      Effect.provideService(CurrentViewer, viewer),
-      Effect.provideService(OwnedAccess.IsFollower, seam),
-    ),
+) =>
+  effect.pipe(
+    Effect.provideService(CurrentViewer, viewer),
+    Effect.provideService(OwnedAccess.IsFollower, seam),
   );
 
 describe("canViewOwned ≡ OwnedAccess.canView", () => {
@@ -145,13 +144,20 @@ describe("canViewOwned ≡ OwnedAccess.canView", () => {
     ),
   );
 
-  it.each(cases)("$label", ({ viewer, visibility, draft, follows }) => {
-    const seam = seamFor(follows);
-    const kernel = Effect.runSync(
-      canViewOwned(viewer, policy, seam, { ownerId: OWNER, visibility, draft, unapproved: false }),
-    );
-    expect(kernel).toBe(run(owned.canView({ ownerId: OWNER, visibility, draft }), viewer, seam));
-  });
+  it.effect.each(cases)("$label", ({ viewer, visibility, draft, follows }) =>
+    Effect.gen(function* () {
+      const seam = seamFor(follows);
+      const kernel = yield* canViewOwned(viewer, policy, seam, {
+        ownerId: OWNER,
+        visibility,
+        draft,
+        unapproved: false,
+      });
+      expect(kernel).toBe(
+        yield* run(owned.canView({ ownerId: OWNER, visibility, draft }), viewer, seam),
+      );
+    }),
+  );
 });
 
 /**
@@ -169,28 +175,34 @@ const asAuthScope = <Following>(
     : scope;
 
 describe("readScopeFor ≡ OwnedAccess.readScope", () => {
-  it.each(Arr.map(accounts, ([label, viewer]) => ({ label, viewer })))("$label", ({ viewer }) => {
-    const seam = seamFor(true);
-    const kernel = run(
-      Effect.map(viewerFrom, (read) => readScopeFor(read, policy, seam)),
-      viewer,
-      seam,
-    );
-    expect(asAuthScope(kernel)).toEqual(run(owned.readScope, viewer, seam));
-  });
+  it.effect.each(Arr.map(accounts, ([label, viewer]) => ({ label, viewer })))(
+    "$label",
+    ({ viewer }) =>
+      Effect.gen(function* () {
+        const seam = seamFor(true);
+        const kernel = yield* run(
+          Effect.map(viewerFrom, (read) => readScopeFor(read, policy, seam)),
+          viewer,
+          seam,
+        );
+        expect(asAuthScope(kernel)).toEqual(yield* run(owned.readScope, viewer, seam));
+      }),
+  );
 
-  it("fails closed to nobody when no follower seam is provided", () => {
-    const viewer: Viewer = Option.some({ id: "u-stranger", role: "user" });
-    const auth = Effect.runSync(owned.readScope.pipe(Effect.provideService(CurrentViewer, viewer)));
-    expect(auth).toEqual(
-      asAuthScope(
-        readScopeFor(viewer, policy, {
-          isFollower: () => Effect.succeed(false),
-          following: () => OwnedAccess.nobody,
-        }),
-      ),
-    );
-  });
+  it.effect("fails closed to nobody when no follower seam is provided", () =>
+    Effect.gen(function* () {
+      const viewer: Viewer = Option.some({ id: "u-stranger", role: "user" });
+      const auth = yield* owned.readScope.pipe(Effect.provideService(CurrentViewer, viewer));
+      expect(auth).toEqual(
+        asAuthScope(
+          readScopeFor(viewer, policy, {
+            isFollower: () => Effect.succeed(false),
+            following: () => OwnedAccess.nobody,
+          }),
+        ),
+      );
+    }),
+  );
 });
 
 describe("isPubliclyServeable ≡ Cacheability.publiclyServeable (CACHE-AUTH-005)", () => {
@@ -311,13 +323,11 @@ const runWithAudience = <A>(
   effect: Effect.Effect<A, never, CurrentViewer | OwnedAccess.IsFollower | OwnedAccess.IsMember>,
   viewer: Viewer,
   audience: ReturnType<typeof audienceFor>,
-): A =>
-  Effect.runSync(
-    effect.pipe(
-      Effect.provideService(CurrentViewer, viewer),
-      Effect.provideService(OwnedAccess.IsFollower, audience.follower),
-      Effect.provideService(OwnedAccess.IsMember, audience.member),
-    ),
+) =>
+  effect.pipe(
+    Effect.provideService(CurrentViewer, viewer),
+    Effect.provideService(OwnedAccess.IsFollower, audience.follower),
+    Effect.provideService(OwnedAccess.IsMember, audience.member),
   );
 
 const audiences = Arr.flatMap([false, true], (follows) =>
@@ -343,49 +353,55 @@ describe("canViewOwned ≡ OwnedAccess.canView, with an audience seam", () => {
     ),
   );
 
-  it.each(cases)("$label", ({ viewer, visibility, published, group, follows, member }) => {
-    const audience = audienceFor(follows, member);
-    const facts = { ownerId: OWNER, visibility, draft: !published, unapproved: false };
-    const kernel = Effect.runSync(
-      canViewOwned(
+  it.effect.each(cases)("$label", ({ viewer, visibility, published, group, follows, member }) =>
+    Effect.gen(function* () {
+      const audience = audienceFor(follows, member);
+      const facts = { ownerId: OWNER, visibility, draft: !published, unapproved: false };
+      const kernel = yield* canViewOwned(
         viewer,
         policy,
         audience.kernel,
         Option.match(group, { onNone: () => facts, onSome: (groupId) => ({ ...facts, groupId }) }),
-      ),
-    );
-    const auth = runWithAudience(
-      owned.canView({
-        ownerId: OWNER,
-        visibility,
-        draft: !published,
-        unapproved: false,
-        groupId: Option.getOrUndefined(group),
-      }),
-      viewer,
-      audience,
-    );
-    expect(kernel).toBe(auth);
-  });
+      );
+      const auth = yield* runWithAudience(
+        owned.canView({
+          ownerId: OWNER,
+          visibility,
+          draft: !published,
+          unapproved: false,
+          groupId: Option.getOrUndefined(group),
+        }),
+        viewer,
+        audience,
+      );
+      expect(kernel).toBe(auth);
+    }),
+  );
 
-  it.each([false, true])("reads unapproved %s as effect-auth does", (unapproved) => {
-    const audience = audienceFor(true, true);
-    const viewer: Viewer = Option.some({ id: "u-stranger", role: "user" });
-    const row = { ownerId: OWNER, visibility: "group", draft: false, groupId: GROUP } as const;
-    expect(
-      Effect.runSync(canViewOwned(viewer, policy, audience.kernel, { ...row, unapproved })),
-    ).toBe(runWithAudience(owned.canView({ ...row, unapproved }), viewer, audience));
-  });
+  it.effect.each([false, true])("reads unapproved %s as effect-auth does", (unapproved) =>
+    Effect.gen(function* () {
+      const audience = audienceFor(true, true);
+      const viewer: Viewer = Option.some({ id: "u-stranger", role: "user" });
+      const row = { ownerId: OWNER, visibility: "group", draft: false, groupId: GROUP } as const;
+      expect(yield* canViewOwned(viewer, policy, audience.kernel, { ...row, unapproved })).toBe(
+        yield* runWithAudience(owned.canView({ ...row, unapproved }), viewer, audience),
+      );
+    }),
+  );
 });
 
 describe("readScopeFor ≡ OwnedAccess.readScope ≡ ReferenceAccess.readScope, with an audience seam", () => {
-  it.each(Arr.map(accounts, ([label, viewer]) => ({ label, viewer })))("$label", ({ viewer }) => {
-    const audience = audienceFor(true, true);
-    const kernel = readScopeFor(viewer, policy, audience.kernel);
-    const auth = runWithAudience(owned.readScope, viewer, audience);
-    expect(kernel).toEqual(auth);
-    expect(runWithAudience(reference.readScope, viewer, audience)).toEqual(auth);
-  });
+  it.effect.each(Arr.map(accounts, ([label, viewer]) => ({ label, viewer })))(
+    "$label",
+    ({ viewer }) =>
+      Effect.gen(function* () {
+        const audience = audienceFor(true, true);
+        const kernel = readScopeFor(viewer, policy, audience.kernel);
+        const auth = yield* runWithAudience(owned.readScope, viewer, audience);
+        expect(kernel).toEqual(auth);
+        expect(yield* runWithAudience(reference.readScope, viewer, audience)).toEqual(auth);
+      }),
+  );
 });
 
 describe("canViewReferenceRow ≡ ReferenceAccess.canView", () => {
@@ -412,26 +428,33 @@ describe("canViewReferenceRow ≡ ReferenceAccess.canView", () => {
     ),
   );
 
-  it.each(cases)("$label", ({ viewer, visibility, followersOf, hasAxis, follows, member }) => {
-    const audience = audienceFor(follows, member);
-    const kernel = Effect.runSync(
-      canViewReferenceRow(access, hasAxis ? scoped : unscoped, viewer, policy, audience.kernel, {
-        visibility,
-        followersOf,
-        groupId: GROUP,
-      }),
-    );
-    // The row as effect-auth reads it: no axis on a view without the column; a
-    // value outside the enum (NULL included) is `private`; `""` names nobody.
-    const row: ReferenceAccess.ReferenceRow = hasAxis
-      ? {
-          visibility: visibility === null || visibility === "secret" ? "private" : visibility,
+  it.effect.each(cases)("$label", ({ viewer, visibility, followersOf, hasAxis, follows, member }) =>
+    Effect.gen(function* () {
+      const audience = audienceFor(follows, member);
+      const kernel = yield* canViewReferenceRow(
+        access,
+        hasAxis ? scoped : unscoped,
+        viewer,
+        policy,
+        audience.kernel,
+        {
+          visibility,
+          followersOf,
           groupId: GROUP,
-          followersOf: followersOf === "" ? undefined : followersOf,
-        }
-      : {};
-    expect(kernel).toBe(runWithAudience(reference.canView(row), viewer, audience));
-  });
+        },
+      );
+      // The row as effect-auth reads it: no axis on a view without the column; a
+      // value outside the enum (NULL included) is `private`; `""` names nobody.
+      const row: ReferenceAccess.ReferenceRow = hasAxis
+        ? {
+            visibility: visibility === null || visibility === "secret" ? "private" : visibility,
+            groupId: GROUP,
+            followersOf: followersOf === "" ? undefined : followersOf,
+          }
+        : {};
+      expect(kernel).toBe(yield* runWithAudience(reference.canView(row), viewer, audience));
+    }),
+  );
 });
 
 describe("a NULL visibility reaches effect-auth as private, never as no axis (PUB-009)", () => {
@@ -448,18 +471,18 @@ describe("a NULL visibility reaches effect-auth as private, never as no axis (PU
     ).toEqual({ visibility: "private", followersOf: undefined, groupId: undefined });
   });
 
-  it("so the anonymous viewer never reads the row, where an absent axis would show it", () => {
-    const seam = seamFor(false);
-    expect(
-      Effect.runSync(
-        canViewReferenceRow({}, HashSet.make("visibility"), anonymous, policy, seam, {
+  it.effect("so the anonymous viewer never reads the row, where an absent axis would show it", () =>
+    Effect.gen(function* () {
+      const seam = seamFor(false);
+      expect(
+        yield* canViewReferenceRow({}, HashSet.make("visibility"), anonymous, policy, seam, {
           visibility: null,
         }),
-      ),
-    ).toBe(false);
-    // The fail-open the bridge must never produce: an omitted axis is unscoped.
-    expect(run(reference.canView({ visibility: undefined }), anonymous, seam)).toBe(true);
-  });
+      ).toBe(false);
+      // The fail-open the bridge must never produce: an omitted axis is unscoped.
+      expect(yield* run(reference.canView({ visibility: undefined }), anonymous, seam)).toBe(true);
+    }),
+  );
 });
 
 describe("an empty id names nobody", () => {
@@ -477,21 +500,25 @@ describe("an empty id names nobody", () => {
     unapproved: false,
   });
   const view = (viewer: Viewer, row: ReturnType<typeof facts>) =>
-    Effect.runSync(canViewOwned(viewer, policy, seam, row));
+    canViewOwned(viewer, policy, seam, row);
 
-  it("an empty-id viewer reads as anonymous", () => {
-    expect(readScopeFor(emptyId, policy, seam)).toEqual({ kind: "public" });
-    expect(readScopeFor(emptyModerator, policy, seam)).toEqual({ kind: "public" });
-    expect(view(emptyId, facts("", "private"))).toBe(false);
-    expect(view(emptyModerator, facts(OWNER, "private"))).toBe(false);
-  });
+  it.effect("an empty-id viewer reads as anonymous", () =>
+    Effect.gen(function* () {
+      expect(readScopeFor(emptyId, policy, seam)).toEqual({ kind: "public" });
+      expect(readScopeFor(emptyModerator, policy, seam)).toEqual({ kind: "public" });
+      expect(yield* view(emptyId, facts("", "private"))).toBe(false);
+      expect(yield* view(emptyModerator, facts(OWNER, "private"))).toBe(false);
+    }),
+  );
 
-  it("an empty owner is nobody's, and never reaches the follower seam", () => {
-    expect(view(stranger, facts("", "followers"))).toBe(false);
-    expect(view(Option.some({ id: "u-moderator", role: "moderator" }), facts("", "private"))).toBe(
-      true,
-    );
-  });
+  it.effect("an empty owner is nobody's, and never reaches the follower seam", () =>
+    Effect.gen(function* () {
+      expect(yield* view(stranger, facts("", "followers"))).toBe(false);
+      expect(
+        yield* view(Option.some({ id: "u-moderator", role: "moderator" }), facts("", "private")),
+      ).toBe(true);
+    }),
+  );
 
   it("no rung outside the predicates admits an empty-id viewer", () => {
     expect(softDeleteFilter(emptyModerator, policy, true)).toEqual(ne("action", "delete"));
@@ -499,10 +526,10 @@ describe("an empty id names nobody", () => {
     expect(searchHeadFor({ access: ownedAccess(), policy }, emptyId)).toEqual(never);
   });
 
-  it("an empty followers-of account names nobody", () => {
-    expect(
-      Effect.runSync(
-        canViewReferenceRow(
+  it.effect("an empty followers-of account names nobody", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* canViewReferenceRow(
           { followersOfColumn: "followersOf" },
           HashSet.make("visibility", "followersOf"),
           emptyId,
@@ -510,9 +537,9 @@ describe("an empty id names nobody", () => {
           seam,
           { visibility: "followers", followersOf: "" },
         ),
-      ),
-    ).toBe(false);
-  });
+      ).toBe(false);
+    }),
+  );
 });
 
 describe("the owned serveability axes are effect-auth's (CACHE-AUTH-005)", () => {

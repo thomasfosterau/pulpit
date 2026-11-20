@@ -36,12 +36,12 @@ import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as P from "effect/Predicate";
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import {
   type AccountErasureDefinition,
   defineAccountErasure,
   ErasurePresets,
-  type ErasureSummary,
 } from "../src/Erasure.ts";
 import { audienceSeam } from "../src/Audience.ts";
 import type { ProposalRow } from "../src/Proposals.ts";
@@ -65,8 +65,6 @@ import {
   makeInMemoryWorkingCopyStore,
 } from "../src/testing.ts";
 import { defineVersionChain } from "../src/VersionChain.ts";
-
-const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 
 const GONE = "u-gone";
 const OTHER = "u-other";
@@ -139,7 +137,7 @@ const makeWorld = () => {
           chains,
           documents,
           documentColumns: ["body"],
-          dependents: [(id) => posts.dropOwner(id)],
+          dependents: [(id) => Effect.sync(() => posts.dropOwner(id))],
         }),
         families: [
           { type: "posts", disposition: ErasurePresets.ownedLeaf, chain: postChain },
@@ -370,197 +368,233 @@ const snapshot = (world: World) => ({
 });
 
 describe("defineAccountErasure", () => {
-  it("leaves nothing recorded against the account", async () => {
-    const world = makeWorld();
-    await run(seed(world));
-    expect(recordedAccounts(world)).toContain(GONE);
-    const summary = await run(world.erasure().erase(GONE));
-    expect(summary.complete).toBe(true);
-    expect(recordedAccounts(world)).not.toContain(GONE);
-  });
+  it.effect("leaves nothing recorded against the account", () =>
+    Effect.gen(function* () {
+      const world = makeWorld();
+      yield* seed(world);
+      expect(recordedAccounts(world)).toContain(GONE);
+      const summary = yield* world.erasure().erase(GONE);
+      expect(summary.complete).toBe(true);
+      expect(recordedAccounts(world)).not.toContain(GONE);
+    }),
+  );
 
-  it("purges the account's owned posts, document included, and anonymises its edit of another's", async () => {
-    const world = makeWorld();
-    const ids = await run(seed(world));
-    const summary = await run(world.erasure().erase(GONE));
-    expect(Arr.map(summary.purged, (purged) => purged.id)).toEqual([ids.mine]);
-    expect(summary.purged[0]?.documents.length).toBe(1);
-    expect(Arr.filter(world.postChain.rows(), (row) => row.id === ids.mine)).toEqual([]);
-    const edits = Arr.filter(world.postChain.rows(), (row) => row.id === ids.theirs);
-    expect(Arr.map(edits, (row) => [row.action, row.state["body"], row.actorId])).toEqual([
-      ["create", "theirs", Option.some(OTHER)],
-      ["update", "edited", Option.some(GONE)],
-      // The redacting version: the head's state, no actor.
-      ["update", "edited", Option.none()],
-    ]);
-    expect(HashMap.get(world.posts.owners(), ids.theirs)).toEqual(Option.some(OTHER));
-  });
+  it.effect(
+    "purges the account's owned posts, document included, and anonymises its edit of another's",
+    () =>
+      Effect.gen(function* () {
+        const world = makeWorld();
+        const ids = yield* seed(world);
+        const summary = yield* world.erasure().erase(GONE);
+        expect(Arr.map(summary.purged, (purged) => purged.id)).toEqual([ids.mine]);
+        expect(summary.purged[0]?.documents.length).toBe(1);
+        expect(Arr.filter(world.postChain.rows(), (row) => row.id === ids.mine)).toEqual([]);
+        const edits = Arr.filter(world.postChain.rows(), (row) => row.id === ids.theirs);
+        expect(Arr.map(edits, (row) => [row.action, row.state["body"], row.actorId])).toEqual([
+          ["create", "theirs", Option.some(OTHER)],
+          ["update", "edited", Option.some(GONE)],
+          // The redacting version: the head's state, no actor.
+          ["update", "edited", Option.none()],
+        ]);
+        expect(HashMap.get(world.posts.owners(), ids.theirs)).toEqual(Option.some(OTHER));
+      }),
+  );
 
-  it("anonymises a comment: content and its reply survive, the owner record and the actor go", async () => {
-    const world = makeWorld();
-    const ids = await run(seed(world));
-    await run(world.erasure().erase(GONE));
-    const comment = await run(world.comments.get(ids.comment));
-    const reply = await run(world.comments.get(ids.reply));
-    expect(Option.map(comment, (row) => [row["body"], row["ownerId"]])).toEqual(
-      Option.some(["first", undefined]),
-    );
-    expect(Option.map(reply, (row) => [row["parentId"], row["ownerId"]])).toEqual(
-      Option.some([ids.comment, OTHER]),
-    );
-    const versions = Arr.filter(world.commentChain.rows(), (row) => row.id === ids.comment);
-    expect(Arr.map(versions, (row) => [row.version, row.actorId, row.state["body"]])).toEqual([
-      [0n, Option.some(GONE), "first"],
-      [1n, Option.none(), "first"],
-    ]);
-    expect(world.commentCache.get(ids.comment)).toEqual(Option.none());
-    expect(world.commentCache.versionOf(ids.comment)).toEqual(Option.some(1n));
-  });
+  it.effect(
+    "anonymises a comment: content and its reply survive, the owner record and the actor go",
+    () =>
+      Effect.gen(function* () {
+        const world = makeWorld();
+        const ids = yield* seed(world);
+        yield* world.erasure().erase(GONE);
+        const comment = yield* world.comments.get(ids.comment);
+        const reply = yield* world.comments.get(ids.reply);
+        expect(Option.map(comment, (row) => [row["body"], row["ownerId"]])).toEqual(
+          Option.some(["first", undefined]),
+        );
+        expect(Option.map(reply, (row) => [row["parentId"], row["ownerId"]])).toEqual(
+          Option.some([ids.comment, OTHER]),
+        );
+        const versions = Arr.filter(world.commentChain.rows(), (row) => row.id === ids.comment);
+        expect(Arr.map(versions, (row) => [row.version, row.actorId, row.state["body"]])).toEqual([
+          [0n, Option.some(GONE), "first"],
+          [1n, Option.none(), "first"],
+        ]);
+        expect(world.commentCache.get(ids.comment)).toEqual(Option.none());
+        expect(world.commentCache.versionOf(ids.comment)).toEqual(Option.some(1n));
+      }),
+  );
 
-  it("reassigns a reference contribution with a redacting version under the tombstone, its declared column redacted", async () => {
-    const world = makeWorld();
-    const ids = await run(seed(world));
-    await run(world.erasure().erase(GONE));
-    const versions = Arr.filter(world.taxonChain.rows(), (row) => row.id === ids.taxon);
-    expect(Arr.map(versions, (row) => [row.actorId, row.proposedBy, row.state])).toEqual([
-      [Option.some(GONE), Option.none(), { name: "Rosa", creditedTo: GONE }],
-      [Option.some(OTHER), Option.some(GONE), { name: "Rosa canina", creditedTo: GONE }],
-      [Option.some(TOMBSTONE), Option.none(), { name: "Rosa canina", creditedTo: TOMBSTONE }],
-    ]);
-  });
+  it.effect(
+    "reassigns a reference contribution with a redacting version under the tombstone, its declared column redacted",
+    () =>
+      Effect.gen(function* () {
+        const world = makeWorld();
+        const ids = yield* seed(world);
+        yield* world.erasure().erase(GONE);
+        const versions = Arr.filter(world.taxonChain.rows(), (row) => row.id === ids.taxon);
+        expect(Arr.map(versions, (row) => [row.actorId, row.proposedBy, row.state])).toEqual([
+          [Option.some(GONE), Option.none(), { name: "Rosa", creditedTo: GONE }],
+          [Option.some(OTHER), Option.some(GONE), { name: "Rosa canina", creditedTo: GONE }],
+          [Option.some(TOMBSTONE), Option.none(), { name: "Rosa canina", creditedTo: TOMBSTONE }],
+        ]);
+      }),
+  );
 
-  it("leaves every earlier version row unchanged and appends exactly one redacting version per node", async () => {
-    const world = makeWorld();
-    const ids = await run(seed(world));
-    // Every row of a node that survives (the account's own post is purged).
-    const before = Arr.map(world.chains, (chain) =>
-      Arr.filter(chain.rows(), (row) => row.id !== ids.mine),
-    );
-    await run(world.erasure().erase(GONE));
-    const after = Arr.map(world.chains, (chain) => chain.rows());
-    Arr.forEach(before, (rows, index) => {
-      const kept = (after[index] ?? []).slice(0, rows.length);
-      expect(kept).toEqual(rows);
-      // The very same row objects: nothing was rewritten, not even to an equal value.
-      Arr.forEach(rows, (row, at) => expect(kept[at]).toBe(row));
-    });
-    const appended = Arr.flatMap(after, (rows, index) => rows.slice((before[index] ?? []).length));
-    expect(Arr.map(appended, (row) => [row.id, row.action, row.actorId, row.proposedBy])).toEqual([
-      [ids.theirs, "update", Option.none(), Option.none()],
-      [ids.comment, "update", Option.none(), Option.none()],
-      [ids.taxon, "update", Option.some(TOMBSTONE), Option.none()],
-    ]);
-  });
+  it.effect(
+    "leaves every earlier version row unchanged and appends exactly one redacting version per node",
+    () =>
+      Effect.gen(function* () {
+        const world = makeWorld();
+        const ids = yield* seed(world);
+        // Every row of a node that survives (the account's own post is purged).
+        const before = Arr.map(world.chains, (chain) =>
+          Arr.filter(chain.rows(), (row) => row.id !== ids.mine),
+        );
+        yield* world.erasure().erase(GONE);
+        const after = Arr.map(world.chains, (chain) => chain.rows());
+        Arr.forEach(before, (rows, index) => {
+          const kept = (after[index] ?? []).slice(0, rows.length);
+          expect(kept).toEqual(rows);
+          // The very same row objects: nothing was rewritten, not even to an equal value.
+          Arr.forEach(rows, (row, at) => expect(kept[at]).toBe(row));
+        });
+        const appended = Arr.flatMap(after, (rows, index) =>
+          rows.slice((before[index] ?? []).length),
+        );
+        expect(
+          Arr.map(appended, (row) => [row.id, row.action, row.actorId, row.proposedBy]),
+        ).toEqual([
+          [ids.theirs, "update", Option.none(), Option.none()],
+          [ids.comment, "update", Option.none(), Option.none()],
+          [ids.taxon, "update", Option.some(TOMBSTONE), Option.none()],
+        ]);
+      }),
+  );
 
-  it("appends no redacting version to a tombstoned node", async () => {
-    const world = makeWorld();
-    const ids = await run(seed(world));
-    await run(world.ops.comments.delete(ids.comment, Option.some(GONE)));
-    const before = world.commentChain.rows();
-    const summary = await run(world.erasure().erase(GONE));
-    expect(summary.complete).toBe(true);
-    expect(world.commentChain.rows()).toEqual(before);
-    expect(summary.changed["comments.redact"]).toBeUndefined();
-  });
+  it.effect("appends no redacting version to a tombstoned node", () =>
+    Effect.gen(function* () {
+      const world = makeWorld();
+      const ids = yield* seed(world);
+      yield* world.ops.comments.delete(ids.comment, Option.some(GONE));
+      const before = world.commentChain.rows();
+      const summary = yield* world.erasure().erase(GONE);
+      expect(summary.complete).toBe(true);
+      expect(world.commentChain.rows()).toEqual(before);
+      expect(summary.changed["comments.redact"]).toBeUndefined();
+    }),
+  );
 
-  it("redacts a tombstoned node on restore, when erasure is run again", async () => {
-    const world = makeWorld();
-    const ids = await run(seed(world));
-    await run(world.ops.comments.delete(ids.comment, Option.some(GONE)));
-    await run(world.erasure().erase(GONE));
-    await run(
-      world.commentChain.restore({ id: ids.comment, patch: {}, actorId: Option.some(OTHER) }),
-    );
-    const before = world.commentChain.rows().length;
-    const again = await run(world.erasure().erase(GONE));
-    expect(again.complete).toBe(true);
-    const appended = Arr.filter(
-      world.commentChain.rows().slice(before),
-      (row) => row.id === ids.comment,
-    );
-    expect(Arr.map(appended, (row) => [row.action, row.actorId, row.proposedBy])).toEqual([
-      ["update", Option.none(), Option.none()],
-    ]);
-  });
+  it.effect("redacts a tombstoned node on restore, when erasure is run again", () =>
+    Effect.gen(function* () {
+      const world = makeWorld();
+      const ids = yield* seed(world);
+      yield* world.ops.comments.delete(ids.comment, Option.some(GONE));
+      yield* world.erasure().erase(GONE);
+      yield* world.commentChain.restore({
+        id: ids.comment,
+        patch: {},
+        actorId: Option.some(OTHER),
+      });
+      const before = world.commentChain.rows().length;
+      const again = yield* world.erasure().erase(GONE);
+      expect(again.complete).toBe(true);
+      const appended = Arr.filter(
+        world.commentChain.rows().slice(before),
+        (row) => row.id === ids.comment,
+      );
+      expect(Arr.map(appended, (row) => [row.action, row.actorId, row.proposedBy])).toEqual([
+        ["update", Option.none(), Option.none()],
+      ]);
+    }),
+  );
 
-  it("deletes pending, rejected and filed rows, and keeps an accepted proposal and a resolution under the tombstone", async () => {
-    const world = makeWorld();
-    await run(seed(world));
-    await run(world.erasure().erase(GONE));
-    expect(Arr.map(world.proposals.rows(), (row) => [row.id, row.authorId])).toEqual([
-      ["p-accepted", TOMBSTONE],
-      ["p-other", OTHER],
-      ["p-decided", OTHER],
-    ]);
-    expect(
-      Arr.map(
-        Arr.filter(world.proposals.rows(), (row) => row.id === "p-decided"),
-        (row) => row.decidedBy,
-      ),
-    ).toEqual([Option.some(TOMBSTONE)]);
-    expect(Arr.map(world.reports.rows(), (row) => [row.id, row.resolvedBy])).toEqual([
-      ["r-resolved", Option.some(TOMBSTONE)],
-    ]);
-    expect(Arr.map(world.reactions.rows(), (row) => row.accountId)).toEqual([OTHER]);
-    expect(Arr.map(world.social.rows(), (row) => row.kind)).toEqual(["mute"]);
-    expect(HashMap.size(world.workingCopies.copies())).toBe(0);
-    expect(Arr.map(world.memberships.rows(), (row) => [row.groupId, row.accountId])).toEqual([
-      ["g-1", OTHER],
-      ["g-own", OTHER],
-    ]);
-    expect(HashMap.toEntries(world.groups.owners())).toEqual([["g-own", TOMBSTONE]]);
-  });
+  it.effect(
+    "deletes pending, rejected and filed rows, and keeps an accepted proposal and a resolution under the tombstone",
+    () =>
+      Effect.gen(function* () {
+        const world = makeWorld();
+        yield* seed(world);
+        yield* world.erasure().erase(GONE);
+        expect(Arr.map(world.proposals.rows(), (row) => [row.id, row.authorId])).toEqual([
+          ["p-accepted", TOMBSTONE],
+          ["p-other", OTHER],
+          ["p-decided", OTHER],
+        ]);
+        expect(
+          Arr.map(
+            Arr.filter(world.proposals.rows(), (row) => row.id === "p-decided"),
+            (row) => row.decidedBy,
+          ),
+        ).toEqual([Option.some(TOMBSTONE)]);
+        expect(Arr.map(world.reports.rows(), (row) => [row.id, row.resolvedBy])).toEqual([
+          ["r-resolved", Option.some(TOMBSTONE)],
+        ]);
+        expect(Arr.map(world.reactions.rows(), (row) => row.accountId)).toEqual([OTHER]);
+        expect(Arr.map(world.social.rows(), (row) => row.kind)).toEqual(["mute"]);
+        expect(HashMap.size(world.workingCopies.copies())).toBe(0);
+        expect(Arr.map(world.memberships.rows(), (row) => [row.groupId, row.accountId])).toEqual([
+          ["g-1", OTHER],
+          ["g-own", OTHER],
+        ]);
+        expect(HashMap.toEntries(world.groups.owners())).toEqual([["g-own", TOMBSTONE]]);
+      }),
+  );
 
-  it("changes nothing when run again", async () => {
-    const world = makeWorld();
-    await run(seed(world));
-    await run(world.erasure().erase(GONE));
-    const before = snapshot(world);
-    const rows = Arr.map(world.chains, (chain) => chain.rows().length);
-    const again = await run(world.erasure().erase(GONE));
-    expect(again).toMatchObject({ complete: true, changed: {}, purged: [] });
-    expect(snapshot(world)).toEqual(before);
-    expect(Arr.map(world.chains, (chain) => chain.rows().length)).toEqual(rows);
-  });
+  it.effect("changes nothing when run again", () =>
+    Effect.gen(function* () {
+      const world = makeWorld();
+      yield* seed(world);
+      yield* world.erasure().erase(GONE);
+      const before = snapshot(world);
+      const rows = Arr.map(world.chains, (chain) => chain.rows().length);
+      const again = yield* world.erasure().erase(GONE);
+      expect(again).toMatchObject({ complete: true, changed: {}, purged: [] });
+      expect(snapshot(world)).toEqual(before);
+      expect(Arr.map(world.chains, (chain) => chain.rows().length)).toEqual(rows);
+    }),
+  );
 
-  it("keeps a node redacted when another account writes after the redacting version", async () => {
-    const world = makeWorld();
-    const ids = await run(seed(world));
-    await run(world.erasure().erase(GONE));
-    await run(
-      world.ops.comments.update({
+  it.effect("keeps a node redacted when another account writes after the redacting version", () =>
+    Effect.gen(function* () {
+      const world = makeWorld();
+      const ids = yield* seed(world);
+      yield* world.erasure().erase(GONE);
+      yield* world.ops.comments.update({
         id: ids.comment,
         patch: { body: "moderated" },
         actorId: Option.some(OTHER),
-      }),
-    );
-    const rows = world.commentChain.rows().length;
-    const again = await run(world.erasure().erase(GONE));
-    expect(again.changed).toEqual({});
-    expect(world.commentChain.rows().length).toBe(rows);
-  });
+      });
+      const rows = world.commentChain.rows().length;
+      const again = yield* world.erasure().erase(GONE);
+      expect(again.changed).toEqual({});
+      expect(world.commentChain.rows().length).toBe(rows);
+    }),
+  );
 
-  it.each([1, 2, 3])(
+  it.effect.each([1, 2, 3])(
     "resumes a run cut short every %i batches to the same end state",
-    async (maxBatches) => {
-      const whole = makeWorld();
-      await run(seed(whole));
-      await run(whole.erasure({ batchSize: 1 }).erase(GONE));
+    (maxBatches) =>
+      Effect.gen(function* () {
+        const whole = makeWorld();
+        yield* seed(whole);
+        yield* whole.erasure({ batchSize: 1 }).erase(GONE);
 
-      const cut = makeWorld();
-      await run(seed(cut));
-      const erasure = cut.erasure({ batchSize: 1 });
-      const runs = (count: number): Effect.Effect<number, unknown> =>
-        Effect.flatMap(
-          erasure.erase(GONE, { maxBatches }),
-          (summary: ErasureSummary): Effect.Effect<number, unknown> =>
+        const cut = makeWorld();
+        yield* seed(cut);
+        const erasure = cut.erasure({ batchSize: 1 });
+        /** Erase until complete, counting the passes from `count`. */
+        const runs = (
+          count: number,
+        ): Effect.Effect<number, Effect.Error<ReturnType<typeof erasure.erase>>> =>
+          Effect.flatMap(erasure.erase(GONE, { maxBatches }), (summary) =>
             summary.complete ? Effect.succeed(count) : runs(count + 1),
-        );
-      const passes = await run(runs(1));
-      expect(passes).toBeGreaterThan(1);
-      expect(snapshot(cut)).toEqual(snapshot(whole));
-      expect(recordedAccounts(cut)).not.toContain(GONE);
-    },
+          );
+        const passes = yield* runs(1);
+        expect(passes).toBeGreaterThan(1);
+        expect(snapshot(cut)).toEqual(snapshot(whole));
+        expect(recordedAccounts(cut)).not.toContain(GONE);
+      }),
   );
 
   describe("memberships at a batch boundary", () => {
@@ -596,45 +630,51 @@ describe("defineAccountErasure", () => {
       );
     };
 
-    it("erases them in bounded batches, invitations counted against the same limit", async () => {
-      const world = makeWorld();
-      await run(seedMemberships(world));
-      const summary = await run(world.erasure({ batchSize: BATCH }).erase(GONE));
-      expect(summary.complete).toBe(true);
-      expect(summary.changed).toEqual({ memberships: 8 });
-      expect(Arr.map(world.memberships.rows(), (row) => row.accountId)).toEqual([
-        OTHER,
-        OTHER,
-        OTHER,
-        OTHER,
-      ]);
-      expect(Arr.map(world.memberships.pending(), (row) => row.accountId)).toEqual(["u-invited-3"]);
-      expect(recordedAccounts(world)).not.toContain(GONE);
-    });
+    it.effect("erases them in bounded batches, invitations counted against the same limit", () =>
+      Effect.gen(function* () {
+        const world = makeWorld();
+        yield* seedMemberships(world);
+        const summary = yield* world.erasure({ batchSize: BATCH }).erase(GONE);
+        expect(summary.complete).toBe(true);
+        expect(summary.changed).toEqual({ memberships: 8 });
+        expect(Arr.map(world.memberships.rows(), (row) => row.accountId)).toEqual([
+          OTHER,
+          OTHER,
+          OTHER,
+          OTHER,
+        ]);
+        expect(Arr.map(world.memberships.pending(), (row) => row.accountId)).toEqual([
+          "u-invited-3",
+        ]);
+        expect(recordedAccounts(world)).not.toContain(GONE);
+      }),
+    );
 
-    it.each([1, 2])(
+    it.effect.each([1, 2])(
       "resumes a run cut short every %i batches to one uninterrupted run's end state",
-      async (maxBatches) => {
-        const whole = makeWorld();
-        await run(seedMemberships(whole));
-        await run(whole.erasure({ batchSize: BATCH }).erase(GONE));
+      (maxBatches) =>
+        Effect.gen(function* () {
+          const whole = makeWorld();
+          yield* seedMemberships(whole);
+          yield* whole.erasure({ batchSize: BATCH }).erase(GONE);
 
-        const cut = makeWorld();
-        await run(seedMemberships(cut));
-        const erasure = cut.erasure({ batchSize: BATCH });
-        const first = await run(erasure.erase(GONE, { maxBatches }));
-        expect(first.complete).toBe(false);
-        expect(first.changed).toEqual({ memberships: BATCH * maxBatches });
-        const runs = (count: number): Effect.Effect<number, unknown> =>
-          Effect.flatMap(
-            erasure.erase(GONE, { maxBatches }),
-            (summary: ErasureSummary): Effect.Effect<number, unknown> =>
+          const cut = makeWorld();
+          yield* seedMemberships(cut);
+          const erasure = cut.erasure({ batchSize: BATCH });
+          const first = yield* erasure.erase(GONE, { maxBatches });
+          expect(first.complete).toBe(false);
+          expect(first.changed).toEqual({ memberships: BATCH * maxBatches });
+          /** Erase until complete, counting the passes from `count`. */
+          const runs = (
+            count: number,
+          ): Effect.Effect<number, Effect.Error<ReturnType<typeof erasure.erase>>> =>
+            Effect.flatMap(erasure.erase(GONE, { maxBatches }), (summary) =>
               summary.complete ? Effect.succeed(count) : runs(count + 1),
-          );
-        expect(await run(runs(2))).toBeGreaterThan(1);
-        expect(snapshot(cut)).toEqual(snapshot(whole));
-        expect(recordedAccounts(cut)).not.toContain(GONE);
-      },
+            );
+          expect(yield* runs(2)).toBeGreaterThan(1);
+          expect(snapshot(cut)).toEqual(snapshot(whole));
+          expect(recordedAccounts(cut)).not.toContain(GONE);
+        }),
     );
   });
 
@@ -661,144 +701,163 @@ describe("defineAccountErasure", () => {
       );
     const audience = (world: World) => audienceSeam(world.memberships);
 
-    it("reassigns every group to the tombstone account before the memberships go, and its members keep their access", async () => {
-      const world = makeWorld();
-      await run(seedGroups(world));
-      const summary = await run(world.erasure({ batchSize: BATCH }).erase(GONE));
-      expect(summary.complete).toBe(true);
-      expect(summary.changed).toEqual({ groups: OWNED.length, memberships: OWNED.length });
-      expect(Arr.sort(HashMap.toEntries(world.groups.owners()), byGroupId)).toEqual([
-        ...Arr.map(OWNED, (groupId) => [groupId, TOMBSTONE]),
-        ["g-theirs", OTHER],
-      ]);
-      const seam = audience(world);
-      // The tombstone account owns each group but holds no membership, so it reads nothing.
-      const access = await run(
-        Effect.forEach(
-          OWNED,
-          (groupId) =>
-            Effect.all(
-              [
-                seam.isMember(OTHER, groupId),
-                seam.isMember(GONE, groupId),
-                seam.isMember(TOMBSTONE, groupId),
-                world.groups.ownerOf(groupId),
-              ],
-              { concurrency: 1 },
-            ),
-          { concurrency: 1 },
-        ),
-      );
-      expect(access).toEqual(Arr.map(OWNED, () => [true, false, false, Option.some(TOMBSTONE)]));
-      expect(recordedAccounts(world)).not.toContain(GONE);
-    });
-
-    it("changes nothing when run again", async () => {
-      const world = makeWorld();
-      await run(seedGroups(world));
-      await run(world.erasure({ batchSize: BATCH }).erase(GONE));
-      const before = snapshot(world);
-      const again = await run(world.erasure({ batchSize: BATCH }).erase(GONE));
-      expect(again).toMatchObject({ complete: true, changed: {} });
-      expect(snapshot(world)).toEqual(before);
-    });
-
-    it.each([1, 2])(
-      "resumes a run cut short every %i batches to one uninterrupted run's end state",
-      async (maxBatches) => {
-        const whole = makeWorld();
-        await run(seedGroups(whole));
-        await run(whole.erasure({ batchSize: BATCH }).erase(GONE));
-
-        const cut = makeWorld();
-        await run(seedGroups(cut));
-        const erasure = cut.erasure({ batchSize: BATCH });
-        const first = await run(erasure.erase(GONE, { maxBatches }));
-        expect(first.complete).toBe(false);
-        expect(first.changed).toEqual({ groups: BATCH * maxBatches });
-        // Cut short mid-reassignment: the account still holds its memberships, and no member lost access.
-        expect(await run(audience(cut).isMember(OTHER, "g-a"))).toBe(true);
-        const runs = (count: number): Effect.Effect<number, unknown> =>
-          Effect.flatMap(
-            erasure.erase(GONE, { maxBatches }),
-            (summary: ErasureSummary): Effect.Effect<number, unknown> =>
-              summary.complete ? Effect.succeed(count) : runs(count + 1),
-          );
-        expect(await run(runs(2))).toBeGreaterThan(1);
-        expect(snapshot(cut)).toEqual(snapshot(whole));
-        expect(recordedAccounts(cut)).not.toContain(GONE);
-      },
-    );
-
-    it("runs the application's disposeGroups in the reassignment's place", async () => {
-      const world = makeWorld();
-      await run(seedGroups(world));
-      // An application that deletes the groups instead: each with its memberships, a batch at a time.
-      const deleteOwned = (query: {
-        readonly accountId: string;
-        readonly replacement: string;
-        readonly limit: number;
-      }) =>
+    it.effect(
+      "reassigns every group to the tombstone account before the memberships go, and its members keep their access",
+      () =>
         Effect.gen(function* () {
-          const owned = Arr.take(
-            Arr.sort(
-              Arr.map(
-                Arr.filter(
-                  HashMap.toEntries(world.groups.owners()),
-                  ([, ownerId]) => ownerId === query.accountId,
-                ),
-                ([groupId]) => groupId,
-              ),
-              Order.String,
-            ),
-            query.limit,
-          );
-          yield* Effect.forEach(
-            owned,
+          const world = makeWorld();
+          yield* seedGroups(world);
+          const summary = yield* world.erasure({ batchSize: BATCH }).erase(GONE);
+          expect(summary.complete).toBe(true);
+          expect(summary.changed).toEqual({ groups: OWNED.length, memberships: OWNED.length });
+          expect(Arr.sort(HashMap.toEntries(world.groups.owners()), byGroupId)).toEqual([
+            ...Arr.map(OWNED, (groupId) => [groupId, TOMBSTONE]),
+            ["g-theirs", OTHER],
+          ]);
+          const seam = audience(world);
+          // The tombstone account owns each group but holds no membership, so it reads nothing.
+          const access = yield* Effect.forEach(
+            OWNED,
             (groupId) =>
-              Effect.andThen(world.memberships.removeGroup(groupId), world.groups.remove(groupId)),
-            { concurrency: 1, discard: true },
+              Effect.all(
+                [
+                  seam.isMember(OTHER, groupId),
+                  seam.isMember(GONE, groupId),
+                  seam.isMember(TOMBSTONE, groupId),
+                  world.groups.ownerOf(groupId),
+                ],
+                { concurrency: 1 },
+              ),
+            { concurrency: 1 },
           );
-          return owned.length;
-        });
-      const summary = await run(
-        world.erasure({ batchSize: BATCH, disposeGroups: deleteOwned }).erase(GONE),
-      );
-      expect(summary.complete).toBe(true);
-      expect(summary.changed).toEqual({ groups: OWNED.length });
-      expect(HashMap.toEntries(world.groups.owners())).toEqual([["g-theirs", OTHER]]);
-      expect(world.memberships.rows()).toEqual([]);
-      expect(await run(audience(world).isMember(OTHER, "g-a"))).toBe(false);
-    });
-  });
-
-  it("refuses before reading anything", async () => {
-    const world = makeWorld();
-    await run(seed(world));
-    const before = snapshot(world);
-    const refusal = (viewer: Viewer, accountId: string) =>
-      run(Effect.flip(world.erasure({ viewer }).erase(accountId))).then((error) => error._tag);
-    expect(await refusal(Option.none(), GONE)).toBe("Unauthorized");
-    expect(await refusal(Option.some({ id: OTHER, role: "user" }), GONE)).toBe("Forbidden");
-    expect(await refusal(ADMIN, TOMBSTONE)).toBe("TombstoneErasure");
-    expect(snapshot(world)).toEqual(before);
-  });
-
-  it("lets an actor the definition allows erase their own account", async () => {
-    const world = makeWorld();
-    await run(seed(world));
-    const summary = await run(
-      world.erasure({ viewer: Option.some({ id: GONE, role: "user" }) }).erase(GONE),
+          expect(access).toEqual(
+            Arr.map(OWNED, () => [true, false, false, Option.some(TOMBSTONE)]),
+          );
+          expect(recordedAccounts(world)).not.toContain(GONE);
+        }),
     );
-    expect(summary.complete).toBe(true);
-    expect(recordedAccounts(world)).not.toContain(GONE);
+
+    it.effect("changes nothing when run again", () =>
+      Effect.gen(function* () {
+        const world = makeWorld();
+        yield* seedGroups(world);
+        yield* world.erasure({ batchSize: BATCH }).erase(GONE);
+        const before = snapshot(world);
+        const again = yield* world.erasure({ batchSize: BATCH }).erase(GONE);
+        expect(again).toMatchObject({ complete: true, changed: {} });
+        expect(snapshot(world)).toEqual(before);
+      }),
+    );
+
+    it.effect.each([1, 2])(
+      "resumes a run cut short every %i batches to one uninterrupted run's end state",
+      (maxBatches) =>
+        Effect.gen(function* () {
+          const whole = makeWorld();
+          yield* seedGroups(whole);
+          yield* whole.erasure({ batchSize: BATCH }).erase(GONE);
+
+          const cut = makeWorld();
+          yield* seedGroups(cut);
+          const erasure = cut.erasure({ batchSize: BATCH });
+          const first = yield* erasure.erase(GONE, { maxBatches });
+          expect(first.complete).toBe(false);
+          expect(first.changed).toEqual({ groups: BATCH * maxBatches });
+          // Cut short mid-reassignment: the account still holds its memberships, and no member lost access.
+          expect(yield* audience(cut).isMember(OTHER, "g-a")).toBe(true);
+          /** Erase until complete, counting the passes from `count`. */
+          const runs = (
+            count: number,
+          ): Effect.Effect<number, Effect.Error<ReturnType<typeof erasure.erase>>> =>
+            Effect.flatMap(erasure.erase(GONE, { maxBatches }), (summary) =>
+              summary.complete ? Effect.succeed(count) : runs(count + 1),
+            );
+          expect(yield* runs(2)).toBeGreaterThan(1);
+          expect(snapshot(cut)).toEqual(snapshot(whole));
+          expect(recordedAccounts(cut)).not.toContain(GONE);
+        }),
+    );
+
+    it.effect("runs the application's disposeGroups in the reassignment's place", () =>
+      Effect.gen(function* () {
+        const world = makeWorld();
+        yield* seedGroups(world);
+        // An application that deletes the groups instead: each with its memberships, a batch at a time.
+        const deleteOwned = (query: {
+          readonly accountId: string;
+          readonly replacement: string;
+          readonly limit: number;
+        }) =>
+          Effect.gen(function* () {
+            const owned = Arr.take(
+              Arr.sort(
+                Arr.map(
+                  Arr.filter(
+                    HashMap.toEntries(world.groups.owners()),
+                    ([, ownerId]) => ownerId === query.accountId,
+                  ),
+                  ([groupId]) => groupId,
+                ),
+                Order.String,
+              ),
+              query.limit,
+            );
+            yield* Effect.forEach(
+              owned,
+              (groupId) =>
+                Effect.andThen(
+                  world.memberships.removeGroup(groupId),
+                  world.groups.remove(groupId),
+                ),
+              { concurrency: 1, discard: true },
+            );
+            return owned.length;
+          });
+        const summary = yield* world
+          .erasure({ batchSize: BATCH, disposeGroups: deleteOwned })
+          .erase(GONE);
+        expect(summary.complete).toBe(true);
+        expect(summary.changed).toEqual({ groups: OWNED.length });
+        expect(HashMap.toEntries(world.groups.owners())).toEqual([["g-theirs", OTHER]]);
+        expect(world.memberships.rows()).toEqual([]);
+        expect(yield* audience(world).isMember(OTHER, "g-a")).toBe(false);
+      }),
+    );
   });
 
-  it("removes a dangling owner record whose chain is gone instead of looping on it", async () => {
-    const world = makeWorld();
-    await run(world.posts.stampOwner("n-orphan", GONE));
-    const summary = await run(world.erasure({ batchSize: 1 }).erase(GONE));
-    expect(summary).toMatchObject({ complete: true, purged: [], changed: { "posts.purge": 1 } });
-    expect(HashMap.size(world.posts.owners())).toBe(0);
-  });
+  it.effect("refuses before reading anything", () =>
+    Effect.gen(function* () {
+      const world = makeWorld();
+      yield* seed(world);
+      const before = snapshot(world);
+      const refusal = (viewer: Viewer, accountId: string) =>
+        Effect.map(Effect.flip(world.erasure({ viewer }).erase(accountId)), (error) => error._tag);
+      expect(yield* refusal(Option.none(), GONE)).toBe("Unauthorized");
+      expect(yield* refusal(Option.some({ id: OTHER, role: "user" }), GONE)).toBe("Forbidden");
+      expect(yield* refusal(ADMIN, TOMBSTONE)).toBe("TombstoneErasure");
+      expect(snapshot(world)).toEqual(before);
+    }),
+  );
+
+  it.effect("lets an actor the definition allows erase their own account", () =>
+    Effect.gen(function* () {
+      const world = makeWorld();
+      yield* seed(world);
+      const summary = yield* world
+        .erasure({ viewer: Option.some({ id: GONE, role: "user" }) })
+        .erase(GONE);
+      expect(summary.complete).toBe(true);
+      expect(recordedAccounts(world)).not.toContain(GONE);
+    }),
+  );
+
+  it.effect("removes a dangling owner record whose chain is gone instead of looping on it", () =>
+    Effect.gen(function* () {
+      const world = makeWorld();
+      yield* world.posts.stampOwner("n-orphan", GONE);
+      const summary = yield* world.erasure({ batchSize: 1 }).erase(GONE);
+      expect(summary).toMatchObject({ complete: true, purged: [], changed: { "posts.purge": 1 } });
+      expect(HashMap.size(world.posts.owners())).toBe(0);
+    }),
+  );
 });

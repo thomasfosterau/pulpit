@@ -28,7 +28,8 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
 import * as Str from "effect/String";
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { beforeAll, it } from "@effect/vitest";
+import { afterAll, describe, expect } from "vite-plus/test";
 import { makePublications } from "../../src/Publication.ts";
 import { makeVersionChains } from "../../src/VersionChain.ts";
 import { owners, tables, tree, views } from "../fixtures/tree.ts";
@@ -50,7 +51,7 @@ const runtime = ManagedRuntime.make(
 afterAll(() => runtime.dispose());
 
 const run = <A, E>(effect: Effect.Effect<A, E, typeof CurrentTransaction.Identifier>) =>
-  runtime.runPromise(transact(effect));
+  Effect.flatMap(runtime.contextEffect, (context) => Effect.provide(transact(effect), context));
 
 const chains = makeVersionChains({ tree, tables, CurrentTransaction });
 const gated = makePublications({
@@ -110,58 +111,60 @@ const notes: ReadonlyArray<
   [5, "u-3", [{ "en-AU": { heading: "Five" } }], Option.some([0n, FUTURE])],
 ];
 
-beforeAll(async () => {
-  await run(
-    Effect.gen(function* () {
-      const tx = yield* CurrentTransaction;
-      yield* tx.execute(
-        sql.raw(`TRUNCATE pulpit_test.${getTableName(tables.root.identity)} CASCADE`),
-      );
-    }),
-  );
-  await run(
-    Effect.forEach(
-      notes,
-      ([n, owner, versions, fact]) =>
-        Effect.gen(function* () {
-          const [first, ...rest] = versions;
-          const create = {
-            id: Option.some(id(n)),
-            state: { title: `note ${String(n)}`, body: null, summary: null },
-            locales: first,
-            actorId: Option.some(owner),
-          };
-          yield* chains.notes.create(create);
-          yield* memoryChain.create(create);
-          yield* gated.leaves.stampOwner(id(n), owner);
-          yield* memoryLeaves.stampOwner(id(n), owner);
-          yield* Effect.forEach(
-            rest,
-            (locales) => {
-              const update = { id: id(n), patch: {}, locales, actorId: Option.some(owner) };
-              return Effect.andThen(chains.notes.update(update), memoryChain.update(update));
-            },
-            { concurrency: 1 },
-          );
-          yield* Effect.forEach(
-            Option.toArray(fact),
-            ([version, at]) => {
-              const recorded = {
-                id: id(n),
-                version: Option.some(version),
-                at,
-                actorId: Option.some(owner),
-                recordedAt: RECORDED,
-              };
-              return Effect.andThen(gated.facts.record(recorded), memory.facts.record(recorded));
-            },
-            { concurrency: 1 },
-          );
-        }),
-      { concurrency: 1 },
-    ),
-  );
-});
+beforeAll(() =>
+  Effect.gen(function* () {
+    yield* run(
+      Effect.gen(function* () {
+        const tx = yield* CurrentTransaction;
+        yield* tx.execute(
+          sql.raw(`TRUNCATE pulpit_test.${getTableName(tables.root.identity)} CASCADE`),
+        );
+      }),
+    );
+    yield* run(
+      Effect.forEach(
+        notes,
+        ([n, owner, versions, fact]) =>
+          Effect.gen(function* () {
+            const [first, ...rest] = versions;
+            const create = {
+              id: Option.some(id(n)),
+              state: { title: `note ${String(n)}`, body: null, summary: null },
+              locales: first,
+              actorId: Option.some(owner),
+            };
+            yield* chains.notes.create(create);
+            yield* memoryChain.create(create);
+            yield* gated.leaves.stampOwner(id(n), owner);
+            yield* memoryLeaves.stampOwner(id(n), owner);
+            yield* Effect.forEach(
+              rest,
+              (locales) => {
+                const update = { id: id(n), patch: {}, locales, actorId: Option.some(owner) };
+                return Effect.andThen(chains.notes.update(update), memoryChain.update(update));
+              },
+              { concurrency: 1 },
+            );
+            yield* Effect.forEach(
+              Option.toArray(fact),
+              ([version, at]) => {
+                const recorded = {
+                  id: id(n),
+                  version: Option.some(version),
+                  at,
+                  actorId: Option.some(owner),
+                  recordedAt: RECORDED,
+                };
+                return Effect.andThen(gated.facts.record(recorded), memory.facts.record(recorded));
+              },
+              { concurrency: 1 },
+            );
+          }),
+        { concurrency: 1 },
+      ),
+    );
+  }),
+);
 
 const decodeText = Schema.decodeUnknownSync(Schema.NullOr(Schema.String));
 
@@ -198,16 +201,18 @@ describe("the localised live view agrees with the in-memory one", () => {
   const listCases = Arr.flatMap(heads, ([who, headFor]) =>
     Arr.map(lists, ([what, where, orderBy]) => [who, what, headFor, where, orderBy] as const),
   );
-  it.each(listCases)("list, %s: %s", async (_who, _what, headFor, where, orderBy) => {
-    const query = { headFor, where, orderBy, limit: 100, offset: 0 };
-    const fromSql = await run(gated.live.list(query));
-    const fromMemory = await Effect.runPromise(memory.live.list(query));
-    const ordered = Arr.isReadonlyArrayNonEmpty(orderBy);
-    expect({ total: fromSql.total, rows: rowsOf(fromSql, ordered) }).toEqual({
-      total: fromMemory.total,
-      rows: rowsOf(fromMemory, ordered),
-    });
-  });
+  it.live.each(listCases)("list, %s: %s", ([_who, _what, headFor, where, orderBy]) =>
+    Effect.gen(function* () {
+      const query = { headFor, where, orderBy, limit: 100, offset: 0 };
+      const fromSql = yield* run(gated.live.list(query));
+      const fromMemory = yield* memory.live.list(query);
+      const ordered = Arr.isReadonlyArrayNonEmpty(orderBy);
+      expect({ total: fromSql.total, rows: rowsOf(fromSql, ordered) }).toEqual({
+        total: fromMemory.total,
+        rows: rowsOf(fromMemory, ordered),
+      });
+    }),
+  );
 
   const preferences: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
     ["French first", ["fr", "en"]],
@@ -219,97 +224,111 @@ describe("the localised live view agrees with the in-memory one", () => {
   const localisedCases = Arr.flatMap(heads, ([who, headFor]) =>
     Arr.map(preferences, ([what, locales]) => [who, what, headFor, locales] as const),
   );
-  it.each(localisedCases)("listLocalised, %s: %s", async (_who, _what, headFor, locales) => {
-    const query = { headFor, where: always, orderBy: [], limit: 100, offset: 0, locales };
-    const fromSql = await run(gated.live.listLocalised(query));
-    const fromMemory = await Effect.runPromise(memory.live.listLocalised(query));
-    expect({ total: fromSql.total, rows: Arr.map(fromSql.rows, agreed) }).toEqual({
-      total: fromMemory.total,
-      rows: Arr.map(fromMemory.rows, agreed),
-    });
-  });
+  it.live.each(localisedCases)("listLocalised, %s: %s", ([_who, _what, headFor, locales]) =>
+    Effect.gen(function* () {
+      const query = { headFor, where: always, orderBy: [], limit: 100, offset: 0, locales };
+      const fromSql = yield* run(gated.live.listLocalised(query));
+      const fromMemory = yield* memory.live.listLocalised(query);
+      expect({ total: fromSql.total, rows: Arr.map(fromSql.rows, agreed) }).toEqual({
+        total: fromMemory.total,
+        rows: Arr.map(fromMemory.rows, agreed),
+      });
+    }),
+  );
 
-  it.each(heads)("distinct over the translated column, %s", async (_who, headFor) => {
-    const query = { column: "heading", where: always, limit: 100, offset: 0, headFor };
-    expect(await run(gated.live.distinct(query))).toEqual(
-      await Effect.runPromise(memory.live.distinct(query)),
-    );
-  });
+  it.live.each(heads)("distinct over the translated column, %s", ([_who, headFor]) =>
+    Effect.gen(function* () {
+      const query = { column: "heading", where: always, limit: 100, offset: 0, headFor };
+      expect(yield* run(gated.live.distinct(query))).toEqual(yield* memory.live.distinct(query));
+    }),
+  );
 
-  it("reads the live locales for a reader and the head's for its owner (so agreement is not vacuous)", async () => {
-    const chosen = (headFor: ListFilter<never>) =>
-      Effect.map(
-        gated.live.listLocalised({
-          headFor,
-          where: always,
-          orderBy: [],
-          limit: 100,
-          offset: 0,
-          locales: ["fr", "en"],
-        }),
-        (page) => Arr.map(page.rows, (row) => [row.id, row["locale"], row["heading"]]),
-      );
-    expect(await run(chosen(never))).toEqual([
-      [id(1), "fr", "Un"],
-      [id(4), "en", "Four!"],
-    ]);
-    expect(await run(chosen(eq("ownerId", "u-1")))).toEqual([
-      [id(1), "en", "One!"],
-      [id(2), "fr", "Deux"],
-      [id(4), "en", "Four!"],
-    ]);
-  });
+  it.live(
+    "reads the live locales for a reader and the head's for its owner (so agreement is not vacuous)",
+    () =>
+      Effect.gen(function* () {
+        const chosen = (headFor: ListFilter<never>) =>
+          Effect.map(
+            gated.live.listLocalised({
+              headFor,
+              where: always,
+              orderBy: [],
+              limit: 100,
+              offset: 0,
+              locales: ["fr", "en"],
+            }),
+            (page) => Arr.map(page.rows, (row) => [row.id, row["locale"], row["heading"]]),
+          );
+        expect(yield* run(chosen(never))).toEqual([
+          [id(1), "fr", "Un"],
+          [id(4), "en", "Four!"],
+        ]);
+        expect(yield* run(chosen(eq("ownerId", "u-1")))).toEqual([
+          [id(1), "en", "One!"],
+          [id(2), "fr", "Deux"],
+          [id(4), "en", "Four!"],
+        ]);
+      }),
+  );
 
-  it("get / getMany read the shared live row, one per node", async () => {
-    const shown = await run(gated.live.getMany([id(1), id(2), id(3), id(5)]));
-    expect(
-      Arr.sort(
-        Arr.map(shown, (row) => row.id),
-        Str.Order,
-      ),
-    ).toEqual([id(1), id(3)]);
-  });
+  it.live("get / getMany read the shared live row, one per node", () =>
+    Effect.gen(function* () {
+      const shown = yield* run(gated.live.getMany([id(1), id(2), id(3), id(5)]));
+      expect(
+        Arr.sort(
+          Arr.map(shown, (row) => row.id),
+          Str.Order,
+        ),
+      ).toEqual([id(1), id(3)]);
+    }),
+  );
 });
 
 describe("a localised gated leaf's search branch", () => {
-  it("ranks one hit per node over the shared rows a live list reads", async () => {
-    const branch = gated.searchBranch({
-      name: "title",
-      rank: (columns, query) =>
-        Option.map(Option.fromNullishOr(columns["title"]), (title) => ({
-          matches: sql`strpos(${title}, ${query}) > 0`,
-          score: sql`0`,
-        })),
-    });
-    const hits = (headFor: ListFilter<never>) =>
-      run(branch.search({ query: "note", scope: always, headFor, limit: 10 }));
-    // A reader: the live nodes only, each once whatever its locales.
-    expect(await hits(never)).toEqual([{ id: id(1) }, { id: id(3) }, { id: id(4) }]);
-    // u-1's heads add their unpublished node.
-    expect(await hits(eq("ownerId", "u-1"))).toEqual([
-      { id: id(1) },
-      { id: id(2) },
-      { id: id(3) },
-      { id: id(4) },
-    ]);
-  });
+  it.live("ranks one hit per node over the shared rows a live list reads", () =>
+    Effect.gen(function* () {
+      const branch = gated.searchBranch({
+        name: "title",
+        rank: (columns, query) =>
+          Option.map(Option.fromNullishOr(columns["title"]), (title) => ({
+            matches: sql`strpos(${title}, ${query}) > 0`,
+            score: sql`0`,
+          })),
+      });
+      const hits = (headFor: ListFilter<never>) =>
+        run(branch.search({ query: "note", scope: always, headFor, limit: 10 }));
+      // A reader: the live nodes only, each once whatever its locales.
+      expect(yield* hits(never)).toEqual([{ id: id(1) }, { id: id(3) }, { id: id(4) }]);
+      // u-1's heads add their unpublished node.
+      expect(yield* hits(eq("ownerId", "u-1"))).toEqual([
+        { id: id(1) },
+        { id: id(2) },
+        { id: id(3) },
+        { id: id(4) },
+      ]);
+    }),
+  );
 });
 
 describe("the localised gated store agrees with the in-memory one", () => {
-  it("list reads the head's locale rows, draft computed as no live row", async () => {
-    const query = { where: always, orderBy: [], limit: 100, offset: 0 };
-    const fromSql = await run(gated.leaves.list(query));
-    const fromMemory = await Effect.runPromise(memory.leaves.list(query));
-    expect({ total: fromSql.total, rows: rowsOf(fromSql, false) }).toEqual({
-      total: fromMemory.total,
-      rows: rowsOf(fromMemory, false),
-    });
-  });
+  it.live("list reads the head's locale rows, draft computed as no live row", () =>
+    Effect.gen(function* () {
+      const query = { where: always, orderBy: [], limit: 100, offset: 0 };
+      const fromSql = yield* run(gated.leaves.list(query));
+      const fromMemory = yield* memory.leaves.list(query);
+      expect({ total: fromSql.total, rows: rowsOf(fromSql, false) }).toEqual({
+        total: fromMemory.total,
+        rows: rowsOf(fromMemory, false),
+      });
+    }),
+  );
 
-  it("listLocalised chooses among the head's locales", async () => {
-    const query = { where: always, orderBy: [], limit: 100, offset: 0, locales: ["fr", "en"] };
-    const fromSql = await run(gated.leaves.listLocalised(query));
-    const fromMemory = await Effect.runPromise(memory.leaves.listLocalised(query));
-    expect(Arr.map(fromSql.rows, agreed)).toEqual(Arr.map(fromMemory.rows, agreed));
-  });
+  it.live("listLocalised chooses among the head's locales", () =>
+    Effect.gen(function* () {
+      const query = { where: always, orderBy: [], limit: 100, offset: 0, locales: ["fr", "en"] };
+      const fromSql = yield* run(gated.leaves.listLocalised(query));
+      const fromMemory = yield* memory.leaves.listLocalised(query);
+      expect(Arr.map(fromSql.rows, agreed)).toEqual(Arr.map(fromMemory.rows, agreed));
+    }),
+  );
 });

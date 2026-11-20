@@ -13,7 +13,8 @@
  * @module tests/relations
  */
 
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -33,13 +34,13 @@ import {
 } from "../src/testing.ts";
 import { gardeneriaPolicy, member, moderator, NOW, otherMember } from "./fixtures.ts";
 
-const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
-const tagOf = async <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) => {
-  const exit = await Effect.runPromiseExit(effect);
-  return Exit.isFailure(exit)
-    ? Option.map(Exit.findErrorOption(exit), (e) => e._tag)
-    : Option.none();
-};
+const tagOf = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.exit(effect);
+    return Exit.isFailure(exit)
+      ? Option.map(Exit.findErrorOption(exit), (e) => e._tag)
+      : Option.none();
+  });
 
 const anonymous: Viewer = Option.none();
 const as = (account: typeof member): Viewer => Option.some(account);
@@ -107,7 +108,8 @@ const reshares = () => {
     targetColumn: "target",
   });
   const post = (who: typeof member, visibility: string) =>
-    run(actAs(as(who), posts.ops.create({ id: Option.none(), state: { visibility } }))).then(
+    Effect.map(
+      actAs(as(who), posts.ops.create({ id: Option.none(), state: { visibility } })),
       ({ id }) => id,
     );
   const share = (who: typeof member, sharer: string, target: string) =>
@@ -116,138 +118,156 @@ const reshares = () => {
 };
 
 describe("reshares: the target through its own gate, or a placeholder", () => {
-  it("shows a readable target, and nothing for a node that reshares nothing", async () => {
-    const r = reshares();
-    const target = await r.post(member, "public");
-    const sharer = await r.post(otherMember, "public");
-    const plain = await r.post(otherMember, "public");
-    await run(r.share(otherMember, sharer, target));
-    const shown = await run(r.actAs(anonymous, r.reads.targetOf(sharer)));
-    expect(shown).toEqual(
-      Option.some({ _tag: "Visible", target: expect.objectContaining({ id: target }) }),
-    );
-    expect(await run(r.actAs(anonymous, r.reads.targetOf(plain)))).toEqual(Option.none());
-  });
+  it.effect("shows a readable target, and nothing for a node that reshares nothing", () =>
+    Effect.gen(function* () {
+      const r = reshares();
+      const target = yield* r.post(member, "public");
+      const sharer = yield* r.post(otherMember, "public");
+      const plain = yield* r.post(otherMember, "public");
+      yield* r.share(otherMember, sharer, target);
+      const shown = yield* r.actAs(anonymous, r.reads.targetOf(sharer));
+      expect(shown).toEqual(
+        Option.some({ _tag: "Visible", target: expect.objectContaining({ id: target }) }),
+      );
+      expect(yield* r.actAs(anonymous, r.reads.targetOf(plain))).toEqual(Option.none());
+    }),
+  );
 
   /** A reshare whose target has since gone private. */
-  const hiddenTarget = async () => {
-    const r = reshares();
-    const target = await r.post(member, "public");
-    const sharer = await r.post(otherMember, "public");
-    await run(r.share(otherMember, sharer, target));
-    await run(
-      r.actAs(as(member), r.posts.ops.update({ id: target, patch: { visibility: "private" } })),
-    );
-    return { r, target, sharer };
-  };
+  const hiddenTarget = () =>
+    Effect.gen(function* () {
+      const r = reshares();
+      const target = yield* r.post(member, "public");
+      const sharer = yield* r.post(otherMember, "public");
+      yield* r.share(otherMember, sharer, target);
+      yield* r.actAs(
+        as(member),
+        r.posts.ops.update({ id: target, patch: { visibility: "private" } }),
+      );
+      return { r, target, sharer };
+    });
 
-  it.each([
+  it.effect.each([
     { label: "anonymous", viewer: anonymous },
     { label: "a stranger", viewer: as({ id: "u-stranger", role: "user" }) },
     { label: "the sharer's owner", viewer: as(otherMember) },
-  ])("a private target is the placeholder to $label", async ({ viewer }) => {
-    const { r, sharer } = await hiddenTarget();
-    // Exactly `{ _tag: "Unavailable" }`: neither the target's id nor its content.
-    expect(await run(r.actAs(viewer, r.reads.targetOf(sharer)))).toEqual(
-      Option.some({ _tag: "Unavailable" }),
-    );
-  });
+  ])("a private target is the placeholder to $label", ({ viewer }) =>
+    Effect.gen(function* () {
+      const { r, sharer } = yield* hiddenTarget();
+      // Exactly `{ _tag: "Unavailable" }`: neither the target's id nor its content.
+      expect(yield* r.actAs(viewer, r.reads.targetOf(sharer))).toEqual(
+        Option.some({ _tag: "Unavailable" }),
+      );
+    }),
+  );
 
-  it.each([
+  it.effect.each([
     { label: "the target's owner", viewer: as(member) },
     { label: "a moderator", viewer: as(moderator) },
-  ])("a private target is visible to $label", async ({ viewer }) => {
-    const { r, target, sharer } = await hiddenTarget();
-    expect(await run(r.actAs(viewer, r.reads.targetOf(sharer)))).toEqual(
-      Option.some({ _tag: "Visible", target: expect.objectContaining({ id: target }) }),
-    );
-  });
+  ])("a private target is visible to $label", ({ viewer }) =>
+    Effect.gen(function* () {
+      const { r, target, sharer } = yield* hiddenTarget();
+      expect(yield* r.actAs(viewer, r.reads.targetOf(sharer))).toEqual(
+        Option.some({ _tag: "Visible", target: expect.objectContaining({ id: target }) }),
+      );
+    }),
+  );
 
-  it("a tombstoned target is the placeholder below the rung that reads tombstones", async () => {
-    const r = reshares();
-    const target = await r.post(member, "public");
-    const sharer = await r.post(otherMember, "public");
-    await run(r.share(otherMember, sharer, target));
-    await run(r.actAs(as(member), r.posts.ops.delete(target)));
-    expect(await run(r.actAs(anonymous, r.reads.targetOf(sharer)))).toEqual(
-      Option.some({ _tag: "Unavailable" }),
-    );
-  });
+  it.effect("a tombstoned target is the placeholder below the rung that reads tombstones", () =>
+    Effect.gen(function* () {
+      const r = reshares();
+      const target = yield* r.post(member, "public");
+      const sharer = yield* r.post(otherMember, "public");
+      yield* r.share(otherMember, sharer, target);
+      yield* r.actAs(as(member), r.posts.ops.delete(target));
+      expect(yield* r.actAs(anonymous, r.reads.targetOf(sharer))).toEqual(
+        Option.some({ _tag: "Unavailable" }),
+      );
+    }),
+  );
 
-  it("the reshare edge itself keeps EDGE-001: a hidden target hides the edge", async () => {
-    const r = reshares();
-    const target = await r.post(member, "public");
-    const sharer = await r.post(otherMember, "public");
-    await run(r.share(otherMember, sharer, target));
-    await run(
-      r.actAs(as(member), r.posts.ops.update({ id: target, patch: { visibility: "private" } })),
-    );
-    const page = await run(
-      r.actAs(anonymous, r.edges.list({ limit: 10, offset: 0, where: always })),
-    );
-    expect(page.rows).toEqual([]);
-    expect(page.total).toBe(0);
-  });
+  it.effect("the reshare edge itself keeps EDGE-001: a hidden target hides the edge", () =>
+    Effect.gen(function* () {
+      const r = reshares();
+      const target = yield* r.post(member, "public");
+      const sharer = yield* r.post(otherMember, "public");
+      yield* r.share(otherMember, sharer, target);
+      yield* r.actAs(
+        as(member),
+        r.posts.ops.update({ id: target, patch: { visibility: "private" } }),
+      );
+      const page = yield* r.actAs(anonymous, r.edges.list({ limit: 10, offset: 0, where: always }));
+      expect(page.rows).toEqual([]);
+      expect(page.total).toBe(0);
+    }),
+  );
 
-  it("a hidden sharing node is NodeNotFound, as its own get answers", async () => {
-    const r = reshares();
-    const target = await r.post(member, "public");
-    const sharer = await r.post(otherMember, "private");
-    await run(r.share(otherMember, sharer, target));
-    expect(await tagOf(r.actAs(anonymous, r.reads.targetOf(sharer)))).toEqual(
-      Option.some("NodeNotFound"),
-    );
-  });
+  it.effect("a hidden sharing node is NodeNotFound, as its own get answers", () =>
+    Effect.gen(function* () {
+      const r = reshares();
+      const target = yield* r.post(member, "public");
+      const sharer = yield* r.post(otherMember, "private");
+      yield* r.share(otherMember, sharer, target);
+      expect(yield* tagOf(r.actAs(anonymous, r.reads.targetOf(sharer)))).toEqual(
+        Option.some("NodeNotFound"),
+      );
+    }),
+  );
 
-  it("targetsOf answers a page in one pass, omitting hidden sharers and non-reshares", async () => {
-    const r = reshares();
-    const open = await r.post(member, "public");
-    const closed = await r.post(member, "public");
-    const sharesOpen = await r.post(otherMember, "public");
-    const sharesClosed = await r.post(otherMember, "public");
-    const hiddenSharer = await r.post(otherMember, "private");
-    const plain = await r.post(otherMember, "public");
-    await run(r.share(otherMember, sharesOpen, open));
-    await run(r.share(otherMember, sharesClosed, closed));
-    await run(r.share(otherMember, hiddenSharer, open));
-    await run(
-      r.actAs(as(member), r.posts.ops.update({ id: closed, patch: { visibility: "private" } })),
-    );
-    const page = await run(
-      r.actAs(
+  it.effect("targetsOf answers a page in one pass, omitting hidden sharers and non-reshares", () =>
+    Effect.gen(function* () {
+      const r = reshares();
+      const open = yield* r.post(member, "public");
+      const closed = yield* r.post(member, "public");
+      const sharesOpen = yield* r.post(otherMember, "public");
+      const sharesClosed = yield* r.post(otherMember, "public");
+      const hiddenSharer = yield* r.post(otherMember, "private");
+      const plain = yield* r.post(otherMember, "public");
+      yield* r.share(otherMember, sharesOpen, open);
+      yield* r.share(otherMember, sharesClosed, closed);
+      yield* r.share(otherMember, hiddenSharer, open);
+      yield* r.actAs(
+        as(member),
+        r.posts.ops.update({ id: closed, patch: { visibility: "private" } }),
+      );
+      const page = yield* r.actAs(
         anonymous,
         r.reads.targetsOf([sharesOpen, sharesClosed, hiddenSharer, plain, sharesOpen]),
-      ),
-    );
-    expect(HashMap.size(page)).toBe(2);
-    expect(Option.map(HashMap.get(page, sharesOpen), (t) => t._tag)).toEqual(
-      Option.some("Visible"),
-    );
-    expect(HashMap.get(page, sharesClosed)).toEqual(Option.some({ _tag: "Unavailable" }));
-    expect(await run(r.actAs(anonymous, r.reads.targetsOf([])))).toEqual(HashMap.empty());
-  });
+      );
+      expect(HashMap.size(page)).toBe(2);
+      expect(Option.map(HashMap.get(page, sharesOpen), (t) => t._tag)).toEqual(
+        Option.some("Visible"),
+      );
+      expect(HashMap.get(page, sharesClosed)).toEqual(Option.some({ _tag: "Unavailable" }));
+      expect(yield* r.actAs(anonymous, r.reads.targetsOf([]))).toEqual(HashMap.empty());
+    }),
+  );
 
-  it("targetsOf reads nothing past MAX_SET_VALUES ids", async () => {
-    const r = reshares();
-    const ids = Arr.makeBy(1001, (i) => `p-${String(i)}`);
-    expect(HashMap.size(await run(r.actAs(anonymous, r.reads.targetsOf(ids))))).toBe(0);
-  });
+  it.effect("targetsOf reads nothing past MAX_SET_VALUES ids", () =>
+    Effect.gen(function* () {
+      const r = reshares();
+      const ids = Arr.makeBy(1001, (i) => `p-${String(i)}`);
+      expect(HashMap.size(yield* r.actAs(anonymous, r.reads.targetsOf(ids)))).toBe(0);
+    }),
+  );
 
-  it("only a writer of the sharing node reshares from it, once", async () => {
-    const r = reshares();
-    const target = await r.post(member, "public");
-    const other = await r.post(member, "public");
-    const sharer = await r.post(otherMember, "public");
-    expect(await tagOf(r.share(member, sharer, target))).toEqual(Option.some("Forbidden"));
-    expect(await tagOf(r.actAs(anonymous, r.edges.create({ sharer, target })))).toEqual(
-      Option.some("Unauthorized"),
-    );
-    await run(r.share(otherMember, sharer, target));
-    expect(await tagOf(r.share(otherMember, sharer, other))).toEqual(
-      Option.some("EdgeCardinalityExceeded"),
-    );
-    expect(Option.isSome(await run(r.actAs(as(moderator), r.reads.targetOf(sharer))))).toBe(true);
-  });
+  it.effect("only a writer of the sharing node reshares from it, once", () =>
+    Effect.gen(function* () {
+      const r = reshares();
+      const target = yield* r.post(member, "public");
+      const other = yield* r.post(member, "public");
+      const sharer = yield* r.post(otherMember, "public");
+      expect(yield* tagOf(r.share(member, sharer, target))).toEqual(Option.some("Forbidden"));
+      expect(yield* tagOf(r.actAs(anonymous, r.edges.create({ sharer, target })))).toEqual(
+        Option.some("Unauthorized"),
+      );
+      yield* r.share(otherMember, sharer, target);
+      expect(yield* tagOf(r.share(otherMember, sharer, other))).toEqual(
+        Option.some("EdgeCardinalityExceeded"),
+      );
+      expect(Option.isSome(yield* r.actAs(as(moderator), r.reads.targetOf(sharer)))).toBe(true);
+    }),
+  );
 });
 
 // ── Accepted answers ──────────────────────────────────────────────────
@@ -285,16 +305,18 @@ const qanda = () => {
     }),
   });
   const ask = (who: typeof member) =>
-    run(
+    Effect.map(
       actAs(as(who), questions.ops.create({ id: Option.none(), state: { visibility: "public" } })),
-    ).then(({ id }) => id);
+      ({ id }) => id,
+    );
   const reply = (who: typeof member, questionId: string) =>
-    run(
+    Effect.map(
       actAs(
         as(who),
         answers.ops.create({ id: Option.none(), state: { visibility: "public", questionId } }),
       ),
-    ).then(({ id }) => id);
+      ({ id }) => id,
+    );
   const accept = (who: Viewer, question: string, answer: string) =>
     actAs(who, accepted.create({ question, answer }));
   return { accepted, actAs, ask, reply, accept };
@@ -308,89 +330,99 @@ describe("accepted answers: the question's write gate and the answer's parent", 
     { label: "anonymous", viewer: anonymous, outcome: Option.some("Unauthorized") },
   ] as const;
 
-  it.each(writers)("$label accepting an answer", async ({ viewer, outcome }) => {
-    const q = qanda();
-    const question = await q.ask(member);
-    const answer = await q.reply(otherMember, question);
-    expect(await tagOf(q.accept(viewer, question, answer))).toEqual(outcome);
-  });
+  it.effect.each(writers)("$label accepting an answer", ({ viewer, outcome }) =>
+    Effect.gen(function* () {
+      const q = qanda();
+      const question = yield* q.ask(member);
+      const answer = yield* q.reply(otherMember, question);
+      expect(yield* tagOf(q.accept(viewer, question, answer))).toEqual(outcome);
+    }),
+  );
 
-  it("refuses an answer to another question, after the gate", async () => {
-    const q = qanda();
-    const question = await q.ask(member);
-    const elsewhere = await q.ask(otherMember);
-    const answer = await q.reply(otherMember, elsewhere);
-    expect(await tagOf(q.accept(as(member), question, answer))).toEqual(
-      Option.some("AnswerNotOfQuestion"),
-    );
-    // A stranger is refused by the gate first, so it learns nothing about the answer.
-    expect(await tagOf(q.accept(as(otherMember), question, answer))).toEqual(
-      Option.some("Forbidden"),
-    );
-  });
+  it.effect("refuses an answer to another question, after the gate", () =>
+    Effect.gen(function* () {
+      const q = qanda();
+      const question = yield* q.ask(member);
+      const elsewhere = yield* q.ask(otherMember);
+      const answer = yield* q.reply(otherMember, elsewhere);
+      expect(yield* tagOf(q.accept(as(member), question, answer))).toEqual(
+        Option.some("AnswerNotOfQuestion"),
+      );
+      // A stranger is refused by the gate first, so it learns nothing about the answer.
+      expect(yield* tagOf(q.accept(as(otherMember), question, answer))).toEqual(
+        Option.some("Forbidden"),
+      );
+    }),
+  );
 
-  it("holds one accepted answer per question; only a writer un-accepts it", async () => {
-    const q = qanda();
-    const question = await q.ask(member);
-    const first = await q.reply(otherMember, question);
-    const second = await q.reply(otherMember, question);
-    const { id } = await run(q.accept(as(member), question, first));
-    expect(await tagOf(q.accept(as(member), question, second))).toEqual(
-      Option.some("EdgeCardinalityExceeded"),
-    );
-    expect(await tagOf(q.actAs(as(otherMember), q.accepted.delete(id)))).toEqual(
-      Option.some("Forbidden"),
-    );
-    await run(q.actAs(as(member), q.accepted.delete(id)));
-    expect(await tagOf(q.accept(as(member), question, second))).toEqual(Option.none());
-  });
+  it.effect("holds one accepted answer per question; only a writer un-accepts it", () =>
+    Effect.gen(function* () {
+      const q = qanda();
+      const question = yield* q.ask(member);
+      const first = yield* q.reply(otherMember, question);
+      const second = yield* q.reply(otherMember, question);
+      const { id } = yield* q.accept(as(member), question, first);
+      expect(yield* tagOf(q.accept(as(member), question, second))).toEqual(
+        Option.some("EdgeCardinalityExceeded"),
+      );
+      expect(yield* tagOf(q.actAs(as(otherMember), q.accepted.delete(id)))).toEqual(
+        Option.some("Forbidden"),
+      );
+      yield* q.actAs(as(member), q.accepted.delete(id));
+      expect(yield* tagOf(q.accept(as(member), question, second))).toEqual(Option.none());
+    }),
+  );
 });
 
 // ── Bylines ───────────────────────────────────────────────────────────
 
 describe("bylines: credit only", () => {
-  const bylines = async () => {
-    const { leaf, actAs } = world();
-    const posts = leaf("posts", ["visibility"]);
-    const profiles = leaf("profiles", ["visibility"]);
-    const byline = defineCollection({
-      type: "post-authors",
-      parent: posts.ops,
-      members: profiles.ops,
-      store: makeInMemoryCollectionStore(),
-    });
-    const post = await run(
-      actAs(as(member), posts.ops.create({ id: Option.none(), state: { visibility: "public" } })),
-    );
-    const profile = await run(
-      actAs(
+  const bylines = () =>
+    Effect.gen(function* () {
+      const { leaf, actAs } = world();
+      const posts = leaf("posts", ["visibility"]);
+      const profiles = leaf("profiles", ["visibility"]);
+      const byline = defineCollection({
+        type: "post-authors",
+        parent: posts.ops,
+        members: profiles.ops,
+        store: makeInMemoryCollectionStore(),
+      });
+      const post = yield* actAs(
+        as(member),
+        posts.ops.create({ id: Option.none(), state: { visibility: "public" } }),
+      );
+      const profile = yield* actAs(
         as(otherMember),
         profiles.ops.create({ id: Option.none(), state: { visibility: "public" } }),
-      ),
-    );
-    return { posts, byline, actAs, post: post.id, profile: profile.id };
-  };
+      );
+      return { posts, byline, actAs, post: post.id, profile: profile.id };
+    });
 
-  it("lists the credited authors to every reader of the node", async () => {
-    const b = await bylines();
-    await run(b.actAs(as(member), b.byline.append(b.post, b.profile)));
-    const page = await run(b.actAs(anonymous, b.byline.list(b.post, { limit: 10, offset: 0 })));
-    expect(page.rows.map((row) => row.memberId)).toEqual([b.profile]);
-  });
+  it.effect("lists the credited authors to every reader of the node", () =>
+    Effect.gen(function* () {
+      const b = yield* bylines();
+      yield* b.actAs(as(member), b.byline.append(b.post, b.profile));
+      const page = yield* b.actAs(anonymous, b.byline.list(b.post, { limit: 10, offset: 0 }));
+      expect(page.rows.map((row) => row.memberId)).toEqual([b.profile]);
+    }),
+  );
 
-  it("grants a credited co-author no write on the node or its byline", async () => {
-    const b = await bylines();
-    await run(b.actAs(as(member), b.byline.append(b.post, b.profile)));
-    expect(
-      await tagOf(
-        b.actAs(
-          as(otherMember),
-          b.posts.ops.update({ id: b.post, patch: { visibility: "private" } }),
+  it.effect("grants a credited co-author no write on the node or its byline", () =>
+    Effect.gen(function* () {
+      const b = yield* bylines();
+      yield* b.actAs(as(member), b.byline.append(b.post, b.profile));
+      expect(
+        yield* tagOf(
+          b.actAs(
+            as(otherMember),
+            b.posts.ops.update({ id: b.post, patch: { visibility: "private" } }),
+          ),
         ),
-      ),
-    ).toEqual(Option.some("Forbidden"));
-    expect(await tagOf(b.actAs(as(otherMember), b.byline.remove(b.post, b.profile)))).toEqual(
-      Option.some("Forbidden"),
-    );
-  });
+      ).toEqual(Option.some("Forbidden"));
+      expect(yield* tagOf(b.actAs(as(otherMember), b.byline.remove(b.post, b.profile)))).toEqual(
+        Option.some("Forbidden"),
+      );
+    }),
+  );
 });

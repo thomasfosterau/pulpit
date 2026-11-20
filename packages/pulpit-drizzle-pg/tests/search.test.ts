@@ -8,7 +8,8 @@
 import { always, never } from "@thomasfosterau/pulpit/Filter";
 import { sql } from "drizzle-orm";
 import * as Effect from "effect/Effect";
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import { makePublications } from "../src/Publication.ts";
 import { fullTextRank, makeSearchBranch } from "../src/Search.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
@@ -32,12 +33,10 @@ const runWith = <A, E>(
   effect: Effect.Effect<A, E, typeof database.CurrentTransaction.Identifier>,
 ) => {
   const { tx, calls } = cannedTransaction(rows);
-  return Effect.runPromise(
-    Effect.map(Effect.provideService(effect, database.CurrentTransaction, tx), (value) => ({
-      value,
-      calls,
-    })),
-  );
+  return Effect.map(Effect.provideService(effect, database.CurrentTransaction, tx), (value) => ({
+    value,
+    calls,
+  }));
 };
 
 describe("makeSearchBranch", () => {
@@ -45,26 +44,30 @@ describe("makeSearchBranch", () => {
     expect({ name: branch.name, weight: branch.weight }).toEqual({ name: "text", weight: 2 });
   });
 
-  it("ranks in one statement and makes hits of the ids, in order", async () => {
-    const { value, calls } = await runWith(
-      [{ id: ID }, { id: "b" }],
-      branch.search({ query: "apple", scope: always, headFor: never, limit: 10 }),
-    );
-    expect(value).toEqual([{ id: ID }, { id: "b" }]);
-    expect(calls).toEqual(["select", "from", "where", "orderBy", "limit"]);
-  });
+  it.effect("ranks in one statement and makes hits of the ids, in order", () =>
+    Effect.gen(function* () {
+      const { value, calls } = yield* runWith(
+        [{ id: ID }, { id: "b" }],
+        branch.search({ query: "apple", scope: always, headFor: never, limit: 10 }),
+      );
+      expect(value).toEqual([{ id: ID }, { id: "b" }]);
+      expect(calls).toEqual(["select", "from", "where", "orderBy", "limit"]);
+    }),
+  );
 
-  it.each([
+  it.effect.each([
     ["a blank query", "  ", 10],
     ["a zero limit", "apple", 0],
     ["a negative limit", "apple", -3],
-  ])("reads nothing for %s", async (_name, query, limit) => {
-    const { value, calls } = await runWith(
-      [{ id: ID }],
-      branch.search({ query, scope: always, headFor: never, limit }),
-    );
-    expect({ value, calls }).toEqual({ value: [], calls: [] });
-  });
+  ] as const)("reads nothing for %s", ([_name, query, limit]) =>
+    Effect.gen(function* () {
+      const { value, calls } = yield* runWith(
+        [{ id: ID }],
+        branch.search({ query, scope: always, headFor: never, limit }),
+      );
+      expect({ value, calls }).toEqual({ value: [], calls: [] });
+    }),
+  );
 });
 
 describe("a gated leaf's searchBranch", () => {
@@ -77,13 +80,17 @@ describe("a gated leaf's searchBranch", () => {
     CurrentTransaction: database.CurrentTransaction,
   }).posts;
 
-  it("is one value that ranks the chosen rows for each request's headFor, in one statement", async () => {
-    const search = gated.searchBranch({ name: "live text", rank });
-    const { value, calls } = await runWith(
-      [{ id: ID }],
-      search.search({ query: "apple", scope: always, headFor: always, limit: 5 }),
-    );
-    expect({ name: search.name, value }).toEqual({ name: "live text", value: [{ id: ID }] });
-    expect(calls).toEqual(["select", "from", "where", "orderBy", "limit"]);
-  });
+  it.effect(
+    "is one value that ranks the chosen rows for each request's headFor, in one statement",
+    () =>
+      Effect.gen(function* () {
+        const search = gated.searchBranch({ name: "live text", rank });
+        const { value, calls } = yield* runWith(
+          [{ id: ID }],
+          search.search({ query: "apple", scope: always, headFor: always, limit: 5 }),
+        );
+        expect({ name: search.name, value }).toEqual({ name: "live text", value: [{ id: ID }] });
+        expect(calls).toEqual(["select", "from", "where", "orderBy", "limit"]);
+      }),
+  );
 });

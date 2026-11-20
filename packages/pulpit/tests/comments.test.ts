@@ -14,7 +14,8 @@
  * @module tests/comments
  */
 
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Arr from "effect/Array";
@@ -45,16 +46,13 @@ import {
 } from "../src/testing.ts";
 import { follower, gardeneriaPolicy, member, moderator, NOW, otherMember } from "./fixtures.ts";
 
-const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
-
-const tagOf = async <A, E extends { readonly _tag: string }>(
-  effect: Effect.Effect<A, E>,
-): Promise<Option.Option<string>> => {
-  const exit = await Effect.runPromiseExit(effect);
-  return Exit.isFailure(exit)
-    ? Option.map(Exit.findErrorOption(exit), (error) => error._tag)
-    : Option.none();
-};
+const tagOf = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.exit(effect);
+    return Exit.isFailure(exit)
+      ? Option.map(Exit.findErrorOption(exit), (error) => error._tag)
+      : Option.none();
+  });
 
 const columns = { authorColumn: "ownerId", stateColumn: "moderationState" };
 const as = (account: ViewerAccount): Viewer => Option.some(account);
@@ -175,9 +173,12 @@ const world = (maxDepth?: number) => {
       viewer = who;
       return effect;
     });
-  const post = async (visibility: string) =>
-    (await run(actAs(as(member), posts.create({ id: Option.none(), state: { visibility } })))).id;
-  const comment = async (
+  const post = (visibility: string) =>
+    Effect.map(
+      actAs(as(member), posts.create({ id: Option.none(), state: { visibility } })),
+      (value) => value.id,
+    );
+  const comment = (
     targetId: string,
     options: {
       readonly targetType?: string;
@@ -185,9 +186,9 @@ const world = (maxDepth?: number) => {
       readonly parentId?: string;
       readonly state?: ChainState;
     } = {},
-  ) => {
-    const { id } = await run(
-      actAs(
+  ) =>
+    Effect.gen(function* () {
+      const { id } = yield* actAs(
         as(author),
         comments.create({
           id: Option.none(),
@@ -196,15 +197,15 @@ const world = (maxDepth?: number) => {
           parentId: Option.fromUndefinedOr(options.parentId),
           state: options.state ?? { body: "hi", visibility: "public" },
         }),
-      ),
-    );
-    if (options.approve !== false) {
-      await run(
-        actAs(as(moderator), commentLeaf.update({ id, patch: { moderationState: "approved" } })),
       );
-    }
-    return id;
-  };
+      if (options.approve !== false) {
+        yield* actAs(
+          as(moderator),
+          commentLeaf.update({ id, patch: { moderationState: "approved" } }),
+        );
+      }
+      return id;
+    });
   const readers = {
     anonymous,
     author: as(author),
@@ -214,9 +215,9 @@ const world = (maxDepth?: number) => {
     moderator: as(moderator),
   };
   /** Who reads comment `id`, through `get` and through `listByTarget` (which must agree). */
-  const whoReads = async (id: string, targetId: string, targetType = "posts") => {
-    const sightings = await run(
-      Effect.forEach(
+  const whoReads = (id: string, targetId: string, targetType = "posts") =>
+    Effect.gen(function* () {
+      const sightings = yield* Effect.forEach(
         R.toEntries(readers),
         ([name, who]) =>
           Effect.all(
@@ -245,159 +246,189 @@ const world = (maxDepth?: number) => {
             })),
           ),
         { concurrency: 1 },
-      ),
-    );
-    // `get` and `listByTarget` agree for every reader.
-    expect(sightings.filter(({ got, listed }) => got !== listed)).toEqual([]);
-    return R.fromEntries(
-      sightings.filter(({ got }) => got).map(({ name }) => [name, true] as const),
-    );
-  };
+      );
+      // `get` and `listByTarget` agree for every reader.
+      expect(sightings.filter(({ got, listed }) => got !== listed)).toEqual([]);
+      return R.fromEntries(
+        sightings.filter(({ got }) => got).map(({ name }) => [name, true] as const),
+      );
+    });
   return { posts, terms, commentLeaf, comments, actAs, post, comment, whoReads, commentChain };
 };
 
 describe("defineComments — the read gates", () => {
-  it("an approved comment on a public target is readable by everyone", async () => {
-    const { post, comment, whoReads } = world();
-    const target = await post("public");
-    const id = await comment(target);
-    expect(await whoReads(id, target)).toEqual({
-      anonymous: true,
-      author: true,
-      owner: true,
-      stranger: true,
-      follower: true,
-      moderator: true,
-    });
-  });
+  it.effect("an approved comment on a public target is readable by everyone", () =>
+    Effect.gen(function* () {
+      const { post, comment, whoReads } = world();
+      const target = yield* post("public");
+      const id = yield* comment(target);
+      expect(yield* whoReads(id, target)).toEqual({
+        anonymous: true,
+        author: true,
+        owner: true,
+        stranger: true,
+        follower: true,
+        moderator: true,
+      });
+    }),
+  );
 
-  it("a pending comment reads to its author and the rung only, not the target's owner", async () => {
-    const { post, comment, whoReads } = world();
-    const target = await post("public");
-    const id = await comment(target, { approve: false });
-    expect(await whoReads(id, target)).toEqual({ author: true, moderator: true });
-  });
+  it.effect("a pending comment reads to its author and the rung only, not the target's owner", () =>
+    Effect.gen(function* () {
+      const { post, comment, whoReads } = world();
+      const target = yield* post("public");
+      const id = yield* comment(target, { approve: false });
+      expect(yield* whoReads(id, target)).toEqual({ author: true, moderator: true });
+    }),
+  );
 
-  it("a tombstoned comment is hidden from everyone but the view-deleted rung", async () => {
-    const { post, comment, whoReads, actAs, commentLeaf } = world();
-    const target = await post("public");
-    const id = await comment(target);
-    await run(actAs(as(author), commentLeaf.delete(id)));
-    expect(await whoReads(id, target)).toEqual({ moderator: true });
-  });
+  it.effect("a tombstoned comment is hidden from everyone but the view-deleted rung", () =>
+    Effect.gen(function* () {
+      const { post, comment, whoReads, actAs, commentLeaf } = world();
+      const target = yield* post("public");
+      const id = yield* comment(target);
+      yield* actAs(as(author), commentLeaf.delete(id));
+      expect(yield* whoReads(id, target)).toEqual({ moderator: true });
+    }),
+  );
 
-  it("a comment on a private target reads only to the target's owner and the rung, not its author", async () => {
-    const { post, posts, comment, whoReads, actAs } = world();
-    // Commented while the author could still read it.
-    const target = await post("public");
-    const id = await comment(target);
-    await run(actAs(as(member), posts.update({ id: target, patch: { visibility: "private" } })));
-    expect(await whoReads(id, target)).toEqual({ owner: true, moderator: true });
-  });
+  it.effect(
+    "a comment on a private target reads only to the target's owner and the rung, not its author",
+    () =>
+      Effect.gen(function* () {
+        const { post, posts, comment, whoReads, actAs } = world();
+        // Commented while the author could still read it.
+        const target = yield* post("public");
+        const id = yield* comment(target);
+        yield* actAs(as(member), posts.update({ id: target, patch: { visibility: "private" } }));
+        expect(yield* whoReads(id, target)).toEqual({ owner: true, moderator: true });
+      }),
+  );
 
-  it("a comment on a followers-only target reads to the owner, their followers and the rung", async () => {
-    const { post, posts, comment, whoReads, actAs } = world();
-    const target = await post("public");
-    const id = await comment(target);
-    await run(actAs(as(member), posts.update({ id: target, patch: { visibility: "followers" } })));
-    expect(await whoReads(id, target)).toEqual({ owner: true, follower: true, moderator: true });
-  });
+  it.effect(
+    "a comment on a followers-only target reads to the owner, their followers and the rung",
+    () =>
+      Effect.gen(function* () {
+        const { post, posts, comment, whoReads, actAs } = world();
+        const target = yield* post("public");
+        const id = yield* comment(target);
+        yield* actAs(as(member), posts.update({ id: target, patch: { visibility: "followers" } }));
+        expect(yield* whoReads(id, target)).toEqual({
+          owner: true,
+          follower: true,
+          moderator: true,
+        });
+      }),
+  );
 
-  it("flipping the target private hides its comments, its own author included", async () => {
-    const { post, posts, comment, whoReads, actAs } = world();
-    const target = await post("public");
-    const id = await comment(target);
-    await run(actAs(as(member), posts.update({ id: target, patch: { visibility: "private" } })));
-    expect(await whoReads(id, target)).toEqual({ owner: true, moderator: true });
-  });
+  it.effect("flipping the target private hides its comments, its own author included", () =>
+    Effect.gen(function* () {
+      const { post, posts, comment, whoReads, actAs } = world();
+      const target = yield* post("public");
+      const id = yield* comment(target);
+      yield* actAs(as(member), posts.update({ id: target, patch: { visibility: "private" } }));
+      expect(yield* whoReads(id, target)).toEqual({ owner: true, moderator: true });
+    }),
+  );
 
-  it("a comment on a tombstoned target is hidden, even from its author and the owner", async () => {
-    const { post, posts, comment, whoReads, actAs } = world();
-    const target = await post("public");
-    const id = await comment(target);
-    await run(actAs(as(member), posts.delete(target)));
-    expect(await whoReads(id, target)).toEqual({ moderator: true });
-  });
+  it.effect("a comment on a tombstoned target is hidden, even from its author and the owner", () =>
+    Effect.gen(function* () {
+      const { post, posts, comment, whoReads, actAs } = world();
+      const target = yield* post("public");
+      const id = yield* comment(target);
+      yield* actAs(as(member), posts.delete(target));
+      expect(yield* whoReads(id, target)).toEqual({ moderator: true });
+    }),
+  );
 
-  it("a reference target with no visibility axis is public by construction", async () => {
-    const { terms, comment, whoReads, actAs } = world();
-    const { id: target } = await run(
-      actAs(as(moderator), terms.create({ id: Option.none(), state: { name: "Ferns" } })),
-    );
-    const id = await comment(target, { targetType: "terms" });
-    expect(R.keys(await whoReads(id, target, "terms"))).toHaveLength(6);
-  });
-
-  it("commenting on a target the viewer can't read, or of an unknown type, is NodeNotFound", async () => {
-    const { post, comments, actAs } = world();
-    const target = await post("private");
-    const create = (targetType: string, targetId: string) =>
-      actAs(
-        as(otherMember),
-        comments.create({
-          id: Option.none(),
-          targetType,
-          targetId,
-          parentId: Option.none(),
-          state: {},
-        }),
+  it.effect("a reference target with no visibility axis is public by construction", () =>
+    Effect.gen(function* () {
+      const { terms, comment, whoReads, actAs } = world();
+      const { id: target } = yield* actAs(
+        as(moderator),
+        terms.create({ id: Option.none(), state: { name: "Ferns" } }),
       );
-    expect(await tagOf(create("posts", target))).toEqual(Option.some("NodeNotFound"));
-    expect(await tagOf(create("posts", "missing"))).toEqual(Option.some("NodeNotFound"));
-    expect(await tagOf(create("galleries", target))).toEqual(Option.some("NodeNotFound"));
-    expect(
-      await tagOf(
-        actAs(
-          as(otherMember),
-          comments.listByTarget({
-            targetType: "posts",
-            targetId: target,
-            parentId: Option.none(),
-            limit: 10,
-            offset: 0,
-            includeDeleted: false,
-          }),
-        ),
-      ),
-    ).toEqual(Option.some("NodeNotFound"));
-  });
+      const id = yield* comment(target, { targetType: "terms" });
+      expect(R.keys(yield* whoReads(id, target, "terms"))).toHaveLength(6);
+    }),
+  );
 
-  it("a new comment starts pending, whatever it asks for", async () => {
-    const { post, comment, commentChain } = world();
-    const target = await post("public");
-    await comment(target, { approve: false, state: { body: "x", visibility: "public" } });
-    expect(commentChain.rows()[0]?.state).toMatchObject({
-      moderationState: "pending",
-      targetType: "posts",
-      targetId: target,
-      parentId: null,
-      depth: 0,
-    });
-  });
+  it.effect(
+    "commenting on a target the viewer can't read, or of an unknown type, is NodeNotFound",
+    () =>
+      Effect.gen(function* () {
+        const { post, comments, actAs } = world();
+        const target = yield* post("private");
+        const create = (targetType: string, targetId: string) =>
+          actAs(
+            as(otherMember),
+            comments.create({
+              id: Option.none(),
+              targetType,
+              targetId,
+              parentId: Option.none(),
+              state: {},
+            }),
+          );
+        expect(yield* tagOf(create("posts", target))).toEqual(Option.some("NodeNotFound"));
+        expect(yield* tagOf(create("posts", "missing"))).toEqual(Option.some("NodeNotFound"));
+        expect(yield* tagOf(create("galleries", target))).toEqual(Option.some("NodeNotFound"));
+        expect(
+          yield* tagOf(
+            actAs(
+              as(otherMember),
+              comments.listByTarget({
+                targetType: "posts",
+                targetId: target,
+                parentId: Option.none(),
+                limit: 10,
+                offset: 0,
+                includeDeleted: false,
+              }),
+            ),
+          ),
+        ).toEqual(Option.some("NodeNotFound"));
+      }),
+  );
+
+  it.effect("a new comment starts pending, whatever it asks for", () =>
+    Effect.gen(function* () {
+      const { post, comment, commentChain } = world();
+      const target = yield* post("public");
+      yield* comment(target, { approve: false, state: { body: "x", visibility: "public" } });
+      expect(commentChain.rows()[0]?.state).toMatchObject({
+        moderationState: "pending",
+        targetType: "posts",
+        targetId: target,
+        parentId: null,
+        depth: 0,
+      });
+    }),
+  );
 });
 
 describe("defineComments — reply depth", () => {
-  it("maxDepth 1 (the default) takes one level of replies", async () => {
-    const { post, comment, comments, actAs } = world();
-    const target = await post("public");
-    const top = await comment(target);
-    const reply = await comment(target, { parentId: top });
-    expect(
-      await tagOf(
-        actAs(
-          as(author),
-          comments.create({
-            id: Option.none(),
-            targetType: "posts",
-            targetId: target,
-            parentId: Option.some(reply),
-            state: {},
-          }),
+  it.effect("maxDepth 1 (the default) takes one level of replies", () =>
+    Effect.gen(function* () {
+      const { post, comment, comments, actAs } = world();
+      const target = yield* post("public");
+      const top = yield* comment(target);
+      const reply = yield* comment(target, { parentId: top });
+      expect(
+        yield* tagOf(
+          actAs(
+            as(author),
+            comments.create({
+              id: Option.none(),
+              targetType: "posts",
+              targetId: target,
+              parentId: Option.some(reply),
+              state: {},
+            }),
+          ),
         ),
-      ),
-    ).toEqual(Option.some("CommentDepthExceeded"));
-    const replies = await run(
-      actAs(
+      ).toEqual(Option.some("CommentDepthExceeded"));
+      const replies = yield* actAs(
         anonymous,
         comments.listByTarget({
           targetType: "posts",
@@ -407,10 +438,8 @@ describe("defineComments — reply depth", () => {
           offset: 0,
           includeDeleted: false,
         }),
-      ),
-    );
-    const tops = await run(
-      actAs(
+      );
+      const tops = yield* actAs(
         anonymous,
         comments.listByTarget({
           targetType: "posts",
@@ -420,46 +449,54 @@ describe("defineComments — reply depth", () => {
           offset: 0,
           includeDeleted: false,
         }),
-      ),
-    );
-    expect(replies.rows.map((row) => row.id)).toEqual([reply]);
-    expect(tops.rows.map((row) => row.id)).toEqual([top]);
-  });
+      );
+      expect(replies.rows.map((row) => row.id)).toEqual([reply]);
+      expect(tops.rows.map((row) => row.id)).toEqual([top]);
+    }),
+  );
 
-  it("maxDepth 0 is flat, and maxDepth 2 nests twice", async () => {
-    const flat = world(0);
-    const flatTarget = await flat.post("public");
-    const flatTop = await flat.comment(flatTarget);
-    await expect(flat.comment(flatTarget, { parentId: flatTop })).rejects.toBeDefined();
-    const deep = world(2);
-    const deepTarget = await deep.post("public");
-    const one = await deep.comment(deepTarget);
-    const two = await deep.comment(deepTarget, { parentId: one });
-    const three = await deep.comment(deepTarget, { parentId: two });
-    expect(three).toBeTypeOf("string");
-    await expect(deep.comment(deepTarget, { parentId: three })).rejects.toBeDefined();
-  });
+  it.effect("maxDepth 0 is flat, and maxDepth 2 nests twice", () =>
+    Effect.gen(function* () {
+      const flat = world(0);
+      const flatTarget = yield* flat.post("public");
+      const flatTop = yield* flat.comment(flatTarget);
+      expect(
+        Exit.isFailure(yield* Effect.exit(flat.comment(flatTarget, { parentId: flatTop }))),
+      ).toBe(true);
+      const deep = world(2);
+      const deepTarget = yield* deep.post("public");
+      const one = yield* deep.comment(deepTarget);
+      const two = yield* deep.comment(deepTarget, { parentId: one });
+      const three = yield* deep.comment(deepTarget, { parentId: two });
+      expect(three).toBeTypeOf("string");
+      expect(
+        Exit.isFailure(yield* Effect.exit(deep.comment(deepTarget, { parentId: three }))),
+      ).toBe(true);
+    }),
+  );
 
-  it("a reply to a comment on another target is NodeNotFound", async () => {
-    const { post, comment, comments, actAs } = world();
-    const first = await post("public");
-    const second = await post("public");
-    const top = await comment(first);
-    expect(
-      await tagOf(
-        actAs(
-          as(author),
-          comments.create({
-            id: Option.none(),
-            targetType: "posts",
-            targetId: second,
-            parentId: Option.some(top),
-            state: {},
-          }),
+  it.effect("a reply to a comment on another target is NodeNotFound", () =>
+    Effect.gen(function* () {
+      const { post, comment, comments, actAs } = world();
+      const first = yield* post("public");
+      const second = yield* post("public");
+      const top = yield* comment(first);
+      expect(
+        yield* tagOf(
+          actAs(
+            as(author),
+            comments.create({
+              id: Option.none(),
+              targetType: "posts",
+              targetId: second,
+              parentId: Option.some(top),
+              state: {},
+            }),
+          ),
         ),
-      ),
-    ).toEqual(Option.some("NodeNotFound"));
-  });
+      ).toEqual(Option.some("NodeNotFound"));
+    }),
+  );
 
   it("maxDepth must be a non-negative safe integer", () => {
     expect(() => world(-1)).toThrow(CommentDeclarationError);

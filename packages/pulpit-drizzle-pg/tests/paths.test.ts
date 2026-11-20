@@ -8,7 +8,8 @@
 
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import { makePathStore } from "../src/Paths.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
 import { database, paths } from "./fixtures/tree.ts";
@@ -22,58 +23,62 @@ const runWith = <X, E>(
   effect: Effect.Effect<X, E, typeof database.CurrentTransaction.Identifier>,
 ) => {
   const { tx, calls } = cannedTransaction(rows);
-  return Effect.runPromise(
-    Effect.map(
-      Effect.result(Effect.provideService(effect, database.CurrentTransaction, tx)),
-      (value) => ({ value, calls }),
-    ),
+  return Effect.map(
+    Effect.result(Effect.provideService(effect, database.CurrentTransaction, tx)),
+    (value) => ({ value, calls }),
   );
 };
 
 describe("makePathStore over canned rows", () => {
-  it("claim refuses another node's canonical row before writing anything", async () => {
-    const { value, calls } = await runWith(
-      [{ nodeId: B, canonical: true }],
-      store.claim(A, "about"),
-    );
-    expect(value._tag).toBe("Failure");
-    expect(calls).toEqual(["select", "from", "where", "for"]);
-  });
+  it.effect("claim refuses another node's canonical row before writing anything", () =>
+    Effect.gen(function* () {
+      const { value, calls } = yield* runWith(
+        [{ nodeId: B, canonical: true }],
+        store.claim(A, "about"),
+      );
+      expect(value._tag).toBe("Failure");
+      expect(calls).toEqual(["select", "from", "where", "for"]);
+    }),
+  );
 
-  it("claim demotes, then upserts; an upsert the guard refuses is PathTaken", async () => {
-    const won = await runWith(
-      [{ nodeId: A, canonical: false, path: "about" }],
-      store.claim(A, "about"),
-    );
-    expect(won.value._tag).toBe("Success");
-    expect(won.calls).toEqual([
-      "select",
-      "from",
-      "where",
-      "for",
-      "update",
-      "set",
-      "where",
-      "insert",
-      "values",
-      "onConflictDoUpdate",
-      "returning",
-    ]);
-    const lost = await runWith([], store.claim(A, "about"));
-    expect(lost.value._tag).toBe("Failure");
-  });
+  it.effect("claim demotes, then upserts; an upsert the guard refuses is PathTaken", () =>
+    Effect.gen(function* () {
+      const won = yield* runWith(
+        [{ nodeId: A, canonical: false, path: "about" }],
+        store.claim(A, "about"),
+      );
+      expect(won.value._tag).toBe("Success");
+      expect(won.calls).toEqual([
+        "select",
+        "from",
+        "where",
+        "for",
+        "update",
+        "set",
+        "where",
+        "insert",
+        "values",
+        "onConflictDoUpdate",
+        "returning",
+      ]);
+      const lost = yield* runWith([], store.claim(A, "about"));
+      expect(lost.value._tag).toBe("Failure");
+    }),
+  );
 
-  it("lookup, canonicalOf and release; an id that is no UUID holds no path", async () => {
-    expect(
-      (await runWith([{ nodeId: A, canonical: true }], store.lookup("about"))).value,
-    ).toMatchObject({
-      success: Option.some({ nodeId: A, canonical: true }),
-    });
-    expect((await runWith([{ path: "about" }], store.canonicalOf(A))).value).toMatchObject({
-      success: Option.some("about"),
-    });
-    expect((await runWith([], store.canonicalOf("x"))).calls).toEqual([]);
-    expect((await runWith([], store.release(A))).calls).toEqual(["delete", "where"]);
-    expect((await runWith([], store.release("x"))).calls).toEqual([]);
-  });
+  it.effect("lookup, canonicalOf and release; an id that is no UUID holds no path", () =>
+    Effect.gen(function* () {
+      expect(
+        (yield* runWith([{ nodeId: A, canonical: true }], store.lookup("about"))).value,
+      ).toMatchObject({
+        success: Option.some({ nodeId: A, canonical: true }),
+      });
+      expect((yield* runWith([{ path: "about" }], store.canonicalOf(A))).value).toMatchObject({
+        success: Option.some("about"),
+      });
+      expect((yield* runWith([], store.canonicalOf("x"))).calls).toEqual([]);
+      expect((yield* runWith([], store.release(A))).calls).toEqual(["delete", "where"]);
+      expect((yield* runWith([], store.release("x"))).calls).toEqual([]);
+    }),
+  );
 });

@@ -21,7 +21,8 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Str from "effect/String";
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { beforeAll, it } from "@effect/vitest";
+import { afterAll, describe, expect } from "vite-plus/test";
 import { makeReactionStore } from "../../src/Reactions.ts";
 import { makeVersionChains } from "../../src/VersionChain.ts";
 import { accounts, reactions, tables, tree } from "../fixtures/tree.ts";
@@ -43,7 +44,7 @@ const runtime = ManagedRuntime.make(
 afterAll(() => runtime.dispose());
 
 const run = <A, E>(effect: Effect.Effect<A, E, typeof CurrentTransaction.Identifier>) =>
-  runtime.runPromise(transact(effect));
+  Effect.flatMap(runtime.contextEffect, (context) => Effect.provide(transact(effect), context));
 
 const chains = makeVersionChains({ tree, tables, CurrentTransaction });
 const store = makeReactionStore({ table: reactions, CurrentTransaction });
@@ -54,8 +55,8 @@ const [n1 = "", n2 = "", n3 = "", n4 = ""] = Arr.map([1, 2, 3, 4], node);
 const at = (minute: number) =>
   DateTime.toDate(DateTime.makeUnsafe(`2026-11-01T12:${String(minute).padStart(2, "0")}:00.000Z`));
 
-beforeAll(async () => {
-  await run(
+beforeAll(() =>
+  run(
     Effect.gen(function* () {
       const tx = yield* CurrentTransaction;
       yield* tx.execute(
@@ -75,13 +76,16 @@ beforeAll(async () => {
         { concurrency: 1 },
       );
     }),
-  );
-});
+  ),
+);
 
-const both = async <A, E>(
+const both = <A, E>(
   fromSql: Effect.Effect<A, E, typeof CurrentTransaction.Identifier>,
   fromMemory: Effect.Effect<A>,
-) => ({ sql: await run(fromSql), memory: await Effect.runPromise(fromMemory) });
+) =>
+  Effect.gen(function* () {
+    return { sql: yield* run(fromSql), memory: yield* fromMemory };
+  });
 
 const upsertBoth = (row: ReactionRow) => both(store.upsert(row), memory.upsert(row));
 
@@ -110,105 +114,116 @@ const tallies = (map: HashMap.HashMap<string, { readonly [kind: string]: number 
   );
 
 describe("ReactionStore over PostgreSQL agrees with the in-memory store", () => {
-  it("upsert answers none for a first reaction and the replaced kind after", async () => {
-    const calls: ReadonlyArray<ReactionRow> = [
-      { nodeId: n1, accountId: "ana", kind: "like", reactedAt: at(1) },
-      { nodeId: n1, accountId: "ben", kind: "love", reactedAt: at(2) },
-      { nodeId: n2, accountId: "ana", kind: "like", reactedAt: at(3) },
-      { nodeId: n1, accountId: "ana", kind: "love", reactedAt: at(4) },
-      { nodeId: n3, accountId: "ana", kind: "like", reactedAt: at(4) },
-      { nodeId: n4, accountId: "ben", kind: "like", reactedAt: at(5) },
-    ];
-    const answers = await Arr.reduce(
-      calls,
-      Promise.resolve<ReadonlyArray<{ sql: unknown; memory: unknown }>>([]),
-      (previous, row) => previous.then(async (done) => [...done, await upsertBoth(row)]),
-    );
-    expect(Arr.map(answers, (answer) => answer.sql)).toEqual(
-      Arr.map(answers, (answer) => answer.memory),
-    );
-    expect(answers[3]?.sql).toEqual(Option.some("like"));
-    expect(Arr.sort(await stored(), byKey)).toEqual(Arr.sort(memory.rows(), byKey));
-  });
+  it.live("upsert answers none for a first reaction and the replaced kind after", () =>
+    Effect.gen(function* () {
+      const calls: ReadonlyArray<ReactionRow> = [
+        { nodeId: n1, accountId: "ana", kind: "like", reactedAt: at(1) },
+        { nodeId: n1, accountId: "ben", kind: "love", reactedAt: at(2) },
+        { nodeId: n2, accountId: "ana", kind: "like", reactedAt: at(3) },
+        { nodeId: n1, accountId: "ana", kind: "love", reactedAt: at(4) },
+        { nodeId: n3, accountId: "ana", kind: "like", reactedAt: at(4) },
+        { nodeId: n4, accountId: "ben", kind: "like", reactedAt: at(5) },
+      ];
+      const answers = yield* Effect.forEach(calls, (row) => upsertBoth(row), { concurrency: 1 });
+      expect(Arr.map(answers, (answer) => answer.sql)).toEqual(
+        Arr.map(answers, (answer) => answer.memory),
+      );
+      expect(answers[3]?.sql).toEqual(Option.some("like"));
+      expect(Arr.sort(yield* stored(), byKey)).toEqual(Arr.sort(memory.rows(), byKey));
+    }),
+  );
 
-  it("tally counts each node's reactions per kind; a node with none has no key", async () => {
-    const tally = await both(store.tally([n1, n2, n3, n4]), memory.tally([n1, n2, n3, n4]));
-    expect(tallies(tally.sql)).toEqual(tallies(tally.memory));
-    expect(HashMap.get(tally.sql, n1)).toEqual(Option.some({ love: 2 }));
-    const none = await both(store.tally([node(99)]), memory.tally([node(99)]));
-    expect(HashMap.size(none.sql)).toBe(0);
-    expect(HashMap.size(none.memory)).toBe(0);
-  });
+  it.live("tally counts each node's reactions per kind; a node with none has no key", () =>
+    Effect.gen(function* () {
+      const tally = yield* both(store.tally([n1, n2, n3, n4]), memory.tally([n1, n2, n3, n4]));
+      expect(tallies(tally.sql)).toEqual(tallies(tally.memory));
+      expect(HashMap.get(tally.sql, n1)).toEqual(Option.some({ love: 2 }));
+      const none = yield* both(store.tally([node(99)]), memory.tally([node(99)]));
+      expect(HashMap.size(none.sql)).toBe(0);
+      expect(HashMap.size(none.memory)).toBe(0);
+    }),
+  );
 
-  it("byAccount is newest first, then by node, one page", async () => {
-    const pages = [
-      { limit: 10, offset: 0 },
-      { limit: 1, offset: 0 },
-      { limit: 2, offset: 1 },
-      { limit: 5, offset: 9 },
-    ];
-    const reads = await Arr.reduce(
-      pages,
-      Promise.resolve<ReadonlyArray<{ sql: unknown; memory: unknown }>>([]),
-      (previous, page) =>
-        previous.then(async (done) => {
+  it.live("byAccount is newest first, then by node, one page", () =>
+    Effect.gen(function* () {
+      const pages = [
+        { limit: 10, offset: 0 },
+        { limit: 1, offset: 0 },
+        { limit: 2, offset: 1 },
+        { limit: 5, offset: 9 },
+      ];
+      const reads = yield* Effect.forEach(
+        pages,
+        (page) => {
           const query = { accountId: "ana", ...page };
-          return [...done, await both(store.byAccount(query), memory.byAccount(query))];
-        }),
-    );
-    expect(Arr.map(reads, (read) => read.sql)).toEqual(Arr.map(reads, (read) => read.memory));
-    const all = await run(store.byAccount({ accountId: "ana", limit: 10, offset: 0 }));
-    expect(Arr.map(all, (row) => row.nodeId)).toEqual([n1, n3, n2]);
-  });
+          return both(store.byAccount(query), memory.byAccount(query));
+        },
+        { concurrency: 1 },
+      );
+      expect(Arr.map(reads, (read) => read.sql)).toEqual(Arr.map(reads, (read) => read.memory));
+      const all = yield* run(store.byAccount({ accountId: "ana", limit: 10, offset: 0 }));
+      expect(Arr.map(all, (row) => row.nodeId)).toEqual([n1, n3, n2]);
+    }),
+  );
 
-  it("delete answers whether a row went", async () => {
-    expect(await both(store.delete(n2, "ana"), memory.delete(n2, "ana"))).toEqual({
-      sql: true,
-      memory: true,
-    });
-    expect(await both(store.delete(n2, "ana"), memory.delete(n2, "ana"))).toEqual({
-      sql: false,
-      memory: false,
-    });
-  });
+  it.live("delete answers whether a row went", () =>
+    Effect.gen(function* () {
+      expect(yield* both(store.delete(n2, "ana"), memory.delete(n2, "ana"))).toEqual({
+        sql: true,
+        memory: true,
+      });
+      expect(yield* both(store.delete(n2, "ana"), memory.delete(n2, "ana"))).toEqual({
+        sql: false,
+        memory: false,
+      });
+    }),
+  );
 
-  it("eraseAccount deletes at most limit of the account's rows, until none is left", async () => {
-    expect(await both(store.eraseAccount("ana", 1), memory.eraseAccount("ana", 1))).toEqual({
-      sql: 1,
-      memory: 1,
-    });
-    expect(await both(store.eraseAccount("ana", 5), memory.eraseAccount("ana", 5))).toEqual({
-      sql: 1,
-      memory: 1,
-    });
-    expect(await both(store.eraseAccount("ana", 5), memory.eraseAccount("ana", 5))).toEqual({
-      sql: 0,
-      memory: 0,
-    });
-    expect(Arr.sort(await stored(), byKey)).toEqual(Arr.sort(memory.rows(), byKey));
-  });
+  it.live("eraseAccount deletes at most limit of the account's rows, until none is left", () =>
+    Effect.gen(function* () {
+      expect(yield* both(store.eraseAccount("ana", 1), memory.eraseAccount("ana", 1))).toEqual({
+        sql: 1,
+        memory: 1,
+      });
+      expect(yield* both(store.eraseAccount("ana", 5), memory.eraseAccount("ana", 5))).toEqual({
+        sql: 1,
+        memory: 1,
+      });
+      expect(yield* both(store.eraseAccount("ana", 5), memory.eraseAccount("ana", 5))).toEqual({
+        sql: 0,
+        memory: 0,
+      });
+      expect(Arr.sort(yield* stored(), byKey)).toEqual(Arr.sort(memory.rows(), byKey));
+    }),
+  );
 });
 
 describe("beyond the in-memory fake", () => {
-  it("a malformed node id names no node; a limit below one reads and deletes nothing", async () => {
-    const row = { nodeId: "nope", accountId: "cy", kind: "like", reactedAt: at(9) };
-    expect(await run(store.upsert(row))).toEqual(Option.none());
-    expect(await run(store.delete("nope", "cy"))).toBe(false);
-    expect(HashMap.size(await run(store.tally(["nope"])))).toBe(0);
-    expect(await run(store.byAccount({ accountId: "ben", limit: 0, offset: 0 }))).toEqual([]);
-    expect(await run(store.eraseAccount("ben", 0))).toBe(0);
-  });
+  it.live("a malformed node id names no node; a limit below one reads and deletes nothing", () =>
+    Effect.gen(function* () {
+      const row = { nodeId: "nope", accountId: "cy", kind: "like", reactedAt: at(9) };
+      expect(yield* run(store.upsert(row))).toEqual(Option.none());
+      expect(yield* run(store.delete("nope", "cy"))).toBe(false);
+      expect(HashMap.size(yield* run(store.tally(["nope"])))).toBe(0);
+      expect(yield* run(store.byAccount({ accountId: "ben", limit: 0, offset: 0 }))).toEqual([]);
+      expect(yield* run(store.eraseAccount("ben", 0))).toBe(0);
+    }),
+  );
 
-  it("purging a node or deleting an account takes its reactions (the foreign keys cascade)", async () => {
-    await run(store.upsert({ nodeId: n2, accountId: "cy", kind: "like", reactedAt: at(10) }));
-    await run(chains.links.purge(n1));
-    expect(Arr.map(await stored(), (row) => row.nodeId)).not.toContain(n1);
-    await run(
+  it.live(
+    "purging a node or deleting an account takes its reactions (the foreign keys cascade)",
+    () =>
       Effect.gen(function* () {
-        const tx = yield* CurrentTransaction;
-        yield* tx.execute(sql`DELETE FROM ${accounts} WHERE ${accounts.id} IN ('ben', 'cy')`);
+        yield* run(store.upsert({ nodeId: n2, accountId: "cy", kind: "like", reactedAt: at(10) }));
+        yield* run(chains.links.purge(n1));
+        expect(Arr.map(yield* stored(), (row) => row.nodeId)).not.toContain(n1);
+        yield* run(
+          Effect.gen(function* () {
+            const tx = yield* CurrentTransaction;
+            yield* tx.execute(sql`DELETE FROM ${accounts} WHERE ${accounts.id} IN ('ben', 'cy')`);
+          }),
+        );
+        expect(yield* stored()).toEqual([]);
       }),
-    );
-    expect(await stored()).toEqual([]);
-  });
+  );
 });

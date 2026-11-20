@@ -16,7 +16,8 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { beforeAll, it } from "@effect/vitest";
+import { afterAll, describe, expect } from "vite-plus/test";
 import { makePathStore } from "../../src/Paths.ts";
 import { makeVersionChains } from "../../src/VersionChain.ts";
 import { paths, tables, tree } from "../fixtures/tree.ts";
@@ -39,11 +40,16 @@ afterAll(() => runtime.dispose());
 
 /** Run in a committed transaction of its own; a failure is the exit's, a connection fault a defect. */
 const run = <A, E>(effect: Effect.Effect<A, E, typeof CurrentTransaction.Identifier>) =>
-  runtime.runPromiseExit(
-    transact(effect).pipe(
-      Effect.catchIf(
-        (error) => P.isTagged(error, "SqlError"),
-        (error) => Effect.die(error),
+  Effect.exit(
+    Effect.flatMap(runtime.contextEffect, (context) =>
+      Effect.provide(
+        transact(effect).pipe(
+          Effect.catchIf(
+            (error) => P.isTagged(error, "SqlError"),
+            (error) => Effect.die(error),
+          ),
+        ),
+        context,
       ),
     ),
   );
@@ -70,8 +76,8 @@ const outcome = <A, E>(exit: Exit.Exit<A, E>) =>
 /** One step over either store. */
 type Step = <E, R>(paths: PathStore<E, R>) => Effect.Effect<unknown, E | PathTaken, R>;
 
-beforeAll(async () => {
-  await run(
+beforeAll(() =>
+  run(
     Effect.gen(function* () {
       const tx = yield* CurrentTransaction;
       yield* tx.execute(
@@ -83,8 +89,8 @@ beforeAll(async () => {
         { concurrency: 1 },
       );
     }),
-  );
-});
+  ),
+);
 
 describe("PathStore over PostgreSQL agrees with the in-memory store", () => {
   const memory = makeInMemoryPathStore();
@@ -111,20 +117,25 @@ describe("PathStore over PostgreSQL agrees with the in-memory store", () => {
     ["lookup a path nobody holds", (s) => s.lookup("nowhere")],
     ["canonicalOf an id that is no UUID", (s) => s.canonicalOf("x")],
   ];
-  it.each(steps)("%s", async (_name, step) => {
-    expect(outcome(await run(step(store)))).toEqual(
-      outcome(await Effect.runPromiseExit(step(memory))),
-    );
-  });
+  it.live.each(steps)("%s", ([_name, step]) =>
+    Effect.gen(function* () {
+      expect(outcome(yield* run(step(store)))).toEqual(outcome(yield* Effect.exit(step(memory))));
+    }),
+  );
 });
 
 describe("the uniqueness guard", () => {
-  it("two concurrent claims of one free path: exactly one wins, the other is PathTaken", async () => {
-    const results = await Promise.all([run(store.claim(A, "race")), run(store.claim(B, "race"))]);
-    expect(Arr.filter(results, Exit.isSuccess).length).toBe(1);
-    const failure = Arr.findFirst(results, Exit.isFailure);
-    expect(Option.map(failure, (exit) => String(exit.cause).includes("PathTaken"))).toEqual(
-      Option.some(true),
-    );
-  });
+  it.live("two concurrent claims of one free path: exactly one wins, the other is PathTaken", () =>
+    Effect.gen(function* () {
+      const results = yield* Effect.all(
+        [run(store.claim(A, "race")), run(store.claim(B, "race"))],
+        { concurrency: "unbounded" },
+      );
+      expect(Arr.filter(results, Exit.isSuccess).length).toBe(1);
+      const failure = Arr.findFirst(results, Exit.isFailure);
+      expect(Option.map(failure, (exit) => String(exit.cause).includes("PathTaken"))).toEqual(
+        Option.some(true),
+      );
+    }),
+  );
 });

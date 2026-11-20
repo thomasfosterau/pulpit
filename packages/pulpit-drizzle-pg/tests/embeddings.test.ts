@@ -11,7 +11,8 @@ import { getTableName } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import { makeEmbeddingStore, makeEmbeddingTables, vectorLiteral } from "../src/Embeddings.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
 import { database, documents, embeddings, schema } from "./fixtures/tree.ts";
@@ -30,12 +31,10 @@ const runWith = <A, E>(
   effect: Effect.Effect<A, E, typeof database.CurrentTransaction.Identifier>,
 ) => {
   const { tx, calls } = cannedTransaction(rows);
-  return Effect.runPromise(
-    Effect.map(Effect.provideService(effect, database.CurrentTransaction, tx), (value) => ({
-      value,
-      calls,
-    })),
-  );
+  return Effect.map(Effect.provideService(effect, database.CurrentTransaction, tx), (value) => ({
+    value,
+    calls,
+  }));
 };
 
 describe("vectorLiteral", () => {
@@ -71,32 +70,40 @@ describe("makeEmbeddingTables", () => {
 });
 
 describe("makeEmbeddingStore over canned rows", () => {
-  it("pending decodes the hashes, and reads nothing for a limit below one", async () => {
-    expect((await runWith([{ hash: HASH }], store.pending(5))).value).toEqual([HASH]);
-    const none = await runWith([{ hash: HASH }], store.pending(0));
-    expect(none).toEqual({ value: [], calls: [] });
-  });
+  it.effect("pending decodes the hashes, and reads nothing for a limit below one", () =>
+    Effect.gen(function* () {
+      expect((yield* runWith([{ hash: HASH }], store.pending(5))).value).toEqual([HASH]);
+      const none = yield* runWith([{ hash: HASH }], store.pending(0));
+      expect(none).toEqual({ value: [], calls: [] });
+    }),
+  );
 
-  it("a pending row that is no hash is a defect", async () => {
-    const { tx } = cannedTransaction([{ hash: "nope" }]);
-    const exit = await Effect.runPromiseExit(
-      Effect.provideService(store.pending(1), database.CurrentTransaction, tx),
-    );
-    expect(Exit.isFailure(exit) && Exit.hasDies(exit)).toBe(true);
-  });
+  it.effect("a pending row that is no hash is a defect", () =>
+    Effect.gen(function* () {
+      const { tx } = cannedTransaction([{ hash: "nope" }]);
+      const exit = yield* Effect.exit(
+        Effect.provideService(store.pending(1), database.CurrentTransaction, tx),
+      );
+      expect(Exit.isFailure(exit) && Exit.hasDies(exit)).toBe(true);
+    }),
+  );
 
-  it("enqueue, write and discard issue one statement each", async () => {
-    expect((await runWith([], store.enqueue(HASH))).calls).toEqual(["execute"]);
-    expect((await runWith([], store.write([{ hash: HASH, vector: [1] }]))).calls).toEqual([
-      "execute",
-    ]);
-    expect((await runWith([], store.discard([HASH, HASH]))).calls).toEqual(["execute"]);
-  });
+  it.effect("enqueue, write and discard issue one statement each", () =>
+    Effect.gen(function* () {
+      expect((yield* runWith([], store.enqueue(HASH))).calls).toEqual(["execute"]);
+      expect((yield* runWith([], store.write([{ hash: HASH, vector: [1] }]))).calls).toEqual([
+        "execute",
+      ]);
+      expect((yield* runWith([], store.discard([HASH, HASH]))).calls).toEqual(["execute"]);
+    }),
+  );
 
-  it("a malformed hash or an empty batch issues no statement", async () => {
-    expect((await runWith([], store.enqueue("nope"))).calls).toEqual([]);
-    expect((await runWith([], store.write([{ hash: "nope", vector: [1] }]))).calls).toEqual([]);
-    expect((await runWith([], store.write([]))).calls).toEqual([]);
-    expect((await runWith([], store.discard(["nope"]))).calls).toEqual([]);
-  });
+  it.effect("a malformed hash or an empty batch issues no statement", () =>
+    Effect.gen(function* () {
+      expect((yield* runWith([], store.enqueue("nope"))).calls).toEqual([]);
+      expect((yield* runWith([], store.write([{ hash: "nope", vector: [1] }]))).calls).toEqual([]);
+      expect((yield* runWith([], store.write([]))).calls).toEqual([]);
+      expect((yield* runWith([], store.discard(["nope"]))).calls).toEqual([]);
+    }),
+  );
 });

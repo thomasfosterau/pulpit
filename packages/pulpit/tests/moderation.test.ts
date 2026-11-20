@@ -20,7 +20,8 @@
  * @module tests/moderation
  */
 
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -59,16 +60,13 @@ import {
 } from "../src/testing.ts";
 import { gardeneriaPolicy, member, moderator, NOW, otherMember } from "./fixtures.ts";
 
-const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
-
-const tagOf = async <A, E extends { readonly _tag: string }>(
-  effect: Effect.Effect<A, E>,
-): Promise<Option.Option<string>> => {
-  const exit = await Effect.runPromiseExit(effect);
-  return Exit.isFailure(exit)
-    ? Option.map(Exit.findErrorOption(exit), (error) => error._tag)
-    : Option.none();
-};
+const tagOf = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.exit(effect);
+    return Exit.isFailure(exit)
+      ? Option.map(Exit.findErrorOption(exit), (error) => error._tag)
+      : Option.none();
+  });
 
 // ── Grading ───────────────────────────────────────────────────────────
 
@@ -328,66 +326,73 @@ const comments = () => {
       viewer = who;
       return effect;
     });
-  const post = async () =>
-    (
-      await run(
-        actAs(
-          Option.some(member),
-          target.create({ id: Option.none(), state: { body: "Hello", visibility: "public" } }),
-        ),
-      )
-    ).id;
+  const post = () =>
+    Effect.map(
+      actAs(
+        Option.some(member),
+        target.create({ id: Option.none(), state: { body: "Hello", visibility: "public" } }),
+      ),
+      (value) => value.id,
+    );
   const stateOf = () => chain.rows().at(-1)?.state["moderationState"];
   return { chain, target, moderation, actAs, post, stateOf };
 };
 
 describe("the rules through a leaf's hooks", () => {
-  it("create pending → moderate approved (stamped) → an edit to body sends it back", async () => {
-    const { chain, target, moderation, actAs, post, stateOf } = comments();
-    const id = await post();
-    expect(stateOf()).toBe("pending");
-    await run(actAs(Option.some(moderator), moderation.moderate(id, "approved")));
-    expect(chain.rows().at(-1)?.state).toMatchObject({
-      moderationState: "approved",
-      moderatedBy: moderator.id,
-    });
-    await run(actAs(Option.some(member), target.update({ id, patch: { body: "Edited" } })));
-    expect(stateOf()).toBe("pending");
-  });
+  it.effect("create pending → moderate approved (stamped) → an edit to body sends it back", () =>
+    Effect.gen(function* () {
+      const { chain, target, moderation, actAs, post, stateOf } = comments();
+      const id = yield* post();
+      expect(stateOf()).toBe("pending");
+      yield* actAs(Option.some(moderator), moderation.moderate(id, "approved"));
+      expect(chain.rows().at(-1)?.state).toMatchObject({
+        moderationState: "approved",
+        moderatedBy: moderator.id,
+      });
+      yield* actAs(Option.some(member), target.update({ id, patch: { body: "Edited" } }));
+      expect(stateOf()).toBe("pending");
+    }),
+  );
 
-  it("an owner can't approve their own row, and the refusal appends nothing", async () => {
-    const { chain, target, actAs, post } = comments();
-    const id = await post();
-    expect(
-      await tagOf(
-        actAs(Option.some(member), target.update({ id, patch: { moderationState: "approved" } })),
-      ),
-    ).toEqual(Option.some("WriteRejected"));
-    expect(chain.rows()).toHaveLength(1);
-  });
+  it.effect("an owner can't approve their own row, and the refusal appends nothing", () =>
+    Effect.gen(function* () {
+      const { chain, target, actAs, post } = comments();
+      const id = yield* post();
+      expect(
+        yield* tagOf(
+          actAs(Option.some(member), target.update({ id, patch: { moderationState: "approved" } })),
+        ),
+      ).toEqual(Option.some("WriteRejected"));
+      expect(chain.rows()).toHaveLength(1);
+    }),
+  );
 
-  it("moderate is the rung's: refused before anything is read", async () => {
-    const { chain, moderation, actAs, post } = comments();
-    const id = await post();
-    expect(await tagOf(actAs(Option.some(member), moderation.moderate(id, "approved")))).toEqual(
-      Option.some("Forbidden"),
-    );
-    expect(await tagOf(actAs(Option.none(), moderation.moderate(id, "approved")))).toEqual(
-      Option.some("Unauthorized"),
-    );
-    expect(
-      await tagOf(actAs(Option.some(moderator), moderation.moderate("missing", "approved"))),
-    ).toEqual(Option.some("NodeNotFound"));
-    expect(chain.rows()).toHaveLength(1);
-  });
+  it.effect("moderate is the rung's: refused before anything is read", () =>
+    Effect.gen(function* () {
+      const { chain, moderation, actAs, post } = comments();
+      const id = yield* post();
+      expect(yield* tagOf(actAs(Option.some(member), moderation.moderate(id, "approved")))).toEqual(
+        Option.some("Forbidden"),
+      );
+      expect(yield* tagOf(actAs(Option.none(), moderation.moderate(id, "approved")))).toEqual(
+        Option.some("Unauthorized"),
+      );
+      expect(
+        yield* tagOf(actAs(Option.some(moderator), moderation.moderate("missing", "approved"))),
+      ).toEqual(Option.some("NodeNotFound"));
+      expect(chain.rows()).toHaveLength(1);
+    }),
+  );
 
-  it("an owner withdraws their own approved row by deleting it", async () => {
-    const { chain, target, moderation, actAs, post } = comments();
-    const id = await post();
-    await run(actAs(Option.some(moderator), moderation.moderate(id, "approved")));
-    await run(actAs(Option.some(member), target.delete(id)));
-    expect(chain.rows().at(-1)?.action).toBe("delete");
-  });
+  it.effect("an owner withdraws their own approved row by deleting it", () =>
+    Effect.gen(function* () {
+      const { chain, target, moderation, actAs, post } = comments();
+      const id = yield* post();
+      yield* actAs(Option.some(moderator), moderation.moderate(id, "approved"));
+      yield* actAs(Option.some(member), target.delete(id));
+      expect(chain.rows().at(-1)?.action).toBe("delete");
+    }),
+  );
 });
 
 describe("reviewQueueFilter", () => {
@@ -429,49 +434,43 @@ describe("defineReports — member reports", () => {
     return { ...leaf, store, reports, as };
   };
 
-  it("files against a readable target, and refuses a hidden or missing one as NodeNotFound", async () => {
-    const { reports, as, target, actAs } = setup();
-    const open = (
-      await run(
-        actAs(
+  it.effect(
+    "files against a readable target, and refuses a hidden or missing one as NodeNotFound",
+    () =>
+      Effect.gen(function* () {
+        const { reports, as, target, actAs } = setup();
+        const open = (yield* actAs(
           Option.some(member),
           target.create({ id: Option.none(), state: { body: "Hi", visibility: "public" } }),
-        ),
-      )
-    ).id;
-    const hidden = (
-      await run(
-        actAs(
+        )).id;
+        const hidden = (yield* actAs(
           Option.some(member),
           target.create({ id: Option.none(), state: { body: "Hi", visibility: "private" } }),
-        ),
-      )
-    ).id;
-    const file = (targetId: string) =>
-      reports.file({ targetId, reason: "spam", details: Option.none() });
-    expect(await tagOf(as(Option.some(otherMember), file(open)))).toEqual(Option.none());
-    expect(await tagOf(as(Option.some(otherMember), file(hidden)))).toEqual(
-      Option.some("NodeNotFound"),
-    );
-    expect(await tagOf(as(Option.some(otherMember), file("missing")))).toEqual(
-      Option.some("NodeNotFound"),
-    );
-    expect(await tagOf(as(Option.none(), file(open)))).toEqual(Option.some("Unauthorized"));
-  });
+        )).id;
+        const file = (targetId: string) =>
+          reports.file({ targetId, reason: "spam", details: Option.none() });
+        expect(yield* tagOf(as(Option.some(otherMember), file(open)))).toEqual(Option.none());
+        expect(yield* tagOf(as(Option.some(otherMember), file(hidden)))).toEqual(
+          Option.some("NodeNotFound"),
+        );
+        expect(yield* tagOf(as(Option.some(otherMember), file("missing")))).toEqual(
+          Option.some("NodeNotFound"),
+        );
+        expect(yield* tagOf(as(Option.none(), file(open)))).toEqual(Option.some("Unauthorized"));
+      }),
+  );
 
-  it("is read by its reporter and the rung, and resolved by the rung alone", async () => {
-    const { reports, store, as, post } = setup();
-    const target = await post();
-    const { id } = await run(
-      as(
+  it.effect("is read by its reporter and the rung, and resolved by the rung alone", () =>
+    Effect.gen(function* () {
+      const { reports, store, as, post } = setup();
+      const target = yield* post();
+      const { id } = yield* as(
         Option.some(otherMember),
         reports.file({ targetId: target, reason: "spam", details: Option.some("bot") }),
-      ),
-    );
-    const listed = async (who: Viewer) =>
-      (
-        await run(
-          as(
+      );
+      const listed = (who: Viewer) =>
+        Effect.gen(function* () {
+          return (yield* as(
             who,
             reports.list({
               targetId: Option.none(),
@@ -479,37 +478,37 @@ describe("defineReports — member reports", () => {
               limit: 10,
               offset: 0,
             }),
-          ),
-        )
-      ).rows.map((row) => row.id);
-    expect(await listed(Option.some(moderator))).toEqual([id]);
-    expect(await listed(Option.some(otherMember))).toEqual([id]);
-    // The target's own author learns nothing of who reported it.
-    expect(await listed(Option.some(member))).toEqual([]);
-    expect(await listed(Option.none())).toEqual([]);
-    expect(await tagOf(as(Option.some(member), reports.get(id)))).toEqual(
-      Option.some("ReportNotFound"),
-    );
-    expect((await run(as(Option.some(otherMember), reports.get(id)))).reason).toBe("spam");
-    expect(
-      await tagOf(as(Option.some(otherMember), reports.resolve(id, "dismissed", Option.none()))),
-    ).toEqual(Option.some("Forbidden"));
-    await run(as(Option.some(moderator), reports.resolve(id, "resolved", Option.some("removed"))));
-    expect(store.rows()[0]).toMatchObject({
-      status: "resolved",
-      resolvedBy: Option.some(moderator.id),
-      resolutionNote: Option.some("removed"),
-    });
-    expect(
-      await tagOf(as(Option.some(moderator), reports.resolve(id, "dismissed", Option.none()))),
-    ).toEqual(Option.some("ReportClosed"));
-    expect(
-      await tagOf(
-        as(Option.some(moderator), reports.resolve("missing", "dismissed", Option.none())),
-      ),
-    ).toEqual(Option.some("ReportNotFound"));
-    expect(await listed(Option.some(moderator))).toEqual([]);
-  });
+          )).rows.map((row) => row.id);
+        });
+      expect(yield* listed(Option.some(moderator))).toEqual([id]);
+      expect(yield* listed(Option.some(otherMember))).toEqual([id]);
+      // The target's own author learns nothing of who reported it.
+      expect(yield* listed(Option.some(member))).toEqual([]);
+      expect(yield* listed(Option.none())).toEqual([]);
+      expect(yield* tagOf(as(Option.some(member), reports.get(id)))).toEqual(
+        Option.some("ReportNotFound"),
+      );
+      expect((yield* as(Option.some(otherMember), reports.get(id))).reason).toBe("spam");
+      expect(
+        yield* tagOf(as(Option.some(otherMember), reports.resolve(id, "dismissed", Option.none()))),
+      ).toEqual(Option.some("Forbidden"));
+      yield* as(Option.some(moderator), reports.resolve(id, "resolved", Option.some("removed")));
+      expect(store.rows()[0]).toMatchObject({
+        status: "resolved",
+        resolvedBy: Option.some(moderator.id),
+        resolutionNote: Option.some("removed"),
+      });
+      expect(
+        yield* tagOf(as(Option.some(moderator), reports.resolve(id, "dismissed", Option.none()))),
+      ).toEqual(Option.some("ReportClosed"));
+      expect(
+        yield* tagOf(
+          as(Option.some(moderator), reports.resolve("missing", "dismissed", Option.none())),
+        ),
+      ).toEqual(Option.some("ReportNotFound"));
+      expect(yield* listed(Option.some(moderator))).toEqual([]);
+    }),
+  );
 });
 
 describe("the report state machine", () => {
@@ -552,11 +551,9 @@ describe("reports and content moderation, linked", () => {
         }),
       );
     const file = (targetId: string) =>
-      run(
-        as(
-          Option.some(otherMember),
-          reports.file({ targetId, reason: "spam", details: Option.none() }),
-        ),
+      as(
+        Option.some(otherMember),
+        reports.file({ targetId, reason: "spam", details: Option.none() }),
       );
     const stateOfNode = (id: string) =>
       leaf.chain.rows().findLast((row) => row.id === id)?.state["moderationState"];
@@ -564,79 +561,89 @@ describe("reports and content moderation, linked", () => {
     return { ...leaf, store, reports, decide, as, file, stateOfNode, statuses };
   };
 
-  it("upholding a report rejects the target and closes every open report on it", async () => {
-    const { reports, as, post, file, store, stateOfNode, statuses } = linked();
-    const [a, b] = [await post(), await post()];
-    const first = await file(a);
-    await file(a);
-    await file(b);
-    await run(
-      as(Option.some(moderator), reports.resolve(first.id, "resolved", Option.some("spam"))),
-    );
-    expect(stateOfNode(a)).toBe("rejected");
-    expect(stateOfNode(b)).toBe("pending");
-    expect(statuses()).toEqual([
-      [a, "resolved"],
-      [a, "resolved"],
-      [b, "open"],
-    ]);
-    expect(store.rows()[1]).toMatchObject({
-      resolvedBy: Option.some(moderator.id),
-      resolutionNote: Option.some("spam"),
-    });
-  });
+  it.effect("upholding a report rejects the target and closes every open report on it", () =>
+    Effect.gen(function* () {
+      const { reports, as, post, file, store, stateOfNode, statuses } = linked();
+      const [a, b] = [yield* post(), yield* post()];
+      const first = yield* file(a);
+      yield* file(a);
+      yield* file(b);
+      yield* as(Option.some(moderator), reports.resolve(first.id, "resolved", Option.some("spam")));
+      expect(stateOfNode(a)).toBe("rejected");
+      expect(stateOfNode(b)).toBe("pending");
+      expect(statuses()).toEqual([
+        [a, "resolved"],
+        [a, "resolved"],
+        [b, "open"],
+      ]);
+      expect(store.rows()[1]).toMatchObject({
+        resolvedBy: Option.some(moderator.id),
+        resolutionNote: Option.some("spam"),
+      });
+    }),
+  );
 
-  it("dismissing closes one report and leaves the content as it is", async () => {
-    const { reports, as, post, file, stateOfNode, statuses } = linked();
-    const a = await post();
-    const first = await file(a);
-    await file(a);
-    await run(as(Option.some(moderator), reports.resolve(first.id, "dismissed", Option.none())));
-    expect(stateOfNode(a)).toBe("pending");
-    expect(statuses()).toEqual([
-      [a, "dismissed"],
-      [a, "open"],
-    ]);
-  });
+  it.effect("dismissing closes one report and leaves the content as it is", () =>
+    Effect.gen(function* () {
+      const { reports, as, post, file, stateOfNode, statuses } = linked();
+      const a = yield* post();
+      const first = yield* file(a);
+      yield* file(a);
+      yield* as(Option.some(moderator), reports.resolve(first.id, "dismissed", Option.none()));
+      expect(stateOfNode(a)).toBe("pending");
+      expect(statuses()).toEqual([
+        [a, "dismissed"],
+        [a, "open"],
+      ]);
+    }),
+  );
 
-  it("upholding a report on content its owner already deleted still closes its reports", async () => {
-    const { reports, as, post, file, target, statuses } = linked();
-    const a = await post();
-    const { id } = await file(a);
-    await run(as(Option.some(member), target.delete(a)));
-    await run(as(Option.some(moderator), reports.resolve(id, "resolved", Option.none())));
-    expect(statuses()).toEqual([[a, "resolved"]]);
-  });
+  it.effect(
+    "upholding a report on content its owner already deleted still closes its reports",
+    () =>
+      Effect.gen(function* () {
+        const { reports, as, post, file, target, statuses } = linked();
+        const a = yield* post();
+        const { id } = yield* file(a);
+        yield* as(Option.some(member), target.delete(a));
+        yield* as(Option.some(moderator), reports.resolve(id, "resolved", Option.none()));
+        expect(statuses()).toEqual([[a, "resolved"]]);
+      }),
+  );
 
-  it("a content decision through withReports settles the target's open reports", async () => {
-    const { decide, as, post, file, stateOfNode, statuses } = linked();
-    const [a, b, c] = [await post(), await post(), await post()];
-    await file(a);
-    await file(b);
-    await file(c);
-    await run(as(Option.some(moderator), decide.moderate(a, "rejected")));
-    await run(as(Option.some(moderator), decide.moderate(b, "approved")));
-    expect(stateOfNode(a)).toBe("rejected");
-    expect(stateOfNode(b)).toBe("approved");
-    // A re-review sends content back to pending and leaves its reports open.
-    await run(as(Option.some(moderator), decide.moderate(b, "pending")));
-    expect(statuses()).toEqual([
-      [a, "resolved"],
-      [b, "dismissed"],
-      [c, "open"],
-    ]);
-  });
+  it.effect("a content decision through withReports settles the target's open reports", () =>
+    Effect.gen(function* () {
+      const { decide, as, post, file, stateOfNode, statuses } = linked();
+      const [a, b, c] = [yield* post(), yield* post(), yield* post()];
+      yield* file(a);
+      yield* file(b);
+      yield* file(c);
+      yield* as(Option.some(moderator), decide.moderate(a, "rejected"));
+      yield* as(Option.some(moderator), decide.moderate(b, "approved"));
+      expect(stateOfNode(a)).toBe("rejected");
+      expect(stateOfNode(b)).toBe("approved");
+      // A re-review sends content back to pending and leaves its reports open.
+      yield* as(Option.some(moderator), decide.moderate(b, "pending"));
+      expect(statuses()).toEqual([
+        [a, "resolved"],
+        [b, "dismissed"],
+        [c, "open"],
+      ]);
+    }),
+  );
 
-  it("withReports keeps moderate's gate: a refused decision closes nothing", async () => {
-    const { decide, as, post, file, statuses } = linked();
-    const a = await post();
-    await file(a);
-    expect(await tagOf(as(Option.some(member), decide.moderate(a, "rejected")))).toEqual(
-      Option.some("Forbidden"),
-    );
-    expect(await tagOf(as(Option.some(moderator), decide.moderate("missing", "rejected")))).toEqual(
-      Option.some("NodeNotFound"),
-    );
-    expect(statuses()).toEqual([[a, "open"]]);
-  });
+  it.effect("withReports keeps moderate's gate: a refused decision closes nothing", () =>
+    Effect.gen(function* () {
+      const { decide, as, post, file, statuses } = linked();
+      const a = yield* post();
+      yield* file(a);
+      expect(yield* tagOf(as(Option.some(member), decide.moderate(a, "rejected")))).toEqual(
+        Option.some("Forbidden"),
+      );
+      expect(
+        yield* tagOf(as(Option.some(moderator), decide.moderate("missing", "rejected"))),
+      ).toEqual(Option.some("NodeNotFound"));
+      expect(statuses()).toEqual([[a, "open"]]);
+    }),
+  );
 });

@@ -13,7 +13,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import * as Str from "effect/String";
-import { describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import { makePublications } from "../src/Publication.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
 import { database, owners, tables, views } from "./fixtures/tree.ts";
@@ -45,12 +46,10 @@ const runWith = <A, E>(
   effect: Effect.Effect<A, E, typeof database.CurrentTransaction.Identifier>,
 ) => {
   const { tx, calls } = cannedTransaction(rows);
-  return Effect.runPromise(
-    Effect.map(Effect.provideService(effect, database.CurrentTransaction, tx), (value) => ({
-      value,
-      calls,
-    })),
-  );
+  return Effect.map(Effect.provideService(effect, database.CurrentTransaction, tx), (value) => ({
+    value,
+    calls,
+  }));
 };
 
 describe("makePublications", () => {
@@ -115,82 +114,95 @@ describe("a localised gated leaf", () => {
     expect(build({ views: R.empty(), live: views.pointers.live.keyed })).toThrow(DerivationError);
   });
 
-  it("listLocalised pages the chosen locale rows, and reads none for no locales", async () => {
-    const query = {
-      headFor: eq("ownerId", "u-1"),
-      where: always,
-      orderBy: [],
-      limit: 5,
-      offset: 0,
-    };
-    const chosen = await runWith(
-      [{ ...row, locale: "en", heading: "Hi", pageTotal: 1 }],
-      localised.notes.live.listLocalised({ ...query, locales: ["en", "fr"] }),
-    );
-    expect(chosen.value.total).toBe(1);
-    expect(chosen.calls).toContain("select");
-    const none = await runWith(
-      [row],
-      localised.notes.live.listLocalised({ ...query, locales: [] }),
-    );
-    expect(none).toEqual({ value: { rows: [], total: 0 }, calls: [] });
-    const list = await runWith(
-      [{ ...row, locale: "fr", heading: "Salut", pageTotal: 1 }],
-      localised.notes.live.list(query),
-    );
-    expect(list.value.rows).toHaveLength(1);
-  });
+  it.effect("listLocalised pages the chosen locale rows, and reads none for no locales", () =>
+    Effect.gen(function* () {
+      const query = {
+        headFor: eq("ownerId", "u-1"),
+        where: always,
+        orderBy: [],
+        limit: 5,
+        offset: 0,
+      };
+      const chosen = yield* runWith(
+        [{ ...row, locale: "en", heading: "Hi", pageTotal: 1 }],
+        localised.notes.live.listLocalised({ ...query, locales: ["en", "fr"] }),
+      );
+      expect(chosen.value.total).toBe(1);
+      expect(chosen.calls).toContain("select");
+      const none = yield* runWith(
+        [row],
+        localised.notes.live.listLocalised({ ...query, locales: [] }),
+      );
+      expect(none).toEqual({ value: { rows: [], total: 0 }, calls: [] });
+      const list = yield* runWith(
+        [{ ...row, locale: "fr", heading: "Salut", pageTotal: 1 }],
+        localised.notes.live.list(query),
+      );
+      expect(list.value.rows).toHaveLength(1);
+    }),
+  );
 });
 
 describe("the publication log over canned rows", () => {
-  it("reads facts as the kernel's PublicationFact", async () => {
-    expect((await runWith([logRow], gated.facts.effective(ID))).value).toEqual(Option.some(fact));
-    expect((await runWith([], gated.facts.effective(ID))).value).toEqual(Option.none());
-    expect((await runWith([logRow], gated.facts.facts(ID, 10))).value).toEqual([fact]);
-    expect(
-      (await runWith([{ ...logRow, version: null, actor: null }], gated.facts.facts(ID, 10))).value,
-    ).toEqual([{ ...fact, version: Option.none(), actorId: Option.none() }]);
-    expect((await runWith([logRow], gated.facts.scheduled([ID, ID, "x"]))).value).toEqual([fact]);
-  });
+  it.effect("reads facts as the kernel's PublicationFact", () =>
+    Effect.gen(function* () {
+      expect((yield* runWith([logRow], gated.facts.effective(ID))).value).toEqual(
+        Option.some(fact),
+      );
+      expect((yield* runWith([], gated.facts.effective(ID))).value).toEqual(Option.none());
+      expect((yield* runWith([logRow], gated.facts.facts(ID, 10))).value).toEqual([fact]);
+      expect(
+        (yield* runWith([{ ...logRow, version: null, actor: null }], gated.facts.facts(ID, 10)))
+          .value,
+      ).toEqual([{ ...fact, version: Option.none(), actorId: Option.none() }]);
+      expect((yield* runWith([logRow], gated.facts.scheduled([ID, ID, "x"]))).value).toEqual([
+        fact,
+      ]);
+    }),
+  );
 
-  it("an id that is no UUID reads nothing; record inserts", async () => {
-    expect((await runWith([logRow], gated.facts.effective("x"))).calls).toEqual([]);
-    expect((await runWith([logRow], gated.facts.facts("x", 10))).calls).toEqual([]);
-    expect((await runWith([logRow], gated.facts.scheduled(["x"]))).calls).toEqual([]);
-    expect((await runWith([], gated.facts.record(fact))).calls).toEqual(["insert", "values"]);
-  });
+  it.effect("an id that is no UUID reads nothing; record inserts", () =>
+    Effect.gen(function* () {
+      expect((yield* runWith([logRow], gated.facts.effective("x"))).calls).toEqual([]);
+      expect((yield* runWith([logRow], gated.facts.facts("x", 10))).calls).toEqual([]);
+      expect((yield* runWith([logRow], gated.facts.scheduled(["x"]))).calls).toEqual([]);
+      expect((yield* runWith([], gated.facts.record(fact))).calls).toEqual(["insert", "values"]);
+    }),
+  );
 });
 
 describe("the live view over canned rows", () => {
-  it("get / getMany read live rows; a malformed id reads nothing", async () => {
-    expect((await runWith([row], gated.live.get(ID))).value).toEqual(Option.some(row));
-    expect((await runWith([row], gated.live.get("x"))).calls).toEqual([]);
-    expect((await runWith([row], gated.live.getMany([ID, "x"]))).value).toEqual([row]);
-    expect((await runWith([row], gated.live.getMany(["x"]))).value).toEqual([]);
-  });
+  it.effect("get / getMany read live rows; a malformed id reads nothing", () =>
+    Effect.gen(function* () {
+      expect((yield* runWith([row], gated.live.get(ID))).value).toEqual(Option.some(row));
+      expect((yield* runWith([row], gated.live.get("x"))).calls).toEqual([]);
+      expect((yield* runWith([row], gated.live.getMany([ID, "x"]))).value).toEqual([row]);
+      expect((yield* runWith([row], gated.live.getMany(["x"]))).value).toEqual([]);
+    }),
+  );
 
-  it("list and distinct read the chosen rows; listLocalised reads none", async () => {
-    const query = {
-      headFor: eq("ownerId", "u-1"),
-      where: always,
-      orderBy: [],
-      limit: 5,
-      offset: 0,
-    };
-    expect((await runWith([{ ...row, pageTotal: 3 }], gated.live.list(query))).value).toEqual({
-      rows: [row],
-      total: 3,
-    });
-    expect(
-      (
-        await runWith(
+  it.effect("list and distinct read the chosen rows; listLocalised reads none", () =>
+    Effect.gen(function* () {
+      const query = {
+        headFor: eq("ownerId", "u-1"),
+        where: always,
+        orderBy: [],
+        limit: 5,
+        offset: 0,
+      };
+      expect((yield* runWith([{ ...row, pageTotal: 3 }], gated.live.list(query))).value).toEqual({
+        rows: [row],
+        total: 3,
+      });
+      expect(
+        (yield* runWith(
           [{ value: "Hi", total: 1 }],
           gated.live.distinct({ ...query, column: "title" }),
-        )
-      ).value,
-    ).toEqual({ rows: ["Hi"], total: 1 });
-    expect(
-      (await runWith([], gated.live.listLocalised({ ...query, locales: ["en"] }))).value,
-    ).toEqual({ rows: [], total: 0 });
-  });
+        )).value,
+      ).toEqual({ rows: ["Hi"], total: 1 });
+      expect(
+        (yield* runWith([], gated.live.listLocalised({ ...query, locales: ["en"] }))).value,
+      ).toEqual({ rows: [], total: 0 });
+    }),
+  );
 });

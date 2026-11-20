@@ -60,7 +60,20 @@ export default defineConfig({
       "eslint/no-shadow": "error",
       // The suites assert through helpers named `expect…` (`expectAgreement`
       // in tests/subtype.test.ts) as well as `expect` itself.
-      "vitest/expect-expect": ["error", { assertFunctionNames: ["expect", "expect*"] }],
+      // `@effect/vitest`'s `it.effect` registers a test like `it` does.
+      "vitest/expect-expect": [
+        "error",
+        {
+          assertFunctionNames: ["expect", "expect*"],
+          additionalTestBlockFunctions: ["it.effect", "it.live"],
+        },
+      ],
+      "vitest/no-standalone-expect": [
+        "error",
+        {
+          additionalTestBlockFunctions: ["it.effect", "it.effect.each", "it.live", "it.live.each"],
+        },
+      ],
       // The `Buffer` global is typed `any` wherever a consumer loads
       // @cloudflare/workers-types next to @types/node (every application this
       // library serves), so every call on it is unchecked there. The library
@@ -141,13 +154,21 @@ export default defineConfig({
           "effect/avoid-ts-ignore": "off",
         },
       },
-      // A test file IS the runtime boundary `effect-run-in-body` asks for
-      // ("entrypoint/test harness"): its `run` helper is where each case's
-      // Effect meets the Promise vitest awaits.
+      // Two runtime boundaries `effect-run-in-body` asks for ("entrypoint/test
+      // harness") that `@effect/vitest`'s `it.effect` can't stand in for:
+      // vitest's global setup, which runs before any test, and the drizzle
+      // integration run of the kernel's `versionChainConformance`, whose
+      // harness takes Promises. Its fault-injection helper takes whatever
+      // effect the case hands it, and the setup provides its own layers.
       {
-        files: ["**/tests/**/*.test.ts", "**/tests/integration/global-setup.ts"],
+        files: [
+          "packages/pulpit-drizzle-pg/tests/integration/global-setup.ts",
+          "packages/pulpit-drizzle-pg/tests/integration/version-chain.test.ts",
+        ],
         rules: {
           "effect/effect-run-in-body": "off",
+          "effecttsgo/strict-effect-provide": "off",
+          "effecttsgo/any-unknown-in-error-context": "off",
         },
       },
       // pulpit-drizzle-pg's integration global setup is vitest's own entry
@@ -164,16 +185,13 @@ export default defineConfig({
           "effecttsgo/unstable-api-usage": "off",
         },
       },
-      // The same boundary, seen by `@effect/tsgo`'s rules (raised from the
-      // preset's level by the `suspicious` category): a test is the entry
-      // point where its layer is provided, and a fault-injection helper takes
-      // whatever effect the case hands it (its error is the case's, not the
-      // helper's).
+      // `@effect/vitest` is how a test runs an Effect (`it.effect`,
+      // `beforeAll`), and the pinned version marks it unstable as a whole; it
+      // moves with `effect` in the catalog.
       {
         files: ["**/tests/**/*.ts"],
         rules: {
-          "effecttsgo/strict-effect-provide": "off",
-          "effecttsgo/any-unknown-in-error-context": "off",
+          "effecttsgo/unstable-api-usage": "off",
         },
       },
       // The adapter's HTTP surface is `effect/http`, which the pinned Effect
