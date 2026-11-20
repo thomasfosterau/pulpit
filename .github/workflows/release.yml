@@ -48,6 +48,7 @@ jobs:
         uses: voidzero-dev/setup-vp@v1.22.0
         with:
           version-file: pnpm-workspace.yaml
+          node-version: lts
           cache: false
           # No dependency lifecycle scripts in release jobs.
           run-install: |
@@ -79,6 +80,7 @@ jobs:
         uses: voidzero-dev/setup-vp@v1.22.0
         with:
           version-file: pnpm-workspace.yaml
+          node-version: lts
           cache: false
           run-install: |
             - args: ["--frozen-lockfile", "--ignore-scripts"]
@@ -112,6 +114,7 @@ jobs:
         uses: voidzero-dev/setup-vp@v1.22.0
         with:
           version-file: pnpm-workspace.yaml
+          node-version: lts
           cache: false
           run-install: |
             - args: ["--frozen-lockfile", "--ignore-scripts"]
@@ -121,7 +124,8 @@ jobs:
       - name: Build
         run: vp run -r build
       # `pnpm publish` rewrites `catalog:` / `workspace:` specifiers and does OIDC
-      # trusted publishing itself. Provenance stays off while the repo is private.
+      # trusted publishing itself (no npm CLI); it attaches provenance on its own
+      # for a public repository.
       - name: Publish to npm
         uses: changesets/action/publish@v2.1.2
         with:
