@@ -146,7 +146,8 @@
     "drizzle-kit": "catalog:",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",
-    "tsx": "catalog:"
+    "tsx": "catalog:",
+    "vitest": "catalog:"
   },
   "peerDependencies": {
     "@thomasfosterau/effect-drizzle-ext": "catalog:peers",

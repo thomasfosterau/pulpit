@@ -227,17 +227,19 @@ export default defineConfig({
         },
       },
     ],
-    // Type-aware linting through oxlint-tsgolint (bundled with Vite+, patched
-    // by `effect-tsgo patch --oxlint`): `typeAware` turns on the rules that
-    // need type information, `typeCheck` reports TypeScript diagnostics in
-    // `vp check` too. The `check` tasks (native, Effect-patched tsc) stay the
-    // type gate of record and add the Effect diagnostics. tsgolint types a
-    // file with its nearest `tsconfig.json`; each package's covers `src/` and
-    // `tests/`, and the package names resolve through `exports` to `src/`, so
-    // no build is needed first.
+    // Type-aware linting through tsrs (bundled with Vite+, patched by
+    // `effect-tsgo patch --tsrs`): `typeAware` turns on the rules that need
+    // type information. `typeCheck` stays off: tsrs reports the Effect
+    // plugin's warnings (`unstableApiUsage`, `asyncFunction`, ...) as errors,
+    // bypassing the per-file `effecttsgo/*` overrides above. The `check` tasks
+    // (native, Effect-patched tsc) are the type gate and report those
+    // diagnostics at their configured severity. tsrs types a file with its
+    // nearest `tsconfig.json`; each package's covers `src/` and `tests/`, and
+    // the package names resolve through `exports` to `src/`, so no build is
+    // needed first.
     options: {
       typeAware: true,
-      typeCheck: true,
+      typeCheck: false,
     },
     jsPlugins: [
       {

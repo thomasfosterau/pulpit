@@ -214,7 +214,8 @@
     "@types/node": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
     "effect": "catalog:",
-    "tsx": "catalog:"
+    "tsx": "catalog:",
+    "vitest": "catalog:"
   },
   "peerDependencies": {
     "@thomasfosterau/effect-auth": "catalog:peers",
