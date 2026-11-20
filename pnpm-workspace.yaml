@@ -67,11 +67,14 @@ allowBuilds:
 
 # Agent skills dependencies ship (pnpm 12.11+). `fallow` ships `fallow` and
 # `fallow-setup`; only `fallow` is linked, since the repository is already set
-# up. Build grants stay in `allowBuilds`: a `permissions` entry without `build`
-# leaves its package's `allowBuilds` grant in force.
+# up. drizzle-kit's `drizzle` skill is linked too. Build grants stay in
+# `allowBuilds`: a `permissions` entry without `build` leaves its package's
+# `allowBuilds` grant in force.
 permissions:
   fallow:
     skills: [fallow]
+  drizzle-kit:
+    skills: [drizzle]
 
 skills:
   dirs: [.claude/skills]
