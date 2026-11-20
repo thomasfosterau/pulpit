@@ -190,6 +190,18 @@ const heads: ReadonlyArray<readonly [string, ListFilter<never>]> = [
   ["u-1's heads", eq("ownerId", "u-1")],
   ["every head", always],
 ];
+const chosen = (headFor: ListFilter<never>) =>
+  Effect.map(
+    gated.live.listLocalised({
+      headFor,
+      where: always,
+      orderBy: [],
+      limit: 100,
+      offset: 0,
+      locales: ["fr", "en"],
+    }),
+    (page) => Arr.map(page.rows, (row) => [row.id, row["locale"], row["heading"]]),
+  );
 
 describe("the localised live view agrees with the in-memory one", () => {
   const lists: ReadonlyArray<readonly [string, ListFilter<never>, ReadonlyArray<ListOrder>]> = [
@@ -247,18 +259,6 @@ describe("the localised live view agrees with the in-memory one", () => {
     "reads the live locales for a reader and the head's for its owner (so agreement is not vacuous)",
     () =>
       Effect.gen(function* () {
-        const chosen = (headFor: ListFilter<never>) =>
-          Effect.map(
-            gated.live.listLocalised({
-              headFor,
-              where: always,
-              orderBy: [],
-              limit: 100,
-              offset: 0,
-              locales: ["fr", "en"],
-            }),
-            (page) => Arr.map(page.rows, (row) => [row.id, row["locale"], row["heading"]]),
-          );
         expect(yield* run(chosen(never))).toEqual([
           [id(1), "fr", "Un"],
           [id(4), "en", "Four!"],

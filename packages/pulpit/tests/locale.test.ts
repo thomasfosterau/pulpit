@@ -85,15 +85,14 @@ describe("diffLocales", () => {
     expect(diffLocales({}, {})).toEqual({});
   });
 });
+const setup = () => {
+  const store = makeInMemoryVersionChain("pages");
+  return { store, chain: defineVersionChain("pages", store) };
+};
 
 // ── The chain ─────────────────────────────────────────────────────────
 
 describe("the version chain's locale level", () => {
-  const setup = () => {
-    const store = makeInMemoryVersionChain("pages");
-    return { store, chain: defineVersionChain("pages", store) };
-  };
-
   it.effect("appends one version of the whole node per write, however few locales it touches", () =>
     Effect.gen(function* () {
       const { store, chain } = setup();
@@ -375,29 +374,33 @@ describe("a localised leaf's list", () => {
       }),
   );
 });
+/** Three public nodes: en + fr, fr only, de only. */
+const seeded = (ops: ReturnType<typeof pages>["ops"]) =>
+  Effect.gen(function* () {
+    const both = yield* seed(ops);
+    const french = yield* ops.create({
+      id: Option.none(),
+      state: { colour: "blue", visibility: "public", draft: false },
+      locales: { fr: { title: "Salut" } },
+    });
+    const german = yield* ops.create({
+      id: Option.none(),
+      state: { colour: "green", visibility: "public", draft: false },
+      locales: { de: { title: "Hallo" } },
+    });
+    return { both: both.id, french: french.id, german: german.id };
+  });
+
+const served = (page: { readonly rows: ReadonlyArray<LocalisedResource<Page>> }) =>
+  Arr.map(page.rows, (row) => [row.resource.id, row.locale, row.resource.title] as const);
 
 describe("a localised leaf's fallback list", () => {
-  const request = { limit: 10, offset: 0, includeDeleted: false, where: always };
-  /** Three public nodes: en + fr, fr only, de only. */
-  const seeded = (ops: ReturnType<typeof pages>["ops"]) =>
-    Effect.gen(function* () {
-      const both = yield* seed(ops);
-      const french = yield* ops.create({
-        id: Option.none(),
-        state: { colour: "blue", visibility: "public", draft: false },
-        locales: { fr: { title: "Salut" } },
-      });
-      const german = yield* ops.create({
-        id: Option.none(),
-        state: { colour: "green", visibility: "public", draft: false },
-        locales: { de: { title: "Hallo" } },
-      });
-      return { both: both.id, french: french.id, german: german.id };
-    });
-  const served = (page: { readonly rows: ReadonlyArray<LocalisedResource<Page>> }) =>
-    Arr.map(page.rows, (row) => [row.resource.id, row.locale, row.resource.title] as const);
-
-  /** Which seeded node a case expects, and in which locale. */
+  const request = {
+    limit: 10,
+    offset: 0,
+    includeDeleted: false,
+    where: always,
+  }; /** Which seeded node a case expects, and in which locale. */
   type Expected = ReadonlyArray<readonly ["both" | "french", string]>;
   it.effect.each<{ readonly locales: ReadonlyArray<string>; readonly expected: Expected }>([
     {
@@ -560,11 +563,10 @@ describe("a localised leaf's fallback list", () => {
     }),
   );
 });
+const rejected = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
+  Effect.map(Effect.flip(effect), (error) => error._tag);
 
 describe("a localised leaf's writes", () => {
-  const rejected = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
-    Effect.map(Effect.flip(effect), (error) => error._tag);
-
   it.effect("keep shared columns shared and translated ones per locale", () =>
     Effect.gen(function* () {
       const { ops } = pages();

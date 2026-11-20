@@ -334,6 +334,14 @@ const nextContent = (
   return R.isEmptyRecord(level) ? { state } : { state, locales: level };
 };
 
+const versionKey = (id: string, version: bigint) => `${id}@${version}`;
+
+const entryOf = (row: VersionRow): VersionChainEntry => ({
+  version: row.version,
+  action: row.action,
+  timestamp: row.timestamp,
+});
+
 /**
  * An in-memory {@link VersionChain} for leaf `type`: the port's
  * contract (docs/seams.md → `VersionChain`) over an append log, holding
@@ -355,14 +363,7 @@ export const makeInMemoryVersionChain = (type: string): InMemoryVersionChain => 
   let dropped = HashSet.empty<string>();
   let raced = HashSet.empty<string>();
   let minted = 0;
-  const key = (id: string, version: bigint) => `${id}@${version}`;
   const rowsOf = (id: string) => log.filter((row) => row.id === id);
-
-  const entryOf = (row: VersionRow): VersionChainEntry => ({
-    version: row.version,
-    action: row.action,
-    timestamp: row.timestamp,
-  });
 
   /** Whether the next append for `id` is raced, consuming the race. */
   const takeRace = (id: string): boolean => {
@@ -376,7 +377,7 @@ export const makeInMemoryVersionChain = (type: string): InMemoryVersionChain => 
   /** The full state at `(id, version)`, or none when it cannot be reconstructed. */
   const snapshot = (id: string, version: bigint) =>
     Effect.sync(() =>
-      HashSet.has(dropped, key(id, version))
+      HashSet.has(dropped, versionKey(id, version))
         ? Option.none<VersionSnapshot>()
         : Option.map(
             Arr.findFirst(rowsOf(id), (candidate) => candidate.version === version),
@@ -540,7 +541,7 @@ export const makeInMemoryVersionChain = (type: string): InMemoryVersionChain => 
       }),
     rows: () => log,
     dropState: (id, version) => {
-      dropped = HashSet.add(dropped, key(id, version));
+      dropped = HashSet.add(dropped, versionKey(id, version));
     },
     raceNextAppend: (id) => {
       raced = HashSet.add(raced, id);
@@ -1685,13 +1686,14 @@ const plainRowTable = <Row extends PlainRow>(options: {
         );
       }),
     /** Close every open row `which` picks; how many it closed. */
-    closeWhere: (which: (row: Row) => boolean, closed: (row: Row) => Row) =>
-      Effect.sync(() => {
-        const picked = (row: Row) => row.status === options.open && which(row);
+    closeWhere: (which: (row: Row) => boolean, closed: (row: Row) => Row) => {
+      const picked = (row: Row) => row.status === options.open && which(row);
+      return Effect.sync(() => {
         const count = Arr.filter(rows, picked).length;
         rows = Arr.map(rows, (row) => (picked(row) ? closed(row) : row));
         return count;
-      }),
+      });
+    },
     /**
      * Account erasure: apply `erase` to at most `limit` rows it touches (a
      * row it answers `"delete"` for goes, one it returns a new row for is
@@ -2198,6 +2200,8 @@ export interface InMemoryWorkingCopyStore extends WorkingCopyStore<never, never>
   readonly copies: () => HashMap.HashMap<string, WorkingCopy>;
 }
 
+const keyOf = (key: WorkingCopyKey) => `${key.id}:${key.userId}`;
+
 /**
  * An in-memory {@link WorkingCopyStore}: the seam's contract (docs/seams.md → `WorkingCopyStore`), one copy per `(id, userId)`. In memory only;
  * not for production.
@@ -2206,7 +2210,6 @@ export interface InMemoryWorkingCopyStore extends WorkingCopyStore<never, never>
  */
 export const makeInMemoryWorkingCopyStore = (): InMemoryWorkingCopyStore => {
   let copies = HashMap.empty<string, WorkingCopy>();
-  const keyOf = (key: WorkingCopyKey) => `${key.id}:${key.userId}`;
   return {
     put: (key, copy) =>
       Effect.sync(() => {
@@ -2668,6 +2671,9 @@ export interface InMemoryReactionStore extends ReactionStore<never, never> {
   readonly rows: () => ReadonlyArray<ReactionRow>;
 }
 
+const same = (nodeId: string, accountId: string) => (row: ReactionRow) =>
+  row.nodeId === nodeId && row.accountId === accountId;
+
 /**
  * An in-memory {@link ReactionStore}, keyed `(nodeId, accountId)` as the
  * real table is: `upsert` replaces, `tally` groups by node and kind,
@@ -2677,8 +2683,6 @@ export interface InMemoryReactionStore extends ReactionStore<never, never> {
  */
 export const makeInMemoryReactionStore = (): InMemoryReactionStore => {
   let rows: ReadonlyArray<ReactionRow> = [];
-  const same = (nodeId: string, accountId: string) => (row: ReactionRow) =>
-    row.nodeId === nodeId && row.accountId === accountId;
   const newestFirst = Order.combine(
     Order.mapInput(Order.flip(Order.Number), (row: ReactionRow) => row.reactedAt.getTime()),
     Order.mapInput(byCodePoint, (row: ReactionRow) => row.nodeId),
@@ -2826,6 +2830,9 @@ export interface InMemorySocialStore extends SocialStore<InMemoryFollowing, neve
   readonly rows: () => ReadonlyArray<Relationship>;
 }
 
+const relationshipIs = (kind: string, from: string, to: string) => (row: Relationship) =>
+  row.kind === kind && row.from === from && row.to === to;
+
 /**
  * An in-memory {@link SocialStore}, keyed `(kind, from, to)` as the real
  * table is; `followingOf` and `silencedBy` return {@link InMemoryFollowing}
@@ -2837,8 +2844,6 @@ export interface InMemorySocialStore extends SocialStore<InMemoryFollowing, neve
  */
 export const makeInMemorySocialStore = (): InMemorySocialStore => {
   let rows: ReadonlyArray<Relationship> = [];
-  const matches = (kind: string, from: string, to: string) => (row: Relationship) =>
-    row.kind === kind && row.from === from && row.to === to;
   const toIds = (from: string, kinds: ReadonlyArray<string>) =>
     HashSet.fromIterable(
       Arr.map(
@@ -2854,28 +2859,33 @@ export const makeInMemorySocialStore = (): InMemorySocialStore => {
   return {
     add: (relationship) =>
       Effect.sync(() => {
-        if (rows.some(matches(relationship.kind, relationship.from, relationship.to))) return false;
+        if (rows.some(relationshipIs(relationship.kind, relationship.from, relationship.to)))
+          return false;
         rows = [...rows, relationship];
         return true;
       }),
     addFollow: (relationship) =>
       Effect.sync(() => {
         const { from, to } = relationship;
-        if (rows.some(matches("block", from, to)) || rows.some(matches("block", to, from))) {
+        if (
+          rows.some(relationshipIs("block", from, to)) ||
+          rows.some(relationshipIs("block", to, from))
+        ) {
           return "blocked" as const;
         }
-        if (rows.some(matches("follow", from, to))) return "present" as const;
+        if (rows.some(relationshipIs("follow", from, to))) return "present" as const;
         rows = [...rows, relationship];
         return "added" as const;
       }),
     addBlock: (relationship) =>
       Effect.sync(() => {
         const { from, to } = relationship;
-        const written = !rows.some(matches("block", from, to));
+        const written = !rows.some(relationshipIs("block", from, to));
         rows = [
           ...Arr.filter(
             rows,
-            (row) => !matches("follow", from, to)(row) && !matches("follow", to, from)(row),
+            (row) =>
+              !relationshipIs("follow", from, to)(row) && !relationshipIs("follow", to, from)(row),
           ),
           ...(written ? [relationship] : []),
         ];
@@ -2884,10 +2894,10 @@ export const makeInMemorySocialStore = (): InMemorySocialStore => {
     remove: (kind, from, to) =>
       Effect.sync(() => {
         const before = rows.length;
-        rows = Arr.filter(rows, (row) => !matches(kind, from, to)(row));
+        rows = Arr.filter(rows, (row) => !relationshipIs(kind, from, to)(row));
         return rows.length < before;
       }),
-    has: (kind, from, to) => Effect.sync(() => rows.some(matches(kind, from, to))),
+    has: (kind, from, to) => Effect.sync(() => rows.some(relationshipIs(kind, from, to))),
     list: ({ kind, side, accountId, limit, offset }) =>
       Effect.sync(() => {
         const related = Arr.sort(
@@ -2900,7 +2910,7 @@ export const makeInMemorySocialStore = (): InMemorySocialStore => {
         return { rows: related.slice(offset, offset + limit), total: related.length };
       }),
     isFollowing: (follower, followed) =>
-      Effect.sync(() => rows.some(matches("follow", follower, followed))),
+      Effect.sync(() => rows.some(relationshipIs("follow", follower, followed))),
     followingOf: (follower) => toIds(follower, ["follow"]),
     silencedBy: (viewer) => toIds(viewer, ["mute", "block"]),
     eraseAccount: (accountId, limit) =>
@@ -2931,6 +2941,17 @@ export interface InMemoryMembershipStore extends MembershipStore<InMemoryFollowi
   readonly pending: () => ReadonlyArray<Invitation>;
 }
 
+const oldestFirstBy = <A extends { readonly at: Date }>(key: (row: A) => string) =>
+  Order.combine(
+    Order.mapInput(Order.Number, (row: A) => row.at.getTime()),
+    Order.mapInput(byCodePoint, key),
+  );
+
+const matches =
+  (groupId: string, accountId: string) =>
+  (row: { readonly groupId: string; readonly accountId: string }) =>
+    row.groupId === groupId && row.accountId === accountId;
+
 /**
  * An in-memory {@link MembershipStore}: the seam's contract (docs/seams.md
  * → the membership store) over an array of active memberships and one of
@@ -2956,10 +2977,6 @@ export interface InMemoryMembershipStore extends MembershipStore<InMemoryFollowi
 export const makeInMemoryMembershipStore = (): InMemoryMembershipStore => {
   let rows: ReadonlyArray<Membership> = [];
   let pending: ReadonlyArray<Invitation> = [];
-  const matches =
-    (groupId: string, accountId: string) =>
-    (row: { readonly groupId: string; readonly accountId: string }) =>
-      row.groupId === groupId && row.accountId === accountId;
   /** Drop the matching rows of both statuses; how many went. */
   const removeWhere = (
     dropActive: (row: Membership) => boolean,
@@ -2971,11 +2988,6 @@ export const makeInMemoryMembershipStore = (): InMemoryMembershipStore => {
       pending = Arr.filter(pending, (row) => !dropPending(row));
       return before - rows.length - pending.length;
     });
-  const oldestFirst = <A extends { readonly at: Date }>(key: (row: A) => string) =>
-    Order.combine(
-      Order.mapInput(Order.Number, (row: A) => row.at.getTime()),
-      Order.mapInput(byCodePoint, key),
-    );
   const takenKey = (groupId: string, accountId: string) =>
     rows.some(matches(groupId, accountId)) || pending.some(matches(groupId, accountId));
   return {
@@ -3007,7 +3019,7 @@ export const makeInMemoryMembershipStore = (): InMemoryMembershipStore => {
         const members = Arr.map(
           Arr.sort(
             Arr.filter(rows, (row) => row.groupId === groupId),
-            oldestFirst((row: Membership) => row.accountId),
+            oldestFirstBy((row: Membership) => row.accountId),
           ),
           ({ accountId, role, at }) => ({ accountId, role, at }),
         );
@@ -3074,7 +3086,7 @@ export const makeInMemoryMembershipStore = (): InMemoryMembershipStore => {
               ? row.groupId === query.groupId
               : row.accountId === query.accountId,
           ),
-          oldestFirst((row: Invitation) => (query.by === "group" ? row.accountId : row.groupId)),
+          oldestFirstBy((row: Invitation) => (query.by === "group" ? row.accountId : row.groupId)),
         );
         return {
           rows: selected.slice(query.offset, query.offset + query.limit),
@@ -3406,6 +3418,9 @@ export interface InMemoryExternalIdStore extends ExternalIdStore<never, never> {
   readonly links: () => ReadonlyArray<ExternalIdLink>;
 }
 
+const named = (authority: string, externalId: string) => (link: ExternalIdLink) =>
+  link.authority === authority && link.externalId === externalId;
+
 /**
  * An in-memory {@link ExternalIdStore}: the seam's contract (docs/seams.md
  * → `ExternalIdStore`) over a list of links. It enforces what the table's
@@ -3417,8 +3432,6 @@ export interface InMemoryExternalIdStore extends ExternalIdStore<never, never> {
  */
 export const makeInMemoryExternalIdStore = (): InMemoryExternalIdStore => {
   let links: ReadonlyArray<ExternalIdLink> = [];
-  const named = (authority: string, externalId: string) => (link: ExternalIdLink) =>
-    link.authority === authority && link.externalId === externalId;
   return {
     lookup: (authority, externalIds) =>
       Effect.sync(() =>

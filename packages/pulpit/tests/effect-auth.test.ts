@@ -484,6 +484,12 @@ describe("a NULL visibility reaches effect-auth as private, never as no axis (PU
     }),
   );
 });
+const ownedRowFacts = (ownerId: string, visibility: "followers" | "private") => ({
+  ownerId,
+  visibility,
+  draft: false,
+  unapproved: false,
+});
 
 describe("an empty id names nobody", () => {
   const seam: FollowerSeam<OwnedAccess.FollowingSet, never> = {
@@ -493,29 +499,26 @@ describe("an empty id names nobody", () => {
   const emptyId: Viewer = Option.some({ id: "", role: "user" });
   const emptyModerator: Viewer = Option.some({ id: "", role: "moderator" });
   const stranger: Viewer = Option.some({ id: "u-stranger", role: "user" });
-  const facts = (ownerId: string, visibility: "followers" | "private") => ({
-    ownerId,
-    visibility,
-    draft: false,
-    unapproved: false,
-  });
-  const view = (viewer: Viewer, row: ReturnType<typeof facts>) =>
+  const view = (viewer: Viewer, row: ReturnType<typeof ownedRowFacts>) =>
     canViewOwned(viewer, policy, seam, row);
 
   it.effect("an empty-id viewer reads as anonymous", () =>
     Effect.gen(function* () {
       expect(readScopeFor(emptyId, policy, seam)).toEqual({ kind: "public" });
       expect(readScopeFor(emptyModerator, policy, seam)).toEqual({ kind: "public" });
-      expect(yield* view(emptyId, facts("", "private"))).toBe(false);
-      expect(yield* view(emptyModerator, facts(OWNER, "private"))).toBe(false);
+      expect(yield* view(emptyId, ownedRowFacts("", "private"))).toBe(false);
+      expect(yield* view(emptyModerator, ownedRowFacts(OWNER, "private"))).toBe(false);
     }),
   );
 
   it.effect("an empty owner is nobody's, and never reaches the follower seam", () =>
     Effect.gen(function* () {
-      expect(yield* view(stranger, facts("", "followers"))).toBe(false);
+      expect(yield* view(stranger, ownedRowFacts("", "followers"))).toBe(false);
       expect(
-        yield* view(Option.some({ id: "u-moderator", role: "moderator" }), facts("", "private")),
+        yield* view(
+          Option.some({ id: "u-moderator", role: "moderator" }),
+          ownedRowFacts("", "private"),
+        ),
       ).toBe(true);
     }),
   );

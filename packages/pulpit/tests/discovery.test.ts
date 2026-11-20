@@ -333,6 +333,12 @@ describe("keyset paging", () => {
     }),
   );
 });
+const publicState = (title: string) => ({
+  title,
+  visibility: "public",
+  draft: false,
+  moderationState: "approved",
+});
 
 describe("a publish-gated leaf", () => {
   it.effect("lists the live version, never the head, and nothing unpublished or scheduled", () =>
@@ -341,19 +347,13 @@ describe("a publish-gated leaf", () => {
         Effect.gen(function* () {
           const { leaf, ops, paths, create } = fixture({ gated: true, sortable: Option.none() });
           const lifecycle = yield* Effect.fromOption(ops.publication);
-          const state = (title: string) => ({
-            title,
-            visibility: "public",
-            draft: false,
-            moderationState: "approved",
-          });
-          yield* create("live", state("live v0"));
+          yield* create("live", publicState("live v0"));
           yield* lifecycle.publish("live", { at: at(10) });
           yield* ops.update({ id: "live", patch: { title: "unpublished head" } });
-          yield* create("never", state("never"));
-          yield* create("scheduled", state("scheduled"));
+          yield* create("never", publicState("never"));
+          yield* create("scheduled", publicState("scheduled"));
           yield* lifecycle.publish("scheduled", { at: at(-1) });
-          yield* create("withdrawn", state("withdrawn"));
+          yield* create("withdrawn", publicState("withdrawn"));
           yield* lifecycle.publish("withdrawn", { at: at(5) });
           yield* lifecycle.unpublish("withdrawn");
           return yield* defineDiscovery({ leaf, paths, feedColumn: "publishedAt", project }).feed({
@@ -495,6 +495,8 @@ describe("purgeHintHook", () => {
     }),
   );
 });
+const pair = (item: DiscoveryItem<Resource>) =>
+  `${item.id}:${Option.getOrElse(item.locale, () => "-")}`;
 
 // ── A localised leaf ─────────────────────────────────────
 
@@ -556,10 +558,6 @@ describe("a localised leaf", () => {
     yield* ops.update({ id: "e", patch: {}, locales: { fr: { title: "e-fr" } } });
     return defineDiscovery({ leaf, paths, feedColumn: "createdAt", project });
   });
-
-  const pair = (item: DiscoveryItem<Resource>) =>
-    `${item.id}:${Option.getOrElse(item.locale, () => "-")}`;
-
   /** Walk every page of a read, `limit` at a time, keeping each item. */
   const walkItems = (
     read: (request: DiscoveryRequest) => Effect.Effect<DiscoveryPage<Resource>>,

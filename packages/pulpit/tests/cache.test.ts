@@ -139,6 +139,16 @@ describe("makeResourceCache — serveability on both sides (CACHE-AUTH-005)", ()
     }),
   );
 });
+const at = (ttlSeconds: number, wait: Duration.Input, tombstoneTtlSeconds?: number) =>
+  Effect.gen(function* () {
+    const { cache } = setup(
+      tombstoneTtlSeconds === undefined ? { ttlSeconds } : { ttlSeconds, tombstoneTtlSeconds },
+    );
+    yield* cache.delete("p-1", 2n);
+    yield* TestClock.adjust(wait);
+    yield* cache.set("p-1", post("public"), 1n);
+    return Option.isSome(yield* cache.get("p-1"));
+  });
 
 describe("makeResourceCache — decode, TTL and failures", () => {
   it.effect("evicts a value that no longer decodes, and reads it as a miss", () =>
@@ -189,18 +199,6 @@ describe("makeResourceCache — decode, TTL and failures", () => {
 
   it.effect("defaults the tombstone TTL to a day, and never below the value TTL", () =>
     Effect.gen(function* () {
-      const at = (ttlSeconds: number, wait: Duration.Input, tombstoneTtlSeconds?: number) =>
-        Effect.gen(function* () {
-          const { cache } = setup(
-            tombstoneTtlSeconds === undefined
-              ? { ttlSeconds }
-              : { ttlSeconds, tombstoneTtlSeconds },
-          );
-          yield* cache.delete("p-1", 2n);
-          yield* TestClock.adjust(wait);
-          yield* cache.set("p-1", post("public"), 1n);
-          return Option.isSome(yield* cache.get("p-1"));
-        });
       expect(yield* at(10, "23 hours")).toBe(false);
       expect(yield* at(10, "25 hours")).toBe(true);
       // A tombstone TTL below the value TTL is raised to it.
@@ -221,10 +219,9 @@ describe("makeResourceCache — decode, TTL and failures", () => {
     }),
   );
 });
+const localeKey = (locale: string) => `posts:v1:p-1\u001f${locale}`;
 
 describe("makeResourceCache — locale keys", () => {
-  const localeKey = (locale: string) => `posts:v1:p-1\u001f${locale}`;
-
   it.effect(
     "keeps each locale's entry apart, and serves none to a reader of another locale or of no locale",
     () =>

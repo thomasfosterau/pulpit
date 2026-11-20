@@ -26,6 +26,9 @@ const NOW = DateTime.toDate(DateTime.makeUnsafe("2026-09-18T12:00:00.000Z"));
 const hourMs = 60 * 60 * 1000;
 const at = (offsetMs: number) => DateTime.toDate(DateTime.makeUnsafe(NOW.getTime() + offsetMs));
 const iso = (offsetMs: number) => at(offsetMs).toISOString();
+const rowOf = (stamp: Option.Option<Date>) => ({
+  publishedAt: Option.getOrElse(stamp, () => null),
+});
 
 describe("the publication axis", () => {
   it("published means stamped AND arrived; unpublished is its exact complement", () => {
@@ -50,9 +53,6 @@ describe("the publication axis", () => {
   it("the list arms agree with the row predicates on every stamp", () => {
     const context = { now: NOW, contains: () => false };
     const stamps = [Option.none<Date>(), Option.some(at(-hourMs)), Option.some(at(hourMs))];
-    const rowOf = (stamp: Option.Option<Date>) => ({
-      publishedAt: Option.getOrElse(stamp, () => null),
-    });
     expect(
       stamps.map((stamp) => evaluate(published("publishedAt"), rowOf(stamp), context)),
     ).toEqual(stamps.map((stamp) => isPublishedAt(stamp, NOW)));

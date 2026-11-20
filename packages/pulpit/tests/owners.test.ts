@@ -228,16 +228,19 @@ describe("SubtypeOps.owners", () => {
     }),
   );
 });
+const ownedLeaf = (type: string, owners: ReadonlyArray<string>, total = owners.length) => ({
+  type,
+  owners: () => Effect.succeed({ rows: owners, total }),
+});
 
 describe("readableOwners", () => {
-  const leaf = (type: string, owners: ReadonlyArray<string>, total = owners.length) => ({
-    type,
-    owners: () => Effect.succeed({ rows: owners, total }),
-  });
-
   it.effect("is the exact, ordered union of each leaf's owners, paged", () =>
     Effect.gen(function* () {
-      const leaves = [leaf("posts", ["bo", "ana"]), leaf("pages", ["cy", "bo"]), leaf("media", [])];
+      const leaves = [
+        ownedLeaf("posts", ["bo", "ana"]),
+        ownedLeaf("pages", ["cy", "bo"]),
+        ownedLeaf("media", []),
+      ];
       expect(
         yield* run(readableOwners(leaves, { limit: 2, offset: 1, includeDeleted: false })),
       ).toEqual({ rows: ["bo", "cy"], total: 3 });
@@ -248,11 +251,14 @@ describe("readableOwners", () => {
     Effect.gen(function* () {
       const error = yield* run(
         Effect.flip(
-          readableOwners([leaf("posts", ["ana"]), leaf("pages", ["bo"], MAX_PAGE_LIMIT + 1)], {
-            limit: 10,
-            offset: 0,
-            includeDeleted: false,
-          }),
+          readableOwners(
+            [ownedLeaf("posts", ["ana"]), ownedLeaf("pages", ["bo"], MAX_PAGE_LIMIT + 1)],
+            {
+              limit: 10,
+              offset: 0,
+              includeDeleted: false,
+            },
+          ),
         ),
       );
       expect(error).toEqual(new OwnerSetTooLarge({ type: "pages" }));

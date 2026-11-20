@@ -186,33 +186,32 @@ describe("countingCounter — count within the transaction", () => {
       }),
   );
 });
+const leaf = (limit: number) => {
+  const chain = makeInMemoryVersionChain("comments");
+  const leaves = makeInMemoryLeafStore(chain, { columns: ["body", "visibility"], now: NOW });
+  let viewer: Viewer = Option.some(member);
+  const target = defineSubtype({
+    type: "comments",
+    access: ownedAccess(),
+    chain,
+    leaves,
+    viewer: Effect.sync(() => viewer),
+    policy: gardeneriaPolicy,
+    followers: makeInMemoryFollowers([]),
+    toResource: (row: LeafRow) => row,
+    hooks: Effect.succeed({ before: [budgetHook(budget({ limit }))], after: [] }),
+  });
+  const as = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+    Effect.suspend(() => {
+      viewer = who;
+      return effect;
+    });
+  const create = () =>
+    target.create({ id: Option.none(), state: { body: "Hi", visibility: "public" } });
+  return { chain, target, as, create };
+};
 
 describe("budgetHook — a chain write's budget", () => {
-  const leaf = (limit: number) => {
-    const chain = makeInMemoryVersionChain("comments");
-    const leaves = makeInMemoryLeafStore(chain, { columns: ["body", "visibility"], now: NOW });
-    let viewer: Viewer = Option.some(member);
-    const target = defineSubtype({
-      type: "comments",
-      access: ownedAccess(),
-      chain,
-      leaves,
-      viewer: Effect.sync(() => viewer),
-      policy: gardeneriaPolicy,
-      followers: makeInMemoryFollowers([]),
-      toResource: (row: LeafRow) => row,
-      hooks: Effect.succeed({ before: [budgetHook(budget({ limit }))], after: [] }),
-    });
-    const as = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
-      Effect.suspend(() => {
-        viewer = who;
-        return effect;
-      });
-    const create = () =>
-      target.create({ id: Option.none(), state: { body: "Hi", visibility: "public" } });
-    return { chain, target, as, create };
-  };
-
   it.effect("refuses the create past the limit, appending nothing, and leaves updates alone", () =>
     Effect.gen(function* () {
       const { chain, target, create } = leaf(1);
@@ -247,63 +246,62 @@ describe("budgetHook — a chain write's budget", () => {
     }),
   );
 });
+const setup = () => {
+  const chain = makeInMemoryVersionChain("pages");
+  const leaves = makeInMemoryLeafStore(chain, {
+    columns: ["title", "visibility", "moderationState"],
+    now: NOW,
+  });
+  let viewer: Viewer = Option.some(member);
+  const viewerOf = Effect.sync(() => viewer);
+  const target = defineSubtype({
+    type: "pages",
+    access: ownedAccess(),
+    chain,
+    leaves,
+    viewer: viewerOf,
+    policy: gardeneriaPolicy,
+    followers: makeInMemoryFollowers([]),
+    toResource: (row: LeafRow) => row,
+  });
+  const bound = bindBudget({
+    type: "pages",
+    budget: { limit: 1, windowSeconds: 3600 },
+    counter: makeInMemoryBudgetCounter(),
+    policy: gardeneriaPolicy,
+  });
+  const proposals = defineProposals({
+    type: "pages",
+    target,
+    chain,
+    ownerOf: leaves.ownerOf,
+    proposals: makeInMemoryProposalStore({ chain, leaves }),
+    viewer: viewerOf,
+    policy: gardeneriaPolicy,
+    canPropose: () => true,
+    attributes: ["title"],
+    decode: (patch) =>
+      Schema.is(Schema.Record(Schema.String, Schema.String))(patch)
+        ? Effect.succeed(patch)
+        : Effect.fail(new InvalidProposalPatch({ type: "pages", reason: "strings only" })),
+    budget: bound,
+  });
+  const reports = defineReports({
+    target,
+    reports: makeInMemoryReportStore(),
+    viewer: viewerOf,
+    policy: gardeneriaPolicy,
+    budget: bound,
+  });
+  const as = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+    Effect.suspend(() => {
+      viewer = who;
+      return effect;
+    });
+  return { target, proposals, reports, as };
+};
 
 describe("opt-in budgets on proposals and reports", () => {
-  const setup = () => {
-    const chain = makeInMemoryVersionChain("pages");
-    const leaves = makeInMemoryLeafStore(chain, {
-      columns: ["title", "visibility", "moderationState"],
-      now: NOW,
-    });
-    let viewer: Viewer = Option.some(member);
-    const viewerOf = Effect.sync(() => viewer);
-    const target = defineSubtype({
-      type: "pages",
-      access: ownedAccess(),
-      chain,
-      leaves,
-      viewer: viewerOf,
-      policy: gardeneriaPolicy,
-      followers: makeInMemoryFollowers([]),
-      toResource: (row: LeafRow) => row,
-    });
-    const bound = bindBudget({
-      type: "pages",
-      budget: { limit: 1, windowSeconds: 3600 },
-      counter: makeInMemoryBudgetCounter(),
-      policy: gardeneriaPolicy,
-    });
-    const proposals = defineProposals({
-      type: "pages",
-      target,
-      chain,
-      ownerOf: leaves.ownerOf,
-      proposals: makeInMemoryProposalStore({ chain, leaves }),
-      viewer: viewerOf,
-      policy: gardeneriaPolicy,
-      canPropose: () => true,
-      attributes: ["title"],
-      decode: (patch) =>
-        Schema.is(Schema.Record(Schema.String, Schema.String))(patch)
-          ? Effect.succeed(patch)
-          : Effect.fail(new InvalidProposalPatch({ type: "pages", reason: "strings only" })),
-      budget: bound,
-    });
-    const reports = defineReports({
-      target,
-      reports: makeInMemoryReportStore(),
-      viewer: viewerOf,
-      policy: gardeneriaPolicy,
-      budget: bound,
-    });
-    const as = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
-      Effect.suspend(() => {
-        viewer = who;
-        return effect;
-      });
-    return { target, proposals, reports, as };
-  };
-
   it.effect(
     "throttles submit and file, each as its own action, and refuses an invalid submission before spending",
     () =>

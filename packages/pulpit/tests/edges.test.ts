@@ -257,25 +257,24 @@ const twoReferenceLeaves = () => {
   parts.put(node("p3", { visibility: "public" }));
   return { subjects, parts };
 };
+const corpus = (declaration: Pick<Definition, "onConflict"> = {}, uniqueKey: string[] = []) => {
+  const { subjects, parts } = twoReferenceLeaves();
+  const links = family(
+    {
+      ...declaration,
+      ends: {
+        subject: referenceEnd("subjectId", subjects),
+        part: referenceEnd("partId", parts),
+      },
+    },
+    uniqueKey,
+  );
+  return { subjects, parts, ...links };
+};
 
 // ── Ported: an edge between two reference leaves ──────────────────────
 
 describe("ported: an edge joining two reference leaves (gardeneria's anatomy / chemistry)", () => {
-  const corpus = (declaration: Pick<Definition, "onConflict"> = {}, uniqueKey: string[] = []) => {
-    const { subjects, parts } = twoReferenceLeaves();
-    const links = family(
-      {
-        ...declaration,
-        ends: {
-          subject: referenceEnd("subjectId", subjects),
-          part: referenceEnd("partId", parts),
-        },
-      },
-      uniqueKey,
-    );
-    return { subjects, parts, ...links };
-  };
-
   it.effect("refuses an anonymous and a plain user's assertion, and admits a contributor's", () =>
     Effect.gen(function* () {
       const { ops, actAs } = corpus();
@@ -503,55 +502,54 @@ describe("ported: CMS rows on the moderator rung (gardeneria's page collections 
     }),
   );
 });
+const observationsAndDisorders = () => {
+  const observations = makeInMemoryNodes(["ownerId", "visibility"]);
+  const disorders = makeInMemoryNodes([]);
+  observations.put(node("o-public", { ownerId: member.id, visibility: "public" }));
+  observations.put(node("o-private", { ownerId: member.id, visibility: "private" }));
+  disorders.put(node("mildew", {}));
+  disorders.put(node("chlorosis", {}));
+  /** The observation's owner, or moderator+ (gardeneria's `requireObservationWriterE`). */
+  const observationWriter: EdgeWriteGate<never, never> = ({ viewer, policy, edge }) => {
+    const id = textOf(edge["observationId"]);
+    return requireWriter(
+      ownedAccess(),
+      viewer,
+      policy,
+      { type: "observations", id },
+      Effect.map(
+        observations.get(id),
+        Option.flatMap((row) => Option.liftPredicate(row["ownerId"], P.isString)),
+      ),
+    );
+  };
+  const links = family(
+    {
+      ends: {
+        observation: {
+          column: "observationId",
+          type: "observations",
+          access: ownedAccess(),
+          nodes: observations,
+        },
+        disorder: {
+          column: "disorderId",
+          type: "disorders",
+          access: { kind: "reference" },
+          nodes: disorders,
+        },
+      },
+      writeGate: observationWriter,
+      onConflict: "ignore",
+    },
+    ["observationId", "disorderId"],
+  );
+  return { disorders, ...links };
+};
 
 // ── Ported: an owned-child edge ───────────────────────────────────────
 
 describe("ported: an owned-child edge whose gate is its owned end's (gardeneria's disorders)", () => {
-  const observationsAndDisorders = () => {
-    const observations = makeInMemoryNodes(["ownerId", "visibility"]);
-    const disorders = makeInMemoryNodes([]);
-    observations.put(node("o-public", { ownerId: member.id, visibility: "public" }));
-    observations.put(node("o-private", { ownerId: member.id, visibility: "private" }));
-    disorders.put(node("mildew", {}));
-    disorders.put(node("chlorosis", {}));
-    /** The observation's owner, or moderator+ (gardeneria's `requireObservationWriterE`). */
-    const observationWriter: EdgeWriteGate<never, never> = ({ viewer, policy, edge }) => {
-      const id = textOf(edge["observationId"]);
-      return requireWriter(
-        ownedAccess(),
-        viewer,
-        policy,
-        { type: "observations", id },
-        Effect.map(
-          observations.get(id),
-          Option.flatMap((row) => Option.liftPredicate(row["ownerId"], P.isString)),
-        ),
-      );
-    };
-    const links = family(
-      {
-        ends: {
-          observation: {
-            column: "observationId",
-            type: "observations",
-            access: ownedAccess(),
-            nodes: observations,
-          },
-          disorder: {
-            column: "disorderId",
-            type: "disorders",
-            access: { kind: "reference" },
-            nodes: disorders,
-          },
-        },
-        writeGate: observationWriter,
-        onConflict: "ignore",
-      },
-      ["observationId", "disorderId"],
-    );
-    return { disorders, ...links };
-  };
-
   it.effect("lets the observation's owner record a disorder they did not author", () =>
     Effect.gen(function* () {
       const { ops, actAs } = observationsAndDisorders();
@@ -699,6 +697,25 @@ const drafts: ReadonlyArray<ColumnValue | typeof ABSENT> = [false, true, null, "
 /** A draft for a row id: a string quoted, so `"false"` never collides with `false`. */
 const showDraft = (draft: ColumnValue | typeof ABSENT): string =>
   draft === ABSENT ? "absent" : P.isString(draft) ? `"${draft}"` : showValue(draft);
+/** Whether the viewer holds both read rungs, and so reads every row of a declared view. */
+const seesEverything = (viewer: Viewer, policy: AccessPolicy) =>
+  Option.exists(viewer, policy.canViewPrivate) && Option.exists(viewer, policy.canViewDeleted);
+
+const curatedEnd = (
+  columns: ReadonlyArray<string>,
+  followersOfColumn?: string,
+): EdgeEnd<never, never> => ({
+  column: "termId",
+  type: "terms",
+  access:
+    followersOfColumn === undefined
+      ? { kind: "reference" }
+      : { kind: "reference", followersOfColumn },
+  nodes: makeInMemoryNodes(columns),
+});
+
+/** The same row, live: what a tombstone reads as to the view-deleted rung. */
+const revived = (row: LeafRow): LeafRow => ({ ...row, action: "update" });
 
 describe("EDGE-001: the endpoint filter never disagrees with the endpoint predicate", () => {
   const ownedRows = Arr.flatMap(actions, (action) =>
@@ -728,11 +745,6 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
         ([name, viewer]) => [`${name}, under ${policyName}`, viewer, policy] as const,
       ),
   );
-
-  /** Whether the viewer holds both read rungs, and so reads every row of a declared view. */
-  const seesEverything = (viewer: Viewer, policy: AccessPolicy) =>
-    Option.exists(viewer, policy.canViewPrivate) && Option.exists(viewer, policy.canViewDeleted);
-
   it.effect.each(viewersByPolicy)("an owned end, for %s", ([_name, viewer, policy]) =>
     Effect.gen(function* () {
       const seen = yield* readings(
@@ -822,18 +834,6 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
         ),
       ),
     );
-    const curatedEnd = (
-      columns: ReadonlyArray<string>,
-      followersOfColumn?: string,
-    ): EdgeEnd<never, never> => ({
-      column: "termId",
-      type: "terms",
-      access:
-        followersOfColumn === undefined
-          ? { kind: "reference" }
-          : { kind: "reference", followersOfColumn },
-      nodes: makeInMemoryNodes(columns),
-    });
     const variants = [
       ["declaring a column the view carries", ["visibility", "curatorId"], "curatorId"],
       ["declaring a column the view lacks", ["visibility"], "curatorId"],
@@ -1180,8 +1180,6 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
         "delete",
       ),
     ];
-    /** The same row, live: what a tombstone reads as to the view-deleted rung. */
-    const revived = (row: LeafRow): LeafRow => ({ ...row, action: "update" });
     const end = ownedEnd("entryId", ownedNodes);
 
     it.effect.each(
@@ -1220,53 +1218,53 @@ describe("EDGE-001: the endpoint filter never disagrees with the endpoint predic
     );
   });
 });
+const ownedState = (visibility: string, draft = false, ownerId = member.id) => ({
+  ownerId,
+  visibility,
+  draft,
+});
+
+/**
+ * A reference leaf (public, private, tombstoned) and an owned leaf (one
+ * node per visibility state, a draft, a tombstone, another owner's private
+ * row), with one edge seeded between every pair, bypassing `create`.
+ */
+const everyPair = () =>
+  Effect.gen(function* () {
+    const subjects = makeInMemoryNodes(["visibility"]);
+    subjects.put(node("s-public", { visibility: "public" }));
+    subjects.put(node("s-private", { visibility: "private" }));
+    subjects.put(node("s-gone", { visibility: "public" }, "delete"));
+    const entries = makeInMemoryNodes(["ownerId", "visibility", "draft"]);
+    entries.put(node("e-public", ownedState("public")));
+    entries.put(node("e-followers", ownedState("followers")));
+    entries.put(node("e-private", ownedState("private")));
+    entries.put(node("e-draft", ownedState("public", true)));
+    entries.put(node("e-gone", ownedState("public"), "delete"));
+    entries.put(node("e-other", ownedState("private", false, otherMember.id)));
+    const ends = {
+      subject: referenceEnd("subjectId", subjects),
+      entry: ownedEnd("entryId", entries),
+    };
+    const links = family({ ends });
+    const subjectIds = ["s-public", "s-private", "s-gone"];
+    const entryIds = ["e-public", "e-followers", "e-private", "e-draft", "e-gone", "e-other"];
+    yield* Effect.forEach(
+      Arr.flatMap(subjectIds, (subjectId) =>
+        Arr.map(entryIds, (entryId) => ({ subjectId, entryId })),
+      ),
+      (values) => links.edges.insert(values),
+      { concurrency: 1 },
+    );
+    /** The pair an edge joins, as `subject/entry`. */
+    const pairOf = (id: string) => {
+      const row = links.edges.rows().find((candidate) => candidate.id === id);
+      return row === undefined ? "none" : `${textOf(row["subjectId"])}/${textOf(row["entryId"])}`;
+    };
+    return { ends, subjects, entries, pairOf, ...links };
+  });
 
 describe("EDGE-001: an edge is readable only if every end is", () => {
-  /**
-   * A reference leaf (public, private, tombstoned) and an owned leaf (one
-   * node per visibility state, a draft, a tombstone, another owner's private
-   * row), with one edge seeded between every pair, bypassing `create`.
-   */
-  const everyPair = () =>
-    Effect.gen(function* () {
-      const subjects = makeInMemoryNodes(["visibility"]);
-      subjects.put(node("s-public", { visibility: "public" }));
-      subjects.put(node("s-private", { visibility: "private" }));
-      subjects.put(node("s-gone", { visibility: "public" }, "delete"));
-      const entries = makeInMemoryNodes(["ownerId", "visibility", "draft"]);
-      const owned = (visibility: string, draft = false, ownerId = member.id) => ({
-        ownerId,
-        visibility,
-        draft,
-      });
-      entries.put(node("e-public", owned("public")));
-      entries.put(node("e-followers", owned("followers")));
-      entries.put(node("e-private", owned("private")));
-      entries.put(node("e-draft", owned("public", true)));
-      entries.put(node("e-gone", owned("public"), "delete"));
-      entries.put(node("e-other", owned("private", false, otherMember.id)));
-      const ends = {
-        subject: referenceEnd("subjectId", subjects),
-        entry: ownedEnd("entryId", entries),
-      };
-      const links = family({ ends });
-      const subjectIds = ["s-public", "s-private", "s-gone"];
-      const entryIds = ["e-public", "e-followers", "e-private", "e-draft", "e-gone", "e-other"];
-      yield* Effect.forEach(
-        Arr.flatMap(subjectIds, (subjectId) =>
-          Arr.map(entryIds, (entryId) => ({ subjectId, entryId })),
-        ),
-        (values) => links.edges.insert(values),
-        { concurrency: 1 },
-      );
-      /** The pair an edge joins, as `subject/entry`. */
-      const pairOf = (id: string) => {
-        const row = links.edges.rows().find((candidate) => candidate.id === id);
-        return row === undefined ? "none" : `${textOf(row["subjectId"])}/${textOf(row["entryId"])}`;
-      };
-      return { ends, subjects, entries, pairOf, ...links };
-    });
-
   it.effect.each(viewers)(
     "list, get and the predicate agree on every pair, for %s",
     ([_name, viewer]) =>
@@ -1608,36 +1606,68 @@ describe("EDGE-001 by rung × end state: the view-deleted rung reads an edge who
     }),
   );
 });
+/**
+ * `s1` with `hidden` stored edges to private parts, which a contributor
+ * can't read and a moderator can, and room for `maxEdges` on its end.
+ */
+const slotWorld = (maxEdges: number, hidden: number) =>
+  Effect.gen(function* () {
+    const { subjects, parts } = twoReferenceLeaves();
+    const secret = Arr.makeBy(hidden, (index) => `h${String(index + 1)}`);
+    secret.forEach((id) => parts.put(node(id, { visibility: "private" })));
+    const links = family({
+      ends: {
+        subject: { ...referenceEnd("subjectId", subjects), maxEdges },
+        part: referenceEnd("partId", parts),
+      },
+    });
+    yield* Effect.forEach(secret, (partId) => links.edges.insert({ subjectId: "s1", partId }), {
+      concurrency: 1,
+    });
+    return links;
+  });
+
+/**
+ * A family keyed on `path` alone (it leaves the page out), whose page end
+ * holds one edge: an edge on `page-other` already holds the path `taken`,
+ * that page `colliding` (readable or hidden from a contributor), and with
+ * `full` the target page already holds its one edge.
+ */
+const keyWorld = (colliding: "public" | "private", onConflict: "fail" | "ignore", full: boolean) =>
+  Effect.gen(function* () {
+    const pages = makeInMemoryNodes(["visibility"]);
+    pages.put(node("page-target", { visibility: "public" }));
+    pages.put(node("page-other", { visibility: colliding }));
+    const links = family(
+      {
+        ends: {
+          page: {
+            column: "pageId",
+            type: "pages",
+            access: { kind: "reference" },
+            nodes: pages,
+            maxEdges: 1,
+          },
+        },
+        onConflict,
+      },
+      ["path"],
+    );
+    yield* links.edges.insert({ pageId: "page-other", path: "taken" });
+    if (full) yield* links.edges.insert({ pageId: "page-target", path: "own" });
+    return yield* answerOf(
+      links.actAs(as(contributor), links.ops.create({ pageId: "page-target", path: "taken" })),
+    );
+  });
+/** A caller's answers to three creates at `s1`, in order. */
+const slotAnswers = (links: Effect.Success<ReturnType<typeof slotWorld>>, viewer: Viewer) =>
+  Effect.forEach(
+    ["p1", "p2", "p3"],
+    (partId) => answerOf(links.actAs(viewer, links.ops.create({ subjectId: "s1", partId }))),
+    { concurrency: 1 },
+  );
 
 describe("what a create discloses: nothing that tells a hidden edge from a readable one, or from none", () => {
-  /**
-   * `s1` with `hidden` stored edges to private parts, which a contributor
-   * can't read and a moderator can, and room for `maxEdges` on its end.
-   */
-  const slotWorld = (maxEdges: number, hidden: number) =>
-    Effect.gen(function* () {
-      const { subjects, parts } = twoReferenceLeaves();
-      const secret = Arr.makeBy(hidden, (index) => `h${String(index + 1)}`);
-      secret.forEach((id) => parts.put(node(id, { visibility: "private" })));
-      const links = family({
-        ends: {
-          subject: { ...referenceEnd("subjectId", subjects), maxEdges },
-          part: referenceEnd("partId", parts),
-        },
-      });
-      yield* Effect.forEach(secret, (partId) => links.edges.insert({ subjectId: "s1", partId }), {
-        concurrency: 1,
-      });
-      return links;
-    });
-  /** A caller's answers to three creates at `s1`, in order. */
-  const answers = (links: Effect.Success<ReturnType<typeof slotWorld>>, viewer: Viewer) =>
-    Effect.forEach(
-      ["p1", "p2", "p3"],
-      (partId) => answerOf(links.actAs(viewer, links.ops.create({ subjectId: "s1", partId }))),
-      { concurrency: 1 },
-    );
-
   it.effect.each([1, 2])(
     "at maxEdges %i, a contributor's creates answer alike whether the node holds 0, 1 or 2 hidden edges",
     (maxEdges) =>
@@ -1646,7 +1676,7 @@ describe("what a create discloses: nothing that tells a hidden edge from a reada
           [0, 1, 2],
           (hidden) =>
             Effect.gen(function* () {
-              return yield* answers(yield* slotWorld(maxEdges, hidden), as(contributor));
+              return yield* slotAnswers(yield* slotWorld(maxEdges, hidden), as(contributor));
             }),
           { concurrency: "unbounded" },
         );
@@ -1666,54 +1696,17 @@ describe("what a create discloses: nothing that tells a hidden edge from a reada
   it.effect("a caller who can read every edge is held to the limit over all of them", () =>
     Effect.gen(function* () {
       const links = yield* slotWorld(2, 2);
-      expect((yield* answers(links, as(moderator)))[0]).toMatchObject({
+      expect((yield* slotAnswers(links, as(moderator)))[0]).toMatchObject({
         _tag: "EdgeCardinalityExceeded",
       });
       // The contributor, who can't read the two, is not: the documented trade-off.
-      expect((yield* answers(links, as(contributor))).slice(0, 2)).toEqual([
+      expect((yield* slotAnswers(links, as(contributor))).slice(0, 2)).toEqual([
         { created: true },
         { created: true },
       ]);
       expect(links.edges.rows()).toHaveLength(4);
     }),
   );
-
-  /**
-   * A family keyed on `path` alone (it leaves the page out), whose page end
-   * holds one edge: an edge on `page-other` already holds the path `taken`,
-   * that page `colliding` (readable or hidden from a contributor), and with
-   * `full` the target page already holds its one edge.
-   */
-  const keyWorld = (
-    colliding: "public" | "private",
-    onConflict: "fail" | "ignore",
-    full: boolean,
-  ) =>
-    Effect.gen(function* () {
-      const pages = makeInMemoryNodes(["visibility"]);
-      pages.put(node("page-target", { visibility: "public" }));
-      pages.put(node("page-other", { visibility: colliding }));
-      const links = family(
-        {
-          ends: {
-            page: {
-              column: "pageId",
-              type: "pages",
-              access: { kind: "reference" },
-              nodes: pages,
-              maxEdges: 1,
-            },
-          },
-          onConflict,
-        },
-        ["path"],
-      );
-      yield* links.edges.insert({ pageId: "page-other", path: "taken" });
-      if (full) yield* links.edges.insert({ pageId: "page-target", path: "own" });
-      return yield* answerOf(
-        links.actAs(as(contributor), links.ops.create({ pageId: "page-target", path: "taken" })),
-      );
-    });
   const conflict = { _tag: "EdgeConflict", type: "links" };
 
   it.effect.each([
@@ -1733,38 +1726,37 @@ describe("what a create discloses: nothing that tells a hidden edge from a reada
       }),
   );
 });
+/** `end` with `maxEdges: max`; absent, the end is unbounded. */
+const limitedTo = (end: EdgeEnd<never, never>, max?: number): EdgeEnd<never, never> =>
+  max === undefined ? end : { ...end, maxEdges: max };
+const bounded = (
+  limits: {
+    readonly subject?: number;
+    readonly part?: number;
+  },
+  declaration: Pick<Definition, "onConflict"> = {},
+) => {
+  const { subjects, parts } = twoReferenceLeaves();
+  return {
+    parts,
+    ...family(
+      {
+        ...declaration,
+        ends: {
+          subject: limitedTo(referenceEnd("subjectId", subjects), limits.subject),
+          part: limitedTo(referenceEnd("partId", parts), limits.part),
+        },
+      },
+      ["subjectId", "partId"],
+    ),
+  };
+};
+const link = (links: ReturnType<typeof bounded>, subjectId: string, partId: string) =>
+  links.actAs(as(contributor), links.ops.create({ subjectId, partId }));
 
 // ── Cardinality ───────────────────────────────────────────────────────
 
 describe("cardinality: an end's maxEdges is declared and enforced", () => {
-  /** `end` with `maxEdges: max`; absent, the end is unbounded. */
-  const limitedTo = (end: EdgeEnd<never, never>, max?: number): EdgeEnd<never, never> =>
-    max === undefined ? end : { ...end, maxEdges: max };
-  const bounded = (
-    limits: {
-      readonly subject?: number;
-      readonly part?: number;
-    },
-    declaration: Pick<Definition, "onConflict"> = {},
-  ) => {
-    const { subjects, parts } = twoReferenceLeaves();
-    return {
-      parts,
-      ...family(
-        {
-          ...declaration,
-          ends: {
-            subject: limitedTo(referenceEnd("subjectId", subjects), limits.subject),
-            part: limitedTo(referenceEnd("partId", parts), limits.part),
-          },
-        },
-        ["subjectId", "partId"],
-      ),
-    };
-  };
-  const link = (links: ReturnType<typeof bounded>, subjectId: string, partId: string) =>
-    links.actAs(as(contributor), links.ops.create({ subjectId, partId }));
-
   it.effect(
     "refuses a create past one node's limit, writing nothing, and bounds each node apart",
     () =>
@@ -1901,13 +1893,12 @@ describe("cardinality: an end's maxEdges is declared and enforced", () => {
       }),
   );
 });
+const withLimit = (maxEdges: number) => () =>
+  family({
+    ends: { subject: { ...referenceEnd("subjectId", makeInMemoryNodes([])), maxEdges } },
+  });
 
 describe("a family declaration is checked when it is declared", () => {
-  const withLimit = (maxEdges: number) => () =>
-    family({
-      ends: { subject: { ...referenceEnd("subjectId", makeInMemoryNodes([])), maxEdges } },
-    });
-
   it.each([Number.NaN, 1.5, 0, -1, Number.POSITIVE_INFINITY, 2 ** 53])(
     "throws EdgeDeclarationError for maxEdges %s, rather than failing open or refusing every create",
     (maxEdges) => {
@@ -1933,19 +1924,18 @@ describe("a family declaration is checked when it is declared", () => {
     );
   });
 });
+const racing = (onConflict: "fail" | "ignore") => {
+  const { subjects, parts } = twoReferenceLeaves();
+  return family(
+    {
+      ends: { subject: referenceEnd("subjectId", subjects), part: referenceEnd("partId", parts) },
+      onConflict,
+    },
+    ["subjectId", "partId"],
+  );
+};
 
 describe("a create racing another writer for the unique key", () => {
-  const racing = (onConflict: "fail" | "ignore") => {
-    const { subjects, parts } = twoReferenceLeaves();
-    return family(
-      {
-        ends: { subject: referenceEnd("subjectId", subjects), part: referenceEnd("partId", parts) },
-        onConflict,
-      },
-      ["subjectId", "partId"],
-    );
-  };
-
   it.effect("resolves to the winner's edge under `ignore`", () =>
     Effect.gen(function* () {
       const { edges, ops, actAs } = racing("ignore");
@@ -2026,12 +2016,11 @@ describe("a create racing another writer for the unique key", () => {
       }),
   );
 });
+/** `./Edges`' `qualify`: what `endpointFilter` applies to each end's leaf filter. */
+const qualify = (alias: string, filter: ListFilter<Following>) =>
+  renameColumns(filter, (column) => endpointColumn(alias, column));
 
 describe("qualifying a filter with an end's alias renames every node's column", () => {
-  /** `./Edges`' `qualify`: what `endpointFilter` applies to each end's leaf filter. */
-  const qualify = (alias: string, filter: ListFilter<Following>) =>
-    renameColumns(filter, (column) => endpointColumn(alias, column));
-
   /** Every column a filter names, depth first. */
   const columnsOf = (filter: ListFilter<Following>): ReadonlyArray<string> =>
     filter.kind === "and" || filter.kind === "or"
@@ -2080,45 +2069,44 @@ describe("qualifying a filter with an end's alias renames every node's column", 
     ).toEqual(Arr.map(filters, () => [true, false]));
   });
 });
+/** Posts (owned, with drafts) × terms (reference, with a followers column), every pair linked. */
+const curatedTaxonomy = (policy: AccessPolicy = gardeneriaPolicy) => {
+  const posts = makeInMemoryNodes(["ownerId", "visibility", "draft"]);
+  const terms = makeInMemoryNodes(["visibility", "curatorId"]);
+  const postRows = [
+    node("p-public", { ownerId: member.id, visibility: "public", draft: false }),
+    node("p-private", { ownerId: member.id, visibility: "private", draft: false }),
+    node("p-followers", { ownerId: member.id, visibility: "followers", draft: false }),
+    node("p-draft", { ownerId: otherMember.id, visibility: "public", draft: true }),
+    node("p-dead", { ownerId: member.id, visibility: "public", draft: false }, "delete"),
+  ];
+  const termRows = [
+    node("t-public", { visibility: "public", curatorId: null }),
+    node("t-private", { visibility: "private", curatorId: null }),
+    node("t-followers", { visibility: "followers", curatorId: member.id }),
+    node("t-dead", { visibility: "public", curatorId: null }, "delete"),
+  ];
+  Arr.forEach(postRows, posts.put);
+  Arr.forEach(termRows, terms.put);
+  const ends = {
+    post: ownedEnd("postId", posts),
+    term: {
+      column: "termId",
+      type: "terms",
+      access: { kind: "reference", followersOfColumn: "curatorId" },
+      nodes: terms,
+    } satisfies EdgeEnd<never, never>,
+  };
+  const links = family({ ends }, [], policy);
+  const pairs = Arr.flatMap(postRows, (post) =>
+    Arr.map(termRows, (term) => ({ postId: post.id, termId: term.id })),
+  );
+  return { ...links, postRows, termRows, pairs };
+};
 
 // ── Edge membership ──────────────────────────────────────
 
 describe("memberFilter and countBy: membership and counts never disagree with EDGE-001's per-edge predicate", () => {
-  /** Posts (owned, with drafts) × terms (reference, with a followers column), every pair linked. */
-  const taxonomy = (policy: AccessPolicy = gardeneriaPolicy) => {
-    const posts = makeInMemoryNodes(["ownerId", "visibility", "draft"]);
-    const terms = makeInMemoryNodes(["visibility", "curatorId"]);
-    const postRows = [
-      node("p-public", { ownerId: member.id, visibility: "public", draft: false }),
-      node("p-private", { ownerId: member.id, visibility: "private", draft: false }),
-      node("p-followers", { ownerId: member.id, visibility: "followers", draft: false }),
-      node("p-draft", { ownerId: otherMember.id, visibility: "public", draft: true }),
-      node("p-dead", { ownerId: member.id, visibility: "public", draft: false }, "delete"),
-    ];
-    const termRows = [
-      node("t-public", { visibility: "public", curatorId: null }),
-      node("t-private", { visibility: "private", curatorId: null }),
-      node("t-followers", { visibility: "followers", curatorId: member.id }),
-      node("t-dead", { visibility: "public", curatorId: null }, "delete"),
-    ];
-    Arr.forEach(postRows, posts.put);
-    Arr.forEach(termRows, terms.put);
-    const ends = {
-      post: ownedEnd("postId", posts),
-      term: {
-        column: "termId",
-        type: "terms",
-        access: { kind: "reference", followersOfColumn: "curatorId" },
-        nodes: terms,
-      } satisfies EdgeEnd<never, never>,
-    };
-    const links = family({ ends }, [], policy);
-    const pairs = Arr.flatMap(postRows, (post) =>
-      Arr.map(termRows, (term) => ({ postId: post.id, termId: term.id })),
-    );
-    return { ...links, postRows, termRows, pairs };
-  };
-
   const policies = [
     ["gardeneria's rungs", gardeneriaPolicy],
     ["split rungs", splitPolicy],
@@ -2133,7 +2121,7 @@ describe("memberFilter and countBy: membership and counts never disagree with ED
 
   it.effect.each(cases)("for $label", ({ policy, viewer }) =>
     Effect.gen(function* () {
-      const { edges, ops, actAs, postRows, termRows, pairs } = taxonomy(policy);
+      const { edges, ops, actAs, postRows, termRows, pairs } = curatedTaxonomy(policy);
       const ids = yield* Effect.forEach(
         pairs,
         (pair) => Effect.flatMap(edges.insert(pair), Effect.fromOption),
@@ -2180,7 +2168,7 @@ describe("memberFilter and countBy: membership and counts never disagree with ED
 
   it.effect("a post reached only through a hidden edge is not a member", () =>
     Effect.gen(function* () {
-      const { edges, ops, actAs, postRows } = taxonomy();
+      const { edges, ops, actAs, postRows } = curatedTaxonomy();
       yield* edges.insert({ postId: "p-public", termId: "t-private" });
       yield* edges.insert({ postId: "p-private", termId: "t-public" });
       const members = (who: Viewer, termIds: ReadonlyArray<string>) =>
@@ -2207,7 +2195,7 @@ describe("memberFilter and countBy: membership and counts never disagree with ED
 
   it.effect("a NULL or absent id is never a member", () =>
     Effect.gen(function* () {
-      const { edges, ops, actAs } = taxonomy();
+      const { edges, ops, actAs } = curatedTaxonomy();
       yield* edges.insert({ postId: "p-public", termId: "t-public" });
       const filter = yield* actAs(anonymous, ops.memberFilter("post", ["t-public"]));
       const context = {
@@ -2223,7 +2211,7 @@ describe("memberFilter and countBy: membership and counts never disagree with ED
     "fails closed as never, without asking the store, for no ids, too many, or a misnamed end",
     () =>
       Effect.gen(function* () {
-        const { edges, postRows } = taxonomy();
+        const { edges, postRows } = curatedTaxonomy();
         let asked = 0;
         const counting: InMemoryEdgeStore = {
           ...edges,
@@ -2270,7 +2258,7 @@ describe("memberFilter and countBy: membership and counts never disagree with ED
     "countBy for $label: each term's count is the edges the viewer can get",
     ({ policy, viewer }) =>
       Effect.gen(function* () {
-        const { edges, ops, actAs, termRows, pairs } = taxonomy(policy);
+        const { edges, ops, actAs, termRows, pairs } = curatedTaxonomy(policy);
         const ids = yield* Effect.forEach(
           pairs,
           (pair) => Effect.flatMap(edges.insert(pair), Effect.fromOption),
@@ -2306,7 +2294,7 @@ describe("memberFilter and countBy: membership and counts never disagree with ED
 
   it.effect("countBy narrows by the family's own predicate", () =>
     Effect.gen(function* () {
-      const { edges, ops, actAs } = taxonomy();
+      const { edges, ops, actAs } = curatedTaxonomy();
       yield* edges.insert({ postId: "p-public", termId: "t-public" });
       yield* edges.insert({ postId: "p-followers", termId: "t-public" });
       const counted = yield* actAs(
@@ -2319,7 +2307,7 @@ describe("memberFilter and countBy: membership and counts never disagree with ED
 
   it.effect("countBy reads the store once, and fails closed to 0 without asking it", () =>
     Effect.gen(function* () {
-      const { edges, postRows } = taxonomy();
+      const { edges, postRows } = curatedTaxonomy();
       let asked = 0;
       const counting: InMemoryEdgeStore = {
         ...edges,
@@ -2361,44 +2349,43 @@ describe("memberFilter and countBy: membership and counts never disagree with ED
     }),
   );
 });
+/** Posts (owned, with drafts) × terms (reference): a few chosen edges, so some posts are in no set. */
+const plainTaxonomy = (policy: AccessPolicy = gardeneriaPolicy) => {
+  const posts = makeInMemoryNodes(["ownerId", "visibility", "draft"]);
+  const terms = makeInMemoryNodes(["visibility"]);
+  const postRows = [
+    node("p-public", { ownerId: member.id, visibility: "public", draft: false }),
+    node("p-private", { ownerId: member.id, visibility: "private", draft: false }),
+    node("p-followers", { ownerId: member.id, visibility: "followers", draft: false }),
+    node("p-draft", { ownerId: otherMember.id, visibility: "public", draft: true }),
+    node("p-alone", { ownerId: otherMember.id, visibility: "public", draft: false }),
+    node("p-dead", { ownerId: member.id, visibility: "public", draft: false }, "delete"),
+  ];
+  const termRows = [
+    node("t-public", { visibility: "public" }),
+    node("t-private", { visibility: "private" }),
+    node("t-dead", { visibility: "public" }, "delete"),
+  ];
+  Arr.forEach(postRows, posts.put);
+  Arr.forEach(termRows, terms.put);
+  const links = family(
+    { ends: { post: ownedEnd("postId", posts), term: referenceEnd("termId", terms) } },
+    [],
+    policy,
+  );
+  const pairs = [
+    { postId: "p-public", termId: "t-public" },
+    { postId: "p-public", termId: "t-private" },
+    { postId: "p-private", termId: "t-public" },
+    { postId: "p-followers", termId: "t-private" },
+    { postId: "p-draft", termId: "t-public" },
+    { postId: "p-dead", termId: "t-public" },
+    { postId: "p-alone", termId: "t-dead" },
+  ];
+  return { ...links, postRows, termRows, pairs };
+};
 
 describe("nonMemberFilter: the complement of memberFilter under EDGE-001", () => {
-  /** Posts (owned, with drafts) × terms (reference): a few chosen edges, so some posts are in no set. */
-  const taxonomy = (policy: AccessPolicy = gardeneriaPolicy) => {
-    const posts = makeInMemoryNodes(["ownerId", "visibility", "draft"]);
-    const terms = makeInMemoryNodes(["visibility"]);
-    const postRows = [
-      node("p-public", { ownerId: member.id, visibility: "public", draft: false }),
-      node("p-private", { ownerId: member.id, visibility: "private", draft: false }),
-      node("p-followers", { ownerId: member.id, visibility: "followers", draft: false }),
-      node("p-draft", { ownerId: otherMember.id, visibility: "public", draft: true }),
-      node("p-alone", { ownerId: otherMember.id, visibility: "public", draft: false }),
-      node("p-dead", { ownerId: member.id, visibility: "public", draft: false }, "delete"),
-    ];
-    const termRows = [
-      node("t-public", { visibility: "public" }),
-      node("t-private", { visibility: "private" }),
-      node("t-dead", { visibility: "public" }, "delete"),
-    ];
-    Arr.forEach(postRows, posts.put);
-    Arr.forEach(termRows, terms.put);
-    const links = family(
-      { ends: { post: ownedEnd("postId", posts), term: referenceEnd("termId", terms) } },
-      [],
-      policy,
-    );
-    const pairs = [
-      { postId: "p-public", termId: "t-public" },
-      { postId: "p-public", termId: "t-private" },
-      { postId: "p-private", termId: "t-public" },
-      { postId: "p-followers", termId: "t-private" },
-      { postId: "p-draft", termId: "t-public" },
-      { postId: "p-dead", termId: "t-public" },
-      { postId: "p-alone", termId: "t-dead" },
-    ];
-    return { ...links, postRows, termRows, pairs };
-  };
-
   const context = {
     now: NOW,
     contains: (set: Following, value: ColumnValue) => P.isString(value) && HashSet.has(set, value),
@@ -2418,7 +2405,7 @@ describe("nonMemberFilter: the complement of memberFilter under EDGE-001", () =>
 
   it.effect.each(cases)("partitions the rows with memberFilter, for $label", ({ policy, viewer }) =>
     Effect.gen(function* () {
-      const { edges, ops, actAs, postRows, termRows, pairs } = taxonomy(policy);
+      const { edges, ops, actAs, postRows, termRows, pairs } = plainTaxonomy(policy);
       yield* Effect.forEach(pairs, edges.insert, { concurrency: 1, discard: true });
       const asked = [...termRows.map((term) => [term.id]), termRows.map((term) => term.id)];
       const answers = yield* actAs(
@@ -2446,7 +2433,7 @@ describe("nonMemberFilter: the complement of memberFilter under EDGE-001", () =>
 
   it.effect("a post whose only edge to the named terms is hidden is not excluded", () =>
     Effect.gen(function* () {
-      const { edges, ops, actAs, postRows } = taxonomy();
+      const { edges, ops, actAs, postRows } = plainTaxonomy();
       yield* edges.insert({ postId: "p-public", termId: "t-private" });
       yield* edges.insert({ postId: "p-private", termId: "t-public" });
       const kept = (who: Viewer, termIds: ReadonlyArray<string>) =>
@@ -2470,7 +2457,7 @@ describe("nonMemberFilter: the complement of memberFilter under EDGE-001", () =>
 
   it.effect("a NULL or absent id is never excluded", () =>
     Effect.gen(function* () {
-      const { edges, ops, actAs } = taxonomy();
+      const { edges, ops, actAs } = plainTaxonomy();
       yield* edges.insert({ postId: "p-public", termId: "t-public" });
       const filter = yield* actAs(anonymous, ops.nonMemberFilter("post", ["t-public"]));
       const everything = { now: NOW, contains: () => true };
@@ -2484,7 +2471,7 @@ describe("nonMemberFilter: the complement of memberFilter under EDGE-001", () =>
     "fails closed as always, without asking the store, for no ids, too many, or a misnamed end",
     () =>
       Effect.gen(function* () {
-        const { edges, postRows } = taxonomy();
+        const { edges, postRows } = plainTaxonomy();
         let asked = 0;
         const counting: InMemoryEdgeStore = {
           ...edges,
@@ -2649,6 +2636,12 @@ describe("memberFilter through the member leaf's own list", () => {
           toResource: (row: EdgeRow) => row,
           writeGate: () => Effect.void,
         });
+        const followingPage = (where: ListFilter<Following>) =>
+          Effect.map(
+            posts.list({ limit: 100, offset: 0, includeDeleted: false, where }),
+            (listed) => Arr.sort(listed.rows, Order.String),
+          );
+
         const [inRows, outRows, allRows] = yield* Effect.gen(function* () {
           yield* Effect.forEach(
             [
@@ -2674,15 +2667,10 @@ describe("memberFilter through the member leaf's own list", () => {
           );
           who = viewer;
           const named = ["t-public"];
-          const page = (where: ListFilter<Following>) =>
-            Effect.map(
-              posts.list({ limit: 100, offset: 0, includeDeleted: false, where }),
-              (listed) => Arr.sort(listed.rows, Order.String),
-            );
           return [
-            yield* page(yield* links.memberFilter("post", named)),
-            yield* page(yield* links.nonMemberFilter("post", named)),
-            yield* page(always),
+            yield* followingPage(yield* links.memberFilter("post", named)),
+            yield* followingPage(yield* links.nonMemberFilter("post", named)),
+            yield* followingPage(always),
           ] as const;
         });
         expect(Arr.sort([...inRows, ...outRows], Order.String)).toEqual(allRows);
@@ -2692,6 +2680,28 @@ describe("memberFilter through the member leaf's own list", () => {
       }),
   );
 });
+const showGroup = (groupId: ColumnValue | typeof ABSENT) =>
+  groupId === ABSENT ? "absent" : showValue(groupId);
+
+const withGroup = (
+  columns: { readonly [column: string]: ColumnValue },
+  groupId: ColumnValue | typeof ABSENT,
+) => (groupId === ABSENT ? columns : { ...columns, groupId });
+
+const ownedGroupEnd = (columns: ReadonlyArray<string>): EdgeEnd<never, never> => ({
+  column: "entryId",
+  type: "entries",
+  access: ownedAccess({ draft: true, group: true }),
+  nodes: makeInMemoryNodes(columns),
+});
+
+const referenceGroupEnd = (columns: ReadonlyArray<string>): EdgeEnd<never, never> => ({
+  column: "subjectId",
+  type: "subjects",
+  access: { kind: "reference", groupColumn: "groupId" },
+  nodes: makeInMemoryNodes(columns),
+});
+const isLive = (row: LeafRow) => row.action !== "delete";
 
 describe("EDGE-001: a `group` end reads to its group's members, filter and predicate alike", () => {
   /** `follower` is a member of `g-1`; nobody belongs to anything else. */
@@ -2702,13 +2712,6 @@ describe("EDGE-001: a `group` end reads to its group's members, filter and predi
     groups: (accountId) => (accountId === follower.id ? HashSet.make("g-1") : HashSet.empty()),
   };
   const groupIds: ReadonlyArray<ColumnValue | typeof ABSENT> = ["g-1", "g-2", null, 7, ABSENT];
-  const showGroup = (groupId: ColumnValue | typeof ABSENT) =>
-    groupId === ABSENT ? "absent" : showValue(groupId);
-  const withGroup = (
-    columns: { readonly [column: string]: ColumnValue },
-    groupId: ColumnValue | typeof ABSENT,
-  ) => (groupId === ABSENT ? columns : { ...columns, groupId });
-
   const ownedRows = Arr.flatMap(actions, (action) =>
     Arr.flatMap(["public", "group", "private"], (visibility) =>
       Arr.flatMap([false, true], (draft) =>
@@ -2724,12 +2727,6 @@ describe("EDGE-001: a `group` end reads to its group's members, filter and predi
       ),
     ),
   );
-  const ownedGroupEnd = (columns: ReadonlyArray<string>): EdgeEnd<never, never> => ({
-    column: "entryId",
-    type: "entries",
-    access: ownedAccess({ draft: true, group: true }),
-    nodes: makeInMemoryNodes(columns),
-  });
   const referenceRows = Arr.flatMap(actions, (action) =>
     Arr.flatMap(["public", "group", "private"], (visibility) =>
       Arr.map(groupIds, (groupId) =>
@@ -2741,12 +2738,6 @@ describe("EDGE-001: a `group` end reads to its group's members, filter and predi
       ),
     ),
   );
-  const referenceGroupEnd = (columns: ReadonlyArray<string>): EdgeEnd<never, never> => ({
-    column: "subjectId",
-    type: "subjects",
-    access: { kind: "reference", groupColumn: "groupId" },
-    nodes: makeInMemoryNodes(columns),
-  });
   const everyone = [...viewers, ["an admin", as(admin)] as const];
   const cases = Arr.flatMap(
     [
@@ -2787,7 +2778,6 @@ describe("EDGE-001: a `group` end reads to its group's members, filter and predi
     "is not vacuous: the member reads exactly the live, published group rows of their group",
     () =>
       Effect.gen(function* () {
-        const live = (row: LeafRow) => row.action !== "delete";
         const owned = yield* readings(
           ownedGroupEnd(["ownerId", "visibility", "draft", "groupId"]),
           as(follower),
@@ -2798,7 +2788,7 @@ describe("EDGE-001: a `group` end reads to its group's members, filter and predi
           ownedRows
             .filter(
               (row) =>
-                live(row) &&
+                isLive(row) &&
                 row["draft"] === false &&
                 (row["visibility"] === "public" ||
                   (row["visibility"] === "group" && row["groupId"] === "g-1")),
@@ -2815,7 +2805,7 @@ describe("EDGE-001: a `group` end reads to its group's members, filter and predi
           referenceRows
             .filter(
               (row) =>
-                live(row) &&
+                isLive(row) &&
                 (row["visibility"] === "public" ||
                   (row["visibility"] === "group" && row["groupId"] === "g-1")),
             )

@@ -67,6 +67,8 @@ export const errorBody = (error: WpRestError): Schema.JsonObject => ({
 /** A weak entity tag over a body's content hash: `W/"<hash>"`. */
 export const weakEtag = (hash: string): string => `W/"${hash}"`;
 
+const opaque = (tag: string) => (tag.startsWith("W/") ? tag.slice(2) : tag);
+
 /**
  * Whether an `If-None-Match` header matches `etag`, by the weak comparison
  * RFC 9110 §13.1.2 prescribes for it: `*` matches any current
@@ -74,7 +76,6 @@ export const weakEtag = (hash: string): string => `W/"${hash}"`;
  * does, whether either side is marked weak.
  */
 export const matchesIfNoneMatch = (header: string, etag: string): boolean => {
-  const opaque = (tag: string) => (tag.startsWith("W/") ? tag.slice(2) : tag);
   return header
     .split(",")
     .map((tag) => tag.trim())
@@ -136,9 +137,10 @@ export interface Query {
   readonly pairs: ReadonlyArray<readonly [string, string]>;
 }
 
+const bare = (key: string) => (key.endsWith("[]") ? key.slice(0, -2) : key);
+
 /** Read a query string's pairs as {@link Query}. */
 export const readQuery = (pairs: ReadonlyArray<readonly [string, string]>): Query => {
-  const bare = (key: string) => (key.endsWith("[]") ? key.slice(0, -2) : key);
   const valuesOf = (name: string) =>
     Arr.filter(pairs, ([key]) => bare(key) === name).map(([key, value]) => ({
       listed: key.endsWith("[]"),

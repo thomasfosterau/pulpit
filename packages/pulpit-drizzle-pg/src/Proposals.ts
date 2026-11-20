@@ -185,6 +185,16 @@ const toRow = (row: typeof StoredRow.Type): ProposalRow => ({
   appliedVersion: Option.fromNullishOr(row.appliedVersion),
 });
 
+const listingOf = ({ targetVersion, ...stored }: { readonly targetVersion: unknown }) =>
+  Effect.zipWith(
+    Effect.orDie(decodeStored(stored)),
+    Effect.orDie(decodeHead(targetVersion)),
+    (row, head): ProposalListing => ({
+      row: toRow(row),
+      targetVersion: Option.fromNullishOr(head),
+    }),
+  );
+
 /**
  * Bind the kernel's `ProposalStore` to the proposal table, in the caller's
  * `CurrentTransaction`. `root` is the tree's root tables (`tables.root`),
@@ -247,16 +257,6 @@ export const makeProposalStore = <I, Relations extends AnyRelations>(config: {
     status: table.status,
     targetOwnerId: owners.ownerId,
   };
-
-  const listingOf = ({ targetVersion, ...stored }: { readonly targetVersion: unknown }) =>
-    Effect.zipWith(
-      Effect.orDie(decodeStored(stored)),
-      Effect.orDie(decodeHead(targetVersion)),
-      (row, head): ProposalListing => ({
-        row: toRow(row),
-        targetVersion: Option.fromNullishOr(head),
-      }),
-    );
 
   return {
     mintId: Effect.flatMap(CurrentTransaction, mintUuid),

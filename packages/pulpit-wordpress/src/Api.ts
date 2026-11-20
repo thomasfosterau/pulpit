@@ -1586,6 +1586,118 @@ type LinkEntry = readonly [rel: string, links: Schema.Json];
 
 // ── The API ───────────────────────────────────────────────────────────
 
+const whenSome = <A>(value: Option.Option<A>, filter: (value: A) => ListFilter<never>) =>
+  Option.match(value, { onNone: () => always, onSome: filter });
+
+const unless = (values: ReadonlyArray<string>, filter: () => ListFilter<never>) =>
+  Arr.isReadonlyArrayNonEmpty(values) ? filter() : always;
+
+/**
+ * `column NOT IN values` as WordPress reads it: an unset column is core's
+ * `0` (a top-level page's `post_parent`), which no exclusion names, so the
+ * row stays; a bare `noneOf` drops it, as SQL's `NULL <> ALL(…)` does.
+ */
+const excluding = (column: string, values: ReadonlyArray<string>) =>
+  or<never>(isNull(column), noneOf(column, values));
+
+const mediaFields = (mediaOf: MediaFields) => ({
+  alt_text: mediaOf.altText,
+  media_type: mediaOf.mediaType,
+  mime_type: mediaOf.mimeType,
+  media_details: mediaOf.mediaDetails,
+});
+
+const embeddable = (href: string): Schema.Json => [{ embeddable: true, href }];
+
+/** A node's wire id, or `0` (WordPress's "none") for no node or one the response may not name. */
+const wireOf = (related: Related, id: Option.Option<string>): WireId =>
+  Option.getOrElse(
+    Option.flatMap(id, (node) => HashMap.get(related.wire, node)),
+    () => 0,
+  );
+
+/** An item's terms in one taxonomy, as wire ids (none when the taxonomy doesn't apply). */
+const termIdsOf = (related: Related, taxonomy: Taxonomy, itemId: string) =>
+  Option.getOrElse(
+    Option.flatMap(
+      Arr.findFirst(related.terms, ([held]) => held === taxonomy),
+      ([, byItem]) => HashMap.get(byItem, itemId),
+    ),
+    () => [],
+  );
+
+/**
+ * A single-item response with its weak `ETag`:
+ * the SHA-256 of the body, so it holds with `_embed`, `_fields` and
+ * `context`, whatever the item embeds. A request whose `If-None-Match`
+ * matches is `304` with the tag and `Cache-Control` alone. An error, and
+ * any other route, is left as it is.
+ */
+const tagged =
+  (request: WordPressRequest) =>
+  (response: WordPressResponse): Effect.Effect<WordPressResponse> =>
+    Option.match(response.body, {
+      onNone: () => Effect.succeed(response),
+      onSome: (body) =>
+        Effect.gen(function* () {
+          const text = yield* Effect.orDie(encodeBody(body));
+          const etag = weakEtag(yield* sha256Hex(new TextEncoder().encode(text)));
+          const matched =
+            request.ifNoneMatch !== undefined && matchesIfNoneMatch(request.ifNoneMatch, etag);
+          return matched
+            ? {
+                status: 304,
+                headers: {
+                  etag,
+                  ...R.filter(response.headers, (_, name) => name === "cache-control"),
+                },
+                body: Option.none(),
+              }
+            : { ...response, headers: { ...response.headers, etag } };
+        }),
+    });
+
+const rendered = (related: Related, id: string, field: string): string =>
+  Option.getOrElse(HashMap.get(related.rendered, renderKey(id, field)), () => "");
+
+/** Whether everything a response carries may be served from a public cache (`CACHE-AUTH-005`). */
+const publicly = (
+  viewer: Viewer,
+  items: ReadonlyArray<ShownItem>,
+  related: Related,
+  embed: (rel: string) => boolean,
+) =>
+  Option.isNone(viewer) &&
+  Arr.every(items, (item) => item.serveable) &&
+  (!embed("wp:featuredmedia") ||
+    Arr.every(HashMap.toValues(related.media), (item) => item.serveable)) &&
+  (!embed("up") || Arr.every(HashMap.toValues(related.parents), (item) => item.serveable)) &&
+  (!embed("wp:term") || Arr.every(HashMap.toValues(related.termItems), (term) => term.serveable));
+
+const invalidUser = () =>
+  new WpRestError({ code: "rest_user_invalid_id", message: "Invalid user ID.", status: 404 });
+
+const invalidTerm = () =>
+  new WpRestError({ code: "rest_term_invalid", message: "Term does not exist.", status: 404 });
+
+const editRefused = (viewer: Viewer, message: string) =>
+  new WpRestError({
+    code: "rest_forbidden_context",
+    message,
+    status: authorizationStatus(Option.isSome(viewer)),
+  });
+
+const cacheControl = (isPublic: boolean): readonly [string, string] => [
+  "cache-control",
+  isPublic ? "public" : "private, no-store",
+];
+
+const termWires = (related: Related, taxonomy: Taxonomy, itemId: string) =>
+  Arr.getSomes(termIdsOf(related, taxonomy, itemId).map((id) => HashMap.get(related.wire, id)));
+
+const whenGiven = <A>(value: Option.Option<A>, filter: (value: A) => ListFilter<never>) =>
+  Option.match(value, { onNone: () => always, onSome: filter });
+
 /**
  * Declare a `wp/v2` read API over the leaves an application binds to
  * WordPress's post types. Its `handle` answers every request under the
@@ -1834,28 +1946,6 @@ export const defineWordPress = <R, Following = never>(
       } satisfies Related;
     });
 
-  /** A node's wire id, or `0` (WordPress's "none") for no node or one the response may not name. */
-  const wireOf = (related: Related, id: Option.Option<string>): WireId =>
-    Option.getOrElse(
-      Option.flatMap(id, (node) => HashMap.get(related.wire, node)),
-      () => 0,
-    );
-
-  /** An item's terms in one taxonomy, as wire ids (none when the taxonomy doesn't apply). */
-  const termIdsOf = (related: Related, taxonomy: Taxonomy, itemId: string) =>
-    Option.getOrElse(
-      Option.flatMap(
-        Arr.findFirst(related.terms, ([held]) => held === taxonomy),
-        ([, byItem]) => HashMap.get(byItem, itemId),
-      ),
-      () => [],
-    );
-  const termWires = (related: Related, taxonomy: Taxonomy, itemId: string) =>
-    Arr.getSomes(termIdsOf(related, taxonomy, itemId).map((id) => HashMap.get(related.wire, id)));
-
-  const rendered = (related: Related, id: string, field: string): string =>
-    Option.getOrElse(HashMap.get(related.rendered, renderKey(id, field)), () => "");
-
   const linksOf = (type: PostType, item: ShownItem, related: Related): Schema.JsonObject => {
     const { fields } = item;
     const wireId = wireOf(related, Option.some(fields.id));
@@ -1864,7 +1954,6 @@ export const defineWordPress = <R, Following = never>(
     );
     const featured = Option.filter(fields.featuredMedia, (id) => HashMap.has(related.media, id));
     const parent = Option.filter(fields.parent, (id) => HashMap.has(related.parents, id));
-    const embeddable = (href: string): Schema.Json => [{ embeddable: true, href }];
     const entries: ReadonlyArray<LinkEntry> = [
       [
         "self",
@@ -1967,12 +2056,6 @@ export const defineWordPress = <R, Following = never>(
     const content = { rendered: rendered(related, fields.id, "content"), protected: false };
     const caption = { rendered: rendered(related, fields.id, "caption") };
     const media = Option.fromNullishOr(fields.media);
-    const mediaFields = (mediaOf: MediaFields) => ({
-      alt_text: mediaOf.altText,
-      media_type: mediaOf.mediaType,
-      mime_type: mediaOf.mimeType,
-      media_details: mediaOf.mediaDetails,
-    });
     const _links = linksOf(type, item, related);
     /** The term fields of a page or attachment a taxonomy is bound to (a post always has both). */
     const termFields = R.fromEntries(
@@ -2254,20 +2337,6 @@ export const defineWordPress = <R, Following = never>(
       ]),
     );
 
-  /** Whether everything a response carries may be served from a public cache (`CACHE-AUTH-005`). */
-  const publicly = (
-    viewer: Viewer,
-    items: ReadonlyArray<ShownItem>,
-    related: Related,
-    embed: (rel: string) => boolean,
-  ) =>
-    Option.isNone(viewer) &&
-    Arr.every(items, (item) => item.serveable) &&
-    (!embed("wp:featuredmedia") ||
-      Arr.every(HashMap.toValues(related.media), (item) => item.serveable)) &&
-    (!embed("up") || Arr.every(HashMap.toValues(related.parents), (item) => item.serveable)) &&
-    (!embed("wp:term") || Arr.every(HashMap.toValues(related.termItems), (term) => term.serveable));
-
   const respond = (
     status: number,
     body: Schema.Json,
@@ -2284,18 +2353,6 @@ export const defineWordPress = <R, Following = never>(
       body: Option.some(body),
     };
   };
-
-  const cacheControl = (isPublic: boolean): readonly [string, string] => [
-    "cache-control",
-    isPublic ? "public" : "private, no-store",
-  ];
-
-  const editRefused = (viewer: Viewer, message: string) =>
-    new WpRestError({
-      code: "rest_forbidden_context",
-      message,
-      status: authorizationStatus(Option.isSome(viewer)),
-    });
 
   // ── Handlers ────────────────────────────────────────────────────────
 
@@ -2407,37 +2464,6 @@ export const defineWordPress = <R, Following = never>(
       ]);
     });
 
-  /**
-   * A single-item response with its weak `ETag`:
-   * the SHA-256 of the body, so it holds with `_embed`, `_fields` and
-   * `context`, whatever the item embeds. A request whose `If-None-Match`
-   * matches is `304` with the tag and `Cache-Control` alone. An error, and
-   * any other route, is left as it is.
-   */
-  const tagged =
-    (request: WordPressRequest) =>
-    (response: WordPressResponse): Effect.Effect<WordPressResponse> =>
-      Option.match(response.body, {
-        onNone: () => Effect.succeed(response),
-        onSome: (body) =>
-          Effect.gen(function* () {
-            const text = yield* Effect.orDie(encodeBody(body));
-            const etag = weakEtag(yield* sha256Hex(new TextEncoder().encode(text)));
-            const matched =
-              request.ifNoneMatch !== undefined && matchesIfNoneMatch(request.ifNoneMatch, etag);
-            return matched
-              ? {
-                  status: 304,
-                  headers: {
-                    etag,
-                    ...R.filter(response.headers, (_, name) => name === "cache-control"),
-                  },
-                  body: Option.none(),
-                }
-              : { ...response, headers: { ...response.headers, etag } };
-          }),
-      });
-
   /** The decoded node ids of each id list, in one `decode`. */
   const decodeLists = (
     wireIds: WireIds<WireId, unknown, unknown, R>,
@@ -2503,37 +2529,30 @@ export const defineWordPress = <R, Following = never>(
         filter: (column: string) => ListFilter<never>,
       ): ListFilter<never> =>
         Option.match(columnOf(columns, key), { onNone: () => never, onSome: filter });
-      const when = <A>(value: Option.Option<A>, filter: (value: A) => ListFilter<never>) =>
-        Option.match(value, { onNone: () => always, onSome: filter });
-      /**
-       * `column NOT IN values` as WordPress reads it: an unset column is core's
-       * `0` (a top-level page's `post_parent`), which no exclusion names, so the
-       * row stays; a bare `noneOf` drops it, as SQL's `NULL <> ALL(…)` does.
-       */
-      const excluding = (column: string, values: ReadonlyArray<string>) =>
-        or<never>(isNull(column), noneOf(column, values));
-      const unless = (values: ReadonlyArray<string>, filter: () => ListFilter<never>) =>
-        Arr.isReadonlyArrayNonEmpty(values) ? filter() : always;
       const where = and<Following>(
         or<never>(...params.statuses.map((status) => statusFilter(type, columns, status))),
-        when(params.include, () => anyOf("id", include)),
+        whenGiven(params.include, () => anyOf("id", include)),
         unless(exclude, () => noneOf("id", exclude)),
-        when(params.slug, (slugs) => anyOf(columns.slug, slugs)),
-        when(params.author, () => onColumn("author", (column) => anyOf(column, author))),
+        whenGiven(params.slug, (slugs) => anyOf(columns.slug, slugs)),
+        whenGiven(params.author, () => onColumn("author", (column) => anyOf(column, author))),
         unless(authorExclude, () =>
           onColumn("author", (column) => excluding(column, authorExclude)),
         ),
-        when(params.parent, () => onColumn("parent", (column) => anyOf(column, parent))),
+        whenGiven(params.parent, () => onColumn("parent", (column) => anyOf(column, parent))),
         unless(parentExclude, () =>
           onColumn("parent", (column) => excluding(column, parentExclude)),
         ),
-        when(params.menuOrder, (value) => onColumn("menuOrder", (column) => eq(column, value))),
-        when(params.mimeType, (value) => onColumn("mimeType", (column) => eq(column, value))),
-        when(params.mediaType, (types) => onColumn("mediaType", (column) => anyOf(column, types))),
-        when(params.after, (at) => gt(columns.date, at)),
-        when(params.before, (at) => lt(columns.date, at)),
-        when(params.modifiedAfter, (at) => gt(columns.modified, at)),
-        when(params.modifiedBefore, (at) => lt(columns.modified, at)),
+        whenGiven(params.menuOrder, (value) =>
+          onColumn("menuOrder", (column) => eq(column, value)),
+        ),
+        whenGiven(params.mimeType, (value) => onColumn("mimeType", (column) => eq(column, value))),
+        whenGiven(params.mediaType, (types) =>
+          onColumn("mediaType", (column) => anyOf(column, types)),
+        ),
+        whenGiven(params.after, (at) => gt(columns.date, at)),
+        whenGiven(params.before, (at) => lt(columns.date, at)),
+        whenGiven(params.modifiedAfter, (at) => gt(columns.modified, at)),
+        whenGiven(params.modifiedBefore, (at) => lt(columns.modified, at)),
         membership,
       );
       const sortBy = Match.value(params.orderby).pipe(
@@ -2669,9 +2688,6 @@ export const defineWordPress = <R, Following = never>(
     });
 
   // ── Terms ───────────────────────────────────────────────────────────
-
-  const invalidTerm = () =>
-    new WpRestError({ code: "rest_term_invalid", message: "Term does not exist.", status: 404 });
 
   /** The readable parents of `terms` (one `getMany`), so a hidden parent is `0`. */
   const readableParents = (
@@ -2853,19 +2869,17 @@ export const defineWordPress = <R, Following = never>(
             }),
           )
         : Option.none<ReadonlyArray<string>>();
-      const when = <A>(value: Option.Option<A>, filter: (value: A) => ListFilter<never>) =>
-        Option.match(value, { onNone: () => always, onSome: filter });
       const where = and<never>(
-        when(params.include, () => anyOf("id", include)),
+        whenSome(params.include, () => anyOf("id", include)),
         Arr.isReadonlyArrayNonEmpty(exclude) ? noneOf("id", exclude) : always,
-        when(params.slug, (slugs) => anyOf(columns.slug, slugs)),
-        when(params.parent, (wire) =>
+        whenSome(params.slug, (slugs) => anyOf(columns.slug, slugs)),
+        whenSome(params.parent, (wire) =>
           Option.match(Option.fromNullishOr(columns.parent), {
             onNone: () => never,
             onSome: (column) => (wire === 0 ? isNull(column) : anyOf(column, parent)),
           }),
         ),
-        when(ofPost, (termIds) => anyOf("id", termIds)),
+        whenSome(ofPost, (termIds) => anyOf("id", termIds)),
       );
       const column = Match.value(params.orderby).pipe(
         Match.when("id", () => columns.id ?? "id"),
@@ -2918,9 +2932,6 @@ export const defineWordPress = <R, Following = never>(
     });
 
   // ── Users ───────────────────────────────────────────────────────────
-
-  const invalidUser = () =>
-    new WpRestError({ code: "rest_user_invalid_id", message: "Invalid user ID.", status: 404 });
 
   /**
    * The accounts owning a row the viewer may list, across every bound post

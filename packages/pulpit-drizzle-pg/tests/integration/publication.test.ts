@@ -250,6 +250,11 @@ describe("the publication log", () => {
     }),
   );
 });
+const byId = (rows: ReadonlyArray<{ readonly id: string }>) =>
+  Arr.sort(
+    Arr.map(rows, (row) => row.id),
+    Str.Order,
+  );
 
 describe("the live view agrees with the in-memory one", () => {
   it.live("get / getMany read each node's live row, if it has one", () =>
@@ -269,11 +274,6 @@ describe("the live view agrees with the in-memory one", () => {
       expect(fromSql).toEqual(fromMemory);
       const many = yield* run(gated.live.getMany([...ids, "x"]));
       const memoryMany = yield* memory.live.getMany(ids);
-      const byId = (rows: ReadonlyArray<{ readonly id: string }>) =>
-        Arr.sort(
-          Arr.map(rows, (row) => row.id),
-          Str.Order,
-        );
       expect(byId(many)).toEqual(byId(memoryMany));
     }),
   );

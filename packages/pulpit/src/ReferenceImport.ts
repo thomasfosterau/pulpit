@@ -406,6 +406,11 @@ type Outcome =
   | { readonly kind: "unchanged" }
   | { readonly kind: "conflict"; readonly conflict: ImportConflict };
 
+const conflict = (externalId: string, reason: ImportConflictReason): Outcome => ({
+  kind: "conflict",
+  conflict: { externalId, reason },
+});
+
 /**
  * Bind an external reference import to a reference leaf (see the module
  * doc). The leaf's operations are rebound to the declared actor for
@@ -493,11 +498,6 @@ export const defineReferenceImport = <Row extends LeafRow, Resource, Following, 
     HashSet.has(authorities, authority)
       ? Effect.void
       : Effect.fail(new UnknownAuthority({ type, authority }));
-
-  const conflict = (externalId: string, reason: ImportConflictReason): Outcome => ({
-    kind: "conflict",
-    conflict: { externalId, reason },
-  });
 
   /** A record's write, with every race, hook refusal and tombstone settled as a conflict. */
   const settled = <X>(externalId: string, write: Effect.Effect<Outcome, X, R>) =>

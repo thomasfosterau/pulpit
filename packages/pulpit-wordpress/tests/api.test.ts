@@ -191,15 +191,16 @@ const titleBranch = (rows: ReadonlyArray<LeafRow>) =>
     now: NOW,
   });
 
+/** A chain and the current-version view over it. */
+const chainStore = (columns: ReadonlyArray<string>) => {
+  const chain = makeInMemoryVersionChain("posts");
+  return { chain, leaves: makeInMemoryLeafStore(chain, { columns, now: NOW }) };
+};
+
 const site = (options: SiteOptions = {}) => {
   let viewer: Viewer = Option.none();
   const followers = makeInMemoryFollowers([]);
   const viewerSeam = Effect.sync(() => viewer);
-  /** A chain and the current-version view over it. */
-  const store = (columns: ReadonlyArray<string>) => {
-    const chain = makeInMemoryVersionChain("posts");
-    return { chain, leaves: makeInMemoryLeafStore(chain, { columns, now: NOW }) };
-  };
   /** The posts' live pointer, when gated: the publication log and the head view with `draft` computed from it. */
   const gatedPosts = (() => {
     const chain = makeInMemoryVersionChain("posts");
@@ -216,12 +217,12 @@ const site = (options: SiteOptions = {}) => {
   };
   const postStore = () => {
     if (gated) return { chain: gatedPosts.chain, leaves: gatedPosts.publication.leaves };
-    return options.localised === true ? localisedStore() : store(COLUMNS);
+    return options.localised === true ? localisedStore() : chainStore(COLUMNS);
   };
   const leafStores = {
     posts: postStore(),
-    pages: store(COLUMNS),
-    media: store(COLUMNS),
+    pages: chainStore(COLUMNS),
+    media: chainStore(COLUMNS),
   };
   const leaf = (type: Target) => {
     const declaration = {
@@ -249,8 +250,8 @@ const site = (options: SiteOptions = {}) => {
   };
   const ops = { posts: leaf("posts"), pages: leaf("pages"), media: leaf("media") };
   const termStores = {
-    category: store(TERM_COLUMNS),
-    post_tag: store(TERM_COLUMNS),
+    category: chainStore(TERM_COLUMNS),
+    post_tag: chainStore(TERM_COLUMNS),
   };
   const termOps = (taxonomy: Taxonomy) =>
     defineSubtype({
@@ -710,23 +711,24 @@ describe("the wp/v2 read API — the read rule (SEC-AUTH-ENUM-001)", () => {
       }),
   );
 });
+const seed = (count: number) =>
+  Effect.gen(function* () {
+    const wp = site();
+    const rows = yield* Effect.forEach(
+      Arr.range(0, count - 1),
+      (index) =>
+        wp.create("posts", {
+          slug: `post-${index}`,
+          publishedAt: at(`2026-01-01T00:0${index}:00.000Z`),
+        }),
+      { concurrency: 1 },
+    );
+    return { wp, ids: rows.map(({ wireId }) => wireId) };
+  });
+
+const href = (n: number) => `<https://example.org/wp-json/wp/v2/posts?per_page=2&page=${n}>`;
 
 describe("the wp/v2 read API — collections", () => {
-  const seed = (count: number) =>
-    Effect.gen(function* () {
-      const wp = site();
-      const rows = yield* Effect.forEach(
-        Arr.range(0, count - 1),
-        (index) =>
-          wp.create("posts", {
-            slug: `post-${index}`,
-            publishedAt: at(`2026-01-01T00:0${index}:00.000Z`),
-          }),
-        { concurrency: 1 },
-      );
-      return { wp, ids: rows.map(({ wireId }) => wireId) };
-    });
-
   it.effect(
     "sets X-WP-Total, X-WP-TotalPages and the prev / next Link for the first, middle and last pages",
     () =>
@@ -752,8 +754,6 @@ describe("the wp/v2 read API — collections", () => {
           ["5", "3"],
         ]);
         const api = '<https://example.org/wp-json/>; rel="https://api.w.org/"';
-        const href = (n: number) =>
-          `<https://example.org/wp-json/wp/v2/posts?per_page=2&page=${n}>`;
         expect(pages.map((response) => response.headers["link"])).toEqual([
           `${api}, ${href(2)}; rel="next"`,
           `${api}, ${href(1)}; rel="prev", ${href(3)}; rel="next"`,
@@ -973,16 +973,15 @@ describe("the wp/v2 read API — caching (CACHE-AUTH-005)", () => {
     }),
   );
 });
+const conditional = (
+  wp: ReturnType<typeof site>,
+  path: string,
+  ifNoneMatch: string,
+  query: ReadonlyArray<readonly [string, string]> = [],
+  who: Viewer = Option.none(),
+) => wp.get(path, query, who, "GET", Option.some(ifNoneMatch));
 
 describe("the wp/v2 read API — conditional reads", () => {
-  const conditional = (
-    wp: ReturnType<typeof site>,
-    path: string,
-    ifNoneMatch: string,
-    query: ReadonlyArray<readonly [string, string]> = [],
-    who: Viewer = Option.none(),
-  ) => wp.get(path, query, who, "GET", Option.some(ifNoneMatch));
-
   it.effect(
     "sends a weak ETag hashed from the body of an item, a term and a user, and none on a collection",
     () =>
@@ -1086,37 +1085,37 @@ describe("the wp/v2 read API — conditional reads", () => {
       }),
   );
 });
+/** `live` is published; `fresh` never was; `soon` is scheduled for later; `edited` is live with a newer version scheduled. */
+const gatedSite = () =>
+  Effect.gen(function* () {
+    const wp = site({ gated: true });
+    const publication = Option.match(wp.ops.posts.publication, {
+      onNone: () => expect.unreachable("a gated leaf has publication operations"),
+      onSome: (operations) => operations,
+    });
+    const publishAs = (id: string, options?: { readonly at: Date; readonly version: bigint }) =>
+      wp.as(Option.some(member), publication.publish(id, options));
+    const live = yield* wp.create("posts", { slug: "live", draft: true });
+    yield* publishAs(live.id);
+    const fresh = yield* wp.create("posts", { slug: "fresh", draft: true });
+    const soon = yield* wp.create("posts", { slug: "soon", draft: true });
+    yield* publishAs(soon.id, { at: FUTURE, version: 0n });
+    const edited = yield* wp.create("posts", { slug: "edited", draft: true });
+    yield* publishAs(edited.id);
+    yield* wp.as(
+      Option.some(member),
+      wp.ops.posts.update({ id: edited.id, patch: { title: "v2" } }),
+    );
+    yield* publishAs(edited.id, { at: FUTURE, version: 1n });
+    return { wp, live, fresh, soon, edited };
+  });
+
+const statusAndDate = (response: WordPressResponse) =>
+  decodeBody(Schema.Struct({ status: Schema.String, date_gmt: Schema.NullOr(Schema.String) }))(
+    response,
+  );
 
 describe("the wp/v2 read API — a publish-gated leaf", () => {
-  /** `live` is published; `fresh` never was; `soon` is scheduled for later; `edited` is live with a newer version scheduled. */
-  const gatedSite = () =>
-    Effect.gen(function* () {
-      const wp = site({ gated: true });
-      const publication = Option.match(wp.ops.posts.publication, {
-        onNone: () => expect.unreachable("a gated leaf has publication operations"),
-        onSome: (operations) => operations,
-      });
-      const publishAs = (id: string, options?: { readonly at: Date; readonly version: bigint }) =>
-        wp.as(Option.some(member), publication.publish(id, options));
-      const live = yield* wp.create("posts", { slug: "live", draft: true });
-      yield* publishAs(live.id);
-      const fresh = yield* wp.create("posts", { slug: "fresh", draft: true });
-      const soon = yield* wp.create("posts", { slug: "soon", draft: true });
-      yield* publishAs(soon.id, { at: FUTURE, version: 0n });
-      const edited = yield* wp.create("posts", { slug: "edited", draft: true });
-      yield* publishAs(edited.id);
-      yield* wp.as(
-        Option.some(member),
-        wp.ops.posts.update({ id: edited.id, patch: { title: "v2" } }),
-      );
-      yield* publishAs(edited.id, { at: FUTURE, version: 1n });
-      return { wp, live, fresh, soon, edited };
-    });
-  const statusAndDate = (response: WordPressResponse) =>
-    decodeBody(Schema.Struct({ status: Schema.String, date_gmt: Schema.NullOr(Schema.String) }))(
-      response,
-    );
-
   it.effect(
     "serves readers the live version only, and a writer's unpublished node as draft or future",
     () =>
@@ -1187,33 +1186,44 @@ describe("the wp/v2 read API — a publish-gated leaf", () => {
       }),
   );
 });
+const localeTitle = (tag: string, text: string) => [tag, { title: text }] as const;
+
+/** `hello` in en, pt and pt-BR; `plain` in en alone; `french` in fr alone; a draft in pt. */
+const localisedSite = () =>
+  Effect.gen(function* () {
+    const wp = site({ localised: true });
+    const hello = yield* wp.create("posts", {}, member, {
+      en: { title: "Hello" },
+      pt: { title: "Ola" },
+      "pt-BR": { title: "Oi" },
+    });
+    const plain = yield* wp.create(
+      "posts",
+      {},
+      member,
+      R.fromEntries([localeTitle("en", "Plain")]),
+    );
+    const french = yield* wp.create(
+      "posts",
+      {},
+      member,
+      R.fromEntries([localeTitle("fr", "Salut")]),
+    );
+    const draft = yield* wp.create("posts", { draft: true }, member, {
+      pt: { title: "Rascunho" },
+    });
+    return { wp, hello, plain, french, draft };
+  });
+
+const titleOf = (response: WordPressResponse) =>
+  decodeBody(Schema.Struct({ title: Schema.Struct({ rendered: Schema.String }) }))(response).title;
+
+const titlesOf = (response: WordPressResponse) =>
+  decodeBody(Schema.Array(Schema.Struct({ title: Schema.Struct({ rendered: Schema.String }) })))(
+    response,
+  ).map(({ title }) => title.rendered);
 
 describe("the wp/v2 read API — lang", () => {
-  /** `hello` in en, pt and pt-BR; `plain` in en alone; `french` in fr alone; a draft in pt. */
-  const localisedSite = () =>
-    Effect.gen(function* () {
-      const wp = site({ localised: true });
-      const title = (tag: string, text: string) => [tag, { title: text }] as const;
-      const hello = yield* wp.create("posts", {}, member, {
-        en: { title: "Hello" },
-        pt: { title: "Ola" },
-        "pt-BR": { title: "Oi" },
-      });
-      const plain = yield* wp.create("posts", {}, member, R.fromEntries([title("en", "Plain")]));
-      const french = yield* wp.create("posts", {}, member, R.fromEntries([title("fr", "Salut")]));
-      const draft = yield* wp.create("posts", { draft: true }, member, {
-        pt: { title: "Rascunho" },
-      });
-      return { wp, hello, plain, french, draft };
-    });
-  const titleOf = (response: WordPressResponse) =>
-    decodeBody(Schema.Struct({ title: Schema.Struct({ rendered: Schema.String }) }))(response)
-      .title;
-  const titlesOf = (response: WordPressResponse) =>
-    decodeBody(Schema.Array(Schema.Struct({ title: Schema.Struct({ rendered: Schema.String }) })))(
-      response,
-    ).map(({ title }) => title.rendered);
-
   it.effect(
     "serves an item in the requested locale, the best prefix of it, then the default, and says which",
     () =>
@@ -1358,25 +1368,25 @@ describe("the wp/v2 read API — lang", () => {
       }),
   );
 });
+const searchSite = (search: "scoped" | "stale" = "scoped") =>
+  Effect.gen(function* () {
+    const wp = site({ search });
+    const post = (title: string, state: { readonly [column: string]: ColumnValue } = {}) =>
+      wp.create("posts", { title, slug: title.replaceAll(" ", "-"), ...state });
+    const soup = yield* post("tomato soup recipe");
+    const short = yield* post("tomato");
+    const basil = yield* post("basil");
+    const secret = yield* post("tomato secret", { visibility: "private" });
+    const draft = yield* post("tomato draft", { draft: true });
+    return { wp, soup, short, basil, secret, draft };
+  });
+
+const slugsOf = (response: WordPressResponse) =>
+  decodeBody(Schema.Array(Schema.Struct({ slug: Schema.String })))(response).map(
+    ({ slug }) => slug,
+  );
 
 describe("the wp/v2 read API — search", () => {
-  const searchSite = (search: "scoped" | "stale" = "scoped") =>
-    Effect.gen(function* () {
-      const wp = site({ search });
-      const post = (title: string, state: { readonly [column: string]: ColumnValue } = {}) =>
-        wp.create("posts", { title, slug: title.replaceAll(" ", "-"), ...state });
-      const soup = yield* post("tomato soup recipe");
-      const short = yield* post("tomato");
-      const basil = yield* post("basil");
-      const secret = yield* post("tomato secret", { visibility: "private" });
-      const draft = yield* post("tomato draft", { draft: true });
-      return { wp, soup, short, basil, secret, draft };
-    });
-  const slugsOf = (response: WordPressResponse) =>
-    decodeBody(Schema.Array(Schema.Struct({ slug: Schema.String })))(response).map(
-      ({ slug }) => slug,
-    );
-
   it.effect("orders by relevance by default, and counts the hydrated hits", () =>
     Effect.gen(function* () {
       const { wp } = yield* searchSite();
@@ -1616,21 +1626,24 @@ describe("the wp/v2 read API — routes", () => {
     }),
   );
 });
+/** The names `rest_invalid_param` lists for a query, or none for another answer. */
+const refusedParams = (
+  path: string,
+  query: ReadonlyArray<readonly [string, string]>,
+  wp = site(),
+) =>
+  Effect.gen(function* () {
+    const body = decodeBody(ErrorBody)(yield* wp.get(path, query));
+    return [body.code, R.keys(body.data.params ?? {})];
+  });
 
 describe("the wp/v2 read API — every parameter's check", () => {
-  /** The names `rest_invalid_param` lists for a query, or none for another answer. */
-  const refused = (path: string, query: ReadonlyArray<readonly [string, string]>, wp = site()) =>
-    Effect.gen(function* () {
-      const body = decodeBody(ErrorBody)(yield* wp.get(path, query));
-      return [body.code, R.keys(body.data.params ?? {})];
-    });
-
   it.effect(
     "names each bad value: a non-integer, an out-of-range one, an unknown enum, a bad date, context and status",
     () =>
       Effect.gen(function* () {
         expect(
-          yield* refused("/wp/v2/posts", [
+          yield* refusedParams("/wp/v2/posts", [
             ["page", "two"],
             ["per_page", "0"],
             ["offset", "-1"],
@@ -1672,12 +1685,12 @@ describe("the wp/v2 read API — every parameter's check", () => {
     "refuses a parameter the post type doesn't take, or whose column the binding leaves out",
     () =>
       Effect.gen(function* () {
-        expect(yield* refused("/wp/v2/posts", [["parent", "1"]])).toEqual([
+        expect(yield* refusedParams("/wp/v2/posts", [["parent", "1"]])).toEqual([
           "rest_invalid_param",
           ["parent"],
         ]);
         expect(
-          yield* refused("/wp/v2/media", [
+          yield* refusedParams("/wp/v2/media", [
             ["media_type", "hologram"],
             ["menu_order", "1"],
           ]),
@@ -1686,7 +1699,7 @@ describe("the wp/v2 read API — every parameter's check", () => {
           columns: { slug: "slug", date: "publishedAt", modified: "updatedAt" },
         });
         expect(
-          yield* refused(
+          yield* refusedParams(
             "/wp/v2/pages",
             [
               ["author", "1"],
@@ -2563,16 +2576,15 @@ describe("the wp/v2 read API — media from a file leaf", () => {
     ).toEqual({ width: 10 });
   });
 });
+/** A post written through `./Paths`' `routable`, so its slug is its claimed path. */
+const routed = () => {
+  const wp = site();
+  const paths = makeInMemoryPathStore();
+  const posts = routable(wp.ops.posts, { column: "slug", paths, chain: wp.chains.posts });
+  return { wp, paths, posts };
+};
 
 describe("the wp/v2 read API — a routable leaf's paths", () => {
-  /** A post written through `./Paths`' `routable`, so its slug is its claimed path. */
-  const routed = () => {
-    const wp = site();
-    const paths = makeInMemoryPathStore();
-    const posts = routable(wp.ops.posts, { column: "slug", paths, chain: wp.chains.posts });
-    return { wp, paths, posts };
-  };
-
   it.effect(
     "finds a renamed post by its canonical path only: an alias neither matches ?slug= nor redirects",
     () =>

@@ -94,6 +94,8 @@ export type RelationshipTable = ReturnType<typeof makeRelationshipTable>;
 const decodeRelated = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ accountId: Schema.String, at: Schema.Date, total: Schema.Int })),
 );
+const at = (relationship: Relationship): SQL => sql`${relationship.at.toISOString()}::timestamptz`;
+
 /**
  * Bind the kernel's `SocialStore` to the relationship table, in the
  * caller's `CurrentTransaction`; its `Following` is a SQL subquery.
@@ -146,8 +148,6 @@ export const makeSocialStore = <I, Relations extends AnyRelations>(config: {
       );
       return yield* selectRows(tx, statement, row);
     });
-  const at = (relationship: Relationship): SQL =>
-    sql`${relationship.at.toISOString()}::timestamptz`;
   const toIdsOf = (from: string, kinds: ReadonlyArray<RelationshipKind>): SQL =>
     sql`(SELECT ${table.toId} FROM ${table} WHERE ${table.kind} IN (${sql.join(
       Arr.map(kinds, (kind) => sql`${kind}`),

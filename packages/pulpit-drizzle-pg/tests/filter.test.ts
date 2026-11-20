@@ -158,14 +158,13 @@ describe("renderListFilter — the contract table", () => {
     expect(text(isNull("missing"))?.sql).toBe("false");
   });
 });
+const order = (orderBy: Parameters<typeof renderListOrder>[0]) =>
+  Arr.map(
+    renderListOrder(orderBy, all, all.id),
+    (term) => unqualified(dialect.sqlToQuery(term)).sql,
+  );
 
 describe("renderListOrder — the list order contract", () => {
-  const order = (orderBy: Parameters<typeof renderListOrder>[0]) =>
-    Arr.map(
-      renderListOrder(orderBy, all, all.id),
-      (term) => unqualified(dialect.sqlToQuery(term)).sql,
-    );
-
   it("closes every order with id ASC, and NULLS LAST on every key", () => {
     expect(order([])).toEqual(['"node"."id" ASC']);
     expect(

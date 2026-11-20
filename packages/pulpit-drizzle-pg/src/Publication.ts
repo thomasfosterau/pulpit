@@ -109,6 +109,10 @@ export type Publications<Leaf extends string, E, I> = {
 /** The key a live row's publication stamp takes (the kernel's `publishedAt`). */
 const PUBLISHED_AT = "publishedAt";
 
+/** A predicate over a source, `true` for `always`. */
+const predicate = (filter: ListFilter<SQLWrapper>, source: RowSource): SQL =>
+  Option.getOrElse(renderListFilter(filter, source.columns), () => sql`true`);
+
 /**
  * Bind the kernel's live pointer to every leaf of one pointer (`pointer`, a
  * name in `makeTreeTables`' `root.pointers`): `log` is
@@ -302,10 +306,6 @@ export const makePublications = <Leaf extends string, I, Relations extends AnyRe
     };
 
     const shared = sourcesOver(headView, liveView);
-
-    /** A predicate over a source, `true` for `always`. */
-    const predicate = (filter: ListFilter<SQLWrapper>, source: RowSource): SQL =>
-      Option.getOrElse(renderListFilter(filter, source.columns), () => sql`true`);
 
     /**
      * Per node, the rows of `over` (the shared pair, or the keyed pair: one

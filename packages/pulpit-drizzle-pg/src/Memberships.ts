@@ -44,6 +44,13 @@ import { countOf } from "./internal/count.ts";
 import { eraseBatch } from "./internal/erase.ts";
 import type { StoreQueryError } from "./internal/owners.ts";
 
+const key = (column: string, target?: AnyPgColumn) => {
+  const built = text(column);
+  return target === undefined
+    ? built
+    : built.references((): AnyPgColumn => target, { onDelete: "cascade" });
+};
+
 /**
  * Build the membership table (`name`, `membership` by default): `group_id`,
  * `account_id`, `role` (`member | admin`), `status` (`active | pending`),
@@ -73,12 +80,6 @@ export const makeMembershipTable = (options: {
   readonly name?: string;
 }) => {
   const name = options.name ?? "membership";
-  const key = (column: string, target?: AnyPgColumn) => {
-    const built = text(column);
-    return target === undefined
-      ? built
-      : built.references((): AnyPgColumn => target, { onDelete: "cascade" });
-  };
   return options.schema.table(
     name,
     {
@@ -132,6 +133,8 @@ const decodeRoles = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ role: MembershipRole })),
 );
 
+const at = (date: Date): SQL => sql`${date.toISOString()}::timestamptz`;
+
 /**
  * Bind the kernel's `MembershipStore` to the membership table, in the
  * caller's `CurrentTransaction`; its `Following` is a SQL subquery.
@@ -159,7 +162,6 @@ export const makeMembershipStore = <I, Relations extends AnyRelations>(config: {
   readonly CurrentTransaction: Context.Service<I, PgTransaction<Relations>>;
 }): MembershipStore<SQL, StoreQueryError<Relations>, I> => {
   const { table, CurrentTransaction } = config;
-  const at = (date: Date): SQL => sql`${date.toISOString()}::timestamptz`;
   const keyed = (groupId: string, accountId: string, status: "active" | "pending") =>
     and(eq(table.groupId, groupId), eq(table.accountId, accountId), eq(table.status, status));
   /** Run a statement that returns one row per row it wrote; whether any did. */

@@ -438,6 +438,9 @@ export const DEFAULT_MODERATION_THRESHOLD = 0.5;
 const bandFor = (score: number): ModerationPriority =>
   score >= 0.9 ? "urgent" : score >= 0.75 ? "high" : score >= 0.5 ? "medium" : "low";
 
+const top = (values: ReadonlyArray<readonly [string, number]>) =>
+  Arr.reduce(values, 0, (worst, [, score]) => Math.max(worst, score));
+
 /**
  * Grade a classifier's scores against the leaf's thresholds (a category
  * missing from `thresholds` grades against `defaultThreshold`). A category
@@ -470,8 +473,6 @@ export const gradeScores = (
     entries,
     ([category, score]) => score > (thresholds[category] ?? defaultThreshold),
   );
-  const top = (values: ReadonlyArray<readonly [string, number]>) =>
-    Arr.reduce(values, 0, (worst, [, score]) => Math.max(worst, score));
   const topScore = top(entries);
   const topExceeded = top(breaches);
   return {

@@ -51,6 +51,15 @@ const runWith = <A, E>(
     calls,
   }));
 };
+const buildFromLeaves = (pointer: string, leaves: Readonly<Record<string, PgView>>) => () =>
+  makePublications({
+    views: { leaves },
+    pointer,
+    log: tables.pointers.live,
+    live: views.pointers.live.leaves,
+    owners,
+    CurrentTransaction: database.CurrentTransaction,
+  });
 
 describe("makePublications", () => {
   it("binds one gated leaf per pointer leaf, with the gated store's columns", () => {
@@ -60,19 +69,25 @@ describe("makePublications", () => {
   });
 
   it("refuses a pointer name its views do not carry, and a leaf with no view", () => {
-    const build = (pointer: string, leaves: Readonly<Record<string, PgView>>) => () =>
-      makePublications({
-        views: { leaves },
-        pointer,
-        log: tables.pointers.live,
-        live: views.pointers.live.leaves,
-        owners,
-        CurrentTransaction: database.CurrentTransaction,
-      });
-    expect(build("draft", views.leaves)).toThrow(/no draftAt column/u);
-    expect(build("live", R.empty())).toThrow(DerivationError);
+    expect(buildFromLeaves("draft", views.leaves)).toThrow(/no draftAt column/u);
+    expect(buildFromLeaves("live", R.empty())).toThrow(DerivationError);
   });
 });
+const buildKeyed =
+  (keyed: {
+    readonly views: Readonly<Record<string, PgView>>;
+    readonly live: Readonly<Record<string, PgView>>;
+  }) =>
+  () =>
+    makePublications({
+      views,
+      pointer: "live",
+      log: tables.pointers.live,
+      live: views.pointers.live.leaves,
+      keyed,
+      owners,
+      CurrentTransaction: database.CurrentTransaction,
+    });
 
 describe("a localised gated leaf", () => {
   const localised = makePublications({
@@ -95,23 +110,12 @@ describe("a localised gated leaf", () => {
   });
 
   it("refuses a leaf keyed on one side only", () => {
-    const build =
-      (keyed: {
-        readonly views: Readonly<Record<string, PgView>>;
-        readonly live: Readonly<Record<string, PgView>>;
-      }) =>
-      () =>
-        makePublications({
-          views,
-          pointer: "live",
-          log: tables.pointers.live,
-          live: views.pointers.live.leaves,
-          keyed,
-          owners,
-          CurrentTransaction: database.CurrentTransaction,
-        });
-    expect(build({ views: views.keyed, live: R.empty() })).toThrow(/keyed view on one side only/u);
-    expect(build({ views: R.empty(), live: views.pointers.live.keyed })).toThrow(DerivationError);
+    expect(buildKeyed({ views: views.keyed, live: R.empty() })).toThrow(
+      /keyed view on one side only/u,
+    );
+    expect(buildKeyed({ views: R.empty(), live: views.pointers.live.keyed })).toThrow(
+      DerivationError,
+    );
   });
 
   it.effect("listLocalised pages the chosen locale rows, and reads none for no locales", () =>

@@ -129,6 +129,9 @@ export const vectorLiteral = (kind: VectorKind, values: ReadonlyArray<number>): 
   return kind.kind === "pgvector" ? sql`${`[${body}]`}::vector` : sql`${`{${body}}`}::float8[]`;
 };
 
+const keys = (hashes: Arr.NonEmptyReadonlyArray<string>): SQL =>
+  sql.join(Arr.map(hashes, hashKey), sql`, `);
+
 /**
  * Bind the kernel's `EmbeddingStore` to one family's embedding tables, in
  * the caller's `CurrentTransaction`; `documents` is the family's document
@@ -158,8 +161,6 @@ export const makeEmbeddingStore = <I, Relations extends AnyRelations>(config: {
   const { queue, vectors } = tables;
   const isHash = Schema.is(DocumentHash);
   const valid = (hashes: ReadonlyArray<string>) => Arr.dedupe(Arr.filter(hashes, isHash));
-  const keys = (hashes: Arr.NonEmptyReadonlyArray<string>): SQL =>
-    sql.join(Arr.map(hashes, hashKey), sql`, `);
 
   return {
     enqueue: (hash) =>

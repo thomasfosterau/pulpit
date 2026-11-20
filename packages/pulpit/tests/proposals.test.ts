@@ -175,31 +175,30 @@ const decodeStrings = (patch: Schema.Json): Effect.Effect<ChainPatch, InvalidPro
   P.isObject(patch) && !Array.isArray(patch) && R.every(patch, (value) => P.isString(value))
     ? Effect.succeed(R.filter(patch, P.isString))
     : Effect.fail(new InvalidProposalPatch({ type: "pages", reason: "a value is not a string" }));
+const validatePagePatch = (patch: Schema.Json) =>
+  Effect.exit(
+    validateProposalPatch("pages", patch, {
+      attributes: ["title", "body", "visibility"],
+      forbidden: PROPOSAL_FORBIDDEN_KEYS,
+      decode: decodeStrings,
+    }),
+  );
+const pagePatchReason = (patch: Schema.Json) =>
+  Effect.gen(function* () {
+    const exit = yield* validatePagePatch(patch);
+    return Exit.isFailure(exit)
+      ? Option.map(Exit.findErrorOption(exit), (error) => error.reason)
+      : Option.none();
+  });
 
 describe("validateProposalPatch — the patch rules", () => {
-  const validate = (patch: Schema.Json) =>
-    Effect.exit(
-      validateProposalPatch("pages", patch, {
-        attributes: ["title", "body", "visibility"],
-        forbidden: PROPOSAL_FORBIDDEN_KEYS,
-        decode: decodeStrings,
-      }),
-    );
-  const reason = (patch: Schema.Json) =>
-    Effect.gen(function* () {
-      const exit = yield* validate(patch);
-      return Exit.isFailure(exit)
-        ? Option.map(Exit.findErrorOption(exit), (error) => error.reason)
-        : Option.none();
-    });
-
   it("reserves identity and the publication axes to the owner", () => {
     expect(PROPOSAL_FORBIDDEN_KEYS).toEqual(["id", "type", "visibility", "draft", "publishedAt"]);
   });
 
   it.effect("decodes an admissible patch and reports its keys in declaration order", () =>
     Effect.gen(function* () {
-      const exit = yield* validate({ body: "b", title: "t" });
+      const exit = yield* validatePagePatch({ body: "b", title: "t" });
       expect(Exit.isSuccess(exit) && exit.value).toEqual({
         patch: { body: "b", title: "t" },
         touchedKeys: ["title", "body"],
@@ -211,22 +210,24 @@ describe("validateProposalPatch — the patch rules", () => {
 
   it.effect("refuses a non-object and an empty patch", () =>
     Effect.gen(function* () {
-      expect(yield* reason(["title"])).toEqual(
+      expect(yield* pagePatchReason(["title"])).toEqual(
         Option.some("expected an object of attribute changes"),
       );
-      expect(yield* reason(null)).toEqual(Option.some("expected an object of attribute changes"));
-      expect(yield* reason({})).toEqual(Option.some("it proposes no changes"));
+      expect(yield* pagePatchReason(null)).toEqual(
+        Option.some("expected an object of attribute changes"),
+      );
+      expect(yield* pagePatchReason({})).toEqual(Option.some("it proposes no changes"));
     }),
   );
 
   it.effect("refuses a forbidden key before an unknown one, even where the leaf declares it", () =>
     Effect.gen(function* () {
-      expect(yield* reason({ visibility: "public", bogus: "x" })).toEqual(
+      expect(yield* pagePatchReason({ visibility: "public", bogus: "x" })).toEqual(
         Option.some(
           "`visibility` can't be proposed: identity and publication are the owner's to set",
         ),
       );
-      expect(yield* reason({ draft: "false" })).toEqual(
+      expect(yield* pagePatchReason({ draft: "false" })).toEqual(
         Option.some("`draft` can't be proposed: identity and publication are the owner's to set"),
       );
     }),
@@ -234,7 +235,7 @@ describe("validateProposalPatch — the patch rules", () => {
 
   it.effect("refuses an unknown key loudly rather than dropping it", () =>
     Effect.gen(function* () {
-      expect(yield* reason({ titel: "t" })).toEqual(
+      expect(yield* pagePatchReason({ titel: "t" })).toEqual(
         Option.some("`titel` is not a proposable attribute"),
       );
     }),
@@ -242,7 +243,7 @@ describe("validateProposalPatch — the patch rules", () => {
 
   it.effect("refuses what the leaf's decoder refuses", () =>
     Effect.gen(function* () {
-      expect(yield* reason({ title: 7 })).toEqual(Option.some("a value is not a string"));
+      expect(yield* pagePatchReason({ title: 7 })).toEqual(Option.some("a value is not a string"));
     }),
   );
 });
@@ -599,13 +600,37 @@ describe("defineProposals — the operations", () => {
       }),
   );
 });
-
-describe("over a localised leaf", () => {
-  const atLocales = (version: bigint, locales: LocaleStates): VersionSnapshot => ({
-    ...snapshot(version, { colour: "red" }),
-    locales,
+const atLocales = (version: bigint, locales: LocaleStates): VersionSnapshot => ({
+  ...snapshot(version, { colour: "red" }),
+  locales,
+});
+const validateLocalisedPatch = (
+  patch: Schema.Json,
+  locales: Schema.Json,
+  localeAttributes = ["title"],
+) =>
+  Effect.exit(
+    validateProposalPatch("pages", patch, {
+      attributes: ["colour"],
+      forbidden: PROPOSAL_FORBIDDEN_KEYS,
+      decode: decodeStrings,
+      locales,
+      localeAttributes,
+    }),
+  );
+const localisedPatchReason = (
+  patch: Schema.Json,
+  locales: Schema.Json,
+  localeAttributes?: Array<string>,
+) =>
+  Effect.gen(function* () {
+    const exit = yield* validateLocalisedPatch(patch, locales, localeAttributes);
+    return Exit.isFailure(exit)
+      ? Option.map(Exit.findErrorOption(exit), (error) => error.reason)
+      : Option.none();
   });
 
+describe("over a localised leaf", () => {
   describe("classifyProposalConflict per locale", () => {
     const base = atLocales(4n, { en: { title: "Hello" }, fr: { title: "Bonjour" } });
 
@@ -658,27 +683,9 @@ describe("over a localised leaf", () => {
   });
 
   describe("validateProposalPatch with a per-locale patch", () => {
-    const validate = (patch: Schema.Json, locales: Schema.Json, localeAttributes = ["title"]) =>
-      Effect.exit(
-        validateProposalPatch("pages", patch, {
-          attributes: ["colour"],
-          forbidden: PROPOSAL_FORBIDDEN_KEYS,
-          decode: decodeStrings,
-          locales,
-          localeAttributes,
-        }),
-      );
-    const reason = (patch: Schema.Json, locales: Schema.Json, localeAttributes?: Array<string>) =>
-      Effect.gen(function* () {
-        const exit = yield* validate(patch, locales, localeAttributes);
-        return Exit.isFailure(exit)
-          ? Option.map(Exit.findErrorOption(exit), (error) => error.reason)
-          : Option.none();
-      });
-
     it.effect("takes a translation alone, decoded, with its touched columns", () =>
       Effect.gen(function* () {
-        const exit = yield* validate({}, { fr: { title: "Salut" } });
+        const exit = yield* validateLocalisedPatch({}, { fr: { title: "Salut" } });
         expect(Exit.isSuccess(exit) && exit.value).toEqual({
           patch: {},
           touchedKeys: [],
@@ -692,22 +699,24 @@ describe("over a localised leaf", () => {
       "refuses dropping a translation, an empty or malformed locale, and an empty proposal",
       () =>
         Effect.gen(function* () {
-          expect(yield* reason({}, { fr: null })).toEqual(
+          expect(yield* localisedPatchReason({}, { fr: null })).toEqual(
             Option.some("dropping the `fr` translation is the owner's to do"),
           );
-          expect(yield* reason({}, { fr: {} })).toEqual(
+          expect(yield* localisedPatchReason({}, { fr: {} })).toEqual(
             Option.some("it proposes no changes for `fr`"),
           );
-          expect(yield* reason({}, { fr: "x" })).toEqual(
+          expect(yield* localisedPatchReason({}, { fr: "x" })).toEqual(
             Option.some("expected an object of attribute changes for `fr`"),
           );
-          expect(yield* reason({}, { "": { title: "x" } })).toEqual(
+          expect(yield* localisedPatchReason({}, { "": { title: "x" } })).toEqual(
             Option.some("a locale tag is empty"),
           );
-          expect(yield* reason({}, ["fr"])).toEqual(
+          expect(yield* localisedPatchReason({}, ["fr"])).toEqual(
             Option.some("expected an object of changes per locale"),
           );
-          expect(yield* reason({}, {})).toEqual(Option.some("it proposes no changes"));
+          expect(yield* localisedPatchReason({}, {})).toEqual(
+            Option.some("it proposes no changes"),
+          );
         }),
     );
 
@@ -715,15 +724,15 @@ describe("over a localised leaf", () => {
       "refuses a shared column in a locale, a forbidden one, and any locale on a leaf without translations",
       () =>
         Effect.gen(function* () {
-          expect(yield* reason({}, { fr: { colour: "x" } })).toEqual(
+          expect(yield* localisedPatchReason({}, { fr: { colour: "x" } })).toEqual(
             Option.some("`colour` is not a proposable attribute (in `fr`)"),
           );
-          expect(yield* reason({}, { fr: { visibility: "public" } })).toEqual(
+          expect(yield* localisedPatchReason({}, { fr: { visibility: "public" } })).toEqual(
             Option.some(
               "`visibility` can't be proposed: identity and publication are the owner's to set (in `fr`)",
             ),
           );
-          expect(yield* reason({ colour: "x" }, { fr: { title: "x" } }, [])).toEqual(
+          expect(yield* localisedPatchReason({ colour: "x" }, { fr: { title: "x" } }, [])).toEqual(
             Option.some("this leaf takes no translated attributes"),
           );
         }),
@@ -731,7 +740,7 @@ describe("over a localised leaf", () => {
 
     it.effect("refuses what the leaf's decoder refuses in a locale", () =>
       Effect.gen(function* () {
-        expect(yield* reason({}, { fr: { title: 7 } })).toEqual(
+        expect(yield* localisedPatchReason({}, { fr: { title: 7 } })).toEqual(
           Option.some("a value is not a string"),
         );
       }),

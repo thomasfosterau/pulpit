@@ -222,12 +222,15 @@ describe("evaluate — the other nodes", () => {
     expect(run(or<Following>(eq("action", "delete"), eq("kind", "page")), row)).toBe(true);
   });
 });
+/** Every operator's answer for one row against one comparand, in `gt, gte, lt, lte` order. */
+const answersFor = (row: FilterRow, value: Comparable) =>
+  Arr.map([gt, gte, lt, lte], (op) => run(op("c", value), row));
+
+const handBuilt = (value: Comparable): ReadonlyArray<ListFilter<Following>> =>
+  Arr.map(["gt", "gte", "lt", "lte"] as const, (kind) => ({ kind, column: "c", value }));
+const answers = (column: ColumnValue, value: Comparable) => answersFor({ c: column }, value);
 
 describe("evaluate — gt / gte / lt / lte against SQL's comparison", () => {
-  /** Every operator's answer for one row against one comparand, in `gt, gte, lt, lte` order. */
-  const answersFor = (row: FilterRow, value: Comparable) =>
-    Arr.map([gt, gte, lt, lte], (op) => run(op("c", value), row));
-  const answers = (column: ColumnValue, value: Comparable) => answersFor({ c: column }, value);
   const NONE = [false, false, false, false];
 
   it("orders numbers, with equality satisfying only gte / lte", () => {
@@ -310,8 +313,6 @@ describe("evaluate — gt / gte / lt / lte against SQL's comparison", () => {
         Arr.map([gt, gte, lt, lte], (op) => op("c", value)),
       ),
     ).toEqual(Arr.makeBy(8, () => never));
-    const handBuilt = (value: Comparable): ReadonlyArray<ListFilter<Following>> =>
-      Arr.map(["gt", "gte", "lt", "lte"] as const, (kind) => ({ kind, column: "c", value }));
     expect(
       Arr.flatMap(
         [

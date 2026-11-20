@@ -273,6 +273,12 @@ export interface CommentOps<Resource, E, R> {
   ) => Effect.Effect<Page<Resource>, NodeNotFound | InvalidListOrder | E, R>;
 }
 
+/** A row's stored depth: `0` for a top-level comment; a value that is no number reads as past every limit. */
+const depthOf = (row: LeafRow): number => {
+  const depth = row["depth"];
+  return P.isNumber(depth) ? depth : Number.POSITIVE_INFINITY;
+};
+
 /**
  * Bind a comments family over its comment leaf. Edits, deletes and history
  * stay the comment leaf's own operations.
@@ -322,12 +328,6 @@ export const defineComments = <Resource, Following, E, R>(
       );
       return { resource, row: row.value };
     });
-
-  /** A row's stored depth: `0` for a top-level comment; a value that is no number reads as past every limit. */
-  const depthOf = (row: LeafRow): number => {
-    const depth = row["depth"];
-    return P.isNumber(depth) ? depth : Number.POSITIVE_INFINITY;
-  };
 
   const create = Effect.fn(`${type}.comments.create`)(function* (input: CommentCreate) {
     const viewer = yield* definition.viewer;

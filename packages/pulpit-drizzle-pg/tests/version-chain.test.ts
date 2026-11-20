@@ -275,13 +275,12 @@ describe("fromLeafChain — the driver's own failure", () => {
     }),
   );
 });
+const tag = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
+  Effect.map(Effect.flip(effect), (error) => error._tag);
 
 describe("fromLeafChain — an id that is no UUID names no node", () => {
   const { chain } = harness(true);
   const actorId = Option.none<string>();
-  const tag = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
-    Effect.map(Effect.flip(effect), (error) => error._tag);
-
   it.effect("answers as an unknown id does, without reaching the chain", () =>
     Effect.gen(function* () {
       expect(yield* tag(chain.update({ id: "not-a-uuid", patch: {}, actorId }))).toBe(

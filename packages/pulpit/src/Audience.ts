@@ -483,6 +483,9 @@ const window = (request: MembersPageRequest) => ({
   offset: Math.max(0, Math.trunc(request.offset)),
 });
 
+const notOwner = (groupId: string, owner: string, accountId: string) =>
+  accountId === owner ? Effect.fail(new GroupOwnerMembership({ groupId })) : Effect.void;
+
 /**
  * Bind the membership family's operations. Every operation is traced as
  * `audience.<operation>`, and the writes run in the caller's transaction.
@@ -531,9 +534,6 @@ export const defineAudience = <Following, E, R>(
       if (Option.contains(role, "admin")) return { account, owner };
       return yield* new Forbidden({ message: "Only the group's owner or an admin may manage it." });
     });
-
-  const notOwner = (groupId: string, owner: string, accountId: string) =>
-    accountId === owner ? Effect.fail(new GroupOwnerMembership({ groupId })) : Effect.void;
 
   const addMember = Effect.fn("audience.addMember")(function* (
     groupId: string,
