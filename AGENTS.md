@@ -35,4 +35,4 @@ No `CONTEXT.md` or `docs/adr/`: the module guides in `docs/`, SECURITY.md's inva
 
 The pre-commit hook runs `vp run fallow:audit` and blocks on findings your change introduces; fix them rather than skipping the hook.
 
-`vp install` links the `fallow` skill into `.claude/skills/fallow` from the installed package (approved under `permissions` in `pnpm-workspace.yaml`).
+`vp install` links the `fallow` skill into `.claude/skills/fallow` from the installed package (approved under `permissions` in `pnpm-workspace.yaml`); drizzle-kit's `drizzle` skill is linked the same way.
