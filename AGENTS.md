@@ -17,6 +17,20 @@ Read [README.md](README.md) and [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) fir
 - `vp run -r docgen` executes every `@example`; a missing `@since` fails it.
 - There is no root `CLAUDE.md`; `.claude/CLAUDE.md` imports this file.
 
+## Agent skills
+
+### Issue tracker
+
+Issues live in this repo's GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default triage roles, each label equal to its name (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+No `CONTEXT.md` or `docs/adr/`: the module guides in `docs/`, SECURITY.md's invariant IDs and each export's TSDoc are the domain docs. See `docs/agents/domain.md`.
+
 ## Fallow
 
 The pre-commit hook runs `vp run fallow:audit` and blocks on findings your change introduces; fix them rather than skipping the hook.
