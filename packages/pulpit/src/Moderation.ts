@@ -87,6 +87,7 @@ import type {
   StaleVersion,
   VersionConflict,
 } from "./VersionChain.ts";
+import { knownViewerOf } from "./internal/delegated-access.ts";
 
 // ── Transitions ───────────────────────────────────────────────────────
 
@@ -357,7 +358,7 @@ export const defineModeration = <Resource, E, R>(definition: {
     decision: ModerationState,
     precondition: Precondition = {},
   ) {
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     if (Option.isNone(viewer))
       return yield* new Unauthorized({ message: "This operation needs a signed-in viewer." });
     if (!definition.policy.canModerate(viewer.value)) {
@@ -750,7 +751,7 @@ export const defineReports = <Resource, E, R>(definition: {
   const { target, reports, policy } = definition;
   const type = target.type;
 
-  const signedIn = signedInAs(definition.viewer);
+  const signedIn = signedInAs(knownViewerOf(definition.viewer));
 
   const file = Effect.fn(`${type}.reports.file`)(function* (input: {
     readonly targetId: string;
@@ -788,7 +789,7 @@ export const defineReports = <Resource, E, R>(definition: {
     );
 
   const get = Effect.fn(`${type}.reports.get`)(function* (id: string) {
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     const row = yield* reports.get(id);
     if (Option.isNone(row) || !readable(viewer, row.value)) {
       return yield* new ReportNotFound({ id });
@@ -802,7 +803,7 @@ export const defineReports = <Resource, E, R>(definition: {
     readonly limit: number;
     readonly offset: number;
   }) {
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     const scope = Option.match(viewer, {
       onNone: (): ListFilter<never> => never,
       onSome: (account): ListFilter<never> =>
@@ -874,7 +875,7 @@ export const withReports = <E, R>(definition: {
       // `moderate` admitted the viewer, so it is a signed-in moderator here.
       const settled = Option.zipWith(
         reportOutcomeOf(decision),
-        yield* definition.viewer,
+        yield* knownViewerOf(definition.viewer),
         (status, account) => ({ status, resolvedBy: account.id }),
       );
       if (Option.isSome(settled)) {

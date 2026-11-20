@@ -203,6 +203,9 @@ describe("defineAudience — leaving", () => {
         Option.some("GroupOwnerMembership"),
       );
       expect(yield* tagOf(as(Option.none()).leave(GROUP))).toEqual(Option.some("Unauthorized"));
+      expect(yield* tagOf(as(Option.some({ ...owner, id: "" })).leave(GROUP))).toEqual(
+        Option.some("Unauthorized"),
+      );
     }),
   );
 });

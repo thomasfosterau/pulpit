@@ -51,6 +51,7 @@ import {
   type Viewer,
   type ViewerAccount,
 } from "./Subtype.ts";
+import { knownViewerOf } from "./internal/delegated-access.ts";
 
 // ── Vocabulary ────────────────────────────────────────────────────────
 
@@ -370,7 +371,7 @@ export const defineSocial = <Following, E, R>(
   definition: SocialDefinition<Following, E, R>,
 ): SocialOps<Following, E, R> => {
   const { store } = definition;
-  const signedIn = signedInAs(definition.viewer);
+  const signedIn = signedInAs(knownViewerOf(definition.viewer));
 
   const assert = (kind: RelationshipKind, account: ViewerAccount, to: string) =>
     Effect.flatMap(nowDate, (at) =>
@@ -424,7 +425,7 @@ export const defineSocial = <Following, E, R>(
         const page = yield* store.list({ kind: "follow", side, accountId, ...window(request) });
         return { rows: page.rows, total: Option.some(page.total) };
       }
-      const viewer = yield* definition.viewer;
+      const viewer = yield* knownViewerOf(definition.viewer);
       // A subject the viewer can't see answers as one with no relationships.
       if (!HashSet.has(yield* accounts.visible(viewer, [accountId]), accountId)) {
         return { rows: [], total: Option.none() };
@@ -449,7 +450,7 @@ export const defineSocial = <Following, E, R>(
     });
 
   const silencedFilter = (column: string) =>
-    Effect.map(definition.viewer, (viewer) =>
+    Effect.map(knownViewerOf(definition.viewer), (viewer) =>
       Option.match(viewer, {
         onNone: (): ListFilter<Following> => always,
         onSome: (account): ListFilter<Following> => isNotIn(column, store.silencedBy(account.id)),

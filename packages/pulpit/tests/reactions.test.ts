@@ -142,6 +142,9 @@ describe("defineReactions", () => {
       expect(yield* tagOf(as(Option.none(), reactions.mine({ limit: 10, offset: 0 })))).toEqual(
         Option.some("Unauthorized"),
       );
+      expect(
+        yield* tagOf(as(Option.some({ ...member, id: "" }), reactions.react(id, "like"))),
+      ).toEqual(Option.some("Unauthorized"));
       expect(yield* tagOf(as(Option.some(member), reactions.react(id, "angry")))).toEqual(
         Option.some("InvalidReactionKind"),
       );

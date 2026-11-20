@@ -105,6 +105,7 @@ import {
   type VersionNotFound,
   type VersionSnapshot,
 } from "./VersionChain.ts";
+import { knownViewerOf } from "./internal/delegated-access.ts";
 
 // ── Vocabulary ────────────────────────────────────────────────────────
 
@@ -813,11 +814,11 @@ export const defineProposals = <Resource, E, R>(
       }),
     );
 
-  const signedIn = signedInAs(definition.viewer);
+  const signedIn = signedInAs(knownViewerOf(definition.viewer));
 
   /** The target's write gate: before any proposal state is disclosed to the caller. */
   const writerOf = (targetId: string) =>
-    Effect.flatMap(definition.viewer, (viewer) =>
+    Effect.flatMap(knownViewerOf(definition.viewer), (viewer) =>
       requireWriter(
         target.access,
         viewer,
@@ -925,7 +926,7 @@ export const defineProposals = <Resource, E, R>(
     });
 
   const get = Effect.fn(`${type}.proposals.get`)(function* (id: string) {
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     const listing = yield* proposals.get(id);
     if (
       Option.isNone(listing) ||
@@ -953,7 +954,7 @@ export const defineProposals = <Resource, E, R>(
     readonly limit: number;
     readonly offset: number;
   }) {
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     const page = yield* proposals.list(plainRowQuery(type, readFilter(viewer), request));
     return { rows: Arr.map(page.rows, viewOf), total: page.total };
   });

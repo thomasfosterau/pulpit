@@ -106,7 +106,7 @@ import {
   type ListFilter,
 } from "./Filter.ts";
 import { renameColumns } from "./internal/filter-columns.ts";
-import { knownViewer } from "./internal/delegated-access.ts";
+import { knownViewer, knownViewerOf } from "./internal/delegated-access.ts";
 import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
 import { canViewReferenceRow, referenceListFilter } from "./internal/reference-columns.ts";
 import {
@@ -981,14 +981,14 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
       });
 
   const list = Effect.fn(`${type}.list`)(function* (request: EdgeListRequest) {
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     const where = and<Following>(endpointFilter(ends, viewer, policy, followers), request.where);
     const { rows, total } = yield* edges.list({ where, ...pageWindow(request) });
     return { rows: Arr.map(rows, toResource), total };
   });
 
   const get = Effect.fn(`${type}.get`)(function* (id: string) {
-    const row = yield* visibleEdge(yield* definition.viewer, id);
+    const row = yield* visibleEdge(yield* knownViewerOf(definition.viewer), id);
     // Hidden and missing are the same answer (SEC-AUTH-ENUM-001).
     if (Option.isNone(row)) return yield* new EdgeNotFound({ type, id });
     return toResource(row.value);
@@ -1018,7 +1018,7 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     });
 
   const create = Effect.fn(`${type}.create`)(function* (input: Create) {
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     const values = definition.values(input);
     // The interval is the input's own shape: checked first, it reads nothing.
     const interval = yield* intervalOf(values);
@@ -1069,7 +1069,7 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
   });
 
   const closeValidity = Effect.fn(`${type}.closeValidity`)(function* (id: string, at: Date) {
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     const row = yield* visibleEdge(viewer, id);
     if (Option.isNone(row)) return yield* new EdgeNotFound({ type, id });
     yield* writeGate({ viewer, policy, edge: row.value });
@@ -1092,7 +1092,7 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
   });
 
   const remove = Effect.fn(`${type}.delete`)(function* (id: string) {
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     const row = yield* visibleEdge(viewer, id);
     if (Option.isNone(row)) return yield* new EdgeNotFound({ type, id });
     yield* writeGate({ viewer, policy, edge: row.value });
@@ -1121,7 +1121,7 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     const named = anyOf(otherColumn, otherIds);
     // No ids, or past MAX_SET_VALUES: `anyOf` is `never`.
     if (named.kind === "never") return Option.none<Following>();
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     const following = yield* edges.members({
       column: member.value.column,
       otherColumn,
@@ -1162,7 +1162,7 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
     ) {
       return zero;
     }
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     const counts = yield* edges.countBy({
       column: counted.value.column,
       ids: wanted,

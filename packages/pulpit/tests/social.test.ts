@@ -87,6 +87,8 @@ describe("defineSocial — follows, mutes and blocks", () => {
       const { social, as } = setup();
       expect(yield* tagOf(social.follow("u-b"))).toEqual(Option.some("Unauthorized"));
       expect(yield* tagOf(social.muted(page))).toEqual(Option.some("Unauthorized"));
+      expect(yield* tagOf(as("", social.follow("u-b")))).toEqual(Option.some("Unauthorized"));
+      expect(yield* tagOf(as("", social.muted(page)))).toEqual(Option.some("Unauthorized"));
       expect(yield* tagOf(as("u-a", social.follow("u-a")))).toEqual(
         Option.some("SelfRelationship"),
       );

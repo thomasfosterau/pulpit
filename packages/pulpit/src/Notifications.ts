@@ -82,6 +82,7 @@ import {
   type ColumnValue,
   type NodeNotFound,
 } from "./VersionChain.ts";
+import { knownViewerOf } from "./internal/delegated-access.ts";
 
 // ── Vocabulary ────────────────────────────────────────────────────────
 
@@ -555,7 +556,7 @@ export const followCreated =
   (result: {
     readonly changed: boolean;
   }): Effect.Effect<ReadonlyArray<NotificationDraft>, never, R> =>
-    Effect.map(viewer, (current) =>
+    Effect.map(knownViewerOf(viewer), (current) =>
       result.changed
         ? Option.toArray(
             Option.map(current, (follower): NotificationDraft => ({
@@ -880,7 +881,7 @@ export const defineNotifications = <Kind extends string, E, R>(
     };
   });
 
-  const me = signedIn(definition.viewer);
+  const me = signedIn(knownViewerOf(definition.viewer));
 
   return {
     sweep,

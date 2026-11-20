@@ -58,6 +58,7 @@ import {
   type Viewer,
   type ViewerAccount,
 } from "./Subtype.ts";
+import { knownViewerOf } from "./internal/delegated-access.ts";
 
 // ── Vocabulary ────────────────────────────────────────────────────────
 
@@ -513,7 +514,7 @@ export const defineAudience = <Following, E, R>(
   definition: AudienceDefinition<Following, E, R>,
 ): AudienceOps<E, R> => {
   const { store, groups } = definition;
-  const signedIn = signedInAs(definition.viewer);
+  const signedIn = signedInAs(knownViewerOf(definition.viewer));
 
   /** The group's owner, or {@link GroupNotFound}. */
   const ownerOf = (groupId: string) =>

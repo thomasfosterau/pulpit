@@ -73,6 +73,7 @@ import {
   type NodeAlreadyExists,
   type VersionConflict,
 } from "./VersionChain.ts";
+import { knownViewerOf } from "./internal/delegated-access.ts";
 
 // ── Errors ────────────────────────────────────────────────────────────
 
@@ -330,7 +331,7 @@ export const defineComments = <Resource, Following, E, R>(
   };
 
   const create = Effect.fn(`${type}.comments.create`)(function* (input: CommentCreate) {
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     yield* targetReadable(input.targetType, input.targetId);
     let depth = 0;
     if (Option.isSome(input.parentId)) {
@@ -358,13 +359,13 @@ export const defineComments = <Resource, Following, E, R>(
   });
 
   const get = Effect.fn(`${type}.comments.get`)(function* (id: string) {
-    return (yield* readableRow(yield* definition.viewer, id)).resource;
+    return (yield* readableRow(yield* knownViewerOf(definition.viewer), id)).resource;
   });
 
   const listByTarget = Effect.fn(`${type}.comments.listByTarget`)(function* (
     request: CommentListRequest,
   ) {
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     yield* targetReadable(request.targetType, request.targetId);
     const parent = Option.match(request.parentId, {
       onNone: (): ListFilter<never> => always,

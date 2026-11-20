@@ -338,6 +338,9 @@ describe("defineProposals — the operations", () => {
         expect(yield* tagOf(actAs("anonymous", submit(open, { title: "x" })))).toEqual(
           Option.some("Unauthorized"),
         );
+        expect(yield* tagOf(actAs({ ...curator, id: "" }, submit(open, { title: "x" })))).toEqual(
+          Option.some("Unauthorized"),
+        );
         // Hidden and missing are one answer (SEC-AUTH-ENUM-001).
         expect(yield* tagOf(actAs(curator, submit(hidden, { title: "x" })))).toEqual(
           Option.some("NodeNotFound"),

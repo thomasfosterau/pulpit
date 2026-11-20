@@ -124,7 +124,7 @@ import {
   type ListFilter,
 } from "./Filter.ts";
 import { byCodePoint } from "./internal/list-order.ts";
-import { knownViewer, readScopeDelegated } from "./internal/delegated-access.ts";
+import { knownViewer, knownViewerOf, readScopeDelegated } from "./internal/delegated-access.ts";
 import { canViewOwnedRow, declaresColumns, ownedFacts } from "./internal/owned-columns.ts";
 import { qOf } from "./internal/qvalue.ts";
 import {
@@ -222,7 +222,9 @@ export interface AccessAxes<Rung extends string> {
  * The kernel's {@link AccessPolicy} from effect-auth's guard kit
  * (`Guard.make`): each axis is the kit's ladder
  * (`ladder.hasAtLeast(account, rung)`), the rank comparison its role gates
- * make, which fails closed on a role outside the ladder. Never fails.
+ * make, which fails closed on a role outside the ladder. An account whose id
+ * is empty is anonymous and holds no rung, as `Guard.make` reads it.
+ * Never fails.
  *
  * @example
  * ```ts
@@ -249,6 +251,7 @@ export interface AccessAxes<Rung extends string> {
  * strictEqual(policy.canWriteCorpus({ id: "u-1", role: "contributor" }), true);
  * strictEqual(policy.canViewPrivate({ id: "u-1", role: "contributor" }), false);
  * strictEqual(policy.canModerate({ id: "u-2", role: "superuser" }), false); // off the ladder
+ * strictEqual(policy.canModerate({ id: "", role: "moderator" }), false); // anonymous
  * ```
  *
  * @since 0.2.0
@@ -258,11 +261,15 @@ export const accessPolicyFromGuards = <Id, User extends ViewerAccount, Rung exte
   axes: AccessAxes<NoInfer<Rung>>,
 ): AccessPolicy => {
   const { ladder } = guards;
+  const atLeast =
+    (rung: Rung | Ladder.Axis<Rung>) =>
+    (account: ViewerAccount): boolean =>
+      Str.isNonEmpty(account.id) && ladder.hasAtLeast(account, rung);
   return {
-    canViewPrivate: (account) => ladder.hasAtLeast(account, axes.viewPrivate),
-    canViewDeleted: (account) => ladder.hasAtLeast(account, axes.viewDeleted),
-    canModerate: (account) => ladder.hasAtLeast(account, axes.moderate),
-    canWriteCorpus: (account) => ladder.hasAtLeast(account, axes.writeCorpus),
+    canViewPrivate: atLeast(axes.viewPrivate),
+    canViewDeleted: atLeast(axes.viewDeleted),
+    canModerate: atLeast(axes.moderate),
+    canWriteCorpus: atLeast(axes.writeCorpus),
   };
 };
 
@@ -1960,7 +1967,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
           beforeAppend: (event) =>
             Effect.flatMap(hooks, ({ before }) =>
               Arr.isReadonlyArrayNonEmpty(before)
-                ? Effect.flatMap(definition.viewer, (viewer) =>
+                ? Effect.flatMap(knownViewerOf(definition.viewer), (viewer) =>
                     runBefore(before, { ...event, type, viewer }),
                   )
                 : Effect.succeed(event.patch),
@@ -1968,7 +1975,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
           beforeAppendLocales: (event) =>
             Effect.flatMap(hooks, ({ before }) =>
               Arr.isReadonlyArrayNonEmpty(before)
-                ? Effect.flatMap(definition.viewer, (viewer) =>
+                ? Effect.flatMap(knownViewerOf(definition.viewer), (viewer) =>
                     runBeforeLocales(before, { ...event, type, viewer }),
                   )
                 : Effect.succeed(event.locales ?? {}),
@@ -2104,7 +2111,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     );
 
   const create = Effect.fn(`${type}.create`)(function* (input: CreateRequest) {
-    const account = yield* requireCreator(access, yield* definition.viewer, policy);
+    const account = yield* requireCreator(access, yield* knownViewerOf(definition.viewer), policy);
     yield* lockedLocales(
       Option.getOrElse(input.id, () => ""),
       "create",
@@ -2117,13 +2124,13 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   });
 
   const update = Effect.fn(`${type}.update`)(function* (input: UpdateRequest) {
-    const account = yield* writer(yield* definition.viewer, input.id);
+    const account = yield* writer(yield* knownViewerOf(definition.viewer), input.id);
     yield* lockedLocales(input.id, "update", input.patch, input.locales ?? {});
     return yield* chain.update({ ...input, actorId: actor(account) });
   });
 
   const restore = Effect.fn(`${type}.restore`)(function* (input: RestoreRequest) {
-    const account = yield* writer(yield* definition.viewer, input.id);
+    const account = yield* writer(yield* knownViewerOf(definition.viewer), input.id);
     yield* lockedLocales(input.id, "restore", input.patch, input.locales ?? {});
     return yield* chain.restore({ ...input, actorId: actor(account) });
   });
@@ -2132,7 +2139,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     id: string,
     precondition: Precondition = {},
   ) {
-    const account = yield* writer(yield* definition.viewer, id);
+    const account = yield* writer(yield* knownViewerOf(definition.viewer), id);
     return yield* chain.delete(id, actor(account), precondition);
   });
 
@@ -2143,12 +2150,12 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
       if (Option.isSome(head) && head.value.action !== "delete") return toResource(head.value);
     }
     // Hidden and missing are the same answer (SEC-AUTH-ENUM-001).
-    return toResource(yield* visibleRow(yield* definition.viewer, id));
+    return toResource(yield* visibleRow(yield* knownViewerOf(definition.viewer), id));
   });
 
   const owners = Effect.fn(`${type}.owners`)(function* (request: OwnersRequest) {
     if (access.kind !== "owned") return { rows: [], total: 0 };
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     const among = request.among === undefined ? always : anyOf(access.ownerColumn, request.among);
     const query = {
       column: access.ownerColumn,
@@ -2173,7 +2180,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     id: string,
     locales: ReadonlyArray<string>,
   ) {
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     // The node's own gate, exactly as `get` runs it: a preview grant reads
     // its node's head unless tombstoned, anyone else the row `get` serves.
     const preview = (yield* previewing(id))
@@ -2231,7 +2238,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
 
   const getMany = Effect.fn(`${type}.getMany`)(function* (ids: ReadonlyArray<string>) {
     if (!Arr.isReadonlyArrayNonEmpty(ids)) return HashMap.empty<string, Resource>();
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     const rows = yield* chosenRows(viewer, yield* leaves.getMany(Arr.dedupe(ids)));
     const shown = yield* Effect.filter(rows, (row) => visible(viewer, row));
     return HashMap.fromIterable(Arr.map(shown, (row) => [row.id, toResource(row)] as const));
@@ -2242,7 +2249,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
 
   const list = Effect.fn(`${type}.list`)(function* (request: ListRequest<Following>) {
     const orderBy = yield* checkedOrder(type, isSortable, request.orderBy ?? []);
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     const where = searchScopeFilter(
       { access, columns: leaves.columns, policy, followers },
       viewer,
@@ -2271,7 +2278,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   ) {
     const orderBy = yield* checkedOrder(type, isSortable, request.orderBy ?? []);
     if (Option.isNone(localeLevel)) return { rows: [], total: 0 };
-    const viewer = yield* definition.viewer;
+    const viewer = yield* knownViewerOf(definition.viewer);
     const locales = Arr.dedupe(request.locales);
     const query = {
       // `list`'s own scope, narrowed to the requested locales' rows.
@@ -2310,7 +2317,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
    */
   const historyRead = <A, E2>(id: string, read: Effect.Effect<A, E2, R>) =>
     Effect.andThen(
-      Effect.flatMap(definition.viewer, (viewer) => writer(viewer, id)),
+      Effect.flatMap(knownViewerOf(definition.viewer), (viewer) => writer(viewer, id)),
       read,
     );
 
@@ -2327,7 +2334,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     version: bigint,
     precondition: Precondition = {},
   ) {
-    const account = yield* writer(yield* definition.viewer, id);
+    const account = yield* writer(yield* knownViewerOf(definition.viewer), id);
     return yield* chain.restoreVersion(id, version, actor(account), precondition);
   });
 
@@ -2339,7 +2346,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
   });
 
   const authorize = Effect.fn(`${type}.authorize`)(function* (id: string) {
-    return yield* writer(yield* definition.viewer, id);
+    return yield* writer(yield* knownViewerOf(definition.viewer), id);
   });
 
   /** A publication's before hooks: shown the head, an empty patch; the returned patch is ignored. */
@@ -2371,7 +2378,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
 
   const publicationOps = Option.map(publication, ({ facts }): PublicationOps<E, R> => ({
     publish: Effect.fn(`${type}.publish`)(function* (id: string, options: PublishOptions = {}) {
-      const viewer = yield* definition.viewer;
+      const viewer = yield* knownViewerOf(definition.viewer);
       const account = yield* writer(viewer, id);
       const head = yield* definition.chain.head(id);
       if (Option.isNone(head) || head.value.action === "delete") {
@@ -2395,7 +2402,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
       return { fact, head: head.value.version };
     }),
     unpublish: Effect.fn(`${type}.unpublish`)(function* (id: string) {
-      const viewer = yield* definition.viewer;
+      const viewer = yield* knownViewerOf(definition.viewer);
       const account = yield* writer(viewer, id);
       const head = yield* definition.chain.head(id);
       if (Option.isNone(head)) return yield* new NodeNotFound({ type, id });
@@ -2415,7 +2422,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
       id: string,
       precondition: Precondition = {},
     ) {
-      const account = yield* writer(yield* definition.viewer, id);
+      const account = yield* writer(yield* knownViewerOf(definition.viewer), id);
       const live = Option.flatMap(yield* facts.effective(id), (fact) => fact.version);
       if (Option.isNone(live)) return yield* new NotPublished({ type, id });
       const head = yield* definition.chain.head(id);
@@ -2429,7 +2436,7 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
     }),
     scheduled: Effect.fn(`${type}.scheduledPublications`)(function* (ids: ReadonlyArray<string>) {
       if (!Arr.isReadonlyArrayNonEmpty(ids)) return HashMap.empty<string, PublicationFact>();
-      const viewer = yield* definition.viewer;
+      const viewer = yield* knownViewerOf(definition.viewer);
       // The heads this viewer reads and may see: the rows whose draft state they are shown.
       const heads = Arr.filter(
         yield* leaves.getMany(Arr.dedupe(ids)),
