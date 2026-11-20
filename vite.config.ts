@@ -51,12 +51,7 @@ export default defineConfig({
       // `_links` and `_embedded` are the WordPress REST API's own (HAL) wire
       // members, which pulpit-wordpress must emit under exactly those names.
       "eslint/no-underscore-dangle": ["error", { allow: ["_tag", "_links", "_embedded"] }],
-      // Effect code builds its operations, handlers, layers and schema
-      // transformations as closures over their factory's arguments, and the
-      // tests build their fixtures inside the `describe` they read as part
-      // of; hoisting each one would scatter one definition across a module
-      // (94 sites when the category was turned on).
-      "unicorn/consistent-function-scoping": "off",
+      "unicorn/consistent-function-scoping": "error",
       "eslint/no-shadow": "error",
       // The suites assert through helpers named `expect…` (`expectAgreement`
       // in tests/subtype.test.ts) as well as `expect` itself.

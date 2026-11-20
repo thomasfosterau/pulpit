@@ -56,6 +56,14 @@ export interface InMemoryIdCodec extends IdCodec<never, never> {
   readonly decodeCalls: () => ReadonlyArray<ReadonlyArray<number>>;
 }
 
+/** The entries of `table` at `keys`, as a codec's `= ANY($keys)` read answers. */
+const pick = <K, V>(table: HashMap.HashMap<K, V>, keys: ReadonlyArray<K>) =>
+  HashMap.fromIterable(
+    Arr.getSomes(
+      keys.map((key) => Option.map(HashMap.get(table, key), (value) => [key, value] as const)),
+    ),
+  );
+
 /**
  * An {@link InMemoryIdCodec}, with `nodeIds` assigned 1, 2, … in order.
  *
@@ -75,14 +83,6 @@ export const makeInMemoryIdCodec = (nodeIds: Iterable<string> = []): InMemoryIdC
       return integer;
     });
   Arr.fromIterable(nodeIds).forEach(assign);
-
-  /** The entries of `table` at `keys`, as a codec's `= ANY($keys)` read answers. */
-  const pick = <K, V>(table: HashMap.HashMap<K, V>, keys: ReadonlyArray<K>) =>
-    HashMap.fromIterable(
-      Arr.getSomes(
-        keys.map((key) => Option.map(HashMap.get(table, key), (value) => [key, value] as const)),
-      ),
-    );
 
   return {
     assign,

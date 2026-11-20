@@ -150,6 +150,8 @@ export interface ResourceCache<Resource, R> extends ResourceCacheSeam<Resource, 
   readonly get: (id: string, locale?: string) => Effect.Effect<Option.Option<Resource>, never, R>;
 }
 
+const valueRank = (version: bigint) => version * 2n;
+
 /**
  * The reference {@link ResourceCacheSeam} over a {@link VersionedKv}.
  *
@@ -196,7 +198,6 @@ export const makeResourceCache = <Resource, E, R>(
   // An id holding U+001F could collide with another id's locale key; node ids
   // (UUIDs, slugs) never do.
   const localeKeyOf = (id: string, locale: string) => `${keyOf(id)}\u001f${locale}`;
-  const valueRank = (version: bigint) => version * 2n;
 
   /**
    * The conditional write at the entry's rank (`2·version`, plus one for a

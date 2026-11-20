@@ -258,6 +258,9 @@ export type ErasureRoot = VersionChainTables["root"] & {
   };
 };
 
+const ids = (rows: ReadonlyArray<unknown>) =>
+  Effect.map(Effect.orDie(decodeIds(rows)), (decoded) => Arr.map(decoded, ({ id }) => id));
+
 /**
  * Bind the kernel's `AccountErasureStore` to the tree's root tables and the
  * owner table, in the caller's `CurrentTransaction`. It writes no version
@@ -287,8 +290,6 @@ export const makeAccountErasureStore = <I, Relations extends AnyRelations>(confi
   const { root, owners, CurrentTransaction } = config;
   const { identity, version } = root;
   const proposedBy: Option.Option<AnyPgColumn> = R.get(getTableColumns(version), "proposedBy");
-  const ids = (rows: ReadonlyArray<unknown>) =>
-    Effect.map(Effect.orDie(decodeIds(rows)), (decoded) => Arr.map(decoded, ({ id }) => id));
 
   return {
     ownedNodes: ({ accountId, type, limit }) =>

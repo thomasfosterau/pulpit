@@ -1933,6 +1933,8 @@ export interface SubtypeOps<Resource, E, R, Following = never> {
   >;
 }
 
+const actor = (account: ViewerAccount) => Option.some(account.id);
+
 /**
  * Bind a leaf's operations. Every produced operation is traced as
  * `${type}.<operation>`; the write operations run in the caller's
@@ -1975,7 +1977,6 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
             ),
         },
   );
-  const actor = (account: ViewerAccount) => Option.some(account.id);
 
   // The view's column set is fixed at bind time, so the owned leaf's
   // declared-column check is answered once, not per row.

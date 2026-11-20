@@ -160,57 +160,56 @@ const anonymous: Viewer = Option.none();
 /** `follower` follows `member`; nobody else follows anybody. */
 const follows = makeInMemoryFollowers([[follower.id, [member.id]]]);
 const nobody = nobodyFollows<Following>(HashSet.empty());
+const viewRow = (
+  visibility: Visibility,
+  viewer: Viewer,
+  options: {
+    readonly draft?: boolean;
+    readonly unapproved?: boolean;
+    readonly followers?: typeof follows;
+  } = {},
+) =>
+  canViewOwned(viewer, gardeneriaPolicy, options.followers ?? follows, {
+    ownerId: member.id,
+    visibility,
+    draft: options.draft ?? false,
+    unapproved: options.unapproved ?? false,
+  });
 
 // ── The row predicate ─────────────────────────────────────────────────
 
 describe("canViewOwned (the owned-material read predicate)", () => {
-  const view = (
-    visibility: Visibility,
-    viewer: Viewer,
-    options: {
-      readonly draft?: boolean;
-      readonly unapproved?: boolean;
-      readonly followers?: typeof follows;
-    } = {},
-  ) =>
-    canViewOwned(viewer, gardeneriaPolicy, options.followers ?? follows, {
-      ownerId: member.id,
-      visibility,
-      draft: options.draft ?? false,
-      unapproved: options.unapproved ?? false,
-    });
-
   it.effect("public: everyone, anonymous included", () =>
     Effect.gen(function* () {
-      expect(yield* view("public", anonymous)).toBe(true);
-      expect(yield* view("public", as(otherMember))).toBe(true);
+      expect(yield* viewRow("public", anonymous)).toBe(true);
+      expect(yield* viewRow("public", as(otherMember))).toBe(true);
     }),
   );
 
   it.effect("private: the owner and moderator+, nobody else", () =>
     Effect.gen(function* () {
-      expect(yield* view("private", as(member))).toBe(true);
-      expect(yield* view("private", as(moderator))).toBe(true);
-      expect(yield* view("private", as(admin))).toBe(true);
-      expect(yield* view("private", as(otherMember))).toBe(false);
-      expect(yield* view("private", as(contributor))).toBe(false);
-      expect(yield* view("private", anonymous)).toBe(false);
+      expect(yield* viewRow("private", as(member))).toBe(true);
+      expect(yield* viewRow("private", as(moderator))).toBe(true);
+      expect(yield* viewRow("private", as(admin))).toBe(true);
+      expect(yield* viewRow("private", as(otherMember))).toBe(false);
+      expect(yield* viewRow("private", as(contributor))).toBe(false);
+      expect(yield* viewRow("private", anonymous)).toBe(false);
     }),
   );
 
   it.effect("followers: the owner, moderator+, and the owner's followers via the seam", () =>
     Effect.gen(function* () {
-      expect(yield* view("followers", as(member))).toBe(true);
-      expect(yield* view("followers", as(moderator))).toBe(true);
-      expect(yield* view("followers", as(follower))).toBe(true);
-      expect(yield* view("followers", as(contributor))).toBe(false);
-      expect(yield* view("followers", anonymous)).toBe(false);
+      expect(yield* viewRow("followers", as(member))).toBe(true);
+      expect(yield* viewRow("followers", as(moderator))).toBe(true);
+      expect(yield* viewRow("followers", as(follower))).toBe(true);
+      expect(yield* viewRow("followers", as(contributor))).toBe(false);
+      expect(yield* viewRow("followers", anonymous)).toBe(false);
     }),
   );
 
   it.effect("followers: fails closed under the nobody-follows seam", () =>
     Effect.gen(function* () {
-      expect(yield* view("followers", as(follower), { followers: nobody })).toBe(false);
+      expect(yield* viewRow("followers", as(follower), { followers: nobody })).toBe(false);
     }),
   );
 
@@ -220,27 +219,29 @@ describe("canViewOwned (the owned-material read predicate)", () => {
         isFollower: () => Effect.succeed(true),
         following: () => HashSet.empty<string>(),
       };
-      expect(yield* view("private", as(otherMember), { followers: everyoneFollows })).toBe(false);
+      expect(yield* viewRow("private", as(otherMember), { followers: everyoneFollows })).toBe(
+        false,
+      );
     }),
   );
 
   it.effect("a draft narrows even public to the owner and moderator+", () =>
     Effect.gen(function* () {
-      expect(yield* view("public", anonymous, { draft: true })).toBe(false);
-      expect(yield* view("public", as(otherMember), { draft: true })).toBe(false);
-      expect(yield* view("followers", as(follower), { draft: true })).toBe(false);
-      expect(yield* view("public", as(member), { draft: true })).toBe(true);
-      expect(yield* view("private", as(moderator), { draft: true })).toBe(true);
+      expect(yield* viewRow("public", anonymous, { draft: true })).toBe(false);
+      expect(yield* viewRow("public", as(otherMember), { draft: true })).toBe(false);
+      expect(yield* viewRow("followers", as(follower), { draft: true })).toBe(false);
+      expect(yield* viewRow("public", as(member), { draft: true })).toBe(true);
+      expect(yield* viewRow("private", as(moderator), { draft: true })).toBe(true);
     }),
   );
 
   it.effect("an unapproved row narrows even public to the owner and moderator+", () =>
     Effect.gen(function* () {
-      expect(yield* view("public", anonymous, { unapproved: true })).toBe(false);
-      expect(yield* view("public", as(otherMember), { unapproved: true })).toBe(false);
-      expect(yield* view("followers", as(follower), { unapproved: true })).toBe(false);
-      expect(yield* view("public", as(member), { unapproved: true })).toBe(true);
-      expect(yield* view("private", as(moderator), { unapproved: true })).toBe(true);
+      expect(yield* viewRow("public", anonymous, { unapproved: true })).toBe(false);
+      expect(yield* viewRow("public", as(otherMember), { unapproved: true })).toBe(false);
+      expect(yield* viewRow("followers", as(follower), { unapproved: true })).toBe(false);
+      expect(yield* viewRow("public", as(member), { unapproved: true })).toBe(true);
+      expect(yield* viewRow("private", as(moderator), { unapproved: true })).toBe(true);
     }),
   );
 });
@@ -384,6 +385,11 @@ describe("ownedListFilter ≡ canViewOwned", () => {
     expect(filter).toEqual(never);
   });
 });
+const inline = (showDeleted: boolean, showPrivate: boolean) =>
+  and<never>(
+    showDeleted ? always : ne("action", "delete"),
+    showPrivate ? always : eq("visibility", "public"),
+  );
 
 // ── The reference two-state predicate (website's matrix) ─────────────
 
@@ -395,12 +401,6 @@ describe("the reference list predicates", () => {
       softDeleteFilter(viewer, websitePolicy, includeDeleted),
       referencePrivacyFilter(viewer, websitePolicy, columns),
     );
-  const inline = (showDeleted: boolean, showPrivate: boolean) =>
-    and<never>(
-      showDeleted ? always : ne("action", "delete"),
-      showPrivate ? always : eq("visibility", "public"),
-    );
-
   it("an anonymous viewer and a non-admin get both filters", () => {
     expect(filters(anonymous, false)).toEqual(inline(false, false));
     expect(filters(as(reader), false)).toEqual(inline(false, false));
@@ -475,6 +475,7 @@ describe("the reference list predicates", () => {
     });
   });
 });
+const ownedBy = (owner: Option.Option<string>) => Effect.succeed(owner);
 
 // ── The gates ─────────────────────────────────────────────────────────
 
@@ -482,8 +483,6 @@ describe("the write gates", () => {
   const reference: LeafAccess = { kind: "reference" };
   const owned = ownedAccess();
   const row = { type: "gardens", id: "g1" };
-  const ownedBy = (owner: Option.Option<string>) => Effect.succeed(owner);
-
   it.effect("create: reference data needs the corpus rung, an owned leaf any account", () =>
     Effect.gen(function* () {
       expect(yield* tagOf(requireCreator(reference, anonymous, gardeneriaPolicy))).toEqual(
@@ -503,15 +502,13 @@ describe("the write gates", () => {
       );
     }),
   );
+  const gate = (viewer: Viewer) =>
+    tagOf(requireWriter(owned, viewer, gardeneriaPolicy, row, ownedBy(Option.some(member.id))));
 
   it.effect(
     "an owned write admits the owner whatever their rung, and moderator+ on anyone's row",
     () =>
       Effect.gen(function* () {
-        const gate = (viewer: Viewer) =>
-          tagOf(
-            requireWriter(owned, viewer, gardeneriaPolicy, row, ownedBy(Option.some(member.id))),
-          );
         expect(yield* gate(as(member))).toEqual(Option.none());
         expect(yield* gate(as(moderator))).toEqual(Option.none());
         expect(yield* gate(as(admin))).toEqual(Option.none());
@@ -1046,17 +1043,16 @@ describe("defineSubtype — an owned leaf", () => {
     );
   });
 });
+/** An owned post at head 1, written by its owner. */
+const atHeadOne = () =>
+  Effect.gen(function* () {
+    const context = ownedPosts();
+    const id = yield* context.post("public");
+    yield* context.actAs(as(member), context.ops.update({ id, patch: { title: "Second" } }));
+    return { ...context, id };
+  });
 
 describe("defineSubtype — the expected-version precondition", () => {
-  /** An owned post at head 1, written by its owner. */
-  const atHeadOne = () =>
-    Effect.gen(function* () {
-      const context = ownedPosts();
-      const id = yield* context.post("public");
-      yield* context.actAs(as(member), context.ops.update({ id, patch: { title: "Second" } }));
-      return { ...context, id };
-    });
-
   type Ops = ReturnType<typeof ownedPosts>["ops"];
   type Write = (
     ops: Ops,
@@ -1179,22 +1175,36 @@ describe("defineSubtype — a reference leaf", () => {
     }),
   );
 });
+const asc = (column: string): ListOrder => ({ column, direction: "asc" });
+
+const desc = (column: string): ListOrder => ({ column, direction: "desc" });
+
+const byText = (ids: ReadonlyArray<string>) => Arr.sort(ids, Order.String);
+
+/** A request whose `orderBy` is `value`, as an unchecked caller might send it. */
+const unchecked = (value: Schema.Json) => {
+  const order: Pick<ListRequest, "orderBy"> = { orderBy: [] };
+  Reflect.set(order, "orderBy", value);
+  return order;
+};
+const isoDate = (iso: string) => DateTime.toDate(DateTime.makeUnsafe(iso));
 
 // ── List ordering ────────────────────────────────────────
 
+/** One seeded node: its caller-chosen id, its state and whether it is tombstoned. */
+interface OrderSeed {
+  readonly id: string;
+  readonly state: ChainState;
+  readonly deleted: boolean;
+}
+const orderSeed = (id: string, state: ChainState, deleted = false): OrderSeed => ({
+  id,
+  state,
+  deleted,
+});
+
 describe("defineSubtype — list ordering", () => {
   type Keys = ReadonlyArray<ListOrder>;
-  /** One seeded node: its caller-chosen id, its state and whether it is tombstoned. */
-  interface OrderSeed {
-    readonly id: string;
-    readonly state: ChainState;
-    readonly deleted: boolean;
-  }
-  const seed = (id: string, state: ChainState, deleted = false): OrderSeed => ({
-    id,
-    state,
-    deleted,
-  });
   /** Who lists, whether they asked for tombstones, and the page window. */
   interface Ask {
     readonly who: Viewer;
@@ -1202,13 +1212,7 @@ describe("defineSubtype — list ordering", () => {
     readonly limit: number;
     readonly offset: number;
   }
-  const everything: Ask = { who: anonymous, includeDeleted: false, limit: 100, offset: 0 };
-  const asc = (column: string): ListOrder => ({ column, direction: "asc" });
-  const desc = (column: string): ListOrder => ({ column, direction: "desc" });
-  const at = (iso: string) => DateTime.toDate(DateTime.makeUnsafe(iso));
-  const byText = (ids: ReadonlyArray<string>) => Arr.sort(ids, Order.String);
-
-  /**
+  const everything: Ask = { who: anonymous, includeDeleted: false, limit: 100, offset: 0 }; /**
    * A reference leaf with a `visibility` column (`public` unless a seed
    * says otherwise), seeded straight through the chain with caller-chosen
    * ids so the `id` tiebreak is checkable, a log of every query the store
@@ -1285,9 +1289,9 @@ describe("defineSubtype — list ordering", () => {
   it.effect("keeps the default order, id ascending, when the order is absent, null or empty", () =>
     Effect.gen(function* () {
       const { page, queries } = yield* ranked([
-        seed("c", { rank: 1 }),
-        seed("a", { rank: 3 }),
-        seed("b", { rank: 2 }),
+        orderSeed("c", { rank: 1 }),
+        orderSeed("a", { rank: 3 }),
+        orderSeed("b", { rank: 2 }),
       ]);
       // `null`, as an unchecked caller might send it, is the same as absent.
       const nullOrder: Pick<ListRequest, "orderBy"> = {};
@@ -1307,11 +1311,11 @@ describe("defineSubtype — list ordering", () => {
   it.effect("orders by one key in either direction, NULL and absent last in both", () =>
     Effect.gen(function* () {
       const { ids } = yield* ranked([
-        seed("a", { rank: 2 }),
-        seed("b", { rank: null }),
-        seed("c", { rank: 10 }),
-        seed("d", {}),
-        seed("e", { rank: -1 }),
+        orderSeed("a", { rank: 2 }),
+        orderSeed("b", { rank: null }),
+        orderSeed("c", { rank: 10 }),
+        orderSeed("d", {}),
+        orderSeed("e", { rank: -1 }),
       ]);
       // Numerically (10 after 2), not as text; NULL and absent tie, so `id` orders them.
       expect(yield* ids([asc("rank")])).toEqual(["e", "a", "c", "b", "d"]);
@@ -1324,11 +1328,11 @@ describe("defineSubtype — list ordering", () => {
     () =>
       Effect.gen(function* () {
         const { ids } = yield* ranked([
-          seed("a", { rank: Number.NaN, title: true }),
-          seed("b", { rank: Number.POSITIVE_INFINITY, title: false }),
-          seed("c", { rank: null, title: null }),
-          seed("d", { rank: Number.NEGATIVE_INFINITY, title: true }),
-          seed("e", { rank: Number.NaN, title: false }),
+          orderSeed("a", { rank: Number.NaN, title: true }),
+          orderSeed("b", { rank: Number.POSITIVE_INFINITY, title: false }),
+          orderSeed("c", { rank: null, title: null }),
+          orderSeed("d", { rank: Number.NEGATIVE_INFINITY, title: true }),
+          orderSeed("e", { rank: Number.NaN, title: false }),
         ]);
         expect(yield* ids([asc("rank")])).toEqual(["d", "b", "a", "e", "c"]);
         expect(yield* ids([desc("rank")])).toEqual(["a", "e", "b", "d", "c"]);
@@ -1340,11 +1344,11 @@ describe("defineSubtype — list ordering", () => {
   it.effect("orders by two keys, the second breaking the first's ties, then id", () =>
     Effect.gen(function* () {
       const { ids } = yield* ranked([
-        seed("a", { title: "Oak", rank: 1 }),
-        seed("b", { title: "Ash", rank: 1 }),
-        seed("c", { title: "Oak", rank: 2 }),
-        seed("d", { title: "Ash", rank: 1 }),
-        seed("e", { title: null, rank: 2 }),
+        orderSeed("a", { title: "Oak", rank: 1 }),
+        orderSeed("b", { title: "Ash", rank: 1 }),
+        orderSeed("c", { title: "Oak", rank: 2 }),
+        orderSeed("d", { title: "Ash", rank: 1 }),
+        orderSeed("e", { title: null, rank: 2 }),
       ]);
       expect(yield* ids([asc("title"), desc("rank")])).toEqual(["b", "d", "c", "a", "e"]);
       expect(yield* ids([desc("title"), asc("rank")])).toEqual(["a", "c", "b", "d", "e"]);
@@ -1357,11 +1361,11 @@ describe("defineSubtype — list ordering", () => {
     () =>
       Effect.gen(function* () {
         const { ids } = yield* ranked([
-          seed("a", { title: "\u{1F600}" }),
-          seed("b", { title: "�" }),
-          seed("c", { title: "a" }),
-          seed("d", { title: "B" }),
-          seed("e", { title: "" }),
+          orderSeed("a", { title: "\u{1F600}" }),
+          orderSeed("b", { title: "�" }),
+          orderSeed("c", { title: "a" }),
+          orderSeed("d", { title: "B" }),
+          orderSeed("e", { title: "" }),
         ]);
         // UTF-16's `<` would put U+1F600 (a surrogate pair from U+D83D) before U+FFFD.
         expect(yield* ids([asc("title")])).toEqual(["e", "d", "c", "b", "a"]);
@@ -1372,10 +1376,10 @@ describe("defineSubtype — list ordering", () => {
   it.effect("compares dates by instant", () =>
     Effect.gen(function* () {
       const { ids } = yield* ranked([
-        seed("a", { publishedAt: at("2026-01-02T00:00:00.000Z") }),
-        seed("b", { publishedAt: at("2025-12-31T23:59:59.999Z") }),
-        seed("c", { publishedAt: null }),
-        seed("d", { publishedAt: at("2026-01-02T00:00:00.001Z") }),
+        orderSeed("a", { publishedAt: isoDate("2026-01-02T00:00:00.000Z") }),
+        orderSeed("b", { publishedAt: isoDate("2025-12-31T23:59:59.999Z") }),
+        orderSeed("c", { publishedAt: null }),
+        orderSeed("d", { publishedAt: isoDate("2026-01-02T00:00:00.001Z") }),
       ]);
       expect(yield* ids([asc("publishedAt")])).toEqual(["b", "a", "d", "c"]);
       expect(yield* ids([desc("publishedAt")])).toEqual(["d", "a", "b", "c"]);
@@ -1387,7 +1391,7 @@ describe("defineSubtype — list ordering", () => {
       const order = ["h", "c", "f", "a", "g", "b", "e", "d", "i"];
       const { page, ids } = yield* ranked(
         Arr.map(order, (id, index) =>
-          seed(id, { rank: index % 3 === 0 ? null : index % 2, title: "same" }),
+          orderSeed(id, { rank: index % 3 === 0 ? null : index % 2, title: "same" }),
         ),
       );
       const offsets = Arr.makeBy(Math.ceil(order.length / 2), (index) => index * 2);
@@ -1427,7 +1431,7 @@ describe("defineSubtype — list ordering", () => {
 
   it.effect("refuses a column the view does not declare, before the store is read", () =>
     Effect.gen(function* () {
-      const { page, queries } = yield* ranked([seed("a", { rank: 1, secret: "x" })]);
+      const { page, queries } = yield* ranked([orderSeed("a", { rank: 1, secret: "x" })]);
       // A direction outside the type, as an unchecked caller might send it.
       const sideways = asc("rank");
       Reflect.set(sideways, "direction", "sideways");
@@ -1447,7 +1451,7 @@ describe("defineSubtype — list ordering", () => {
 
   it.effect("hands the store each column once, rebuilt to its column and direction", () =>
     Effect.gen(function* () {
-      const { ids, queries } = yield* ranked([seed("a", { rank: 1 })]);
+      const { ids, queries } = yield* ranked([orderSeed("a", { rank: 1 })]);
       const extra = { ...desc("rank"), raw: "DESC NULLS FIRST" };
       yield* ids([extra, asc("title"), asc("rank"), desc("title")]);
       expect(queries.map((query) => query.orderBy)).toEqual([[desc("rank"), asc("title")]]);
@@ -1458,11 +1462,11 @@ describe("defineSubtype — list ordering", () => {
     Effect.gen(function* () {
       const big = 2n ** 64n;
       const { ids } = yield* ranked([
-        seed("a", { rank: big + 1n }),
-        seed("b", { rank: big }),
-        seed("c", { rank: null }),
-        seed("d", { rank: 0n }),
-        seed("e", { rank: -1n }),
+        orderSeed("a", { rank: big + 1n }),
+        orderSeed("b", { rank: big }),
+        orderSeed("c", { rank: null }),
+        orderSeed("d", { rank: 0n }),
+        orderSeed("e", { rank: -1n }),
       ]);
       // As doubles, 2^64 and 2^64 + 1 tie, and `id` would put `a` first.
       expect(yield* ids([asc("rank")])).toEqual(["e", "d", "b", "a", "c"]);
@@ -1473,9 +1477,9 @@ describe("defineSubtype — list ordering", () => {
   it.effect('closes the order with id by code point, as uuid or a COLLATE "C" text id sorts', () =>
     Effect.gen(function* () {
       const { ids } = yield* ranked([
-        seed("\u{1F600}", { title: "same" }),
-        seed("�", { title: "same" }),
-        seed("z", { title: "same" }),
+        orderSeed("\u{1F600}", { title: "same" }),
+        orderSeed("�", { title: "same" }),
+        orderSeed("z", { title: "same" }),
       ]);
       // UTF-16's `<` would put U+1F600 (a surrogate pair from U+D83D) before U+FFFD.
       const expected = ["z", "�", "\u{1F600}"];
@@ -1486,7 +1490,7 @@ describe("defineSubtype — list ordering", () => {
 
   it.effect("checks the order before the viewer is read", () =>
     Effect.gen(function* () {
-      const { page, queries, viewerReads } = yield* ranked([seed("a", { rank: 1 })]);
+      const { page, queries, viewerReads } = yield* ranked([orderSeed("a", { rank: 1 })]);
       const refused = yield* Effect.flip(page({ orderBy: [asc("secret")] }));
       expect(refused).toEqual(new InvalidListOrder({ type: "taxa", column: "secret" }));
       expect(viewerReads()).toBe(0);
@@ -1498,13 +1502,7 @@ describe("defineSubtype — list ordering", () => {
 
   it.effect("refuses an order not shaped as one with InvalidListOrder, never a defect", () =>
     Effect.gen(function* () {
-      const { page, queries, viewerReads } = yield* ranked([seed("a", { title: "Oak" })]);
-      /** A request whose `orderBy` is `value`, as an unchecked caller might send it. */
-      const unchecked = (value: Schema.Json) => {
-        const order: Pick<ListRequest, "orderBy"> = { orderBy: [] };
-        Reflect.set(order, "orderBy", value);
-        return order;
-      };
+      const { page, queries, viewerReads } = yield* ranked([orderSeed("a", { title: "Oak" })]);
       const refused = yield* Effect.forEach(
         [
           [{ column: 42, direction: "asc" }],
@@ -1539,9 +1537,9 @@ describe("defineSubtype — list ordering", () => {
     () =>
       Effect.gen(function* () {
         const seeds = [
-          seed("a", { title: "Oak", rank: 2 }),
-          seed("b", { title: "Ash", rank: 1 }),
-          seed("c", { title: "Elm", rank: 3 }),
+          orderSeed("a", { title: "Oak", rank: 2 }),
+          orderSeed("b", { title: "Ash", rank: 1 }),
+          orderSeed("c", { title: "Elm", rank: 3 }),
         ];
         const { ids, page, queries, viewerReads } = yield* ranked(seeds, {
           sortable: ["title", "id"],
@@ -1575,7 +1573,7 @@ describe("defineSubtype — list ordering", () => {
           "taxa: sortable names 'secret', which is not a column of the view",
         );
         // An empty list is a valid declaration: nothing but the default order.
-        const { page } = yield* ranked([seed("a", {})], { sortable: [] });
+        const { page } = yield* ranked([orderSeed("a", {})], { sortable: [] });
         expect(yield* Effect.flip(page({ orderBy: [asc("id")] }))).toEqual(
           new InvalidListOrder({ type: "taxa", column: "id" }),
         );
@@ -1589,7 +1587,7 @@ describe("defineSubtype — list ordering", () => {
       const listed = yield* Effect.all(
         Arr.map([{}, {}], (leaf) =>
           Effect.gen(function* () {
-            const { page, queries } = yield* ranked([seed("a", { rank: 1 })], leaf);
+            const { page, queries } = yield* ranked([orderSeed("a", { rank: 1 })], leaf);
             yield* Effect.forEach(columns, (column) => page({ orderBy: [desc(column)] }), {
               concurrency: 1,
             });
@@ -1610,12 +1608,12 @@ describe("defineSubtype — list ordering", () => {
     () =>
       Effect.gen(function* () {
         const { page, ids } = yield* ranked([
-          seed("a", { rank: 3, title: "Oak", visibility: "public" }),
-          seed("b", { rank: 1, title: "Ash", visibility: "private" }),
-          seed("c", { rank: null, title: "Elm", visibility: "public" }),
-          seed("d", { rank: 2, title: "Yew", visibility: "public" }, true),
-          seed("e", { rank: 0, title: "Fir", visibility: "followers" }),
-          seed("f", { rank: 4, title: "Box", visibility: "public" }),
+          orderSeed("a", { rank: 3, title: "Oak", visibility: "public" }),
+          orderSeed("b", { rank: 1, title: "Ash", visibility: "private" }),
+          orderSeed("c", { rank: null, title: "Elm", visibility: "public" }),
+          orderSeed("d", { rank: 2, title: "Yew", visibility: "public" }, true),
+          orderSeed("e", { rank: 0, title: "Fir", visibility: "followers" }),
+          orderSeed("f", { rank: 4, title: "Box", visibility: "public" }),
         ]);
         const orders: ReadonlyArray<Keys> = [
           [],
@@ -2473,6 +2471,17 @@ describe("defineSubtype — a `group` row reads to its group's members", () => {
     ).toEqual(eq("visibility", "public"));
   });
 });
+const invite = (memberships: ReturnType<typeof makeInMemoryMembershipStore>) =>
+  memberships.invite({
+    groupId: "g-1",
+    accountId: follower.id,
+    role: "admin",
+    invitedBy: member.id,
+    at: NOW,
+  });
+
+const sharedWithG1 = (labels: ReadonlyArray<string>) =>
+  labels.filter((label) => label.includes('visibility "group"') && label.includes('"g-1"'));
 
 describe("defineSubtype — a pending group invitation reads nothing a `group` row exposes", () => {
   const groupSeeds: ReadonlyArray<Seed> = Arr.flatMap(
@@ -2485,17 +2494,6 @@ describe("defineSubtype — a pending group invitation reads nothing a `group` r
       })),
   );
   const columns = ["title", "visibility", "draft", "groupId"];
-  const invite = (memberships: ReturnType<typeof makeInMemoryMembershipStore>) =>
-    memberships.invite({
-      groupId: "g-1",
-      accountId: follower.id,
-      role: "admin",
-      invitedBy: member.id,
-      at: NOW,
-    });
-  const sharedWithG1 = (labels: ReadonlyArray<string>) =>
-    labels.filter((label) => label.includes('visibility "group"') && label.includes('"g-1"'));
-
   it.effect(
     "hidden to the pending invitee in get, getMany and list; open once accepted; hidden after leaving or a revoke",
     () =>
@@ -2707,18 +2705,26 @@ describe("defineSubtype — an owner column holding no string is no owner", () =
     }),
   );
 });
+const roleIn =
+  (...roles: ReadonlyArray<string>) =>
+  (account: ViewerAccount) =>
+    roles.includes(account.role);
+
+const failureTag = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
+  Effect.match(effect, {
+    onFailure: (error) => Option.some(error._tag),
+    onSuccess: () => Option.none<string>(),
+  });
 
 // ── A reference row's write and history gates answer as `get` does ────
 
 describe("defineSubtype — a reference leaf's write and history gates answer a hidden row as get does", () => {
   /** Roles that split the view rungs apart: each corpus writer holds at most one of them. */
   const curator: ViewerAccount = { id: "u-curator", role: "curator" };
-  const archivist: ViewerAccount = { id: "u-archivist", role: "archivist" };
-  const roleIn =
-    (...roles: ReadonlyArray<string>) =>
-    (account: ViewerAccount) =>
-      roles.includes(account.role);
-  /** The corpus rung without, with view-private only, with view-deleted only, and with both. */
+  const archivist: ViewerAccount = {
+    id: "u-archivist",
+    role: "archivist",
+  }; /** The corpus rung without, with view-private only, with view-deleted only, and with both. */
   const splitPolicy: AccessPolicy = {
     canWriteCorpus: roleIn("contributor", "curator", "archivist", "moderator", "admin"),
     canViewPrivate: roleIn("curator", "moderator", "admin"),
@@ -2900,13 +2906,6 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
       Match.when("compare absent to", () => leaf.ops.compare(id, 0n, ABSENT_VERSION)),
       Match.exhaustive,
     );
-
-  const failureTag = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
-    Effect.match(effect, {
-      onFailure: (error) => Option.some(error._tag),
-      onSuccess: () => Option.none<string>(),
-    });
-
   /**
    * What `get` implies for `operation` on a row: the gate's answer for a
    * caller below the rung, `get`'s `NodeNotFound` for a row it hides, and
@@ -3029,18 +3028,19 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
     }),
   );
 
+  const splitAnswers = (who: ViewerAccount) =>
+    Effect.gen(function* () {
+      return R.fromEntries(
+        (yield* probe(splitPolicy, ["name", "visibility", "draft"], as(who))).map(
+          (result) => [`${result.operation} ${result.label}`, result.answer] as const,
+        ),
+      );
+    });
+
   it.effect(
     "is not vacuous: a corpus writer without the view rungs reaches no hidden row, and the rungs restore access",
     () =>
       Effect.gen(function* () {
-        const answers = (who: ViewerAccount) =>
-          Effect.gen(function* () {
-            return R.fromEntries(
-              (yield* probe(splitPolicy, ["name", "visibility", "draft"], as(who))).map(
-                (result) => [`${result.operation} ${result.label}`, result.answer] as const,
-              ),
-            );
-          });
         const hiddenFromContributor = HashSet.make(
           "private",
           "followers",
@@ -3055,7 +3055,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
           "missing",
         );
         // Every operation on every row: only the two rows `get` serves it reach the chain.
-        expect(yield* answers(contributor)).toEqual(
+        expect(yield* splitAnswers(contributor)).toEqual(
           R.fromEntries(
             Arr.flatMap(operations, (operation) =>
               Arr.map([...seeds.map((seed) => seed.label), "missing"], (label) => [
@@ -3070,7 +3070,7 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
           ),
         );
         // view-private opens the live private rows, but no tombstone …
-        const curatorAnswers = yield* answers(curator);
+        const curatorAnswers = yield* splitAnswers(curator);
         expect(curatorAnswers["getVersion private"]).toEqual(Option.none());
         expect(curatorAnswers["update private"]).toEqual(Option.none());
         expect(curatorAnswers["restore tombstoned public"]).toEqual(Option.some("NodeNotFound"));
@@ -3078,14 +3078,14 @@ describe("defineSubtype — a reference leaf's write and history gates answer a 
           Option.some("NodeNotFound"),
         );
         // … view-deleted opens the public tombstone, but not a private one …
-        const archivistAnswers = yield* answers(archivist);
+        const archivistAnswers = yield* splitAnswers(archivist);
         expect(archivistAnswers["restore tombstoned public"]).toEqual(Option.none());
         expect(archivistAnswers["delete tombstoned public"]).toEqual(Option.none());
         expect(archivistAnswers["getVersion tombstoned public"]).toEqual(Option.none());
         expect(archivistAnswers["restore tombstoned private"]).toEqual(Option.some("NodeNotFound"));
         expect(archivistAnswers["getVersion private"]).toEqual(Option.some("NodeNotFound"));
         // … and a moderator, holding both, reaches every existing row.
-        const moderatorAnswers = yield* answers(moderator);
+        const moderatorAnswers = yield* splitAnswers(moderator);
         expect(moderatorAnswers["restore tombstoned private"]).toEqual(Option.none());
         expect(moderatorAnswers["getVersion tombstoned private"]).toEqual(Option.none());
         expect(moderatorAnswers["restoreVersion private"]).toEqual(Option.none());
@@ -3214,6 +3214,10 @@ describe("subtypeHandlers — the handlers seam", () => {
       }),
   );
 });
+const interrupted = <A, E>(effect: Effect.Effect<A, E>) =>
+  Effect.gen(function* () {
+    return Exit.hasInterrupts(yield* Effect.exit(effect));
+  });
 
 describe("subtypeHandlers — a write that hides the row from its own writer evicts the cached resource", () => {
   /** A store failure the re-read can hit after the write committed. */
@@ -3419,10 +3423,6 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
       const updated = yield* publicRow();
       const deleted = yield* publicRow();
       faults.interruptAfterWrite = true;
-      const interrupted = <A, E>(effect: Effect.Effect<A, E>) =>
-        Effect.gen(function* () {
-          return Exit.hasInterrupts(yield* Effect.exit(effect));
-        });
       expect(
         yield* interrupted(
           actAs(
@@ -3548,6 +3548,12 @@ describe("subtypeHandlers — a write that hides the row from its own writer evi
     }),
   );
 });
+const titleOfPatch = (patch: ChainPatch) => Option.liftPredicate(patch["title"], P.isString);
+const slugOf = (patch: ChainPatch): ChainPatch =>
+  Option.match(titleOfPatch(patch), {
+    onNone: () => patch,
+    onSome: (value) => ({ ...patch, slug: value.toLowerCase() }),
+  });
 
 describe("lifecycle hooks — before and after every write", () => {
   /** One hook's sight of a write, as the tests record it. */
@@ -3671,17 +3677,11 @@ describe("lifecycle hooks — before and after every write", () => {
 
   it.effect("a before hook transforms the patch: each hook sees the previous one's", () =>
     Effect.gen(function* () {
-      const title = (patch: ChainPatch) => Option.liftPredicate(patch["title"], P.isString);
-      const slugOf = (patch: ChainPatch): ChainPatch =>
-        Option.match(title(patch), {
-          onNone: () => patch,
-          onSome: (value) => ({ ...patch, slug: value.toLowerCase() }),
-        });
       const shout: BeforeWriteHook<never, never> = {
         name: "shout",
         run: (event) =>
           Effect.succeed(
-            Option.match(title(event.patch), {
+            Option.match(titleOfPatch(event.patch), {
               onNone: () => event.patch,
               onSome: (value) => ({ ...event.patch, title: value.toUpperCase() }),
             }),
@@ -3870,35 +3870,34 @@ describe("lifecycle hooks — before and after every write", () => {
     }),
   );
 });
+const versionedLeaf = () => {
+  const chain = makeInMemoryVersionChain("posts");
+  const leaves = makeInMemoryLeafStore(chain, { columns: ["title", "visibility"], now: NOW });
+  let viewer: Viewer = anonymous;
+  const ops = defineSubtype({
+    type: "posts",
+    access: ownedAccess({ draft: false }),
+    chain,
+    leaves,
+    viewer: Effect.sync(() => viewer),
+    policy: gardeneriaPolicy,
+    followers: follows,
+    toResource: (row: LeafRow) => ({ type: "posts", id: row.id, meta: versionMeta(row) }),
+  });
+  const handlers = subtypeHandlers(ops, {
+    inTransaction: Effect.succeed(false),
+    transact: (effect) => effect,
+    cache: Option.none(),
+  });
+  const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+    Effect.suspend(() => {
+      viewer = who;
+      return effect;
+    });
+  return { ops, handlers, actAs };
+};
 
 describe("the head version on the wire", () => {
-  const versionedLeaf = () => {
-    const chain = makeInMemoryVersionChain("posts");
-    const leaves = makeInMemoryLeafStore(chain, { columns: ["title", "visibility"], now: NOW });
-    let viewer: Viewer = anonymous;
-    const ops = defineSubtype({
-      type: "posts",
-      access: ownedAccess({ draft: false }),
-      chain,
-      leaves,
-      viewer: Effect.sync(() => viewer),
-      policy: gardeneriaPolicy,
-      followers: follows,
-      toResource: (row: LeafRow) => ({ type: "posts", id: row.id, meta: versionMeta(row) }),
-    });
-    const handlers = subtypeHandlers(ops, {
-      inTransaction: Effect.succeed(false),
-      transact: (effect) => effect,
-      cache: Option.none(),
-    });
-    const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
-      Effect.suspend(() => {
-        viewer = who;
-        return effect;
-      });
-    return { ops, handlers, actAs };
-  };
-
   it.effect(
     "projects the head version: a mapper stamps it as meta.version, and it moves with each write",
     () =>
@@ -4180,34 +4179,40 @@ describe("subtypeResourceHandlers — effect-jsonapi's ResourceHandlers", () => 
       }),
   );
 });
+const searchLeaf = (search?: Parameters<typeof defineSubtype>[0]["search"]) => {
+  const chain = makeInMemoryVersionChain("posts");
+  const leaves = makeInMemoryLeafStore(chain, {
+    columns: ["title", "visibility", "language"],
+    now: NOW,
+  });
+  let viewer: Viewer = as(member);
+  const leaf = {
+    type: "posts",
+    access: ownedAccess(),
+    chain,
+    leaves,
+    viewer: Effect.sync(() => viewer),
+    policy: gardeneriaPolicy,
+    followers: follows,
+    toResource: (row: LeafRow) => ({ id: row.id, title: row["title"] }),
+  };
+  const ops = defineSubtype(search === undefined ? leaf : { ...leaf, search });
+  const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+    Effect.suspend(() => {
+      viewer = who;
+      return effect;
+    });
+  return { ops, actAs };
+};
+
+/** A field weighed `E`, as an unchecked JavaScript caller passes it; the type admits only A–D. */
+const weighedOutside = () => {
+  const field: SearchField = { column: "title", weight: "A" };
+  Reflect.set(field, "weight", "E");
+  return field;
+};
 
 describe("search: the projection and gated hydration", () => {
-  const searchLeaf = (search?: Parameters<typeof defineSubtype>[0]["search"]) => {
-    const chain = makeInMemoryVersionChain("posts");
-    const leaves = makeInMemoryLeafStore(chain, {
-      columns: ["title", "visibility", "language"],
-      now: NOW,
-    });
-    let viewer: Viewer = as(member);
-    const leaf = {
-      type: "posts",
-      access: ownedAccess(),
-      chain,
-      leaves,
-      viewer: Effect.sync(() => viewer),
-      policy: gardeneriaPolicy,
-      followers: follows,
-      toResource: (row: LeafRow) => ({ id: row.id, title: row["title"] }),
-    };
-    const ops = defineSubtype(search === undefined ? leaf : { ...leaf, search });
-    const actAs = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
-      Effect.suspend(() => {
-        viewer = who;
-        return effect;
-      });
-    return { ops, actAs };
-  };
-
   it("declares the indexed columns, their weights and the language column", () => {
     expect(
       defineSearchProjection({
@@ -4229,14 +4234,6 @@ describe("search: the projection and gated hydration", () => {
       languageColumn: Option.none(),
     });
   });
-
-  /** A field weighed `E`, as an unchecked JavaScript caller passes it; the type admits only A–D. */
-  const weighedOutside = () => {
-    const field: SearchField = { column: "title", weight: "A" };
-    Reflect.set(field, "weight", "E");
-    return field;
-  };
-
   it.each([
     ["no field", { fields: [] }, "search declares no field"],
     [
@@ -4555,6 +4552,18 @@ describe("the resource cache's compare-on-set", () => {
     }),
   );
 });
+/** The publication operations a gated leaf has; failing the test on one that hasn't. */
+const present = <A>(operations: Option.Option<A>): A =>
+  Option.match(operations, {
+    onNone: () => expect.fail("a publish-gated leaf has publication operations"),
+    onSome: (value) => value,
+  });
+
+const atClock = <A, E>(effect: Effect.Effect<A, E>) =>
+  Effect.andThen(TestClock.setTime(NOW.getTime()), effect);
+
+const hour = (count: number) =>
+  DateTime.toDate(DateTime.makeUnsafe(NOW.getTime() + count * 3_600_000));
 
 describe("defineSubtype — the live pointer", () => {
   /** The leaf's resource. */
@@ -4564,14 +4573,6 @@ describe("defineSubtype — the live pointer", () => {
     readonly title: ColumnValue;
     readonly draft: ColumnValue;
   }
-
-  /** The publication operations a gated leaf has; failing the test on one that hasn't. */
-  const present = <A>(operations: Option.Option<A>): A =>
-    Option.match(operations, {
-      onNone: () => expect.fail("a publish-gated leaf has publication operations"),
-      onSome: (value) => value,
-    });
-
   /** A publish-gated owned leaf over the in-memory seams, with a preview grant a test sets. */
   const gatedPosts = (options: { readonly withCache?: boolean } = {}) => {
     const chain = makeInMemoryVersionChain("posts");
@@ -4616,10 +4617,6 @@ describe("defineSubtype — the live pointer", () => {
     const publicationOps = present(ops.publication);
     return { chain, publication, ops, handlers, cache, actAs, preview, publicationOps };
   };
-
-  const atClock = <A, E>(effect: Effect.Effect<A, E>) =>
-    Effect.andThen(TestClock.setTime(NOW.getTime()), effect);
-
   const titleSeen = <E>(effect: Effect.Effect<Post, E>) =>
     Effect.map(Effect.option(effect), (found) => Option.map(found, (resource) => resource.title));
 
@@ -4745,8 +4742,6 @@ describe("defineSubtype — the live pointer", () => {
     () =>
       Effect.gen(function* () {
         const { ops, actAs, publicationOps, handlers } = gatedPosts();
-        const hour = (count: number) =>
-          DateTime.toDate(DateTime.makeUnsafe(NOW.getTime() + count * 3_600_000));
         const seen = yield* atClock(
           Effect.gen(function* () {
             const create = (visibility: string) =>

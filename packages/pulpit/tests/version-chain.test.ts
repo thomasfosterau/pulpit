@@ -36,12 +36,14 @@ import {
 const ACTOR = Option.some("u-author");
 const ID = "00000000-0000-4000-8000-00000000abcd";
 
+const runEffect = <A, E>(effect: Effect.Effect<A, E>) => effect;
+
+const exitOf = <A, E>(effect: Effect.Effect<A, E>) => Effect.exit(effect);
+
 const setup = () => {
   const store = makeInMemoryVersionChain("posts");
   const chain = defineVersionChain("posts", store);
-  const run = <A, E>(effect: Effect.Effect<A, E>) => effect;
-  const exit = <A, E>(effect: Effect.Effect<A, E>) => Effect.exit(effect);
-  return { store, chain, run, exit };
+  return { store, chain, run: runEffect, exit: exitOf };
 };
 
 /** The failure's tag, or `none` for a success — what the refusal assertions compare. */
@@ -62,6 +64,8 @@ describe("applyPatch — the tri-state rule", () => {
     expect(applyPatch(initial, {})).toEqual(initial);
   });
 });
+// A fresh Date each call: equal instants, never the same object.
+const date = (iso: string) => DateTime.toDate(DateTime.makeUnsafe(iso));
 
 describe("diffStates — the field-level change set", () => {
   it("a null set and a cleared value are present values: a clear is changed, never removed", () => {
@@ -122,8 +126,6 @@ describe("diffStates — the field-level change set", () => {
 
   it("compares a Date by its instant and a bigint by value, never by their JSON spelling", () => {
     const at = "2026-01-01T00:00:00.000Z";
-    // A fresh Date each call: equal instants, never the same object.
-    const date = (iso: string) => DateTime.toDate(DateTime.makeUnsafe(iso));
     expect(diffStates({ at: date(at), n: 10n }, { at: date(at), n: 10n })).toStrictEqual({});
     const later = date("2026-01-01T00:00:00.001Z");
     expect(diffStates({ at: date(at) }, { at: later })).toStrictEqual({
@@ -150,17 +152,16 @@ describe("diffStates — the field-level change set", () => {
     });
   });
 });
+const created = () =>
+  Effect.gen(function* () {
+    const context = setup();
+    yield* context.run(
+      context.chain.create({ id: Option.some(ID), state: initial, actorId: ACTOR }),
+    );
+    return context;
+  });
 
 describe("compare — two getVersion reads and diffStates", () => {
-  const created = () =>
-    Effect.gen(function* () {
-      const context = setup();
-      yield* context.run(
-        context.chain.create({ id: Option.some(ID), state: initial, actorId: ACTOR }),
-      );
-      return context;
-    });
-
   it.effect.each([0n, 1n])("the same version on both sides (%s) is the empty set", (version) =>
     Effect.gen(function* () {
       const { chain, run } = yield* created();
@@ -295,24 +296,25 @@ describe("compare — two getVersion reads and diffStates", () => {
       }),
   );
 });
+const hookedChain = (
+  hook: (event: ChainAppendEvent) => Effect.Effect<ChainPatch, "refused">,
+  port: (store: InMemoryVersionChain) => VersionChain<never, never> = (store) => store,
+) => {
+  const store = makeInMemoryVersionChain("posts");
+  const events: Array<ChainAppendEvent> = [];
+  const chain = defineVersionChain("posts", port(store), {
+    beforeAppend: (event) =>
+      Effect.suspend(() => {
+        events.push(event);
+        return hook(event);
+      }),
+  });
+  return { store, chain, events };
+};
+
+const locales = (event: ChainAppendEvent) => Effect.succeed(event.locales ?? {});
 
 describe("beforeAppend — the kernel's hook layer over the port", () => {
-  const hookedChain = (
-    hook: (event: ChainAppendEvent) => Effect.Effect<ChainPatch, "refused">,
-    port: (store: InMemoryVersionChain) => VersionChain<never, never> = (store) => store,
-  ) => {
-    const store = makeInMemoryVersionChain("posts");
-    const events: Array<ChainAppendEvent> = [];
-    const chain = defineVersionChain("posts", port(store), {
-      beforeAppend: (event) =>
-        Effect.suspend(() => {
-          events.push(event);
-          return hook(event);
-        }),
-    });
-    return { store, chain, events };
-  };
-
   it.effect("shows each write its action, prior head and patch, and stores the hook's patch", () =>
     Effect.gen(function* () {
       const { store, chain, events } = hookedChain((event) =>
@@ -438,7 +440,6 @@ describe("beforeAppend — the kernel's hook layer over the port", () => {
     "a restoreVersion the hook changes is appended through restore, with the restored locale level",
     () =>
       Effect.gen(function* () {
-        const locales = (event: ChainAppendEvent) => Effect.succeed(event.locales ?? {});
         const store = makeInMemoryVersionChain("posts");
         const chain = defineVersionChain("posts", store, {
           beforeAppend: (event) =>

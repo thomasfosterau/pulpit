@@ -102,13 +102,12 @@ versionChainConformance(
   },
   { describe, it, expect },
 );
+const value = <A, E>(effect: Effect.Effect<A, E, typeof CurrentTransaction.Identifier>) =>
+  Effect.flatMap(runtime.contextEffect, (context) => Effect.provide(transact(effect), context));
 
 describe("makeVersionChains over PostgreSQL — beyond the conformance suite", () => {
   const ID = "00000000-0000-4000-8000-0000000000a1";
   const actorId = Option.some("u-editor");
-  const value = <A, E>(effect: Effect.Effect<A, E, typeof CurrentTransaction.Identifier>) =>
-    Effect.flatMap(runtime.contextEffect, (context) => Effect.provide(transact(effect), context));
-
   it.live("records actorId and proposedBy on the root version row", () =>
     Effect.gen(function* () {
       yield* value(truncate);

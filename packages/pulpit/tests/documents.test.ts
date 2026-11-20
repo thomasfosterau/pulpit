@@ -206,19 +206,18 @@ describe("put — idempotent, never rewritten (DOC-001)", () => {
     }),
   );
 });
+const recording = () => {
+  const seen: Array<DocumentInserted<Schema.Json>> = [];
+  const inner = makeInMemoryDocumentStore();
+  const store = onDocumentInsert(inner, (event) =>
+    Effect.sync(() => {
+      seen.push(event);
+    }),
+  );
+  return { seen, inner, store };
+};
 
 describe("onDocumentInsert — the first-insert event", () => {
-  const recording = () => {
-    const seen: Array<DocumentInserted<Schema.Json>> = [];
-    const inner = makeInMemoryDocumentStore();
-    const store = onDocumentInsert(inner, (event) =>
-      Effect.sync(() => {
-        seen.push(event);
-      }),
-    );
-    return { seen, inner, store };
-  };
-
   it.effect("runs once per stored document, never for a put that found it stored", () =>
     Effect.gen(function* () {
       const { seen, store } = recording();
@@ -287,15 +286,14 @@ describe("documentRef — the version row's document reference", () => {
     expect(decodes(NoteResource.updateInput, { id: UUID, body: null })).toBe(false);
   });
 });
+const setup = () => {
+  const documents = makeInMemoryDocumentStore();
+  const chainStore = makeInMemoryVersionChain("notes");
+  const chain = defineVersionChain("notes", chainStore);
+  return { documents, chainStore, chain };
+};
 
 describe("version rows that reference documents", () => {
-  const setup = () => {
-    const documents = makeInMemoryDocumentStore();
-    const chainStore = makeInMemoryVersionChain("notes");
-    const chain = defineVersionChain("notes", chainStore);
-    return { documents, chainStore, chain };
-  };
-
   it.effect("two nodes share one stored document", () =>
     Effect.gen(function* () {
       const { documents, chainStore, chain } = setup();
@@ -348,61 +346,69 @@ describe("version rows that reference documents", () => {
     }),
   );
 });
+const reasonOf = <A, E>(effect: Effect.Effect<A, E>) =>
+  Effect.map(Effect.flip(effect), (error) =>
+    error instanceof WriteRejected ? error.reason : String(error),
+  );
+const beforeWriteEvent = (action: WriteAction, locales: LocalePatch): BeforeWriteEvent => ({
+  type: "posts",
+  viewer: Option.none(),
+  action,
+  id: "p-1",
+  prior: Option.none(),
+  patch: {},
+  locales,
+  actorId: Option.none(),
+});
 
 // ── The grammar check ────────────────────────────────────
 
-describe("the grammar check", () => {
-  type Doc = { readonly type: string };
-  /** The allow-list: a paragraph only. */
-  const check: DocumentCheck<Doc> = (field, document) =>
-    document.type === "paragraph"
-      ? Effect.void
-      : Effect.fail(new DocumentViolation({ field, message: `${document.type} is not allowed` }));
-
-  const fixture = (extra: ReadonlyArray<BeforeWriteHook<never, never>> = []) => {
-    const store = makeInMemoryDocumentStore<Doc>();
-    const checks: Array<string> = [];
-    const counted: DocumentCheck<Doc> = (field, document) =>
-      Effect.andThen(
-        Effect.sync(() => checks.push(`${field}:${document.type}`)),
-        check(field, document),
-      );
-    const chain = makeInMemoryVersionChain("posts");
-    const leaves = makeInMemoryLeafStore(chain, {
-      columns: ["title", "body", "visibility"],
-      now: NOW,
-    });
-    const posts = defineSubtype({
-      type: "posts",
-      access: ownedAccess(),
-      chain,
-      leaves,
-      viewer: Effect.succeedSome({ id: "u-1", role: "user" }),
-      policy: {
-        canViewPrivate: () => false,
-        canViewDeleted: () => false,
-        canModerate: () => false,
-        canWriteCorpus: () => false,
-      },
-      followers: makeInMemoryFollowers([]),
-      toResource: (row: LeafRow) => row,
-      hooks: Effect.succeed({
-        before: [
-          ...extra,
-          documentCheckHook({ type: "posts", fields: ["body"], documents: store, check: counted }),
-        ],
-        after: [],
-      }),
-    });
-    const bodies = checkedDocumentStore(store, "body", check);
-    return { store, bodies, chain, posts, checks };
-  };
-
-  const reasonOf = <A, E>(effect: Effect.Effect<A, E>) =>
-    Effect.map(Effect.flip(effect), (error) =>
-      error instanceof WriteRejected ? error.reason : String(error),
+type Doc = { readonly type: string };
+/** The allow-list: a paragraph only. */
+const check: DocumentCheck<Doc> = (field, document) =>
+  document.type === "paragraph"
+    ? Effect.void
+    : Effect.fail(new DocumentViolation({ field, message: `${document.type} is not allowed` }));
+const fixture = (extra: ReadonlyArray<BeforeWriteHook<never, never>> = []) => {
+  const store = makeInMemoryDocumentStore<Doc>();
+  const checks: Array<string> = [];
+  const counted: DocumentCheck<Doc> = (field, document) =>
+    Effect.andThen(
+      Effect.sync(() => checks.push(`${field}:${document.type}`)),
+      check(field, document),
     );
+  const chain = makeInMemoryVersionChain("posts");
+  const leaves = makeInMemoryLeafStore(chain, {
+    columns: ["title", "body", "visibility"],
+    now: NOW,
+  });
+  const posts = defineSubtype({
+    type: "posts",
+    access: ownedAccess(),
+    chain,
+    leaves,
+    viewer: Effect.succeedSome({ id: "u-1", role: "user" }),
+    policy: {
+      canViewPrivate: () => false,
+      canViewDeleted: () => false,
+      canModerate: () => false,
+      canWriteCorpus: () => false,
+    },
+    followers: makeInMemoryFollowers([]),
+    toResource: (row: LeafRow) => row,
+    hooks: Effect.succeed({
+      before: [
+        ...extra,
+        documentCheckHook({ type: "posts", fields: ["body"], documents: store, check: counted }),
+      ],
+      after: [],
+    }),
+  });
+  const bodies = checkedDocumentStore(store, "body", check);
+  return { store, bodies, chain, posts, checks };
+};
 
+describe("the grammar check", () => {
   it.effect("checkedDocumentStore never stores an off-grammar document", () =>
     Effect.gen(function* () {
       const { store, bodies } = fixture();
@@ -527,18 +533,6 @@ describe("the grammar check", () => {
       expect(chain.rows().map((row) => row.state["title"])).toEqual(["Normalised"]);
     }),
   );
-
-  const event = (action: WriteAction, locales: LocalePatch): BeforeWriteEvent => ({
-    type: "posts",
-    viewer: Option.none(),
-    action,
-    id: "p-1",
-    prior: Option.none(),
-    patch: {},
-    locales,
-    actorId: Option.none(),
-  });
-
   it.effect("checks every locale's patch, and passes the locale patch through", () =>
     Effect.gen(function* () {
       const store = makeInMemoryDocumentStore<Doc>();
@@ -548,10 +542,16 @@ describe("the grammar check", () => {
       const outcome = yield* Effect.gen(function* () {
         const good = yield* store.put({ type: "paragraph" });
         const bad = yield* store.put({ type: "script" });
-        const passed = yield* locales(event("update", { en: { body: good.hash }, fr: null }));
-        const refused = yield* reasonOf(locales(event("update", { de: { body: bad.hash } })));
-        const exempt = yield* locales(event("restoreVersion", { de: { body: bad.hash } }));
-        const { locales: _omitted, ...withoutLocales } = event("update", {});
+        const passed = yield* locales(
+          beforeWriteEvent("update", { en: { body: good.hash }, fr: null }),
+        );
+        const refused = yield* reasonOf(
+          locales(beforeWriteEvent("update", { de: { body: bad.hash } })),
+        );
+        const exempt = yield* locales(
+          beforeWriteEvent("restoreVersion", { de: { body: bad.hash } }),
+        );
+        const { locales: _omitted, ...withoutLocales } = beforeWriteEvent("update", {});
         const none = yield* locales(withoutLocales);
         return { passed, refused, exempt, none, good: good.hash, bad: bad.hash };
       });

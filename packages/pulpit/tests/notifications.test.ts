@@ -106,17 +106,16 @@ const refuse: BeforeWriteHook<never, never> = {
     ),
   locales: (event) => Effect.succeed(event.locales ?? {}),
 };
+const always = (outbox: ReturnType<typeof makeInMemoryOutbox<KernelNotificationKind>>) =>
+  notificationHook({
+    name: "always",
+    outbox,
+    derive: () => Effect.succeed([draftTo(otherMember.id)]),
+  });
 
 // ── The outbox and the transaction ────────────────────────────────────
 
 describe("the outbox is written inside the write (a rollback notifies nobody)", () => {
-  const always = (outbox: ReturnType<typeof makeInMemoryOutbox<KernelNotificationKind>>) =>
-    notificationHook({
-      name: "always",
-      outbox,
-      derive: () => Effect.succeed([draftTo(otherMember.id)]),
-    });
-
   it.effect("a committed write leaves its event", () =>
     Effect.gen(function* () {
       const outbox = makeInMemoryOutbox<KernelNotificationKind>();
@@ -212,6 +211,22 @@ const head = (state: ChainState): Option.Option<VersionSnapshot> =>
 
 const runHook = (hook: BeforeWriteHook<never, never>, at: BeforeWriteEvent) =>
   Effect.asVoid(hook.run(at));
+const proposal = (status: ProposalRow["status"]): ProposalRow => ({
+  id: "pr-1",
+  targetId: "p-1",
+  targetType: "posts",
+  authorId: otherMember.id,
+  patch: {},
+  locales: Option.none(),
+  rationale: Option.none(),
+  baseVersion: 0n,
+  status,
+  submittedAt: NOW,
+  decidedAt: Option.some(NOW),
+  decidedBy: Option.some(member.id),
+  decisionNote: Option.none(),
+  appliedVersion: Option.none(),
+});
 
 describe("each kernel kind is derived from its module's write", () => {
   it.effect(
@@ -306,24 +321,6 @@ describe("each kernel kind is derived from its module's write", () => {
       expect(yield* derive({ id: "missing" })).toEqual([]);
     }),
   );
-
-  const proposal = (status: ProposalRow["status"]): ProposalRow => ({
-    id: "pr-1",
-    targetId: "p-1",
-    targetType: "posts",
-    authorId: otherMember.id,
-    patch: {},
-    locales: Option.none(),
-    rationale: Option.none(),
-    baseVersion: 0n,
-    status,
-    submittedAt: NOW,
-    decidedAt: Option.some(NOW),
-    decidedBy: Option.some(member.id),
-    decisionNote: Option.none(),
-    appliedVersion: Option.none(),
-  });
-
   it.effect.each(["accepted", "rejected"] as const)(
     "proposal.decided: %s notifies the author",
     (status) =>
@@ -543,19 +540,18 @@ describe("fan-out tells a recipient only what they may read", () => {
     }),
   );
 });
+const seeded = () =>
+  Effect.gen(function* () {
+    const harness = yield* fanOut();
+    const id = yield* harness.post("public");
+    yield* harness.notify([toOther(id), toOther(id), toOther(id)]);
+    yield* harness.notifications.sweep(10);
+    return harness;
+  });
 
 // ── The inbox ─────────────────────────────────────────────────────────
 
 describe("the inbox is the viewer's own", () => {
-  const seeded = () =>
-    Effect.gen(function* () {
-      const harness = yield* fanOut();
-      const id = yield* harness.post("public");
-      yield* harness.notify([toOther(id), toOther(id), toOther(id)]);
-      yield* harness.notifications.sweep(10);
-      return harness;
-    });
-
   it.effect("pages newest first, counts unread and marks read only its own entries", () =>
     Effect.gen(function* () {
       const { notifications, viewAs, outbox } = yield* seeded();

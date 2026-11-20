@@ -366,6 +366,38 @@ const snapshot = (world: World) => ({
   copies: HashMap.toEntries(world.workingCopies.copies()),
   documents: HashMap.size(world.documents.stored()),
 });
+/** More of `GONE`'s membership rows than a batch: 4 memberships, 2 invitations to it, 2 from it. */
+const seedMemberships = (world: World) => {
+  const { memberships } = world;
+  const invite = (groupId: string, accountId: string, invitedBy: string) =>
+    memberships.invite({ groupId, accountId, role: "member", invitedBy, at: AT });
+  return Effect.all(
+    [
+      Effect.forEach(
+        ["g-1", "g-2", "g-3", "g-4"],
+        (groupId) =>
+          Effect.andThen(
+            memberships.add({ groupId, accountId: GONE, role: "admin", at: AT }),
+            memberships.add({ groupId, accountId: OTHER, role: "member", at: AT }),
+          ),
+        { concurrency: 1 },
+      ),
+      Effect.forEach(["g-5", "g-6"], (groupId) => invite(groupId, GONE, OTHER), {
+        concurrency: 1,
+      }),
+      Effect.forEach(
+        ["u-invited-1", "u-invited-2"],
+        (accountId) => invite("g-1", accountId, GONE),
+        { concurrency: 1 },
+      ),
+      // An invitation neither to nor from the account stays.
+      invite("g-2", "u-invited-3", OTHER),
+    ],
+    { concurrency: 1, discard: true },
+  );
+};
+
+const audience = (world: World) => audienceSeam(world.memberships);
 
 describe("defineAccountErasure", () => {
   it.effect("leaves nothing recorded against the account", () =>
@@ -599,37 +631,6 @@ describe("defineAccountErasure", () => {
 
   describe("memberships at a batch boundary", () => {
     const BATCH = 3;
-    /** More of `GONE`'s membership rows than a batch: 4 memberships, 2 invitations to it, 2 from it. */
-    const seedMemberships = (world: World) => {
-      const { memberships } = world;
-      const invite = (groupId: string, accountId: string, invitedBy: string) =>
-        memberships.invite({ groupId, accountId, role: "member", invitedBy, at: AT });
-      return Effect.all(
-        [
-          Effect.forEach(
-            ["g-1", "g-2", "g-3", "g-4"],
-            (groupId) =>
-              Effect.andThen(
-                memberships.add({ groupId, accountId: GONE, role: "admin", at: AT }),
-                memberships.add({ groupId, accountId: OTHER, role: "member", at: AT }),
-              ),
-            { concurrency: 1 },
-          ),
-          Effect.forEach(["g-5", "g-6"], (groupId) => invite(groupId, GONE, OTHER), {
-            concurrency: 1,
-          }),
-          Effect.forEach(
-            ["u-invited-1", "u-invited-2"],
-            (accountId) => invite("g-1", accountId, GONE),
-            { concurrency: 1 },
-          ),
-          // An invitation neither to nor from the account stays.
-          invite("g-2", "u-invited-3", OTHER),
-        ],
-        { concurrency: 1, discard: true },
-      );
-    };
-
     it.effect("erases them in bounded batches, invitations counted against the same limit", () =>
       Effect.gen(function* () {
         const world = makeWorld();
@@ -699,8 +700,6 @@ describe("defineAccountErasure", () => {
         ),
         world.groups.put("g-theirs", OTHER),
       );
-    const audience = (world: World) => audienceSeam(world.memberships);
-
     it.effect(
       "reassigns every group to the tombstone account before the memberships go, and its members keep their access",
       () =>

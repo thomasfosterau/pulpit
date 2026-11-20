@@ -268,6 +268,15 @@ describe("a leaf view's branch agrees with the in-memory branch under the read s
       }),
   );
 });
+const titledState = (title: string): ChainState => ({
+  title,
+  visibility: "public",
+  draft: false,
+  groupId: null,
+  rank: null,
+  score: null,
+  publishedAt: null,
+});
 
 describe("a gated leaf's branch agrees with the in-memory branch over the live rows", () => {
   const memoryChain = makeInMemoryVersionChain("posts");
@@ -304,18 +313,9 @@ describe("a gated leaf's branch agrees with the in-memory branch over the live r
           stories,
           ([n, owner, titles, live]) =>
             Effect.gen(function* () {
-              const state = (title: string): ChainState => ({
-                title,
-                visibility: "public",
-                draft: false,
-                groupId: null,
-                rank: null,
-                score: null,
-                publishedAt: null,
-              });
               const create = {
                 id: Option.some(id(n)),
-                state: state(titles[0] ?? ""),
+                state: titledState(titles[0] ?? ""),
                 actorId: Option.some(owner),
               };
               yield* chains.posts.create(create);
@@ -408,6 +408,8 @@ describe("a gated leaf's branch agrees with the in-memory branch over the live r
     }),
   );
 });
+const createIn = (leaf: "notes" | "links" | "posts", n: number, state: ChainState) =>
+  chains[leaf].create({ id: Option.some(id(n)), state, actorId: Option.none() });
 
 describe("the full-text rank over the entry branch view", () => {
   const fullText = makeSearchBranch({
@@ -421,14 +423,12 @@ describe("the full-text rank over the entry branch view", () => {
   beforeAll(() =>
     Effect.gen(function* () {
       yield* run(truncate());
-      const create = (leaf: "notes" | "links" | "posts", n: number, state: ChainState) =>
-        chains[leaf].create({ id: Option.some(id(n)), state, actorId: Option.none() });
       yield* run(
         Effect.all(
           [
-            create("notes", 1, { title: "tomato soup recipe", body: null, summary: null }),
-            create("links", 2, { title: "tomato", href: null }),
-            create("posts", 3, {
+            createIn("notes", 1, { title: "tomato soup recipe", body: null, summary: null }),
+            createIn("links", 2, { title: "tomato", href: null }),
+            createIn("posts", 3, {
               title: "potato salad",
               visibility: "public",
               draft: false,

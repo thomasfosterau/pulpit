@@ -340,6 +340,9 @@ const window = (request: SocialPageRequest) => ({
   offset: Math.max(0, Math.trunc(request.offset)),
 });
 
+const notSelf = (kind: RelationshipKind, account: ViewerAccount, to: string) =>
+  account.id === to ? Effect.fail(new SelfRelationship({ kind })) : Effect.void;
+
 /**
  * Bind the social graph's operations. Every operation is traced as
  * `social.<operation>`, and the writes run in the caller's transaction.
@@ -381,8 +384,6 @@ export const defineSocial = <Following, E, R>(
       const account = yield* signedIn;
       return { changed: yield* store.remove(kind, account.id, to) };
     });
-  const notSelf = (kind: RelationshipKind, account: ViewerAccount, to: string) =>
-    account.id === to ? Effect.fail(new SelfRelationship({ kind })) : Effect.void;
 
   const interactionAllowed = Effect.fn("social.interactionAllowed")(function* (
     a: string,

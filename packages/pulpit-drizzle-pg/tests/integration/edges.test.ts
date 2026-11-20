@@ -212,6 +212,8 @@ const filters: ReadonlyArray<readonly [string, ListFilter<never>]> = [
   ["an end's liveness", eq("object.action", "delete")],
   ["a conjunction", and(eq("subject.ownerId", "u-1"), eq("role", "cites"))],
 ];
+const ids = (page: { readonly rows: ReadonlyArray<{ readonly id: string }> }) =>
+  Arr.map(page.rows, (row) => row.id);
 
 describe("EdgeStore over PostgreSQL agrees with the in-memory store", () => {
   it.live.each(filters)("list, in order with the window total: %s", ([_name, where]) =>
@@ -240,8 +242,9 @@ describe("EdgeStore over PostgreSQL agrees with the in-memory store", () => {
     }),
   );
 
-  it.live.each(filters)("countAt at each node: %s", ([_name, where]) =>
+  it.live.each(filters)("countAt at each node: %s", (filter) =>
     Effect.gen(function* () {
+      const [, where] = filter;
       const nodes = Arr.map([1, 2, 3, 4], node);
       const count = (column: string, nodeId: string) => ({ column, nodeId, where });
       const queries = Arr.flatMap(nodes, (id) => [count("subjectId", id), count("objectId", id)]);
@@ -275,8 +278,6 @@ describe("EdgeStore over PostgreSQL agrees with the in-memory store", () => {
         };
         const sqlSet = yield* run(store.members(query));
         const memorySet = yield* memory.members(query);
-        const ids = (page: { readonly rows: ReadonlyArray<{ readonly id: string }> }) =>
-          Arr.map(page.rows, (row) => row.id);
         const page = { orderBy: [], limit: 100, offset: 0 };
         const sqlPages = yield* run(
           Effect.forEach(

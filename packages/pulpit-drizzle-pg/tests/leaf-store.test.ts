@@ -145,6 +145,16 @@ describe("makeLeafStores — the view-merge trap is refused at module load", () 
     expect(storesOver(trapTree, trapTables)).not.toThrow();
   });
 });
+const runWith = <A, E>(
+  rows: ReadonlyArray<object>,
+  effect: Effect.Effect<A, E, typeof database.CurrentTransaction.Identifier>,
+) => {
+  const { tx, calls } = cannedTransaction(rows);
+  return Effect.map(Effect.provideService(effect, database.CurrentTransaction, tx), (value) => ({
+    value,
+    calls,
+  }));
+};
 
 describe("makeLeafStores — what a store makes of a query's rows", () => {
   const stores = makeLeafStores({
@@ -156,17 +166,6 @@ describe("makeLeafStores — what a store makes of a query's rows", () => {
   });
   const ID = "00000000-0000-4000-8000-000000000001";
   const row = { id: ID, version: 2n, action: "update", title: "Hi", ownerId: "u-1" };
-  const runWith = <A, E>(
-    rows: ReadonlyArray<object>,
-    effect: Effect.Effect<A, E, typeof database.CurrentTransaction.Identifier>,
-  ) => {
-    const { tx, calls } = cannedTransaction(rows);
-    return Effect.map(Effect.provideService(effect, database.CurrentTransaction, tx), (value) => ({
-      value,
-      calls,
-    }));
-  };
-
   it.effect("get and getMany decode the rows; a malformed id reads nothing", () =>
     Effect.gen(function* () {
       expect((yield* runWith([row], stores.posts.get(ID))).value).toEqual(Option.some(row));

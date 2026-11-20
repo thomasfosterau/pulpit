@@ -159,6 +159,32 @@ const StoredEdge = Schema.StructWithRest(
 );
 const isEdgeRow = Schema.is(StoredEdge);
 
+/** Node ids as the `IN` list a `uuid` column compares as text. */
+const textIn = (field: FilterColumn, ids: Arr.NonEmptyReadonlyArray<string>): SQL =>
+  sql`${field}::text IN (${sql.join(
+    Arr.map(ids, (value) => sql`${value}`),
+    sql`, `,
+  )})`;
+
+/** The distinct ids a set read names: none for no id, or more than `MAX_SET_VALUES`. */
+const namedIds = (ids: ReadonlyArray<string>): Option.Option<Arr.NonEmptyReadonlyArray<string>> =>
+  Option.filter(
+    Option.liftPredicate(Arr.dedupe(ids), (named): named is Arr.NonEmptyArray<string> =>
+      Arr.isArrayNonEmpty(named),
+    ),
+    (named) => named.length <= MAX_SET_VALUES,
+  );
+
+/** The rows as the kernel's `EdgeRow`s, or a defect (a column type `ColumnValue` cannot hold). */
+const asEdgeRows = (rows: ReadonlyArray<unknown>) =>
+  Arr.every(rows, isEdgeRow)
+    ? Effect.succeed<ReadonlyArray<EdgeRow>>(rows)
+    : Effect.die(
+        new DerivationError({
+          message: "pulpit-drizzle-pg: an edge row holds a column outside the kernel's ColumnValue",
+        }),
+      );
+
 /**
  * Bind the kernel's `EdgeStore` to one edge family's table, in the caller's
  * `CurrentTransaction`. `ends` is the family's ends by alias (the alias its
@@ -238,32 +264,6 @@ export const makeEdgeStore = <I, Relations extends AnyRelations>(config: {
   /** A filter over the join, `true` for `always`. */
   const predicate = (where: ListFilter<SQLWrapper>): SQL =>
     Option.getOrElse(renderListFilter(where, joinedColumns), () => sql`true`);
-
-  /** The distinct ids a set read names: none for no id, or more than `MAX_SET_VALUES`. */
-  const namedIds = (ids: ReadonlyArray<string>): Option.Option<Arr.NonEmptyReadonlyArray<string>> =>
-    Option.filter(
-      Option.liftPredicate(Arr.dedupe(ids), (named): named is Arr.NonEmptyArray<string> =>
-        Arr.isArrayNonEmpty(named),
-      ),
-      (named) => named.length <= MAX_SET_VALUES,
-    );
-  /** Node ids as the `IN` list a `uuid` column compares as text. */
-  const textIn = (field: FilterColumn, ids: Arr.NonEmptyReadonlyArray<string>): SQL =>
-    sql`${field}::text IN (${sql.join(
-      Arr.map(ids, (value) => sql`${value}`),
-      sql`, `,
-    )})`;
-
-  /** The rows as the kernel's `EdgeRow`s, or a defect (a column type `ColumnValue` cannot hold). */
-  const asEdgeRows = (rows: ReadonlyArray<unknown>) =>
-    Arr.every(rows, isEdgeRow)
-      ? Effect.succeed<ReadonlyArray<EdgeRow>>(rows)
-      : Effect.die(
-          new DerivationError({
-            message:
-              "pulpit-drizzle-pg: an edge row holds a column outside the kernel's ColumnValue",
-          }),
-        );
 
   /**
    * The edge's own columns as a read selects them: each an expression over

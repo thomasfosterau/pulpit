@@ -131,11 +131,10 @@ describe("gradeScores — the classifier's own flag", () => {
     expect(gradeScores(scores(true, { hate: 0.8 }), bars({ hate: 0.99 })).priority).toBe("high");
   });
 });
+const bandFor = (score: number) =>
+  gradeScores(scores(false, { hate: score }), bars({ hate: 0.05 })).priority;
 
 describe("gradeScores — priority bands", () => {
-  const bandFor = (score: number) =>
-    gradeScores(scores(false, { hate: score }), bars({ hate: 0.05 })).priority;
-
   it("maps the worst breaching score onto a band", () => {
     expect([0.95, 0.8, 0.6, 0.2].map(bandFor)).toEqual(["urgent", "high", "medium", "low"]);
   });
@@ -175,23 +174,23 @@ describe("isModerationTransition", () => {
     expect(isModerationTransition(Option.some("pending"), "pending")).toBe(false);
   });
 });
+const event = (
+  action: WriteAction,
+  prior: Option.Option<ChainState>,
+  patch: BeforeWriteEvent["patch"],
+  who: Viewer,
+): BeforeWriteEvent => ({
+  type: "comments",
+  action,
+  id: "c-1",
+  prior: Option.map(prior, (state) => ({ version: 3n, action: "update", timestamp: NOW, state })),
+  patch,
+  actorId: Option.map(who, (account) => account.id),
+  viewer: who,
+});
 
 describe("moderatePatch — the rules, case by case", () => {
   const declaration = moderatedColumns(["body"]);
-  const event = (
-    action: WriteAction,
-    prior: Option.Option<ChainState>,
-    patch: BeforeWriteEvent["patch"],
-    who: Viewer,
-  ): BeforeWriteEvent => ({
-    type: "comments",
-    action,
-    id: "c-1",
-    prior: Option.map(prior, (state) => ({ version: 3n, action: "update", timestamp: NOW, state })),
-    patch,
-    actorId: Option.map(who, (account) => account.id),
-    viewer: who,
-  });
   const apply = (input: BeforeWriteEvent) =>
     moderatePatch(input, declaration, gardeneriaPolicy, NOW);
   const approved = {
@@ -409,31 +408,30 @@ describe("reviewQueueFilter", () => {
     expect(always).toEqual({ kind: "always" });
   });
 });
+const setup = () => {
+  const leaf = comments();
+  const store = makeInMemoryReportStore();
+  let viewer: Viewer = Option.none();
+  const reports = defineReports({
+    target: leaf.target,
+    reports: store,
+    viewer: Effect.sync(() => viewer),
+    policy: gardeneriaPolicy,
+  });
+  const as = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+    leaf.actAs(
+      who,
+      Effect.suspend(() => {
+        viewer = who;
+        return effect;
+      }),
+    );
+  return { ...leaf, store, reports, as };
+};
 
 // ── Reports ───────────────────────────────────────────────────────────
 
 describe("defineReports — member reports", () => {
-  const setup = () => {
-    const leaf = comments();
-    const store = makeInMemoryReportStore();
-    let viewer: Viewer = Option.none();
-    const reports = defineReports({
-      target: leaf.target,
-      reports: store,
-      viewer: Effect.sync(() => viewer),
-      policy: gardeneriaPolicy,
-    });
-    const as = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
-      leaf.actAs(
-        who,
-        Effect.suspend(() => {
-          viewer = who;
-          return effect;
-        }),
-      );
-    return { ...leaf, store, reports, as };
-  };
-
   it.effect(
     "files against a readable target, and refuses a hidden or missing one as NodeNotFound",
     () =>
@@ -527,40 +525,39 @@ describe("the report state machine", () => {
     expect(reportOutcomeOf("pending")).toEqual(Option.none());
   });
 });
+const linked = () => {
+  const leaf = comments();
+  const store = makeInMemoryReportStore();
+  let viewer: Viewer = Option.none();
+  const viewerOf = Effect.sync(() => viewer);
+  const reports = defineReports({
+    target: leaf.target,
+    reports: store,
+    viewer: viewerOf,
+    policy: gardeneriaPolicy,
+    moderation: leaf.moderation,
+  });
+  const decide = withReports({ moderation: leaf.moderation, reports: store, viewer: viewerOf });
+  const as = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
+    leaf.actAs(
+      who,
+      Effect.suspend(() => {
+        viewer = who;
+        return effect;
+      }),
+    );
+  const file = (targetId: string) =>
+    as(
+      Option.some(otherMember),
+      reports.file({ targetId, reason: "spam", details: Option.none() }),
+    );
+  const stateOfNode = (id: string) =>
+    leaf.chain.rows().findLast((row) => row.id === id)?.state["moderationState"];
+  const statuses = () => store.rows().map((row) => [row.targetId, row.status] as const);
+  return { ...leaf, store, reports, decide, as, file, stateOfNode, statuses };
+};
 
 describe("reports and content moderation, linked", () => {
-  const linked = () => {
-    const leaf = comments();
-    const store = makeInMemoryReportStore();
-    let viewer: Viewer = Option.none();
-    const viewerOf = Effect.sync(() => viewer);
-    const reports = defineReports({
-      target: leaf.target,
-      reports: store,
-      viewer: viewerOf,
-      policy: gardeneriaPolicy,
-      moderation: leaf.moderation,
-    });
-    const decide = withReports({ moderation: leaf.moderation, reports: store, viewer: viewerOf });
-    const as = <A, E>(who: Viewer, effect: Effect.Effect<A, E>) =>
-      leaf.actAs(
-        who,
-        Effect.suspend(() => {
-          viewer = who;
-          return effect;
-        }),
-      );
-    const file = (targetId: string) =>
-      as(
-        Option.some(otherMember),
-        reports.file({ targetId, reason: "spam", details: Option.none() }),
-      );
-    const stateOfNode = (id: string) =>
-      leaf.chain.rows().findLast((row) => row.id === id)?.state["moderationState"];
-    const statuses = () => store.rows().map((row) => [row.targetId, row.status] as const);
-    return { ...leaf, store, reports, decide, as, file, stateOfNode, statuses };
-  };
-
   it.effect("upholding a report rejects the target and closes every open report on it", () =>
     Effect.gen(function* () {
       const { reports, as, post, file, store, stateOfNode, statuses } = linked();

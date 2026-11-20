@@ -285,16 +285,20 @@ describe("LeafStore over PostgreSQL agrees with the in-memory store", () => {
     const matrix = Arr.flatMap(viewers, ([name, viewer]) =>
       Arr.map([false, true], (includeDeleted) => [name, includeDeleted, viewer] as const),
     );
-    it.live.each(matrix)("%s, includeDeleted %s", ([_name, includeDeleted, viewer]) =>
+    it.live.each(matrix)("%s, includeDeleted %s", (cell) =>
       Effect.gen(function* () {
-        const scope = <F>(columns: HashSet.HashSet<string>, followers: FollowerSeam<F, unknown>) =>
+        const [, includeDeleted, viewer] = cell;
+        const searchScope = <F>(
+          columns: HashSet.HashSet<string>,
+          followers: FollowerSeam<F, unknown>,
+        ) =>
           searchScopeFilter({ access, columns, policy, followers }, viewer, {
             includeDeleted,
             where: always,
           });
         const result = yield* listBoth(
-          scope(store.columns, sqlSeam),
-          scope(memory.columns, memorySeam),
+          searchScope(store.columns, sqlSeam),
+          searchScope(memory.columns, memorySeam),
         );
         expect(result.sql).toEqual(result.memory);
       }),

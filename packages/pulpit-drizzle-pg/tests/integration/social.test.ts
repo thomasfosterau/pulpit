@@ -126,6 +126,7 @@ const ids = (set: SQL) =>
       return Arr.map(rows, (row) => row.id);
     }),
   );
+const sorted = (set: HashSet.HashSet<string>) => Arr.sort(Arr.fromIterable(set), Str.Order);
 
 describe("SocialStore over PostgreSQL agrees with the in-memory store", () => {
   it.live("add, addFollow and addBlock answer alike; a block drops both follows", () =>
@@ -239,7 +240,6 @@ describe("SocialStore over PostgreSQL agrees with the in-memory store", () => {
         store.addBlock(rel("block", "cy", "fay", 11)),
         memory.addBlock(rel("block", "cy", "fay", 11)),
       );
-      const sorted = (set: HashSet.HashSet<string>) => Arr.sort(Arr.fromIterable(set), Str.Order);
       expect(yield* ids(store.followingOf("cy"))).toEqual(sorted(memory.followingOf("cy")));
       expect(yield* ids(store.followingOf("cy"))).toEqual(["ana"]);
       expect(yield* ids(store.silencedBy("cy"))).toEqual(sorted(memory.silencedBy("cy")));

@@ -59,6 +59,10 @@ import { gardeneriaPolicy, member, moderator, NOW } from "./fixtures.ts";
 
 const ids = (hits: ReadonlyArray<{ readonly id: string }>) => hits.map((hit) => hit.id);
 const hitsOf = (...names: ReadonlyArray<string>) => names.map((id) => ({ id }));
+const branches = (weight: number) => [
+  { name: "text", hits: hitsOf("a") },
+  { name: "vector", weight, hits: hitsOf("b") },
+];
 
 describe("fuseRankings", () => {
   it("scores each hit Σ weight / (k + rank) and orders by score, then id", () => {
@@ -87,10 +91,6 @@ describe("fuseRankings", () => {
   });
 
   it("weights a branch, and scores nothing for a weight that is not a finite non-negative number", () => {
-    const branches = (weight: number) => [
-      { name: "text", hits: hitsOf("a") },
-      { name: "vector", weight, hits: hitsOf("b") },
-    ];
     expect(ids(fuseRankings(branches(2)))).toEqual(["b", "a"]);
     Arr.forEach([Number.NaN, -1, Number.POSITIVE_INFINITY], (weight) =>
       expect(fuseRankings(branches(weight)).find((hit) => hit.id === "b")?.score).toBe(0),
@@ -279,6 +279,8 @@ describe("hybridSearch", () => {
     }),
   );
 });
+const runAt = <A, E>(effect: Effect.Effect<A, E>) =>
+  Effect.andThen(TestClock.setTime(NOW.getTime()), effect);
 
 describe("a publish-gated leaf's search ranks what list reads", () => {
   type Resource = { readonly id: string; readonly title: unknown };
@@ -361,9 +363,6 @@ describe("a publish-gated leaf's search ranks what list reads", () => {
     });
     return { find, seed };
   };
-  const runAt = <A, E>(effect: Effect.Effect<A, E>) =>
-    Effect.andThen(TestClock.setTime(NOW.getTime()), effect);
-
   it.effect("the writer finds their unpublished head, the anonymous reader only the live row", () =>
     Effect.gen(function* () {
       const { find, seed } = setup();

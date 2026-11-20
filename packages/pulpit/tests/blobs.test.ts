@@ -66,6 +66,12 @@ describe("the content hash", () => {
   });
 });
 
+const uploadOf = (text: string) => ({
+  bytes: bytesOf(text),
+  mediaType: "text/plain",
+  filename: "a.txt",
+});
+
 const images = () => {
   const chain = makeInMemoryVersionChain("images");
   const leaves = makeInMemoryLeafStore(chain, {
@@ -96,12 +102,7 @@ const images = () => {
     },
     transact: (effect) => Effect.tap(effect, () => Effect.sync(() => log.push("commit"))),
   });
-  const upload = (text: string) => ({
-    bytes: bytesOf(text),
-    mediaType: "text/plain",
-    filename: "a.txt",
-  });
-  return { chain, leaf, blobs, files, log, upload };
+  return { chain, leaf, blobs, files, log, upload: uploadOf };
 };
 
 describe("defineFileWrites — the commit-ordered write", () => {

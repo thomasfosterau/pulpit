@@ -306,6 +306,15 @@ describe("the purge is the whole chain or nothing (beyond the fake)", () => {
       }),
   );
 });
+const both = <A, E>(
+  fromSql: Effect.Effect<A, E, typeof CurrentTransaction.Identifier>,
+  fromMemory: Effect.Effect<A>,
+) =>
+  Effect.gen(function* () {
+    const answer = { sql: yield* run(fromSql), memory: yield* fromMemory };
+    expect(answer.sql).toEqual(answer.memory);
+    return answer.sql;
+  });
 
 describe("AccountErasureStore over PostgreSQL agrees with the in-memory store", () => {
   beforeAll(() =>
@@ -363,17 +372,6 @@ describe("AccountErasureStore over PostgreSQL agrees with the in-memory store", 
       );
     }),
   );
-
-  const both = <A, E>(
-    fromSql: Effect.Effect<A, E, typeof CurrentTransaction.Identifier>,
-    fromMemory: Effect.Effect<A>,
-  ) =>
-    Effect.gen(function* () {
-      const answer = { sql: yield* run(fromSql), memory: yield* fromMemory };
-      expect(answer.sql).toEqual(answer.memory);
-      return answer.sql;
-    });
-
   it.live("ownedNodes is the account's owned nodes of the leaf, by id, at most limit", () =>
     Effect.gen(function* () {
       const query = { accountId: "acct", type: "posts", limit: 10 };

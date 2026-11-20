@@ -142,15 +142,20 @@ describe("registry — derived wire identity", () => {
     expect(branchOf(REGISTRY[2], HashMap.empty(), ROOTS)).toEqual(parent("content"));
   });
 });
+// Each fixture is the *minimal* malformed registry that trips one invariant;
+// `validateRegistry` throws on the first violation.
+const run = (entries: readonly RegistryEntry[], checks?: ReadonlyArray<RegistryCheck>) =>
+  validateRegistry(entries, checks);
+
+// gardeneria's `searchType` ⇔ `searchable` pairing, restated as a check.
+const searchPairing: RegistryCheck = (entry, byKey) =>
+  entry.searchable === true && !HashMap.has(byKey, `${entry.key}_search_view`)
+    ? Option.some(`'${entry.key}' is searchable but declares no search view`)
+    : Option.none();
 
 // ── Construction-time validation ──────────────────────────────────────
 
 describe("registry — construction-time validation", () => {
-  // Each fixture is the *minimal* malformed registry that trips one invariant;
-  // `validateRegistry` throws on the first violation.
-  const run = (entries: readonly RegistryEntry[], checks?: ReadonlyArray<RegistryCheck>) =>
-    validateRegistry(entries, checks);
-
   it("accepts a well-formed minimal registry", () => {
     const entries: readonly RegistryEntry[] = [
       { key: "node", parent: root },
@@ -263,11 +268,6 @@ describe("registry — construction-time validation", () => {
   });
 
   it("runs an application's own checks after the generic ones, with the index", () => {
-    // gardeneria's `searchType` ⇔ `searchable` pairing, restated as a check.
-    const searchPairing: RegistryCheck = (entry, byKey) =>
-      entry.searchable === true && !HashMap.has(byKey, `${entry.key}_search_view`)
-        ? Option.some(`'${entry.key}' is searchable but declares no search view`)
-        : Option.none();
     const entries: readonly RegistryEntry[] = [
       { key: "node", parent: root },
       {

@@ -397,6 +397,15 @@ const renditions = () => {
     as(who, ops.serve({ contentHash, width: 500, accept: "image/webp,*/*" }));
   return { images, blobs, files, references, rendered, ops, image, serve, as };
 };
+/**
+ * A width list emptied at runtime, as a declaration built from data can be:
+ * typed non-empty, empty by the time the check reads it.
+ */
+const emptiedWidths = (): RenditionPolicy => {
+  const widths: [number, ...Array<number>] = [320];
+  widths.pop();
+  return { widths, formats: ["image/jpeg"] };
+};
 
 describe("defineRenditions", () => {
   it.effect(
@@ -518,16 +527,6 @@ describe("defineRenditions", () => {
       expect(rendered).toEqual([]);
     }),
   );
-
-  /**
-   * A width list emptied at runtime, as a declaration built from data can be:
-   * typed non-empty, empty by the time the check reads it.
-   */
-  const emptiedWidths = (): RenditionPolicy => {
-    const widths: [number, ...Array<number>] = [320];
-    widths.pop();
-    return { widths, formats: ["image/jpeg"] };
-  };
   const invalid: ReadonlyArray<{ readonly label: string; readonly policy: RenditionPolicy }> = [
     { label: "an empty width list", policy: emptiedWidths() },
     { label: "descending widths", policy: { widths: [640, 320], formats: ["image/jpeg"] } },

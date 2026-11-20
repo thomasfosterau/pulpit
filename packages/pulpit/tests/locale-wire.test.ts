@@ -353,6 +353,7 @@ describe("a localised leaf's writes, through Content-Language", () => {
       }),
   );
 });
+const localeTags = (...locales: ReadonlyArray<string>) => Arr.map(locales, Option.some);
 
 describe("a localised leaf's cache, keyed by locale", () => {
   it.effect("evicts every locale's entry on a write, raising the id's version", () =>
@@ -417,13 +418,12 @@ describe("a localised leaf's cache, keyed by locale", () => {
           Effect.forEach(locales, (locale) => cache.get("p", Option.getOrUndefined(locale)), {
             concurrency: 1,
           });
-        const tags = (...locales: ReadonlyArray<string>) => Arr.map(locales, Option.some);
         yield* Effect.gen(function* () {
           yield* cache.set("p", "hello", 1n, "en");
           yield* cache.set("p", "bonjour", 1n, "fr");
           yield* cache.set("p", "secret", 1n, "de");
         });
-        expect(yield* read(tags("en", "fr", "de"))).toEqual([
+        expect(yield* read(localeTags("en", "fr", "de"))).toEqual([
           Option.some("hello"),
           Option.some("bonjour"),
           Option.none(),
@@ -433,16 +433,16 @@ describe("a localised leaf's cache, keyed by locale", () => {
           // A fill that read version 1 is behind the id's version now, in any locale.
           yield* cache.set("p", "bonjour", 1n, "fr");
         });
-        expect(yield* read([...tags("en", "fr"), Option.none()])).toEqual([
+        expect(yield* read([...localeTags("en", "fr"), Option.none()])).toEqual([
           Option.some("hi"),
           Option.none(),
           Option.none(),
         ]);
         yield* cache.delete("p", 3n);
-        expect(yield* read(tags("en", "fr"))).toEqual([Option.none(), Option.none()]);
+        expect(yield* read(localeTags("en", "fr"))).toEqual([Option.none(), Option.none()]);
         // A write at the evicted id's next version caches again, in its own locale only.
         yield* cache.set("p", "salut", 4n, "fr");
-        expect(yield* read(tags("fr", "en"))).toEqual([Option.some("salut"), Option.none()]);
+        expect(yield* read(localeTags("fr", "en"))).toEqual([Option.some("salut"), Option.none()]);
       }),
   );
 });

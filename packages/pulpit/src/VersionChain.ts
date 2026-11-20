@@ -853,6 +853,11 @@ const sameLocales = (left: LocaleStates, right: LocaleStates): boolean =>
     ),
   );
 
+/** The precondition a hooked write appends under: the caller's, else the head the hooks saw. */
+const pinned = (precondition: Precondition, head: VersionSnapshot): Precondition => ({
+  expectedVersion: precondition.expectedVersion ?? head.version,
+});
+
 /**
  * Bind the chain operations for one leaf `type` over its
  * {@link VersionChain}. Every produced operation is traced as
@@ -935,11 +940,6 @@ export const defineVersionChain = <E, R>(
       );
       return Option.some(snapshot);
     });
-
-  /** The precondition a hooked write appends under: the caller's, else the head the hooks saw. */
-  const pinned = (precondition: Precondition, head: VersionSnapshot): Precondition => ({
-    expectedVersion: precondition.expectedVersion ?? head.version,
-  });
 
   const create = Effect.fn(`${type}.create`)(function* (input: CreateInput) {
     if (!hooked) return yield* chain.create(input);

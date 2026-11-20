@@ -373,32 +373,31 @@ describe("accepted answers: the question's write gate and the answer's parent", 
     }),
   );
 });
+const bylines = () =>
+  Effect.gen(function* () {
+    const { leaf, actAs } = world();
+    const posts = leaf("posts", ["visibility"]);
+    const profiles = leaf("profiles", ["visibility"]);
+    const byline = defineCollection({
+      type: "post-authors",
+      parent: posts.ops,
+      members: profiles.ops,
+      store: makeInMemoryCollectionStore(),
+    });
+    const post = yield* actAs(
+      as(member),
+      posts.ops.create({ id: Option.none(), state: { visibility: "public" } }),
+    );
+    const profile = yield* actAs(
+      as(otherMember),
+      profiles.ops.create({ id: Option.none(), state: { visibility: "public" } }),
+    );
+    return { posts, byline, actAs, post: post.id, profile: profile.id };
+  });
 
 // ── Bylines ───────────────────────────────────────────────────────────
 
 describe("bylines: credit only", () => {
-  const bylines = () =>
-    Effect.gen(function* () {
-      const { leaf, actAs } = world();
-      const posts = leaf("posts", ["visibility"]);
-      const profiles = leaf("profiles", ["visibility"]);
-      const byline = defineCollection({
-        type: "post-authors",
-        parent: posts.ops,
-        members: profiles.ops,
-        store: makeInMemoryCollectionStore(),
-      });
-      const post = yield* actAs(
-        as(member),
-        posts.ops.create({ id: Option.none(), state: { visibility: "public" } }),
-      );
-      const profile = yield* actAs(
-        as(otherMember),
-        profiles.ops.create({ id: Option.none(), state: { visibility: "public" } }),
-      );
-      return { posts, byline, actAs, post: post.id, profile: profile.id };
-    });
-
   it.effect("lists the credited authors to every reader of the node", () =>
     Effect.gen(function* () {
       const b = yield* bylines();
