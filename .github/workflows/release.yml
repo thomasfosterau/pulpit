@@ -109,6 +109,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1.22.0
@@ -120,15 +121,14 @@ jobs:
             - args: ["--frozen-lockfile", "--ignore-scripts"]
       # The build runs on the Effect-patched tsc.
       - name: Patch the toolchain
-        run: pnpm run prepare
-      - name: Build
-        run: vp run -r build
-      # `pnpm publish` rewrites `catalog:` / `workspace:` specifiers and does OIDC
-      # trusted publishing itself (no npm CLI); it attaches provenance on its own
-      # for a public repository.
+        run: vp run prepare
+      # `vp run release` (vite.config.ts): builds every package, publishes each
+      # unpublished version with `vp pm publish -r` (pnpm rewrites `catalog:` /
+      # `workspace:` specifiers, does OIDC trusted publishing itself and
+      # attaches provenance on its own for a public repository), then
+      # `changeset git-tag` reports the new tags through CHANGESETS_OUTPUT, and
+      # the action pushes them and creates the releases.
       - name: Publish to npm
         uses: changesets/action/publish@v2.1.2
         with:
-          script: pnpm run release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          script: vp run release

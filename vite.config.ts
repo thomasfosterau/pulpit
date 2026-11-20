@@ -2,6 +2,13 @@ import { defineConfig } from "vite-plus";
 import { recommended } from "@effect/tsgo/oxlint-presets";
 import effect from "@enfect/oxlint";
 
+// Every package `release` may publish; list a new package here.
+const releaseBuilds = [
+  "@thomasfosterau/pulpit#build",
+  "@thomasfosterau/pulpit-wordpress#build",
+  "@thomasfosterau/pulpit-drizzle-pg#build",
+];
+
 export default defineConfig({
   // Lint without fixes, so no type-aware autofix lands unverified.
   staged: {
@@ -261,6 +268,28 @@ export default defineConfig({
       },
       fallow: {
         command: "vp exec fallow --summary",
+        cache: false,
+      },
+      // The release job's publish script (.github/workflows/release.yml),
+      // after every package's build: pnpm publishes each public package whose
+      // version is not on npm yet, in dependency order, under OIDC trusted
+      // publishing, rewriting `catalog:` / `workspace:` specifiers; then
+      // `changeset git-tag` tags each version not tagged yet and reports the
+      // tags to `changesets/action` through `CHANGESETS_OUTPUT`, which pushes
+      // them and creates the GitHub releases. Uncached, so it sees the full
+      // environment; a failed publish stops before tagging.
+      release: {
+        command: [
+          "vp pm publish -r --access public --no-git-checks -- --ignore-scripts",
+          "changeset git-tag",
+        ],
+        dependsOn: releaseBuilds,
+        cache: false,
+      },
+      // What `release` would publish, without publishing or tagging.
+      "release:dry-run": {
+        command: "vp pm publish -r --access public --dry-run --no-git-checks -- --ignore-scripts",
+        dependsOn: releaseBuilds,
         cache: false,
       },
       // One Istanbul map at coverage/coverage-final.json for fallow; thresholds are per package.
