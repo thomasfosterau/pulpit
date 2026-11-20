@@ -42,12 +42,12 @@ import {
   defineAccountErasure,
   ErasurePresets,
   type ErasureSummary,
-} from "../src/erasure.ts";
-import { audienceSeam } from "../src/audience.ts";
-import type { ProposalRow } from "../src/proposals.ts";
-import type { ReportRow } from "../src/moderation.ts";
-import type { Viewer } from "../src/subtype.ts";
-import type { VersionRow } from "../src/version-chain.ts";
+} from "../src/Erasure.ts";
+import { audienceSeam } from "../src/Audience.ts";
+import type { ProposalRow } from "../src/Proposals.ts";
+import type { ReportRow } from "../src/Moderation.ts";
+import type { Viewer } from "../src/Subtype.ts";
+import type { VersionRow } from "../src/VersionChain.ts";
 import { NOW as AT } from "./fixtures.ts";
 import {
   makeInMemoryAccountErasureStore,
@@ -64,7 +64,7 @@ import {
   makeInMemoryVersionChain,
   makeInMemoryWorkingCopyStore,
 } from "../src/testing.ts";
-import { defineVersionChain } from "../src/version-chain.ts";
+import { defineVersionChain } from "../src/VersionChain.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 

@@ -20,8 +20,8 @@ import {
   ReactionDeclarationError,
   reactionKinds,
   type ReactionStore,
-} from "../src/reactions.ts";
-import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/subtype.ts";
+} from "../src/Reactions.ts";
+import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/Subtype.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryFollowers,

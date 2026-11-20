@@ -5,7 +5,7 @@
  */
 
 import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
-import { always, eq } from "@thomasfosterau/pulpit/filter";
+import { always, eq } from "@thomasfosterau/pulpit/Filter";
 import type { PgView } from "drizzle-orm/pg-core";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
@@ -14,7 +14,7 @@ import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import * as Str from "effect/String";
 import { describe, expect, it } from "vite-plus/test";
-import { makePublications } from "../src/publication.ts";
+import { makePublications } from "../src/Publication.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
 import { database, owners, tables, views } from "./fixtures/tree.ts";
 

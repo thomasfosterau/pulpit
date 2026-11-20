@@ -8,7 +8,7 @@
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import { describe, expect, it } from "vite-plus/test";
-import { makeCollectionStore } from "../src/collections.ts";
+import { makeCollectionStore } from "../src/Collections.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
 import { collection, database } from "./fixtures/tree.ts";
 

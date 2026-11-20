@@ -14,9 +14,9 @@ import type * as HashMap from "effect/HashMap";
 import type * as HashSet from "effect/HashSet";
 import type * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
-import { canonicalText, type DocumentStore } from "@thomasfosterau/pulpit/documents";
-import type { EdgeRow, EdgeStore, EdgeValues, EndpointView } from "@thomasfosterau/pulpit/edges";
-import type { ListFilter } from "@thomasfosterau/pulpit/filter";
+import { canonicalText, type DocumentStore } from "@thomasfosterau/pulpit/Documents";
+import type { EdgeRow, EdgeStore, EdgeValues, EndpointView } from "@thomasfosterau/pulpit/Edges";
+import type { ListFilter } from "@thomasfosterau/pulpit/Filter";
 import {
   defineSubtype,
   type FollowerSeam,
@@ -24,7 +24,7 @@ import {
   type LeafStore,
   type ListOrder,
   type ResourceCacheSeam,
-} from "@thomasfosterau/pulpit/subtype";
+} from "@thomasfosterau/pulpit/Subtype";
 import {
   jsonMentionExtractor,
   makeInMemoryVersionChain,
@@ -47,8 +47,8 @@ import {
   type InMemoryNodes,
   type InMemoryResourceCache,
 } from "@thomasfosterau/pulpit/testing";
-import type { MentionExtractor } from "@thomasfosterau/pulpit/notifications";
-import type { VersionChain, VersionRow } from "@thomasfosterau/pulpit/version-chain";
+import type { MentionExtractor } from "@thomasfosterau/pulpit/Notifications";
+import type { VersionChain, VersionRow } from "@thomasfosterau/pulpit/VersionChain";
 
 /** A compile-time assertion: `T` must be exactly `true`. */
 type Assert<T extends true> = T;

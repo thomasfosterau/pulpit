@@ -45,8 +45,8 @@ import {
   or,
   published,
   type Scalar,
-} from "../src/filter.ts";
-import type { ColumnValue } from "../src/version-chain.ts";
+} from "../src/Filter.ts";
+import type { ColumnValue } from "../src/VersionChain.ts";
 
 type Following = HashSet.HashSet<string>;
 

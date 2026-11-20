@@ -1,6 +1,6 @@
 /**
  * The bounded erasure batch the account-keyed stores share (`PERF-DB-001`): delete at most `limit` of a table's rows matching
- * `where`, chosen by key order, in one statement, and count them. `./erasure`
+ * `where`, chosen by key order, in one statement, and count them. `./Erasure`
  * calls a store's `eraseAccount` again until it deletes fewer than `limit`.
  */
 

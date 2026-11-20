@@ -1,6 +1,6 @@
 /**
- * **Node id minting**, shared by `./version-chain` (a hooked create that
- * names no id) and `./reference-import` (the id an external id is linked to
+ * **Node id minting**, shared by `./VersionChain` (a hooked create that
+ * names no id) and `./ReferenceImport` (the id an external id is linked to
  * before its create).
  *
  * Internal: not a package entry point (absent from `package.json`
@@ -20,7 +20,7 @@ const randomByte = Effect.map(Random.nextIntBetween(0, 255), (byte) =>
 /**
  * A fresh RFC 4122 version-4 node id, for a hooked create that names none:
  * the hook is shown the id the version will carry, so it is minted before
- * the append rather than by the port; and for `./reference-import`, which
+ * the append rather than by the port; and for `./ReferenceImport`, which
  * links an external id to the node id before the create.
  *
  * @internal

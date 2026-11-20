@@ -17,16 +17,16 @@ import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as P from "effect/Predicate";
-import { always, evaluate, type FilterRow } from "../src/filter.ts";
-import { defineSocial, socialFollowers, type SocialStore } from "../src/social.ts";
-import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/subtype.ts";
+import { always, evaluate, type FilterRow } from "../src/Filter.ts";
+import { defineSocial, socialFollowers, type SocialStore } from "../src/Social.ts";
+import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/Subtype.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryLeafStore,
   makeInMemorySocialStore,
   type InMemoryFollowing,
 } from "../src/testing.ts";
-import type { ColumnValue } from "../src/version-chain.ts";
+import type { ColumnValue } from "../src/VersionChain.ts";
 import { gardeneriaPolicy, member, NOW, otherMember } from "./fixtures.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);

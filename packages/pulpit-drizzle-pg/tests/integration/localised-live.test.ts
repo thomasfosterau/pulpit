@@ -9,14 +9,14 @@
  */
 
 import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
-import { always, eq, locale, never, type ListFilter } from "@thomasfosterau/pulpit/filter";
-import type { LeafRow, ListOrder } from "@thomasfosterau/pulpit/subtype";
+import { always, eq, locale, never, type ListFilter } from "@thomasfosterau/pulpit/Filter";
+import type { LeafRow, ListOrder } from "@thomasfosterau/pulpit/Subtype";
 import {
   makeInMemoryLeafStore,
   makeInMemoryPublication,
   makeInMemoryVersionChain,
 } from "@thomasfosterau/pulpit/testing";
-import type { LocalePatch, LocaleStates } from "@thomasfosterau/pulpit/version-chain";
+import type { LocalePatch, LocaleStates } from "@thomasfosterau/pulpit/VersionChain";
 import { getTableName, sql } from "drizzle-orm";
 import * as Arr from "effect/Array";
 import * as Config from "effect/Config";
@@ -29,8 +29,8 @@ import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
 import * as Str from "effect/String";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { makePublications } from "../../src/publication.ts";
-import { makeVersionChains } from "../../src/version-chain.ts";
+import { makePublications } from "../../src/Publication.ts";
+import { makeVersionChains } from "../../src/VersionChain.ts";
 import { owners, tables, tree, views } from "../fixtures/tree.ts";
 
 const database = makePgDatabase({ relations: {}, key: "PulpitLocalisedLiveDatabase" });

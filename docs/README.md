@@ -6,14 +6,14 @@ The cross-cutting prose behind the packages: each module's guide (how its export
 
 | Page | Modules | What it covers |
 | --- | --- | --- |
-| [Content model](content-model.md) | `./content`, `./registry`, `./documents`, `./filter` | The Content-axis field spreads, the registry flags and checks, content-addressed documents, and `ListFilter` with the contract a SQL renderer must honour. |
-| [Read model](read-model.md) | `./subtype`, `./publication`, `./cache` | The read gates and who sees what, list order and `sortable`, the gated version history, the head version on the wire, search scope and hydration, the live pointer, localisation, lifecycle hooks, serveability and the resource cache. |
-| [History and review](history-and-review.md) | `./version-chain`, `./working-copy`, `./proposals`, `./moderation` | The append-only chain, optimistic concurrency and compare, autosave, suggested edits and moderation. |
-| [Structure and routing](structure.md) | `./edges`, `./paths`, `./pages`, `./collections`, `./links`, `./relations` | Edges and what a write discloses, taxonomies, paths and aliases, the page recipe, collections, link lists and the UGC relation patterns. |
-| [Participation](participation.md) | `./comments`, `./reactions`, `./budgets`, `./social`, `./audience`, `./notifications`, `./translation`, `./reference-import` | Comments, reactions, write budgets, the social graph, audiences, notifications, translation lineage and reference import. |
-| [Media](media.md) | `./blobs`, `./media` | File leaves over the byte store, the upload pipeline, renditions and albums. |
-| [Discovery and search](discovery-and-search.md) | `./search`, `./discovery` | Hybrid search, the embedding pipeline, the discovery feed and sitemaps. |
-| [Erasure](erasure.md) | `./purge`, `./erasure` | Purging a node's history, and account erasure. |
+| [Content model](content-model.md) | `./Content`, `./Registry`, `./Documents`, `./Filter` | The Content-axis field spreads, the registry flags and checks, content-addressed documents, and `ListFilter` with the contract a SQL renderer must honour. |
+| [Read model](read-model.md) | `./Subtype`, `./Publication`, `./Cache` | The read gates and who sees what, list order and `sortable`, the gated version history, the head version on the wire, search scope and hydration, the live pointer, localisation, lifecycle hooks, serveability and the resource cache. |
+| [History and review](history-and-review.md) | `./VersionChain`, `./WorkingCopy`, `./Proposals`, `./Moderation` | The append-only chain, optimistic concurrency and compare, autosave, suggested edits and moderation. |
+| [Structure and routing](structure.md) | `./Edges`, `./Paths`, `./Pages`, `./Collections`, `./Links`, `./Relations` | Edges and what a write discloses, taxonomies, paths and aliases, the page recipe, collections, link lists and the UGC relation patterns. |
+| [Participation](participation.md) | `./Comments`, `./Reactions`, `./Budgets`, `./Social`, `./Audience`, `./Notifications`, `./Translation`, `./ReferenceImport` | Comments, reactions, write budgets, the social graph, audiences, notifications, translation lineage and reference import. |
+| [Media](media.md) | `./Blobs`, `./Media` | File leaves over the byte store, the upload pipeline, renditions and albums. |
+| [Discovery and search](discovery-and-search.md) | `./Search`, `./Discovery` | Hybrid search, the embedding pipeline, the discovery feed and sitemaps. |
+| [Erasure](erasure.md) | `./Purge`, `./Erasure` | Purging a node's history, and account erasure. |
 | [Seams](seams.md) | every seam, and `./testing` | The shape each seam's real implementation must have (with its SQL sketch) and which package fills it, and the in-memory fakes that are each seam's reference semantics. |
 
 ## The optional packages

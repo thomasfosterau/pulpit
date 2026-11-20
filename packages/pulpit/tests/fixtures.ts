@@ -11,8 +11,8 @@ import * as DateTime from "effect/DateTime";
 import * as Formatter from "effect/Formatter";
 import * as P from "effect/Predicate";
 import * as Schema from "effect/Schema";
-import type { AccessPolicy, ViewerAccount } from "../src/subtype.ts";
-import type { ColumnValue } from "../src/version-chain.ts";
+import type { AccessPolicy, ViewerAccount } from "../src/Subtype.ts";
+import type { ColumnValue } from "../src/VersionChain.ts";
 
 /**
  * A fixture value as a test hands it to a decoder: JSON, plus the `Date`

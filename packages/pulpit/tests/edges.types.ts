@@ -1,5 +1,5 @@
 /**
- * The Taxonomies example in docs/structure.md (`./edges` →
+ * The Taxonomies example in docs/structure.md (`./Edges` →
  * Taxonomies), type-checked by the package's `check` task (`tsconfig.json`
  * includes `tests/`). Nothing checks the docs' copy itself, so change the
  * two together. The code below is the docs' with two changes: the import
@@ -10,8 +10,8 @@
  */
 
 import type * as Effect from "effect/Effect";
-import { defineEdgeOps, type EdgeRow, type EdgeStore } from "../src/edges.ts";
-import { eq } from "../src/filter.ts";
+import { defineEdgeOps, type EdgeRow, type EdgeStore } from "../src/Edges.ts";
+import { eq } from "../src/Filter.ts";
 import {
   ownedAccess,
   requireWriter,
@@ -20,7 +20,7 @@ import {
   type LeafRow,
   type LeafStore,
   type Viewer,
-} from "../src/subtype.ts";
+} from "../src/Subtype.ts";
 import { textOf } from "./fixtures.ts";
 
 export const assignments = <Following, E, R>(seams: {

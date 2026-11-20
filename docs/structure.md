@@ -1,8 +1,8 @@
 # Structure and routing
 
-Relations between nodes (`./edges`, taxonomies included), routable paths and aliases (`./paths`), the page recipe (`./pages`), ordered collections (`./collections`), link lists (`./links`) and the UGC relation patterns over them (`./relations`).
+Relations between nodes (`./Edges`, taxonomies included), routable paths and aliases (`./Paths`), the page recipe (`./Pages`), ordered collections (`./Collections`), link lists (`./Links`) and the UGC relation patterns over them (`./Relations`).
 
-## `./edges`
+## `./Edges`
 
 `defineEdgeOps` binds the operations of an edge family: a relation between nodes, stored as a row of its own (an id, a `createdAt`, one column per end holding that end's node id, and the family's own qualifier columns) outside both nodes' tables. It is ported from gardeneria's `defineEdgeOpsE`:
 
@@ -15,7 +15,7 @@ Relations between nodes (`./edges`, taxonomies included), routable paths and ali
 - `nonMemberFilter(end, otherIds)`: the complement of `memberFilter`, `(id IS NULL OR id NOT IN (…))` over the same `members` subquery under the `notIn` node, so it answers `?categories_exclude=1,2`; `memberFilter` and `nonMemberFilter` partition the rows a leaf's `list` reads. Only edges the viewer can read count as a membership (`EDGE-001`): a row whose only edge to `otherIds` is hidden from the viewer is not excluded, so the hidden edge is never confirmed. An exclusion fails closed by excluding nothing: no ids, more than `MAX_SET_VALUES` (an adapter caps its list first), an `end` the family doesn't declare, or a family without exactly two ends all give `always` without reading the store.
 - `countBy(end, ids, where?)`: the number of edges the viewer can read at each node of `ids` at end `end`, in one grouped store read: a taxonomy term's post count for every term on a page. It counts exactly the edges `list` would show (`EDGE-001`, the same `endpointFilter`, narrowed by the family's optional `where`), so a hidden or tombstoned node at `end` counts `0` and its edges are never confirmed. Every requested id (deduplicated) has a key, `0` when it has no readable edge. More than `MAX_SET_VALUES` ids, or an `end` the family doesn't declare, answers `0` for every id without reading the store.
 
-Writes gate on the declaration's `writeGate`. The default, `corpusWriteGate`, is the corpus-write rung, right for an edge between two reference leaves. `rungGate((policy) => policy.canModerate)` puts a family on another rung. An owned-child edge (gardeneria's observation → disorder) passes a gate that reads its owned end's owner, typically `requireWriter` from `./subtype`.
+Writes gate on the declaration's `writeGate`. The default, `corpusWriteGate`, is the corpus-write rung, right for an edge between two reference leaves. `rungGate((policy) => policy.canModerate)` puts a family on another rung. An owned-child edge (gardeneria's observation → disorder) passes a gate that reads its owned end's owner, typically `requireWriter` from `./Subtype`.
 
 The optional members here (an end's `maxEdges`, the declaration's `onConflict`, `writeGate` and `validity`, and the store's `closeValidity`) are bare `?: T`: a caller that has no value omits the key rather than passing `undefined`.
 
@@ -37,7 +37,7 @@ The read operations never reveal a hidden edge (`SEC-AUTH-ENUM-001`), and nor do
 - **The count reads no hidden edge.** `EdgeCardinalityExceeded` depends only on the edges the caller can read at the node, so a node holding hidden edges answers exactly as one holding none. The cost is the weaker limit under Cardinality: a writer who can't read every edge at a node can take it past `maxEdges` in all.
 - **A collision says only that the key is taken.** `EdgeConflict` carries only the family's type. Under `"fail"` a collision with a hidden edge answers exactly as one with a readable edge; under `"ignore"` only a readable, live edge resolves to `{ created: false, id }`, and otherwise (a hidden edge, or one with a tombstoned end, whoever asks) it is `EdgeConflict`. That the key is taken is the unique index's own answer, so it can't be hidden. That says something about a hidden edge only in a family whose unique key leaves an end out (gardeneria's page slugs key on the path, not the page): there, a writer who gets `EdgeConflict` with no readable edge holding the key learns that some edge it can't read does, though not which, nor at which node. Where the key covers every end, a colliding edge joins the same nodes the create just showed to be live and readable, so it is readable itself. A family that must not reveal even that should key on every end.
 
-An owned leaf's `./subtype` writes answer differently, by decision: its write and history gates deliberately confirm to a signed-in caller that an owned row exists (`Forbidden` for one they don't own, `NodeNotFound` for none). A reference leaf's hide a row as `get` does. See [SECURITY.md → Existence disclosure by the write gates](SECURITY.md#existence-disclosure-by-the-write-gates).
+An owned leaf's `./Subtype` writes answer differently, by decision: its write and history gates deliberately confirm to a signed-in caller that an owned row exists (`Forbidden` for one they don't own, `NodeNotFound` for none). A reference leaf's hide a row as `get` does. See [SECURITY.md → Existence disclosure by the write gates](SECURITY.md#existence-disclosure-by-the-write-gates).
 
 **An edge isn't a node.** It has no version chain, so the chain's append-only rules (`VERSION-CHAIN-001/002`) don't govern it, and its hard delete rewrites no version row. Tombstoning a node leaves its edges stored.
 
@@ -53,8 +53,8 @@ pulpit ships no category or tag vocabulary: a taxonomy is a reference-data leaf 
 
 ```ts
 import type * as Effect from "effect/Effect";
-import { defineEdgeOps, type EdgeRow, type EdgeStore } from "@thomasfosterau/pulpit/edges";
-import { eq } from "@thomasfosterau/pulpit/filter";
+import { defineEdgeOps, type EdgeRow, type EdgeStore } from "@thomasfosterau/pulpit/Edges";
+import { eq } from "@thomasfosterau/pulpit/Filter";
 import {
   ownedAccess,
   requireWriter,
@@ -63,7 +63,7 @@ import {
   type LeafRow,
   type LeafStore,
   type Viewer,
-} from "@thomasfosterau/pulpit/subtype";
+} from "@thomasfosterau/pulpit/Subtype";
 
 const assignments = <Following, E, R>(seams: {
   readonly terms: LeafStore<LeafRow, Following, E, R>;
@@ -123,12 +123,12 @@ const termsOf = <Following, E, R>(
 | `EdgeValidity`, `validAt(validity, at)`, `CloseValidity`, `InvalidValidity` | A family's validity interval columns, the list filter for the edges valid at an instant, the store's interval-closing method, and a malformed or widening interval (422). |
 | `EdgeDeclarationError` | A malformed family (an end alias with a `.`, a `maxEdges` that isn't a positive safe integer, a `validity` naming one column twice, or a `validity` over a store without `closeValidity`), thrown by `defineEdgeOps` when the family is declared, never as an Effect failure. |
 
-## `./paths`
+## `./Paths`
 
 Routable content. A path claim lives on the root node: one path per content item. The locale is chosen when the resolved node is read, never by the path, so a slug translation is not a claim of its own. `routable(ops, { column, paths, chain })` wraps a leaf's `defineSubtype` operations, so that each write keeps the node's claim in step with the state it landed at:
 
 ```ts
-import { routable } from "@thomasfosterau/pulpit/paths";
+import { routable } from "@thomasfosterau/pulpit/Paths";
 
 const pages = routable(pageOps, { column: "slug", paths: pagePaths, chain });
 const handlers = subtypeHandlers(pages, { transact, inTransaction, cache }); // the claims run inside `transact`
@@ -150,18 +150,18 @@ Free-form redirects (patterns, a 404 log) are the site's. The path's syntax is t
 | `PathStore`, `PathEntry` | The path-table seam and one stored path (its node, canonical or alias). |
 | `PathTaken`, `PathNotFound` | Another node holds the path canonically (409); no node the viewer can read answers to it (404). |
 
-## `./pages`
+## `./Pages`
 
 The page recipe: standalone, routable, localised documents (an About page, help, terms, a landing page) assembled from the existing modules, plus the one read that joins them. Nothing here is a new store or a new read rule.
 
 - **The leaf.** A `defineSubtype` leaf, usually a reference leaf (corpus material written at the corpus-write rung; gardeneria's pages are moderator+), with a locale level (`defineLocaleLevel`) for the translated columns and, for drafts and scheduled pages, the publication pointer (`publication`). The path column is shared, never translated: a claim lives on the root node, so one page is one path in every locale.
-- **The collection.** A page collection (a path namespace) is a root claim in `./paths`: one `PathStore` per collection, each wrapped with `routable`. There is no namespace concept beyond that.
+- **The collection.** A page collection (a path namespace) is a root claim in `./Paths`: one `PathStore` per collection, each wrapped with `routable`. There is no namespace concept beyond that.
 - **The read.** `resolveLocalised(pages, { defaultLocale })` returns `(path, locale) => …`. It resolves the path through the leaf's gated `resolve` and reads the node through `getLocalised` in the order `localeFallbacks(locale, defaultLocale)` gives: the requested tag, each shorter prefix of it (`pt-BR` → `pt`), then the default.
 
 ```ts
-import { resolveLocalised } from "@thomasfosterau/pulpit/pages";
-import { routable } from "@thomasfosterau/pulpit/paths";
-import { defineLocaleLevel, defineSubtype } from "@thomasfosterau/pulpit/subtype";
+import { resolveLocalised } from "@thomasfosterau/pulpit/Pages";
+import { routable } from "@thomasfosterau/pulpit/Paths";
+import { defineLocaleLevel, defineSubtype } from "@thomasfosterau/pulpit/Subtype";
 
 const pageOps = defineSubtype({
   type: "pages",
@@ -188,7 +188,7 @@ resolve("about", "pt-BR");
 - **An alias redirects without reading a locale.** The canonical path is the node's and is shared by every locale.
 - **Tags are compared exactly.** BCP 47 is case-insensitive, but the locale rows are not, so normalise a tag's case before it reaches the read.
 
-Navigation menus are an [ordered link list](#links) over `./collections`, and there is no page builder.
+Navigation menus are an [ordered link list](#links) over `./Collections`, and there is no page builder.
 
 | Export | What it is |
 | --- | --- |
@@ -196,14 +196,14 @@ Navigation menus are an [ordered link list](#links) over `./collections`, and th
 | `LocalisedResolution` | What it answers: `{ kind: "node", id, locale, resource }` or `{ kind: "redirect", id, path }`. |
 | `localeFallbacks(requested, defaultLocale)` | The locale order a read tries. |
 
-## `./collections`
+## `./Collections`
 
 Ordered collections: positioned members of a parent node, such as a list's items, an album's media, a byline's authors or a menu's entries.
 
 `CollectionDefinition.mode` is a bare `?: CollectionMode<E, R>`: omit the key for the default model rather than passing `undefined`.
 
 ```ts
-import { defineCollection } from "@thomasfosterau/pulpit/collections";
+import { defineCollection } from "@thomasfosterau/pulpit/Collections";
 
 const items = defineCollection({
   type: "list-items",
@@ -235,17 +235,17 @@ items.list(listId, { limit: 50, offset: 0 }); // { rows: [{ memberId, index, res
 | `CollectionStore`, `CollectionEntry`, `MAX_COLLECTION_SIZE` | The membership table seam (see [Seams](seams.md#seams)), one member's place and the size bound. |
 | `AlreadyMember`, `NotMember`, `CollectionFull` | The failures: 409, 404, 409. |
 
-## `./links`
+## `./Links`
 
 Ordered link lists: an ordered, localised list of links under a parent node, read for one viewer, with nested lists. A navigation menu is the usual example; the kernel names no menu type (a `menu` is a leaf the application binds, like a `page`), so the module is the generic shape and this section shows a menu and its sub-menus.
 
-- **The list** is a `./collections` collection of entry nodes under the parent (the menu), in either order model.
+- **The list** is a `./Collections` collection of entry nodes under the parent (the menu), in either order model.
 - **The entry leaf** is a `defineSubtype` leaf with a locale level. Its columns hold the target (a path, or a node id) and, translated, the label.
-- **The target** is a path, resolved through `./pages`' `resolveLocalised`, a node, read through its leaf's gated `getMany`, or another list: a nested list (a sub-menu) is an entry whose target is another parent of the same collection, so it needs no storage of its own.
+- **The target** is a path, resolved through `./Pages`' `resolveLocalised`, a node, read through its leaf's gated `getMany`, or another list: a nested list (a sub-menu) is an entry whose target is another parent of the same collection, so it needs no storage of its own.
 
 ```ts
-import { defineLinkList } from "@thomasfosterau/pulpit/links";
-import { resolveLocalised } from "@thomasfosterau/pulpit/pages";
+import { defineLinkList } from "@thomasfosterau/pulpit/Links";
+import { resolveLocalised } from "@thomasfosterau/pulpit/Pages";
 
 const nav = defineLinkList({
   type: "menu-links",
@@ -280,18 +280,18 @@ nav.list(menuId, "pt-BR");
 | `Link`, `LinkTarget`, `FollowedTarget` | A returned link, what an entry points at (a path, a node or a nested list), and what that resolved to. |
 | `DEFAULT_LINK_DEPTH` | The nesting cap a definition without `maxDepth` reads under: 3. |
 
-## `./relations`
+## `./Relations`
 
-Three UGC relation patterns, after gardeneria's posts (`sharedId`), questions and answers, and `blog_post_authors`. Each is a recipe over `./edges` or `./collections` plus a small helper; none adds a read rule, so every node is read through its own leaf's gate.
+Three UGC relation patterns, after gardeneria's posts (`sharedId`), questions and answers, and `blog_post_authors`. Each is a recipe over `./Edges` or `./Collections` plus a small helper; none adds a read rule, so every node is read through its own leaf's gate.
 
 ```ts
-import { defineEdgeOps } from "@thomasfosterau/pulpit/edges";
-import { defineCollection } from "@thomasfosterau/pulpit/collections";
+import { defineEdgeOps } from "@thomasfosterau/pulpit/Edges";
+import { defineCollection } from "@thomasfosterau/pulpit/Collections";
 import {
   acceptedAnswerGate,
   defineReshares,
   nodeWriteGate,
-} from "@thomasfosterau/pulpit/relations";
+} from "@thomasfosterau/pulpit/Relations";
 
 // A reshare: an edge family with one target per sharing post, written by whoever may write the post.
 const reshareEdges = defineEdgeOps({
@@ -337,8 +337,8 @@ const byline = defineCollection({ type: "post-authors", parent: posts, members: 
 ```
 
 - **Reshares**. The reshare edge family keeps `EDGE-001`: its `list` and `get` hide an edge whose target the viewer can't read, and its `create` refuses a target the writer can't read. A reshare of a node that has _since_ become unreadable is still shown, as a placeholder: `defineReshares` reads the stored edge itself, outside `EDGE-001`, for a sharing node the viewer can read (`NodeNotFound` otherwise, as its `get`), and answers the target through the target leaf's own `getMany`, so a private, draft, unpublished or tombstoned target is `{ _tag: "Unavailable" }`, carrying neither its id nor its content. What a reader of the sharing node learns is only that it reshared _something_. A target that has been purged leaves no edge (its row is gone), so the post reads as resharing nothing. A quote is the same family with a body on the sharing node.
-- **Accepted answers.** `acceptedAnswerGate` runs after `./edges` has checked that the viewer can read both ends. It is the question's own write gate (`authorize`: its owner or the moderate rung on an owned question, the corpus-write rung on a reference one), then the constraint that the answer's `parentColumn` names the question (`AnswerNotOfQuestion`, 422, otherwise; only a writer of the question learns it). `maxEdges: 1` at the question holds one accepted answer; changing it is a delete (gated the same way) and a create.
-- **Bylines are credit only**. They are an ordered collection (`./collections`) of the accounts' profile nodes, read through the profile leaf's own gate and written through the post's write gate. A credited co-author gets no write right: the post's `requireWriter` reads the owner record, never the byline, so a co-author's `update` is `Forbidden`, and so is their edit of the byline.
+- **Accepted answers.** `acceptedAnswerGate` runs after `./Edges` has checked that the viewer can read both ends. It is the question's own write gate (`authorize`: its owner or the moderate rung on an owned question, the corpus-write rung on a reference one), then the constraint that the answer's `parentColumn` names the question (`AnswerNotOfQuestion`, 422, otherwise; only a writer of the question learns it). `maxEdges: 1` at the question holds one accepted answer; changing it is a delete (gated the same way) and a create.
+- **Bylines are credit only**. They are an ordered collection (`./Collections`) of the accounts' profile nodes, read through the profile leaf's own gate and written through the post's write gate. A credited co-author gets no write right: the post's `requireWriter` reads the owner record, never the byline, so a co-author's `update` is `Forbidden`, and so is their edit of the byline.
 
 | Export | What it is |
 | --- | --- |

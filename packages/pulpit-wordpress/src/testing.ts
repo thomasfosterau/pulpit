@@ -13,7 +13,7 @@
  * ```ts
  * import { deepStrictEqual } from "node:assert";
  * import * as Effect from "effect/Effect";
- * import { integerIds } from "@thomasfosterau/pulpit-wordpress/ids";
+ * import { integerIds } from "@thomasfosterau/pulpit-wordpress/Ids";
  * import { makeInMemoryIdCodec } from "@thomasfosterau/pulpit-wordpress/testing";
  *
  * const codec = makeInMemoryIdCodec(["node-a"]);
@@ -35,7 +35,7 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
-import type { IdCodec } from "./ids.ts";
+import type { IdCodec } from "./Ids.ts";
 
 /**
  * The in-memory {@link IdCodec}: an integer per node id, minted from 1 in the

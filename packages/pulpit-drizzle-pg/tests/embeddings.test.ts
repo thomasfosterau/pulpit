@@ -12,7 +12,7 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import { describe, expect, it } from "vite-plus/test";
-import { makeEmbeddingStore, makeEmbeddingTables, vectorLiteral } from "../src/embeddings.ts";
+import { makeEmbeddingStore, makeEmbeddingTables, vectorLiteral } from "../src/Embeddings.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
 import { database, documents, embeddings, schema } from "./fixtures/tree.ts";
 

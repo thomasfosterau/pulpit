@@ -31,8 +31,8 @@ import {
   type KernelNotificationKind,
   type NotificationDraft,
   type NotificationPreferences,
-} from "../src/notifications.ts";
-import type { ProposalRow } from "../src/proposals.ts";
+} from "../src/Notifications.ts";
+import type { ProposalRow } from "../src/Proposals.ts";
 import {
   defineSubtype,
   ownedAccess,
@@ -42,7 +42,7 @@ import {
   type LeafRow,
   type Viewer,
   type ViewerAccount,
-} from "../src/subtype.ts";
+} from "../src/Subtype.ts";
 import {
   jsonMentionExtractor,
   makeInMemoryDelivery,
@@ -57,7 +57,7 @@ import {
   makeInMemoryVersionChain,
   type InMemoryFollowing,
 } from "../src/testing.ts";
-import type { ChainState, VersionSnapshot } from "../src/version-chain.ts";
+import type { ChainState, VersionSnapshot } from "../src/VersionChain.ts";
 import { gardeneriaPolicy, member, moderator, NOW, otherMember } from "./fixtures.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);

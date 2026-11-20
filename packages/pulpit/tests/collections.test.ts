@@ -17,8 +17,8 @@ import {
   hideRecordedOrder,
   MAX_COLLECTION_SIZE,
   type CollectionMode,
-} from "../src/collections.ts";
-import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/subtype.ts";
+} from "../src/Collections.ts";
+import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/Subtype.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryCollectionStore,

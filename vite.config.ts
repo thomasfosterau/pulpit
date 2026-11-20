@@ -82,7 +82,7 @@ export default defineConfig({
       // the same order, is narrowed with a `// SAFETY:`-commented `as`
       // (audited by `effect/require-safety-comment-for-type-assertion`).
       {
-        files: ["packages/pulpit/src/registry.ts"],
+        files: ["packages/pulpit/src/Registry.ts"],
         rules: {
           "effect/casting-awareness": "off",
           "typescript/no-unsafe-type-assertion": "off",
@@ -117,7 +117,7 @@ export default defineConfig({
         },
       },
       {
-        files: ["packages/pulpit-drizzle-pg/src/version-chain.ts"],
+        files: ["packages/pulpit-drizzle-pg/src/VersionChain.ts"],
         rules: {
           "typescript/no-unsafe-type-assertion": "off",
           "effect/casting-awareness": "off",
@@ -175,7 +175,7 @@ export default defineConfig({
       // every use of the module the file exists to wrap.
       {
         files: [
-          "packages/pulpit-wordpress/src/http.ts",
+          "packages/pulpit-wordpress/src/Http.ts",
           "packages/pulpit-wordpress/tests/http.test.ts",
           "tests/dist-consumer/src/wordpress.ts",
         ],
@@ -189,7 +189,7 @@ export default defineConfig({
       // failure into a 500 `WpRestError` before it leaves the adapter, so
       // the `unknown` never reaches a caller.
       {
-        files: ["packages/pulpit-wordpress/src/api.ts"],
+        files: ["packages/pulpit-wordpress/src/Api.ts"],
         rules: {
           "effecttsgo/any-unknown-in-error-context": "off",
         },

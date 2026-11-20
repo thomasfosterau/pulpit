@@ -16,7 +16,7 @@
  */
 
 import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
-import type { EdgeEnds, EdgeRow, EdgeValues } from "@thomasfosterau/pulpit/edges";
+import type { EdgeEnds, EdgeRow, EdgeValues } from "@thomasfosterau/pulpit/Edges";
 import {
   always,
   and,
@@ -26,9 +26,9 @@ import {
   isNull,
   lt,
   type ListFilter,
-} from "@thomasfosterau/pulpit/filter";
-import { ownedAccess } from "@thomasfosterau/pulpit/subtype";
-import type { ColumnValue } from "@thomasfosterau/pulpit/version-chain";
+} from "@thomasfosterau/pulpit/Filter";
+import { ownedAccess } from "@thomasfosterau/pulpit/Subtype";
+import type { ColumnValue } from "@thomasfosterau/pulpit/VersionChain";
 import {
   makeInMemoryEdgeStore,
   makeInMemoryLeafStore,
@@ -48,9 +48,9 @@ import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
 import * as Str from "effect/String";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { makeEdgeStore } from "../../src/edges.ts";
-import { makeLeafStores } from "../../src/leaf-store.ts";
-import { makeVersionChains } from "../../src/version-chain.ts";
+import { makeEdgeStore } from "../../src/Edges.ts";
+import { makeLeafStores } from "../../src/LeafStore.ts";
+import { makeVersionChains } from "../../src/VersionChain.ts";
 import { owners, relations, tables, tree, views } from "../fixtures/tree.ts";
 
 const database = makePgDatabase({ relations: {}, key: "PulpitEdgeDatabase" });

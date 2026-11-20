@@ -1,19 +1,19 @@
 /**
  * **The kernel's value and row orders**: the code-point string order that
- * `./filter`'s comparison arms share with SQL's `COLLATE "C"`, and the list
+ * `./Filter`'s comparison arms share with SQL's `COLLATE "C"`, and the list
  * order the in-memory `LeafStore` fake sorts by, so the fake and
  * the filter never compare a string two ways.
  *
  * Internal: not a package entry point (absent from `package.json`
  * `exports`) and excluded from the generated API docs (`docgen.json`).
- * Typed structurally, so it never imports `./subtype`.
+ * Typed structurally, so it never imports `./Subtype`.
  *
  * @internal
  */
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import * as P from "effect/Predicate";
-import type { ColumnValue } from "../version-chain.ts";
+import type { ColumnValue } from "../VersionChain.ts";
 
 /**
  * Strings by code point, as SQL's `"C"` collation orders them over UTF-8.
@@ -85,7 +85,7 @@ const byValue: Order.Order<ColumnValue> = Order.make((self, that) => {
   return same === undefined ? 0 : same.order(self, that);
 });
 
-/** One order key, structurally (`./subtype`'s `ListOrder` fits). */
+/** One order key, structurally (`./Subtype`'s `ListOrder` fits). */
 interface OrderKey {
   readonly column: string;
   readonly direction: "asc" | "desc";

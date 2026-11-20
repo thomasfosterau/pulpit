@@ -1,6 +1,6 @@
 /**
- * **The purge itself, ungated**, shared by `./purge`'s
- * `definePurge` (behind the purge rung) and `./erasure`'s account erasure
+ * **The purge itself, ungated**, shared by `./Purge`'s
+ * `definePurge` (behind the purge rung) and `./Erasure`'s account erasure
  * (behind the erasure rung), so a node is erased one way.
  *
  * Internal: not a package entry point (absent from `package.json`
@@ -12,9 +12,9 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
-import { blobKey, type ContentHash } from "../blobs.ts";
-import type { PurgeDefinition, PurgeReport } from "../purge.ts";
-import { NodeNotFound } from "../version-chain.ts";
+import { blobKey, type ContentHash } from "../Blobs.ts";
+import type { PurgeDefinition, PurgeReport } from "../Purge.ts";
+import { NodeNotFound } from "../VersionChain.ts";
 
 /**
  * The purge itself, ungated: inside `transact`, erase node `id` through the
@@ -22,7 +22,7 @@ import { NodeNotFound } from "../version-chain.ts";
  * which of its bytes nothing else references; once `transact` has returned,
  * evict the cache and delete those bytes. Fails `NodeNotFound` when `id` has
  * no chain. {@link definePurge} runs it behind the purge rung and
- * `./erasure` behind the erasure rung; nothing else may call it.
+ * `./Erasure` behind the erasure rung; nothing else may call it.
  *
  * @internal
  */

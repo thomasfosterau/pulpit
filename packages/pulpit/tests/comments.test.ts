@@ -26,17 +26,17 @@ import {
   defineComments,
   moderationListFilter,
   type CommentsDefinition,
-} from "../src/comments.ts";
-import { evaluate } from "../src/filter.ts";
-import { moderatedColumns, moderationHook } from "../src/moderation.ts";
+} from "../src/Comments.ts";
+import { evaluate } from "../src/Filter.ts";
+import { moderatedColumns, moderationHook } from "../src/Moderation.ts";
 import {
   defineSubtype,
   ownedAccess,
   type LeafRow,
   type Viewer,
   type ViewerAccount,
-} from "../src/subtype.ts";
-import type { ChainState } from "../src/version-chain.ts";
+} from "../src/Subtype.ts";
+import type { ChainState } from "../src/VersionChain.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryFollowers,

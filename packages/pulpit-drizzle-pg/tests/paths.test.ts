@@ -9,7 +9,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
-import { makePathStore } from "../src/paths.ts";
+import { makePathStore } from "../src/Paths.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
 import { database, paths } from "./fixtures/tree.ts";
 

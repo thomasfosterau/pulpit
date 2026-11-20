@@ -20,11 +20,11 @@ import * as P from "effect/Predicate";
 import * as R from "effect/Record";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
-import { defineCollection, MAX_COLLECTION_SIZE } from "../src/collections.ts";
-import { LOCALE_COLUMN } from "../src/filter.ts";
-import { DEFAULT_LINK_DEPTH, defineLinkList, type Link, type LinkTarget } from "../src/links.ts";
-import { resolveLocalised } from "../src/pages.ts";
-import { routable } from "../src/paths.ts";
+import { defineCollection, MAX_COLLECTION_SIZE } from "../src/Collections.ts";
+import { LOCALE_COLUMN } from "../src/Filter.ts";
+import { DEFAULT_LINK_DEPTH, defineLinkList, type Link, type LinkTarget } from "../src/Links.ts";
+import { resolveLocalised } from "../src/Pages.ts";
+import { routable } from "../src/Paths.ts";
 import {
   defineLocaleLevel,
   defineSubtype,
@@ -32,7 +32,7 @@ import {
   type LeafRow,
   type PublishOptions,
   type Viewer,
-} from "../src/subtype.ts";
+} from "../src/Subtype.ts";
 import {
   makeInMemoryCollectionStore,
   makeInMemoryFollowers,

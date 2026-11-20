@@ -9,7 +9,7 @@
  */
 
 import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
-import type { CollectionEntry } from "@thomasfosterau/pulpit/collections";
+import type { CollectionEntry } from "@thomasfosterau/pulpit/Collections";
 import { makeInMemoryCollectionStore } from "@thomasfosterau/pulpit/testing";
 import { getTableName, sql } from "drizzle-orm";
 import * as Arr from "effect/Array";
@@ -19,8 +19,8 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { makeCollectionStore } from "../../src/collections.ts";
-import { makeVersionChains } from "../../src/version-chain.ts";
+import { makeCollectionStore } from "../../src/Collections.ts";
+import { makeVersionChains } from "../../src/VersionChain.ts";
 import { collection, tables, tree } from "../fixtures/tree.ts";
 
 const database = makePgDatabase({ relations: {}, key: "PulpitCollectionDatabase" });

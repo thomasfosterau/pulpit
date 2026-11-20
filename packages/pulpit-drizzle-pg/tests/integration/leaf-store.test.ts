@@ -28,7 +28,7 @@ import {
   or,
   published,
   type ListFilter,
-} from "@thomasfosterau/pulpit/filter";
+} from "@thomasfosterau/pulpit/Filter";
 import {
   ownedAccess,
   searchScopeFilter,
@@ -36,13 +36,13 @@ import {
   type FollowerSeam,
   type ListOrder,
   type Viewer,
-} from "@thomasfosterau/pulpit/subtype";
+} from "@thomasfosterau/pulpit/Subtype";
 import {
   makeInMemoryLeafStore,
   makeInMemoryVersionChain,
   type InMemoryFollowing,
 } from "@thomasfosterau/pulpit/testing";
-import type { ChainState } from "@thomasfosterau/pulpit/version-chain";
+import type { ChainState } from "@thomasfosterau/pulpit/VersionChain";
 import { getTableName, sql, type SQLWrapper } from "drizzle-orm";
 import * as Arr from "effect/Array";
 import * as Config from "effect/Config";
@@ -55,8 +55,8 @@ import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import * as Str from "effect/String";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { makeLeafStores } from "../../src/leaf-store.ts";
-import { makeVersionChains } from "../../src/version-chain.ts";
+import { makeLeafStores } from "../../src/LeafStore.ts";
+import { makeVersionChains } from "../../src/VersionChain.ts";
 import { owners, tables, tree, views } from "../fixtures/tree.ts";
 
 const database = makePgDatabase({ relations: {}, key: "PulpitLeafStoreDatabase" });

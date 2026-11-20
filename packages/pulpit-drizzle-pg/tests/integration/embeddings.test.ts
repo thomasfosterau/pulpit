@@ -13,7 +13,7 @@
  */
 
 import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
-import type { DocumentHash } from "@thomasfosterau/pulpit/documents";
+import type { DocumentHash } from "@thomasfosterau/pulpit/Documents";
 import { makeInMemoryEmbeddingStore } from "@thomasfosterau/pulpit/testing";
 import { getTableName, sql } from "drizzle-orm";
 import * as Arr from "effect/Array";
@@ -24,8 +24,8 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { makeDocumentStore } from "../../src/documents.ts";
-import { makeEmbeddingStore } from "../../src/embeddings.ts";
+import { makeDocumentStore } from "../../src/Documents.ts";
+import { makeEmbeddingStore } from "../../src/Embeddings.ts";
 import { documents, embeddings } from "../fixtures/tree.ts";
 
 const database = makePgDatabase({ relations: {}, key: "PulpitEmbeddingDatabase" });

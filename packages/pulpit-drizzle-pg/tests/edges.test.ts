@@ -7,14 +7,14 @@
  */
 
 import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
-import { always } from "@thomasfosterau/pulpit/filter";
+import { always } from "@thomasfosterau/pulpit/Filter";
 import { getTableName } from "drizzle-orm";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
-import { makeEdgeStore } from "../src/edges.ts";
+import { makeEdgeStore } from "../src/Edges.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
 import { database, owners, relations, tables, views } from "./fixtures/tree.ts";
 

@@ -9,8 +9,8 @@
  */
 
 import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
-import { always, and, eq, type ListFilter } from "@thomasfosterau/pulpit/filter";
-import type { ReportRow } from "@thomasfosterau/pulpit/moderation";
+import { always, and, eq, type ListFilter } from "@thomasfosterau/pulpit/Filter";
+import type { ReportRow } from "@thomasfosterau/pulpit/Moderation";
 import { makeInMemoryReportStore } from "@thomasfosterau/pulpit/testing";
 import { getTableName, sql } from "drizzle-orm";
 import * as Arr from "effect/Array";
@@ -23,8 +23,8 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { makeReportStore } from "../../src/reports.ts";
-import { makeVersionChains } from "../../src/version-chain.ts";
+import { makeReportStore } from "../../src/Reports.ts";
+import { makeVersionChains } from "../../src/VersionChain.ts";
 import { reports, tables, tree } from "../fixtures/tree.ts";
 
 const database = makePgDatabase({ relations: {}, key: "PulpitReportDatabase" });

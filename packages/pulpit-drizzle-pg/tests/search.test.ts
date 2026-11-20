@@ -5,12 +5,12 @@
  * PostgreSQL in `tests/integration/search.test.ts`.
  */
 
-import { always, never } from "@thomasfosterau/pulpit/filter";
+import { always, never } from "@thomasfosterau/pulpit/Filter";
 import { sql } from "drizzle-orm";
 import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
-import { makePublications } from "../src/publication.ts";
-import { fullTextRank, makeSearchBranch } from "../src/search.ts";
+import { makePublications } from "../src/Publication.ts";
+import { fullTextRank, makeSearchBranch } from "../src/Search.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
 import { database, owners, tables, views } from "./fixtures/tree.ts";
 

@@ -1,5 +1,5 @@
 /**
- * `./http` — the read API as an `effect/http` handler: the URL's path and
+ * `./Http` — the read API as an `effect/http` handler: the URL's path and
  * query reach the API, and its answer comes back as the response.
  */
 
@@ -9,9 +9,9 @@ import * as Formatter from "effect/Formatter";
 import * as HashMap from "effect/HashMap";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as P from "effect/Predicate";
-import { defineWordPress, type WordPressRequest } from "../src/api.ts";
-import { wordPressHttp } from "../src/http.ts";
-import { stringIds } from "../src/ids.ts";
+import { defineWordPress, type WordPressRequest } from "../src/Api.ts";
+import { wordPressHttp } from "../src/Http.ts";
+import { stringIds } from "../src/Ids.ts";
 
 const seen: Array<WordPressRequest> = [];
 const base = defineWordPress({

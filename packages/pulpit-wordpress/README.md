@@ -18,12 +18,12 @@ pnpm add @thomasfosterau/pulpit-wordpress @thomasfosterau/pulpit effect
 
 ## Example
 
-Bind the application's leaves to WordPress's post types and mount the API on `effect/http`. The operations, mappers and seams named here are the application's; [`./api`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/wordpress.md#api) walks through each, taxonomies and authors included.
+Bind the application's leaves to WordPress's post types and mount the API on `effect/http`. The operations, mappers and seams named here are the application's; [`./Api`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/wordpress.md#api) walks through each, taxonomies and authors included.
 
 ```ts
-import { bind, defineWordPress } from "@thomasfosterau/pulpit-wordpress/api";
-import { wordPressHttp } from "@thomasfosterau/pulpit-wordpress/http";
-import { integerIds } from "@thomasfosterau/pulpit-wordpress/ids";
+import { bind, defineWordPress } from "@thomasfosterau/pulpit-wordpress/Api";
+import { wordPressHttp } from "@thomasfosterau/pulpit-wordpress/Http";
+import { integerIds } from "@thomasfosterau/pulpit-wordpress/Ids";
 
 const wp = defineWordPress({
   site: {
@@ -57,9 +57,9 @@ Every module is a namespace on the root export (`import { Ids } from "@thomasfos
 | Subpath | Contents |
 | --- | --- |
 | `.` | Every module below as a namespace (`Ids`, `Api`, `Http`). |
-| [`./api`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/wordpress.md#api) | The `wp/v2` read API: `defineWordPress`, the post-type and taxonomy bindings (`bind`, `bindTaxonomy`) and the seams it reads (`render`, the author seam, the site). |
-| [`./http`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/wordpress.md#http) | `wordPressHttp(api)`, the read API as an `effect/http` request handler. |
-| [`./ids`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/wordpress.md#ids) | The `IdCodec` seam an application fills, the integer-id mode over it (`integerIds`) and the opt-in string-id mode (`stringIds`). |
+| [`./Api`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/wordpress.md#api) | The `wp/v2` read API: `defineWordPress`, the post-type and taxonomy bindings (`bind`, `bindTaxonomy`) and the seams it reads (`render`, the author seam, the site). |
+| [`./Http`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/wordpress.md#http) | `wordPressHttp(api)`, the read API as an `effect/http` request handler. |
+| [`./Ids`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/wordpress.md#ids) | The `IdCodec` seam an application fills, the integer-id mode over it (`integerIds`) and the opt-in string-id mode (`stringIds`). |
 | [`./testing`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/wordpress.md#testing) | In-memory fakes of the adapter's seams (`makeInMemoryIdCodec`), for tests only. Not on the root export. |
 
 ## Links

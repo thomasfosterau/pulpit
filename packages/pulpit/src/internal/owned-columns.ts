@@ -1,5 +1,5 @@
 /**
- * **The owned leaf's row reading**, shared by `./subtype` and `./edges` so
+ * **The owned leaf's row reading**, shared by `./Subtype` and `./Edges` so
  * the two cannot read the same view or row differently: the declared-column
  * check, the facts read off a row, and the predicate
  * over those facts, which `canViewOwned` delegates to and which
@@ -7,7 +7,7 @@
  *
  * Internal: not a package entry point (absent from `package.json`
  * `exports`) and excluded from the generated API docs (`docgen.json`).
- * Typed structurally, so it never imports `./subtype`.
+ * Typed structurally, so it never imports `./Subtype`.
  *
  * @internal
  */
@@ -17,8 +17,8 @@ import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Str from "effect/String";
-import { Visibility } from "../content.ts";
-import type { ColumnValue } from "../version-chain.ts";
+import { Visibility } from "../Content.ts";
+import type { ColumnValue } from "../VersionChain.ts";
 import {
   canViewOwnedDelegated,
   type Account,
@@ -26,7 +26,7 @@ import {
   type Seam,
 } from "./delegated-access.ts";
 
-/** The owned access declaration's column names, structurally (`./subtype`'s owned `LeafAccess` fits). */
+/** The owned access declaration's column names, structurally (`./Subtype`'s owned `LeafAccess` fits). */
 interface OwnedColumns {
   readonly ownerColumn: string;
   readonly visibilityColumn: string;
@@ -37,7 +37,7 @@ interface OwnedColumns {
 }
 
 /**
- * The facts {@link canViewOwnedRow} reads off an owned row: `./subtype`'s
+ * The facts {@link canViewOwnedRow} reads off an owned row: `./Subtype`'s
  * `OwnedFacts`, except that the owner may be absent. A row whose owner
  * column holds no string has no owner.
  */
@@ -62,7 +62,7 @@ const isVisibility = Schema.is(Visibility);
  * Whether the view carries every column an owned leaf declares (owner,
  * visibility and, when declared, draft and moderation state). An owned leaf whose view lacks one
  * reads no row: `ownedListFilter` lists nothing, and `defineSubtype`'s
- * `get` / `getMany` and `./edges`' `canViewEndpoint` show nothing. Fail
+ * `get` / `getMany` and `./Edges`' `canViewEndpoint` show nothing. Fail
  * closed (`SEC-AUTH-ENUM-001`). Never throws.
  *
  * @internal
@@ -81,7 +81,7 @@ export const declaresColumns = (
 
 /**
  * Read an owned row's facts for `canViewOwned`, in `defineSubtype`'s
- * `get` / `getMany` and `./edges`' `canViewEndpoint`. Each reading fails
+ * `get` / `getMany` and `./Edges`' `canViewEndpoint`. Each reading fails
  * closed where `ownedListFilter` does (`SEC-AUTH-ENUM-001`): a visibility
  * outside the enum (a dropped projection, a schema drift) reads as
  * `private`, since the filter's `eq(visibility, "public")` arm lists only
@@ -125,8 +125,8 @@ export const ownedFacts = (
 
 /**
  * The owned-material read predicate over {@link ownedFacts}: `canViewOwned`
- * in `./subtype` is this with a present owner, and `defineSubtype`'s
- * `get` / `getMany` and `./edges`' `canViewEndpoint` call it directly. The
+ * in `./Subtype` is this with a present owner, and `defineSubtype`'s
+ * `get` / `getMany` and `./Edges`' `canViewEndpoint` call it directly. The
  * decision is effect-auth's `OwnedAccess.canView`, through the
  * bridge in `./delegated-access.ts`: a `public` row that is neither a draft
  * nor unapproved shows to everyone; otherwise its owner and the view-private

@@ -1,8 +1,8 @@
 # Read model
 
-How a leaf is read and written: `defineSubtype`'s read gates, list order, version history, head version on the wire, search scope, the live pointer, localisation and lifecycle hooks (`./subtype`); the publication and serveability predicates (`./publication`); and the reference resource cache (`./cache`). The rationale of the invariant IDs cited here is in [SECURITY.md → Invariant IDs](SECURITY.md#invariant-ids).
+How a leaf is read and written: `defineSubtype`'s read gates, list order, version history, head version on the wire, search scope, the live pointer, localisation and lifecycle hooks (`./Subtype`); the publication and serveability predicates (`./Publication`); and the reference resource cache (`./Cache`). The rationale of the invariant IDs cited here is in [SECURITY.md → Invariant IDs](SECURITY.md#invariant-ids).
 
-## `./subtype`
+## `./Subtype`
 
 `defineSubtype` binds a leaf's CRUD, version history and list over its `VersionChain`, a current-version `LeafStore`, and the viewer seam (`viewer`, `AccessPolicy`, `FollowerSeam`), gated by `LeafAccess`:
 
@@ -28,7 +28,7 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
 
 **The head version on the wire**. Every `LeafRow` carries its head `version` (see [Seams](seams.md#leafstorerow-following-e-r-the-current-version-view)), so a read can tell the client the version its next write should expect. The mapper stamps it as the resource object's `meta.version`, a decimal string (`bigint` has no JSON form), with `versionMeta(row)`: `toResource: (row) => ({ type: "posts", id: row.id, attributes: …, meta: versionMeta(row) })`. A single-resource response (`get`, `create`, `update`, `restore`, `restoreVersion`) also sends `versionEtag(resource)` as its `ETag` header: the strong tag `"<version>"`, read back from that `meta.version`, so the two never disagree. A collection response sends no `ETag`, since it has no single version; each resource in it still carries its own `meta.version`. The version reaches only a resource the read already serves the viewer, so it says nothing about a hidden row (`SEC-AUTH-ENUM-001`). What it does disclose about a row the viewer can see is how many versions its chain holds.
 
-**Search**. The ranking queries (full text, trigram, vectors) are the application's SQL; pulpit owns three things around them here, and their fusion and the embedding pipeline in [`./search`](discovery-and-search.md#search).
+**Search**. The ranking queries (full text, trigram, vectors) are the application's SQL; pulpit owns three things around them here, and their fusion and the embedding pipeline in [`./Search`](discovery-and-search.md#search).
 
 - **The projection.** `defineSearchProjection({ fields, languageColumn? })` declares, once and beside the leaf's registry entry, which view columns the leaf's search view indexes, each with a PostgreSQL `setweight` label (`A`–`D`), and the column naming each row's text search configuration. It throws `SubtypeDeclarationError` at import for no field, a column named twice or a weight outside `A`–`D`. Passed to `defineSubtype` as `search`, each column it names must be a view column, or `defineSubtype` throws too. The application's search-view generator reads the same value.
 - **The scope.** `searchScopeFilter({ access, columns, policy, followers }, viewer, { includeDeleted, where })` is the `ListFilter` a search must apply to its hits, rendered into the search query as a list store renders it. It is the very filter `list` reads under (`list` calls it), so a search surfaces no row `list` would hide (`SEC-AUTH-ENUM-001`): a hidden, draft or tombstoned row, or one the family's `where` excludes. On a leaf with the live pointer (below), the search must also match over the rows its `LiveView.list` reads, not the head: the viewer's own rows (`headFor`) at the head and every other node's live row. Hydration re-reads the live version anyway, but a match scored against an unpublished head would still tell a reader that the draft contains the term. `searchHeadFor({ access, policy }, viewer)` is that `headFor`, exactly as `list` chooses it: every head (`always`) on a head-reading rung (the view-private rung, or a reference leaf's corpus writers), the viewer's own (`eq(ownerColumn, id)`) on an owned leaf, and none (`never`) otherwise. A search hands it to its branches as `BranchRequest.headFor`, beside the scope.
@@ -47,7 +47,7 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
   - On a gated leaf, **`draft` means "no live version"**: both views compute it from the log, and the stored flag is ignored.
 - **Preview.** `preview` is the request's preview grant: the node id a signed, expiring token admits (signing and verifying it are the application's). `get` of exactly that node serves its head to whoever asks, unless it is tombstoned. `getMany`, `list` and every write ignore it.
 - **The cache only ever holds the live version** (`CACHE-AUTH-005`). On a gated leaf `subtypeHandlers` writes through `publicResource(id)`, the resource as an anonymous reader gets it, never the writer's re-read of the head. It evicts when there is none. `publication` on the handlers runs the operations in `transact`, then the after hooks and the cache refresh. A gated leaf's cache posture is `serveablePolicy({ publishGated: true })`: the live view supplies the stamp (`publishedAt`) the cache checks. A `publish` or `unpublish` appends no version, so its write-through and its event's `write.version` carry the node's head: the cache's compare-on-set then orders it after the edits before it, where the published version (often below the head) would be refused. Two publication operations on the same head compare equal, so their order isn't protected the way two chain writes' is: the application serialises publication per node (see [Seams](seams.md#publicationstoree-r-and-liveviewrow-following-e-r-the-live-pointer)).
-- **Autosave** lives outside the chain, in [`./working-copy`](history-and-review.md#working-copy).
+- **Autosave** lives outside the chain, in [`./WorkingCopy`](history-and-review.md#working-copy).
 
 **Localisation** (model (b): the locale is a level in the version chain). One node per content item; its locales share its history, its draft and visibility, its publication state and its path claim. A leaf flagged `localised` in the registry declares, beside its entry, which columns are translated: `defineLocaleLevel({ columns: ["title", "body"] })`, passed to `defineSubtype` as `locales`. Every other column is **shared**: it is held once, in the chain's `state`, so every locale of the node carries the same value. The translated columns live in the version's locale level (`locales: { en: { title: "Hello" }, fr: { title: "Bonjour" } }`).
 
@@ -98,7 +98,7 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
 - **Before hooks** run inside every write (`create`, `update`, `restore`, `delete`, `restoreVersion`), after its gate and the chain's head read and before the append, in the caller's transaction. Each is shown the leaf type, the action, the node, the head the write extends (`prior`, none for a create), the patch, and the viewer, and returns the patch the write applies (the event's, or a transformed one: a derived slug, a normalised field); the next hook sees that patch. One that fails, with `WriteRejected` or the store's `E`, fails the write with nothing appended. The expected-version check still runs after it, against the same head.
 - **After hooks** run in `subtypeHandlers`, once the write's `transact` has returned (the operations alone can't know when a write commits), and are shown the type, the action, the `{ id, version }` the write landed at, and the resource as the writer re-read it (none for a delete, or when the re-read failed). They never fail the write: a failure, a defect included, goes to `afterFailure`, `"log"` (the default: logged at error level, and the next hook still runs) or `"defect"` (the handler dies, though the write committed). They run uninterruptibly. The cache write-through is the first after hook (`cacheWriteThrough`), ahead of the leaf's own. Inside an outer transaction (the config's `inTransaction` reads true once `transact` returns, so `transact` was a SAVEPOINT and nothing has committed), the cache step evicts at the write's version instead of writing through, so a write the outer transaction later rolls back never reaches the cache. The leaf's own after hooks still run there, before the outer commit; until `transact` gains an after-commit hook, a hook that must see only committed writes checks the same signal itself.
 - **Durable delivery is the application's.** An after hook runs once, in process, after the commit; a side effect that must not be lost (a queue message, a webhook) belongs in a before hook, as an outbox row the same transaction writes.
-- **Events fire on explicit writes only.** A delete of an already tombstoned node writes nothing and emits nothing. A version stamped to publish in the future emits nothing when its stamp arrives: drive a sweep from a cron with `./publication`'s `duePublications(since, now)` instead.
+- **Events fire on explicit writes only.** A delete of an already tombstoned node writes nothing and emits nothing. A version stamped to publish in the future emits nothing when its stamp arrives: drive a sweep from a cron with `./Publication`'s `duePublications(since, now)` instead.
 
 | Export | What it is |
 | --- | --- |
@@ -128,7 +128,7 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
 | `SubtypeOps.owners(request)`, `OwnersRequest`, `readableOwners(leaves, request)`, `OwnerSetTooLarge` | The accounts that own at least one row the viewer may list. `owners` is one leaf's distinct owner ids, read under exactly `list`'s scope (and its head-or-live choice on a publish-gated leaf), in code-point order with the distinct total, optionally narrowed to `among` (empty on a reference leaf). `readableOwners` is the exact union across leaves, one read per leaf; a leaf with more than `MAX_PAGE_LIMIT` readable owners fails `OwnerSetTooLarge` rather than answer a short union. A hidden row never contributes its owner (`SEC-AUTH-ENUM-001`). |
 | `SubtypeOps.publicResource`, `SubtypeOps.authorize` | The resource as an anonymous reader gets it (what a public cache may hold), and the write gate on its own, for a surface outside the chain. |
 
-## `./publication`
+## `./Publication`
 
 The publication axis (stamped AND arrived), the moderation state, and the KV cache's serveability policy. `ServeabilityOptions`' `owned`, `publishGated` and `now` are bare `?: T`: a caller that has no value omits the key rather than passing `undefined`.
 
@@ -141,13 +141,13 @@ The publication axis (stamped AND arrived), the moderation state, and the KV cac
 | `isPubliclyServeable(resource, { owned?, publishGated?, now? })` | The KV cache's security gate (`CACHE-AUTH-005`): only what every viewer may read is serveable. |
 | `serveablePolicy(options)` | The same gate as a resource cache's `serveable` hook (see [Seams](seams.md#seams)). |
 
-## `./cache`
+## `./Cache`
 
-The reference resource cache (owner decision: in the kernel, behind a minimal KV seam). `makeResourceCache` is `./subtype`'s `ResourceCacheSeam`, the one `subtypeHandlers` writes through, plus the read-through `get` an application serves from, over a `VersionedKv` it supplies. It replaces each application's own `cache.ts`.
+The reference resource cache (owner decision: in the kernel, behind a minimal KV seam). `makeResourceCache` is `./Subtype`'s `ResourceCacheSeam`, the one `subtypeHandlers` writes through, plus the read-through `get` an application serves from, over a `VersionedKv` it supplies. It replaces each application's own `cache.ts`.
 
 ```ts
-import { makeResourceCache } from "@thomasfosterau/pulpit/cache";
-import { serveablePolicy } from "@thomasfosterau/pulpit/publication";
+import { makeResourceCache } from "@thomasfosterau/pulpit/Cache";
+import { serveablePolicy } from "@thomasfosterau/pulpit/Publication";
 
 const postCache = makeResourceCache({
   kv, // the application's VersionedKv: a Durable Object, Redis, a SQL table

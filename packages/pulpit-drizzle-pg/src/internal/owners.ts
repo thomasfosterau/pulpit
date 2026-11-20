@@ -2,7 +2,7 @@
  * @copyright Thomas Foster
  *
  * The owner table the kernel's owned leaves stamp (`core.node_owner` in the
- * applications), pulpit's vocabulary, which `../leaf-store.ts` publishes and
+ * applications), pulpit's vocabulary, which `../LeafStore.ts` publishes and
  * every leaf-shaped seam joins in as `ownerId`.
  *
  * @since 0.0.0
@@ -12,7 +12,7 @@ import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
 import type { AnyRelations } from "drizzle-orm";
 import { index, text, uuid, type AnyPgColumn, type PgSchema } from "drizzle-orm/pg-core";
 import type * as Effect from "effect/Effect";
-import type { VersionChainTables } from "../version-chain.ts";
+import type { VersionChainTables } from "../VersionChain.ts";
 
 /**
  * The key the owner joins in under.

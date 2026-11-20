@@ -25,7 +25,7 @@
  * import { deepStrictEqual } from "node:assert";
  * import * as Effect from "effect/Effect";
  * import * as Option from "effect/Option";
- * import { defineVersionChain } from "@thomasfosterau/pulpit/version-chain";
+ * import { defineVersionChain } from "@thomasfosterau/pulpit/VersionChain";
  * import { makeInMemoryVersionChain } from "@thomasfosterau/pulpit/testing";
  *
  * const store = makeInMemoryVersionChain("notes");
@@ -62,9 +62,9 @@ import * as P from "effect/Predicate";
 import * as R from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { sha256Hex, type BlobHead, type BlobStore } from "./blobs.ts";
-import type { BudgetCounter, BudgetRequest, WriteCountStore } from "./budgets.ts";
-import { canonicalText, type DocumentHash, type DocumentStore } from "./documents.ts";
+import { sha256Hex, type BlobHead, type BlobStore } from "./Blobs.ts";
+import type { BudgetCounter, BudgetRequest, WriteCountStore } from "./Budgets.ts";
+import { canonicalText, type DocumentHash, type DocumentStore } from "./Documents.ts";
 import {
   endpointColumn,
   type EdgeEnds,
@@ -72,33 +72,33 @@ import {
   type EdgeStore,
   type EdgeValues,
   type EndpointView,
-} from "./edges.ts";
+} from "./Edges.ts";
 import {
   evaluate,
   LOCALE_COLUMN,
   type EvaluationContext,
   type FilterRow,
   type ListFilter,
-} from "./filter.ts";
+} from "./Filter.ts";
 import { byCodePoint, rowOrder } from "./internal/list-order.ts";
-import type { AccountErasureStore } from "./erasure.ts";
-import type { ErasedReferences, PurgeStore } from "./purge.ts";
+import type { AccountErasureStore } from "./Erasure.ts";
+import type { ErasedReferences, PurgeStore } from "./Purge.ts";
 import {
   SearchScopeLeak,
   type EmbeddingStore,
   type RankedHit,
   type SearchBranch,
-} from "./search.ts";
-import type { ReactionRow, ReactionStore } from "./reactions.ts";
-import type { KvEntry, VersionedKv } from "./cache.ts";
-import type { CollectionEntry, CollectionStore } from "./collections.ts";
+} from "./Search.ts";
+import type { ReactionRow, ReactionStore } from "./Reactions.ts";
+import type { KvEntry, VersionedKv } from "./Cache.ts";
+import type { CollectionEntry, CollectionStore } from "./Collections.ts";
 import type {
   GroupOwnerStore,
   GroupOwnership,
   Invitation,
   Membership,
   MembershipStore,
-} from "./audience.ts";
+} from "./Audience.ts";
 import type {
   DeliverySeam,
   InboxEntry,
@@ -108,15 +108,15 @@ import type {
   NotificationPreferences,
   OutboxStore,
   PreferenceStore,
-} from "./notifications.ts";
+} from "./Notifications.ts";
 
-import type { MediaReferences, NodeRef } from "./media.ts";
-import type { ExternalIdLink, ExternalIdStore } from "./reference-import.ts";
-import type { Relationship, SocialStore } from "./social.ts";
-import { PathTaken, type PathEntry, type PathStore } from "./paths.ts";
-import type { ReportResolution, ReportRow, ReportStore } from "./moderation.ts";
-import type { ProposalListing, ProposalRow, ProposalStore } from "./proposals.ts";
-import type { WorkingCopy, WorkingCopyKey, WorkingCopyStore } from "./working-copy.ts";
+import type { MediaReferences, NodeRef } from "./Media.ts";
+import type { ExternalIdLink, ExternalIdStore } from "./ReferenceImport.ts";
+import type { Relationship, SocialStore } from "./Social.ts";
+import { PathTaken, type PathEntry, type PathStore } from "./Paths.ts";
+import type { ReportResolution, ReportRow, ReportStore } from "./Moderation.ts";
+import type { ProposalListing, ProposalRow, ProposalStore } from "./Proposals.ts";
+import type { WorkingCopy, WorkingCopyKey, WorkingCopyStore } from "./WorkingCopy.ts";
 import type {
   FollowerSeam,
   LeafRow,
@@ -129,7 +129,7 @@ import type {
   PublicationFact,
   PublicationStore,
   ResourceCacheSeam,
-} from "./subtype.ts";
+} from "./Subtype.ts";
 import {
   applyLocalePatch,
   applyPatch,
@@ -153,7 +153,7 @@ import {
   type VersionChainEntry,
   type VersionRow,
   type VersionSnapshot,
-} from "./version-chain.ts";
+} from "./VersionChain.ts";
 
 // ── The clock and the follower set ────────────────────────────────────
 
@@ -337,7 +337,7 @@ const nextContent = (
 /**
  * An in-memory {@link VersionChain} for leaf `type`: the port's
  * contract (docs/seams.md → `VersionChain`) over an append log, holding
- * every invariant `./version-chain`'s module doc states, as
+ * every invariant `./VersionChain`'s module doc states, as
  * `versionChainConformance` checks. The log's `(id, version)` pair is
  * unique, as the Drizzle tables' primary key is: an append at a taken pair
  * fails `VersionConflict`, which is what makes the expected-version check
@@ -611,7 +611,7 @@ export interface ConformanceHarness<E, R> {
 
 /**
  * The version chain's conformance suite: every invariant
- * `./version-chain`'s module doc states, as cases registered through
+ * `./VersionChain`'s module doc states, as cases registered through
  * `runner`, against whatever `harness` makes. The kernel's unit suite runs
  * it against {@link makeInMemoryVersionChain}, and pulpit-drizzle-pg's
  * integration suite against its Drizzle chain, so the two cannot drift.

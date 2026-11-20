@@ -1,5 +1,5 @@
 /**
- * `./paths` — a routable leaf's path claims follow its version chain, a path
+ * `./Paths` — a routable leaf's path claims follow its version chain, a path
  * change leaves an alias that redirects, and resolution is gated
  * (`SEC-AUTH-ENUM-001`), over the in-memory chain, leaf and path stores.
  */
@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
-import { routable, type Resolution } from "../src/paths.ts";
+import { routable, type Resolution } from "../src/Paths.ts";
 import {
   defineSubtype,
   nobodyFollows,
@@ -17,7 +17,7 @@ import {
   subtypeHandlers,
   type LeafRow,
   type Viewer,
-} from "../src/subtype.ts";
+} from "../src/Subtype.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryLeafStore,
@@ -25,7 +25,7 @@ import {
   type InMemoryFollowing,
 } from "../src/testing.ts";
 import * as HashSet from "effect/HashSet";
-import type { ColumnValue } from "../src/version-chain.ts";
+import type { ColumnValue } from "../src/VersionChain.ts";
 import { gardeneriaPolicy, member, moderator, NOW, otherMember } from "./fixtures.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);

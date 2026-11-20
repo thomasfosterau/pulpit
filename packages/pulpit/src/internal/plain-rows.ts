@@ -1,5 +1,5 @@
 /**
- * The pieces `./proposals` and `./moderation`'s reports share: both are
+ * The pieces `./Proposals` and `./Moderation`'s reports share: both are
  * plain-row families (not nodes) with a sign-in gate, a write clock and a
  * page query narrowed to one leaf type, an optional target and an
  * optional status.
@@ -11,8 +11,8 @@ import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { always, and, eq, type ListFilter } from "../filter.ts";
-import { MAX_PAGE_LIMIT, Unauthorized, type Viewer, type ViewerAccount } from "../subtype.ts";
+import { always, and, eq, type ListFilter } from "../Filter.ts";
+import { MAX_PAGE_LIMIT, Unauthorized, type Viewer, type ViewerAccount } from "../Subtype.ts";
 
 /** The write clock: the current instant, as the `Date` a row stores. */
 export const nowDate: Effect.Effect<Date> = Effect.map(Clock.currentTimeMillis, (millis) =>

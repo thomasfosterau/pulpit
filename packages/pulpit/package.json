@@ -35,37 +35,37 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
-    "./content": "./src/content.ts",
-    "./registry": "./src/registry.ts",
-    "./version-chain": "./src/version-chain.ts",
-    "./filter": "./src/filter.ts",
-    "./subtype": "./src/subtype.ts",
-    "./publication": "./src/publication.ts",
-    "./cache": "./src/cache.ts",
-    "./documents": "./src/documents.ts",
-    "./edges": "./src/edges.ts",
-    "./proposals": "./src/proposals.ts",
-    "./blobs": "./src/blobs.ts",
-    "./paths": "./src/paths.ts",
-    "./pages": "./src/pages.ts",
-    "./media": "./src/media.ts",
-    "./collections": "./src/collections.ts",
-    "./links": "./src/links.ts",
-    "./moderation": "./src/moderation.ts",
-    "./working-copy": "./src/working-copy.ts",
-    "./comments": "./src/comments.ts",
-    "./purge": "./src/purge.ts",
-    "./erasure": "./src/erasure.ts",
-    "./search": "./src/search.ts",
-    "./budgets": "./src/budgets.ts",
-    "./reactions": "./src/reactions.ts",
-    "./social": "./src/social.ts",
-    "./audience": "./src/audience.ts",
-    "./discovery": "./src/discovery.ts",
-    "./relations": "./src/relations.ts",
-    "./translation": "./src/translation.ts",
-    "./notifications": "./src/notifications.ts",
-    "./reference-import": "./src/reference-import.ts",
+    "./Content": "./src/Content.ts",
+    "./Registry": "./src/Registry.ts",
+    "./VersionChain": "./src/VersionChain.ts",
+    "./Filter": "./src/Filter.ts",
+    "./Subtype": "./src/Subtype.ts",
+    "./Publication": "./src/Publication.ts",
+    "./Cache": "./src/Cache.ts",
+    "./Documents": "./src/Documents.ts",
+    "./Edges": "./src/Edges.ts",
+    "./Proposals": "./src/Proposals.ts",
+    "./Blobs": "./src/Blobs.ts",
+    "./Paths": "./src/Paths.ts",
+    "./Pages": "./src/Pages.ts",
+    "./Media": "./src/Media.ts",
+    "./Collections": "./src/Collections.ts",
+    "./Links": "./src/Links.ts",
+    "./Moderation": "./src/Moderation.ts",
+    "./WorkingCopy": "./src/WorkingCopy.ts",
+    "./Comments": "./src/Comments.ts",
+    "./Purge": "./src/Purge.ts",
+    "./Erasure": "./src/Erasure.ts",
+    "./Search": "./src/Search.ts",
+    "./Budgets": "./src/Budgets.ts",
+    "./Reactions": "./src/Reactions.ts",
+    "./Social": "./src/Social.ts",
+    "./Audience": "./src/Audience.ts",
+    "./Discovery": "./src/Discovery.ts",
+    "./Relations": "./src/Relations.ts",
+    "./Translation": "./src/Translation.ts",
+    "./Notifications": "./src/Notifications.ts",
+    "./ReferenceImport": "./src/ReferenceImport.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -74,129 +74,129 @@
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
       },
-      "./content": {
-        "types": "./dist/content.d.ts",
-        "default": "./dist/content.js"
+      "./Content": {
+        "types": "./dist/Content.d.ts",
+        "default": "./dist/Content.js"
       },
-      "./registry": {
-        "types": "./dist/registry.d.ts",
-        "default": "./dist/registry.js"
+      "./Registry": {
+        "types": "./dist/Registry.d.ts",
+        "default": "./dist/Registry.js"
       },
-      "./version-chain": {
-        "types": "./dist/version-chain.d.ts",
-        "default": "./dist/version-chain.js"
+      "./VersionChain": {
+        "types": "./dist/VersionChain.d.ts",
+        "default": "./dist/VersionChain.js"
       },
-      "./filter": {
-        "types": "./dist/filter.d.ts",
-        "default": "./dist/filter.js"
+      "./Filter": {
+        "types": "./dist/Filter.d.ts",
+        "default": "./dist/Filter.js"
       },
-      "./subtype": {
-        "types": "./dist/subtype.d.ts",
-        "default": "./dist/subtype.js"
+      "./Subtype": {
+        "types": "./dist/Subtype.d.ts",
+        "default": "./dist/Subtype.js"
       },
-      "./publication": {
-        "types": "./dist/publication.d.ts",
-        "default": "./dist/publication.js"
+      "./Publication": {
+        "types": "./dist/Publication.d.ts",
+        "default": "./dist/Publication.js"
       },
-      "./cache": {
-        "types": "./dist/cache.d.ts",
-        "default": "./dist/cache.js"
+      "./Cache": {
+        "types": "./dist/Cache.d.ts",
+        "default": "./dist/Cache.js"
       },
-      "./documents": {
-        "types": "./dist/documents.d.ts",
-        "default": "./dist/documents.js"
+      "./Documents": {
+        "types": "./dist/Documents.d.ts",
+        "default": "./dist/Documents.js"
       },
-      "./edges": {
-        "types": "./dist/edges.d.ts",
-        "default": "./dist/edges.js"
+      "./Edges": {
+        "types": "./dist/Edges.d.ts",
+        "default": "./dist/Edges.js"
       },
-      "./proposals": {
-        "types": "./dist/proposals.d.ts",
-        "default": "./dist/proposals.js"
+      "./Proposals": {
+        "types": "./dist/Proposals.d.ts",
+        "default": "./dist/Proposals.js"
       },
-      "./blobs": {
-        "types": "./dist/blobs.d.ts",
-        "default": "./dist/blobs.js"
+      "./Blobs": {
+        "types": "./dist/Blobs.d.ts",
+        "default": "./dist/Blobs.js"
       },
-      "./paths": {
-        "types": "./dist/paths.d.ts",
-        "default": "./dist/paths.js"
+      "./Paths": {
+        "types": "./dist/Paths.d.ts",
+        "default": "./dist/Paths.js"
       },
-      "./pages": {
-        "types": "./dist/pages.d.ts",
-        "default": "./dist/pages.js"
+      "./Pages": {
+        "types": "./dist/Pages.d.ts",
+        "default": "./dist/Pages.js"
       },
-      "./media": {
-        "types": "./dist/media.d.ts",
-        "default": "./dist/media.js"
+      "./Media": {
+        "types": "./dist/Media.d.ts",
+        "default": "./dist/Media.js"
       },
-      "./collections": {
-        "types": "./dist/collections.d.ts",
-        "default": "./dist/collections.js"
+      "./Collections": {
+        "types": "./dist/Collections.d.ts",
+        "default": "./dist/Collections.js"
       },
-      "./links": {
-        "types": "./dist/links.d.ts",
-        "default": "./dist/links.js"
+      "./Links": {
+        "types": "./dist/Links.d.ts",
+        "default": "./dist/Links.js"
       },
-      "./moderation": {
-        "types": "./dist/moderation.d.ts",
-        "default": "./dist/moderation.js"
+      "./Moderation": {
+        "types": "./dist/Moderation.d.ts",
+        "default": "./dist/Moderation.js"
       },
-      "./working-copy": {
-        "types": "./dist/working-copy.d.ts",
-        "default": "./dist/working-copy.js"
+      "./WorkingCopy": {
+        "types": "./dist/WorkingCopy.d.ts",
+        "default": "./dist/WorkingCopy.js"
       },
-      "./comments": {
-        "types": "./dist/comments.d.ts",
-        "default": "./dist/comments.js"
+      "./Comments": {
+        "types": "./dist/Comments.d.ts",
+        "default": "./dist/Comments.js"
       },
-      "./purge": {
-        "types": "./dist/purge.d.ts",
-        "default": "./dist/purge.js"
+      "./Purge": {
+        "types": "./dist/Purge.d.ts",
+        "default": "./dist/Purge.js"
       },
-      "./erasure": {
-        "types": "./dist/erasure.d.ts",
-        "default": "./dist/erasure.js"
+      "./Erasure": {
+        "types": "./dist/Erasure.d.ts",
+        "default": "./dist/Erasure.js"
       },
-      "./search": {
-        "types": "./dist/search.d.ts",
-        "default": "./dist/search.js"
+      "./Search": {
+        "types": "./dist/Search.d.ts",
+        "default": "./dist/Search.js"
       },
-      "./budgets": {
-        "types": "./dist/budgets.d.ts",
-        "default": "./dist/budgets.js"
+      "./Budgets": {
+        "types": "./dist/Budgets.d.ts",
+        "default": "./dist/Budgets.js"
       },
-      "./reactions": {
-        "types": "./dist/reactions.d.ts",
-        "default": "./dist/reactions.js"
+      "./Reactions": {
+        "types": "./dist/Reactions.d.ts",
+        "default": "./dist/Reactions.js"
       },
-      "./social": {
-        "types": "./dist/social.d.ts",
-        "default": "./dist/social.js"
+      "./Social": {
+        "types": "./dist/Social.d.ts",
+        "default": "./dist/Social.js"
       },
-      "./audience": {
-        "types": "./dist/audience.d.ts",
-        "default": "./dist/audience.js"
+      "./Audience": {
+        "types": "./dist/Audience.d.ts",
+        "default": "./dist/Audience.js"
       },
-      "./discovery": {
-        "types": "./dist/discovery.d.ts",
-        "default": "./dist/discovery.js"
+      "./Discovery": {
+        "types": "./dist/Discovery.d.ts",
+        "default": "./dist/Discovery.js"
       },
-      "./relations": {
-        "types": "./dist/relations.d.ts",
-        "default": "./dist/relations.js"
+      "./Relations": {
+        "types": "./dist/Relations.d.ts",
+        "default": "./dist/Relations.js"
       },
-      "./translation": {
-        "types": "./dist/translation.d.ts",
-        "default": "./dist/translation.js"
+      "./Translation": {
+        "types": "./dist/Translation.d.ts",
+        "default": "./dist/Translation.js"
       },
-      "./notifications": {
-        "types": "./dist/notifications.d.ts",
-        "default": "./dist/notifications.js"
+      "./Notifications": {
+        "types": "./dist/Notifications.d.ts",
+        "default": "./dist/Notifications.js"
       },
-      "./reference-import": {
-        "types": "./dist/reference-import.d.ts",
-        "default": "./dist/reference-import.js"
+      "./ReferenceImport": {
+        "types": "./dist/ReferenceImport.d.ts",
+        "default": "./dist/ReferenceImport.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",

@@ -1,10 +1,10 @@
 /**
- * **The reference leaf's privacy arm** (`PUB-009`), shared by `./subtype`
- * and `./edges` so a reference row is read one way: as a list filter
+ * **The reference leaf's privacy arm** (`PUB-009`), shared by `./Subtype`
+ * and `./Edges` so a reference row is read one way: as a list filter
  * ({@link referenceListFilter}, behind `referencePrivacyFilter`, the subtype
- * `list` and `./edges`' `endpointFilter`) and as a row predicate
+ * `list` and `./Edges`' `endpointFilter`) and as a row predicate
  * ({@link canViewReferenceRow}, behind `defineSubtype`'s `visibleRow` and
- * `./edges`' `canViewEndpoint`).
+ * `./Edges`' `canViewEndpoint`).
  *
  * The row's facts are read by `ownedFacts`, so an owner-like value that is
  * not a non-empty string reads as no owner and never reaches the follower
@@ -14,7 +14,7 @@
  *
  * Internal: not a package entry point (absent from `package.json`
  * `exports`) and excluded from the generated API docs (`docgen.json`).
- * Typed structurally, so it never imports `./subtype`.
+ * Typed structurally, so it never imports `./Subtype`.
  *
  * @internal
  */
@@ -23,8 +23,8 @@ import * as HashSet from "effect/HashSet";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
-import { always, and, eq, isIn, never, or, type ListFilter } from "../filter.ts";
-import type { ColumnValue } from "../version-chain.ts";
+import { always, and, eq, isIn, never, or, type ListFilter } from "../Filter.ts";
+import type { ColumnValue } from "../VersionChain.ts";
 import {
   canViewReferenceDelegated,
   referenceRowOf,
@@ -34,13 +34,13 @@ import {
 } from "./delegated-access.ts";
 import { ownedFacts } from "./owned-columns.ts";
 
-/** The reference access declaration, structurally (`./subtype`'s reference `LeafAccess` fits). */
+/** The reference access declaration, structurally (`./Subtype`'s reference `LeafAccess` fits). */
 interface ReferenceColumns {
   readonly followersOfColumn?: string;
   readonly groupColumn?: string;
 }
 
-/** The read scope the arm reads, structurally (`./subtype`'s `ReadScope` fits). */
+/** The read scope the arm reads, structurally (`./Subtype`'s `ReadScope` fits). */
 type Scope<Following> =
   | { readonly kind: "all" }
   | { readonly kind: "public" }

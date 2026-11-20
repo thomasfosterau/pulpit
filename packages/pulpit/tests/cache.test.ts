@@ -15,8 +15,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { makeResourceCache, type VersionedKv } from "../src/cache.ts";
-import { defineSubtype, ownedAccess, subtypeHandlers, type LeafRow } from "../src/subtype.ts";
+import { makeResourceCache, type VersionedKv } from "../src/Cache.ts";
+import { defineSubtype, ownedAccess, subtypeHandlers, type LeafRow } from "../src/Subtype.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryFollowers,

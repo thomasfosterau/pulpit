@@ -19,8 +19,8 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Str from "effect/String";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { makeExternalIdStore } from "../../src/external-ids.ts";
-import { makeVersionChains } from "../../src/version-chain.ts";
+import { makeExternalIdStore } from "../../src/ExternalIds.ts";
+import { makeVersionChains } from "../../src/VersionChain.ts";
 import { externalIds, tables, tree } from "../fixtures/tree.ts";
 
 const database = makePgDatabase({ relations: {}, key: "PulpitExternalIdDatabase" });

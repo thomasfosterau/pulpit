@@ -21,7 +21,7 @@ import * as HashMap from "effect/HashMap";
 import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
-import { always, eq, never, type FilterRow, type ListFilter } from "../src/filter.ts";
+import { always, eq, never, type FilterRow, type ListFilter } from "../src/Filter.ts";
 import {
   applyReranking,
   embedPending,
@@ -32,7 +32,7 @@ import {
   sweepEmbeddings,
   type FusedHit,
   type SearchBranch,
-} from "../src/search.ts";
+} from "../src/Search.ts";
 import {
   defineSubtype,
   hydrateSearchHits,
@@ -42,7 +42,7 @@ import {
   type LeafRow,
   type SubtypeDefinition,
   type Viewer,
-} from "../src/subtype.ts";
+} from "../src/Subtype.ts";
 import {
   makeInMemoryDocumentStore,
   makeInMemoryEmbeddingStore,

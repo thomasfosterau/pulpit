@@ -20,7 +20,7 @@
  *
  * effect-auth is a required peer of the kernel (option (c)), and
  * the kernel's read predicates, read scope and owned serveability axes now
- * delegate to it (`src/internal/delegated-access.ts`, `./publication`).
+ * delegate to it (`src/internal/delegated-access.ts`, `./Publication`).
  * These matrices are the parity acceptance tests of that bridge: with an
  * audience seam (`IsMember` / `groups`) as well as without, for the
  * reference reading (`ReferenceAccess`) as well as the owned one, and for the
@@ -45,10 +45,10 @@ import * as Option from "effect/Option";
 import * as R from "effect/Record";
 import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
-import { ne, never } from "../src/filter.ts";
+import { ne, never } from "../src/Filter.ts";
 import { referenceRowOf } from "../src/internal/delegated-access.ts";
 import { canViewReferenceRow } from "../src/internal/reference-columns.ts";
-import { isPubliclyServeable } from "../src/publication.ts";
+import { isPubliclyServeable } from "../src/Publication.ts";
 import {
   type AccessPolicy,
   accessPolicyFromGuards,
@@ -62,7 +62,7 @@ import {
   type Viewer,
   type ViewerAccount,
   viewerFromGuards,
-} from "../src/subtype.ts";
+} from "../src/Subtype.ts";
 
 /** gardeneria's ladder and axes, as effect-auth spells them. */
 const Roles = Ladder.make(["user", "contributor", "moderator", "admin"]);

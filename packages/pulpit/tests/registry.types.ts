@@ -20,7 +20,7 @@ import {
   parent,
   root,
   type RegistryEntry,
-} from "../src/registry.ts";
+} from "../src/Registry.ts";
 
 /** Whether `A` is assignable to `B`. */
 type Assignable<A, B> = [A] extends [B] ? true : false;

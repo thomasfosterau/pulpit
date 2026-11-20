@@ -29,7 +29,7 @@ import {
   InvalidProposalPatch,
   PROPOSAL_FORBIDDEN_KEYS,
   validateProposalPatch,
-} from "../src/proposals.ts";
+} from "../src/Proposals.ts";
 import {
   defineLocaleLevel,
   defineSubtype,
@@ -37,13 +37,8 @@ import {
   type LeafRow,
   type Viewer,
   type ViewerAccount,
-} from "../src/subtype.ts";
-import type {
-  ChainPatch,
-  ChainState,
-  LocaleStates,
-  VersionSnapshot,
-} from "../src/version-chain.ts";
+} from "../src/Subtype.ts";
+import type { ChainPatch, ChainState, LocaleStates, VersionSnapshot } from "../src/VersionChain.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryFollowers,

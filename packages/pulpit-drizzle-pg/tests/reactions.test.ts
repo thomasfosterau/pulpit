@@ -11,7 +11,7 @@ import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
-import { makeReactionStore } from "../src/reactions.ts";
+import { makeReactionStore } from "../src/Reactions.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
 import { database, reactions } from "./fixtures/tree.ts";
 

@@ -17,8 +17,8 @@ import * as Exit from "effect/Exit";
 import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
-import { audienceSeam, defineAudience, type MembershipRole } from "../src/audience.ts";
-import type { Viewer, ViewerAccount } from "../src/subtype.ts";
+import { audienceSeam, defineAudience, type MembershipRole } from "../src/Audience.ts";
+import type { Viewer, ViewerAccount } from "../src/Subtype.ts";
 import { makeInMemoryMembershipStore } from "../src/testing.ts";
 import { member, NOW, otherMember } from "./fixtures.ts";
 

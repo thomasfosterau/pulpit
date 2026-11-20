@@ -21,8 +21,8 @@ import {
   type EdgeRow,
   type EdgeStore,
   type EdgeValues,
-} from "../src/edges.ts";
-import type { Viewer } from "../src/subtype.ts";
+} from "../src/Edges.ts";
+import type { Viewer } from "../src/Subtype.ts";
 import {
   makeInMemoryEdgeStore,
   makeInMemoryFollowers,

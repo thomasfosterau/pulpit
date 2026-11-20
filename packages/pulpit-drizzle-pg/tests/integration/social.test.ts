@@ -11,7 +11,7 @@
 
 import { executeRows } from "@thomasfosterau/effect-drizzle-ext/query";
 import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
-import type { Relationship } from "@thomasfosterau/pulpit/social";
+import type { Relationship } from "@thomasfosterau/pulpit/Social";
 import { makeInMemorySocialStore } from "@thomasfosterau/pulpit/testing";
 import { getTableName, sql, type SQL } from "drizzle-orm";
 import * as Arr from "effect/Array";
@@ -25,7 +25,7 @@ import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
 import * as Str from "effect/String";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { makeSocialStore } from "../../src/social.ts";
+import { makeSocialStore } from "../../src/Social.ts";
 import { accounts, relationships } from "../fixtures/tree.ts";
 
 const database = makePgDatabase({ relations: {}, key: "PulpitSocialDatabase" });
