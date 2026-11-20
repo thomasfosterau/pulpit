@@ -282,6 +282,29 @@ describe("defineComments — the read gates", () => {
     }),
   );
 
+  it.effect(
+    "an empty-id viewer is anonymous: it can't comment, and an empty-id moderator can't read a pending one",
+    () =>
+      Effect.gen(function* () {
+        const { post, comment, comments, actAs } = world();
+        const target = yield* post("public");
+        const pending = yield* comment(target, { approve: false });
+        const create = comments.create({
+          id: Option.none(),
+          targetType: "posts",
+          targetId: target,
+          parentId: Option.none(),
+          state: { body: "hi", visibility: "public" },
+        });
+        expect(yield* tagOf(actAs(as({ ...author, id: "" }), create))).toEqual(
+          Option.some("Unauthorized"),
+        );
+        expect(yield* tagOf(actAs(as({ ...moderator, id: "" }), comments.get(pending)))).toEqual(
+          Option.some("NodeNotFound"),
+        );
+      }),
+  );
+
   it.effect("a tombstoned comment is hidden from everyone but the view-deleted rung", () =>
     Effect.gen(function* () {
       const { post, comment, whoReads, actAs, commentLeaf } = world();

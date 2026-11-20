@@ -63,6 +63,7 @@ import {
   type ViewerAccount,
 } from "./Subtype.ts";
 import { NodeNotFound, type VersionChain } from "./VersionChain.ts";
+import { knownViewerOf } from "./internal/delegated-access.ts";
 
 // ── The seam ──────────────────────────────────────────────────────────
 
@@ -255,7 +256,7 @@ export const definePurge = <E, EB, R>(definition: PurgeDefinition<E, EB, R>): Pu
 
   /** The purge rung, checked before any row is read. */
   const gate = Effect.flatMap(
-    definition.viewer,
+    knownViewerOf(definition.viewer),
     (viewer): Effect.Effect<ViewerAccount, Unauthorized | Forbidden> =>
       Option.match(viewer, {
         onNone: () =>

@@ -146,6 +146,7 @@ import {
   VersionNotFound,
 } from "./VersionChain.ts";
 import type { WorkingCopyStore } from "./WorkingCopy.ts";
+import { knownViewerOf } from "./internal/delegated-access.ts";
 
 // ── Vocabulary ────────────────────────────────────────────────────────
 
@@ -743,7 +744,7 @@ export const defineAccountErasure = <E, EB, R>(
   /** The rung, checked before anything is read. */
   const gate = (accountId: string) =>
     Effect.flatMap(
-      definition.viewer,
+      knownViewerOf(definition.viewer),
       (viewer): Effect.Effect<void, Unauthorized | Forbidden | TombstoneErasure> =>
         Option.match(viewer, {
           onNone: () =>

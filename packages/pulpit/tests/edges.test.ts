@@ -288,6 +288,20 @@ describe("ported: an edge joining two reference leaves (gardeneria's anatomy / c
     }),
   );
 
+  it.effect(
+    "reads an empty-id contributor as anonymous: its assertion and delete are Unauthorized",
+    () =>
+      Effect.gen(function* () {
+        const { ops, actAs } = corpus();
+        const emptyId = as({ id: "", role: contributor.role });
+        const { id } = yield* actAs(as(contributor), ops.create({ subjectId: "s1", partId: "p1" }));
+        expect(yield* tagOf(actAs(emptyId, ops.create({ subjectId: "s1", partId: "p2" })))).toEqual(
+          Option.some("Unauthorized"),
+        );
+        expect(yield* tagOf(actAs(emptyId, ops.delete(id)))).toEqual(Option.some("Unauthorized"));
+      }),
+  );
+
   it.effect("round-trips the id through get and delete, and the delete is hard", () =>
     Effect.gen(function* () {
       const { edges, subjects, ops, actAs } = corpus();

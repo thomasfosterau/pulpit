@@ -48,6 +48,7 @@ import { MAX_SET_VALUES } from "./Filter.ts";
 import { nowDate, signedIn as signedInAs } from "./internal/plain-rows.ts";
 import { MAX_PAGE_LIMIT, type SubtypeOps, type Unauthorized, type Viewer } from "./Subtype.ts";
 import type { NodeNotFound } from "./VersionChain.ts";
+import { knownViewerOf } from "./internal/delegated-access.ts";
 
 // ── Vocabulary ────────────────────────────────────────────────────────
 
@@ -287,7 +288,7 @@ export const defineReactions = <Resource, E, R>(
 ): ReactionOps<E, R> => {
   const { type, target, reactions } = definition;
   const kinds = definition.kinds.kinds;
-  const signedIn = signedInAs(definition.viewer);
+  const signedIn = signedInAs(knownViewerOf(definition.viewer));
 
   const react = Effect.fn(`${type}.reactions.react`)(function* (nodeId: string, kind: string) {
     const account = yield* signedIn;

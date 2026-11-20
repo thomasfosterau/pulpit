@@ -376,6 +376,12 @@ describe("the rules through a leaf's hooks", () => {
       expect(yield* tagOf(actAs(Option.none(), moderation.moderate(id, "approved")))).toEqual(
         Option.some("Unauthorized"),
       );
+      // An empty-id moderator is anonymous, not the rung.
+      expect(
+        yield* tagOf(
+          actAs(Option.some({ ...moderator, id: "" }), moderation.moderate(id, "approved")),
+        ),
+      ).toEqual(Option.some("Unauthorized"));
       expect(
         yield* tagOf(actAs(Option.some(moderator), moderation.moderate("missing", "approved"))),
       ).toEqual(Option.some("NodeNotFound"));
@@ -455,6 +461,10 @@ describe("defineReports — member reports", () => {
           Option.some("NodeNotFound"),
         );
         expect(yield* tagOf(as(Option.none(), file(open)))).toEqual(Option.some("Unauthorized"));
+        // An empty id is anonymous, whatever its role.
+        expect(yield* tagOf(as(Option.some({ ...moderator, id: "" }), file(open)))).toEqual(
+          Option.some("Unauthorized"),
+        );
       }),
   );
 

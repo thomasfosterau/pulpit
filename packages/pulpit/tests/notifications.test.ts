@@ -603,6 +603,15 @@ describe("the inbox is the viewer's own", () => {
           }),
         ),
       ).toBe("Unauthorized");
+      expect(
+        yield* viewAs(
+          Option.some({ ...member, id: "" }),
+          Effect.match(notifications.unreadCount, {
+            onFailure: (error) => error._tag,
+            onSuccess: () => "success",
+          }),
+        ),
+      ).toBe("Unauthorized");
     }),
   );
 });

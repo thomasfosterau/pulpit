@@ -863,6 +863,34 @@ describe("defineSubtype — an owned leaf", () => {
       }),
   );
 
+  it.effect("an empty-id viewer is anonymous at every write gate, whatever its role", () =>
+    Effect.gen(function* () {
+      const { ops, actAs, post } = ownedPosts();
+      const id = yield* post("public");
+      const emptyIds = [as({ id: "", role: member.role }), as({ id: "", role: moderator.role })];
+      const writes: ReadonlyArray<Effect.Effect<unknown, { readonly _tag: string }>> = [
+        ops.create({ id: Option.none(), state: { title: "x", visibility: "public" } }),
+        ops.update({ id, patch: { title: "x" } }),
+        ops.restore({ id, patch: {} }),
+        ops.delete(id),
+        ops.getVersion(id, 0n),
+        ops.restoreVersion(id, 0n),
+      ];
+      const observed = yield* Effect.forEach(
+        Arr.flatMap(emptyIds, (who) => Arr.map(writes, (op) => actAs(who, op))),
+        (op) =>
+          Effect.map(Effect.exit(op), (exit) =>
+            Exit.isFailure(exit)
+              ? Option.map(Exit.findErrorOption(exit), (error) => error._tag)
+              : Option.none(),
+          ),
+        { concurrency: 1 },
+      );
+      expect(observed).toEqual(Arr.map(observed, () => Option.some("Unauthorized")));
+      expect(observed).toHaveLength(emptyIds.length * writes.length);
+    }),
+  );
+
   describe("compare: getVersion's gate, then the chain's compare", () => {
     /** A version no row has. */
     const ABSENT_VERSION = 99n;

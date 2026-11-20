@@ -80,15 +80,24 @@ const owned = OwnedAccess.make({ guards, viewPrivate: "private" });
 const reference = ReferenceAccess.make({ guards, viewPrivate: "private" });
 
 /**
- * The viewer the kernel's reads act as: an account whose id is empty reads
- * as anonymous, as effect-auth's guards read it. The rung
- * checks outside the delegated predicates (the view-deleted rung, the
- * head-reading rungs) read the viewer through it, so they agree with them.
+ * The viewer the kernel acts as: an account whose id is empty reads as
+ * anonymous, as effect-auth's guards read it. Every module reads its viewer
+ * seam through {@link knownViewerOf}, so its read and write gates agree.
  *
  * @internal
  */
 export const knownViewer = <A extends Account>(viewer: Option.Option<A>): Option.Option<A> =>
   Option.filter(viewer, (account) => Str.isNonEmpty(account.id));
+
+/**
+ * A viewer seam read through {@link knownViewer}: what each module's
+ * operations read in place of the seam the application passed.
+ *
+ * @internal
+ */
+export const knownViewerOf = <A extends Account, R>(
+  viewer: Effect.Effect<Option.Option<A>, never, R>,
+): Effect.Effect<Option.Option<A>, never, R> => Effect.map(viewer, knownViewer);
 
 const bridged = <A extends Account>(
   viewer: Option.Option<A>,
