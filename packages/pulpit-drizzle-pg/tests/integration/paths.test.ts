@@ -5,7 +5,7 @@
  */
 
 import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
-import type { PathStore, PathTaken } from "@thomasfosterau/pulpit/paths";
+import type { PathStore, PathTaken } from "@thomasfosterau/pulpit/Paths";
 import { makeInMemoryPathStore } from "@thomasfosterau/pulpit/testing";
 import { getTableName, sql } from "drizzle-orm";
 import * as Arr from "effect/Array";
@@ -17,8 +17,8 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { makePathStore } from "../../src/paths.ts";
-import { makeVersionChains } from "../../src/version-chain.ts";
+import { makePathStore } from "../../src/Paths.ts";
+import { makeVersionChains } from "../../src/VersionChain.ts";
 import { paths, tables, tree } from "../fixtures/tree.ts";
 
 const database = makePgDatabase({ relations: {}, key: "PulpitPathsDatabase" });

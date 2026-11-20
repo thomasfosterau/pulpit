@@ -12,7 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
-import { makeGroupOwners, makeMembershipStore } from "../src/memberships.ts";
+import { makeGroupOwners, makeMembershipStore } from "../src/Memberships.ts";
 import { cannedTransaction, failingTransaction } from "./fixtures/canned.ts";
 import { database, groups, memberships } from "./fixtures/tree.ts";
 

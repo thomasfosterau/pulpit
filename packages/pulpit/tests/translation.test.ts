@@ -37,13 +37,13 @@ import {
   type TranslationCandidates,
   type TranslationLanding,
   type Translator,
-} from "../src/translation.ts";
+} from "../src/Translation.ts";
 import {
   defineVersionChain,
   StaleVersion,
   type ChainState,
   type UpdateInput,
-} from "../src/version-chain.ts";
+} from "../src/VersionChain.ts";
 import { showValue } from "./fixtures.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);

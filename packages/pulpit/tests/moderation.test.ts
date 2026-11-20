@@ -25,7 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import { always, eq, evaluate, never } from "../src/filter.ts";
+import { always, eq, evaluate, never } from "../src/Filter.ts";
 import {
   DEFAULT_MODERATION_THRESHOLD,
   defineModeration,
@@ -40,7 +40,7 @@ import {
   reviewQueueFilter,
   withReports,
   type ModerationScores,
-} from "../src/moderation.ts";
+} from "../src/Moderation.ts";
 import {
   defineSubtype,
   ownedAccess,
@@ -48,8 +48,8 @@ import {
   type LeafRow,
   type Viewer,
   type ViewerAccount,
-} from "../src/subtype.ts";
-import type { ChainState, WriteAction } from "../src/version-chain.ts";
+} from "../src/Subtype.ts";
+import type { ChainState, WriteAction } from "../src/VersionChain.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryFollowers,

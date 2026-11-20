@@ -6,12 +6,12 @@ The module guide for [`@thomasfosterau/pulpit-wordpress`](../packages/pulpit-wor
 
 **Not published.** The package is `"private": true`. It lands in phases:
 
-- **Landed:** the `IdCodec` seam and the id modes ([`./ids`](#ids)), with an in-memory codec in [`./testing`](#testing).
-- **Phase 1 (landed):** posts, pages and media (list and get), the discovery index, `_links`, `_embed`, `_fields`, the headers and the errors ([`./api`](#api), [`./http`](#http)).
-- **Phase 2:** categories, tags and `/users` ([`./api`](#api)), with `categories_exclude` / `tags_exclude` over the kernel's `nonMemberFilter`.
+- **Landed:** the `IdCodec` seam and the id modes ([`./Ids`](#ids)), with an in-memory codec in [`./testing`](#testing).
+- **Phase 1 (landed):** posts, pages and media (list and get), the discovery index, `_links`, `_embed`, `_fields`, the headers and the errors ([`./Api`](#api), [`./Http`](#http)).
+- **Phase 2:** categories, tags and `/users` ([`./Api`](#api)), with `categories_exclude` / `tags_exclude` over the kernel's `nonMemberFilter`.
 - **Phase 3:** each later kernel slice as it lands.
 
-## `./ids`
+## `./Ids`
 
 WordPress clients expect positive integer ids (the core route pattern is `(?P<id>[\d]+)`), and pulpit node ids are opaque strings. The adapter reads and writes ids through one of two modes:
 
@@ -22,7 +22,7 @@ Both answer per input, in input order, duplicates included:
 
 - `encode(nodeIds)` answers each node id's wire id. In integer mode it reads the codec once for the whole batch, deduplicated, and fails `UnencodableNodeId` if the codec has no integer for a node (`unmapped`), answers one that isn't a positive safe integer (`invalid-integer`), or answers one integer for two distinct node ids in the batch (`duplicate-integer`), each an application defect: the adapter encodes only nodes the read gate has let through.
 - `decode(wireIds)` answers the node id each wire id names, or `Option.none()`. In integer mode a wire id that isn't a positive safe integer (`0`, a negative, a fraction, an exponent, a non-numeric string, one above `Number.MAX_SAFE_INTEGER`) is none without reaching the codec; a string must be decimal digits, and leading zeros read as decimal, as WordPress's `absint` reads them (`007` is 7). An integer the codec doesn't know is none too. `decode` fails only with the codec's own error (its error type is the codec's `E` alone), never on a malformed input.
-- **A `decode` batch is capped at the kernel's `MAX_SET_VALUES`** (1000, duplicates counted; `SEC-INPUT-003`), the cap on the `= ANY($values)` set the decoded ids feed. Past it, every wire id decodes to none and the codec isn't read, failing closed as the kernel's `anyOf` does. That is closed for an `include` list or a path id, but not for `exclude`, where excluding nothing is open: the adapter caps `include`, `exclude` and every other list parameter itself, at `MAX_LIST_PARAMETER` (100), before `decode` ([`./api`](#api)).
+- **A `decode` batch is capped at the kernel's `MAX_SET_VALUES`** (1000, duplicates counted; `SEC-INPUT-003`), the cap on the `= ANY($values)` set the decoded ids feed. Past it, every wire id decodes to none and the codec isn't read, failing closed as the kernel's `anyOf` does. That is closed for an `include` list or a path id, but not for `exclude`, where excluding nothing is open: the adapter caps `include`, `exclude` and every other list parameter itself, at `MAX_LIST_PARAMETER` (100), before `decode` ([`./Api`](#api)).
 
 **Unknown, malformed and hidden ids answer alike (`SEC-AUTH-ENUM-001`).** Every none is answered exactly as a hidden or missing row is (`404 rest_post_invalid_id`), never as a `400` or a `500`, and a decoded id still goes through the kernel's read gate. Integer ids are guessable where UUIDs aren't, so this is what keeps them from confirming that a hidden node exists. The answer is the same; the timing is not: a malformed id skips the codec, an unknown one costs one codec read, and a hidden one a codec read and a store read. That is the same timing residue the kernel accepts between a missing and a hidden row.
 
@@ -30,7 +30,7 @@ Both answer per input, in input order, duplicates included:
 import { deepStrictEqual } from "node:assert";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { integerIds } from "@thomasfosterau/pulpit-wordpress/ids";
+import { integerIds } from "@thomasfosterau/pulpit-wordpress/Ids";
 import { makeInMemoryIdCodec } from "@thomasfosterau/pulpit-wordpress/testing";
 
 const ids = integerIds(makeInMemoryIdCodec(["node-a", "node-b"]));
@@ -44,13 +44,13 @@ deepStrictEqual(Effect.runSync(ids.decode(["1", "7", "0", "1.5"])), [
 ]);
 ```
 
-## `./api`
+## `./Api`
 
-`defineWordPress(config)` declares a `wp/v2` read API over the leaves an application binds to WordPress's post types, and returns `{ handle }`, which answers one request (its method, its path from the site root, and its query pairs in order) with a status, headers and a JSON body. `handle` never fails: a WordPress error is its envelope (`{ code, message, data: { status } }`), and a failure of a store, the codec or the renderer is `500 internal_server_error`. It is framework-free; [`./http`](#http) mounts it on `effect/http`.
+`defineWordPress(config)` declares a `wp/v2` read API over the leaves an application binds to WordPress's post types, and returns `{ handle }`, which answers one request (its method, its path from the site root, and its query pairs in order) with a status, headers and a JSON body. `handle` never fails: a WordPress error is its envelope (`{ code, message, data: { status } }`), and a failure of a store, the codec or the renderer is `500 internal_server_error`. It is framework-free; [`./Http`](#http) mounts it on `effect/http`.
 
 ```ts
-import { bind, bindTaxonomy, defineWordPress } from "@thomasfosterau/pulpit-wordpress/api";
-import { integerIds } from "@thomasfosterau/pulpit-wordpress/ids";
+import { bind, bindTaxonomy, defineWordPress } from "@thomasfosterau/pulpit-wordpress/Api";
+import { integerIds } from "@thomasfosterau/pulpit-wordpress/Ids";
 
 const wp = defineWordPress({
   site: {
@@ -112,8 +112,8 @@ const wp = defineWordPress({
 **The read rule, and where it differs from WordPress.**
 
 - **A hidden item is a missing one** (`SEC-AUTH-ENUM-001`). Reads go through each bound leaf's own `get` / `getMany` / `list`, so a hidden, draft, tombstoned or unpublished item answers `404 rest_post_invalid_id` exactly as an unknown id does, and a list omits it from its page and its `X-WP-Total`. WordPress answers `rest_forbidden` (401 / 403) for a post that exists but can't be read; this adapter never does.
-- **A file whose bytes are pending is missing**. An attachment over a `./blobs` file leaf whose `MediaFields.bytesPending` is `true` answers `404 rest_post_invalid_id`, to its owner too, and is never a `featured_media` or `_embed` target, until its bytes are confirmed. Declare the leaf's `bytesPending` column in `PostColumns` so a `/media` list (and its `X-WP-Total`) reads only confirmed files. `fileMediaFields(file, blobs, { caption, description, altText, mediaDetails? })` maps a file version onto `MediaFields`: `mime_type` from its `mediaType`, `media_type` from that type's top level, `filesize` from `byteSize`, `source_url` from `fileUrl` (empty while pending), and `bytesPending`.
-- **A routable leaf's paths**. Bind a `./paths` `routable` leaf with its path column as `PostColumns.slug`: the column holds the canonical path, so `?slug=` finds a renamed item by its new path only, never by an alias (WordPress's REST API doesn't follow old slugs either), and a hidden item answers to neither. Build `link` from that slug, so it is the canonical URL. Redirecting an alias is the site's router's job, through `resolve`, which hides a hidden node's alias too.
+- **A file whose bytes are pending is missing**. An attachment over a `./Blobs` file leaf whose `MediaFields.bytesPending` is `true` answers `404 rest_post_invalid_id`, to its owner too, and is never a `featured_media` or `_embed` target, until its bytes are confirmed. Declare the leaf's `bytesPending` column in `PostColumns` so a `/media` list (and its `X-WP-Total`) reads only confirmed files. `fileMediaFields(file, blobs, { caption, description, altText, mediaDetails? })` maps a file version onto `MediaFields`: `mime_type` from its `mediaType`, `media_type` from that type's top level, `filesize` from `byteSize`, `source_url` from `fileUrl` (empty while pending), and `bytesPending`.
+- **A routable leaf's paths**. Bind a `./Paths` `routable` leaf with its path column as `PostColumns.slug`: the column holds the canonical path, so `?slug=` finds a renamed item by its new path only, never by an alias (WordPress's REST API doesn't follow old slugs either), and a hidden item answers to neither. Build `link` from that slug, so it is the canonical URL. Redirecting an alias is the site's router's job, through `resolve`, which hides a hidden node's alias too.
 - **A readable item never points at a hidden one.** `featured_media` and `parent` are read through the target type's own `getMany`; a target the viewer can't read is `0`, and is left out of `_links` and `_embedded`.
 - **`status`.** The default is `publish` (`inherit` for media). Any other status from an anonymous caller is `401 rest_forbidden_status`, and `trash` without the view-deleted rung is `403` (decision 4); the answer names no row. A signed-in caller's `draft` or `private` list is whatever the leaf's gates show them (their own drafts, say). A `followers` item reads as `private` to a viewer who may see it (decision 7).
 - **`context=edit`** is `rest_forbidden_context` (401 / 403), checked after the 404, so it never confirms a hidden item (decision 6). Revisions are not routed.
@@ -121,7 +121,7 @@ const wp = defineWordPress({
 - **A publish-gated leaf**. Bind the leaf's `defineSubtype` operations as they are: readers are served the live version (`get`, `getMany` and `list` choose the row per viewer), so a published node is `publish`, and a node that is unpublished or only scheduled is missing to them (`404`). `draft` on the gated view means "no live version", so a writer (the owner, or the view-private rung) reads such a node as `draft`; map `date` from the view's publication stamp (the live version's `at`) and `modified` is the live version's for readers. **A pending schedule is `future`:** for the items on a page that a writer reads with no live version, the adapter asks `PublicationOps.scheduled` once (the batched kernel read), and an item with a pending publication reads `status: "future"` with `date` / `date_gmt` the scheduled instant. A node already live with a newer version scheduled stays `publish`. Two limits of reading the schedule per page rather than per row in SQL: `?status=future` selects by the binding's stamp column, so a scheduled node without a live version is listed under `status=draft` (with `status: "future"` in its body), and `orderby=date` and `after` / `before` use the stored stamp, not the scheduled instant.
 - **`lang`**. The adapter's own parameter: a BCP 47 tag (`pt-BR`) that picks the locale of a localised leaf. It claims no compatibility with Polylang or WPML, neither of whose conventions can be verified from a public source, and there is no `translations` field (adding a plugin's shape later is additive). Bind a localised leaf with `defaultLocale`. The order a node is read in is the kernel's `localePreferences([lang], defaultLocale)`: the tag, each shorter prefix (`pt-BR`, `pt`), then the default. A single item is read through `getLocalised` in that order, answers `Content-Language: <the locale served>`, and is `404 rest_post_invalid_id` when it carries none of them or is hidden, as a missing one is. A collection is read through `listLocalised`: one row per node in the first of that order it carries, paged and ordered by the store (by the chosen row's own columns), so `X-WP-Total` counts nodes. A collection answers no `Content-Language`, since its items may differ; `_embed`ded and `featured_media` / `parent` targets are read as without `lang`. Without `lang` a localised leaf is read as its binding's operations read it. A malformed tag, or `lang` on a type with no `defaultLocale`, is `400 rest_invalid_param`.
 - **List parameters are capped** at `MAX_LIST_PARAMETER` (100) values each, `400 rest_invalid_param` past it, before any id is decoded (`SEC-INPUT-003`). WordPress core sets no such cap; the cap keeps an over-long `exclude` from decoding to an all-none batch that would exclude nothing.
-- **Conditional reads** (the `ETag` question). A single-item response (an item, a term or a user) carries a weak `ETag`, `W/"<SHA-256 of the response body>"`, hashed through Web Crypto, so it changes whenever anything the body embeds does and stays correct with `_embed`, `_fields` and `context`; the cost is hashing each single-item body. A request whose `If-None-Match` matches (the weak comparison, so a list of tags, a strong spelling and `*` all match) answers `304` with the `ETag` and `Cache-Control` and no body. Collections and errors carry no tag, so a hidden item never answers `304`. Pass the header to `handle` as `WordPressRequest.ifNoneMatch`; `./http` does.
+- **Conditional reads** (the `ETag` question). A single-item response (an item, a term or a user) carries a weak `ETag`, `W/"<SHA-256 of the response body>"`, hashed through Web Crypto, so it changes whenever anything the body embeds does and stays correct with `_embed`, `_fields` and `context`; the cost is hashing each single-item body. A request whose `If-None-Match` matches (the weak comparison, so a list of tags, a strong spelling and `*` all match) answers `304` with the `ETag` and `Cache-Control` and no body. Collections and errors carry no tag, so a hidden item never answers `304`. Pass the header to `handle` as `WordPressRequest.ifNoneMatch`; `./Http` does.
 - **Caching** (`CACHE-AUTH-005`). `Cache-Control: public` only for an anonymous viewer when every item, embeds included, is its binding's `serveable`; otherwise `private, no-store`.
 - **Batched reads** (`PERF-DB-001`). One response is one node `encode`, one author `encode` (plus one profile read with `_embed`), one `render`, and one `getMany` per related type, however many items it carries. `orderby=include` reads the whole `include` list (at most 100 items) and orders it in memory.
 
@@ -133,11 +133,11 @@ const wp = defineWordPress({
 | `SearchRequest` | What a binding's `search` is asked: the text, the request's other filters as `where`, the soft-delete arm and the hit cap. |
 | `LocalisedReads`, `LocalisedItem` | A bound localised leaf's `?lang=` reads (`BoundPostType.localised`): its default locale, the fallback read of one node and the per-node fallback list, and the item with the locale it was served in. |
 | `PostFields`, `MediaFields`, `PostColumns` | What a binding reads off its resource, and the view columns its parameters filter and sort by. |
-| `fileMediaFields(file, blobs, described)` | An attachment's `MediaFields` from a `./blobs` file version. |
+| `fileMediaFields(file, blobs, described)` | An attachment's `MediaFields` from a `./Blobs` file version. |
 | `RenderRequest`, `Author`, `AuthorSeam`, `Site` | The render seam's request, the author seam and its profile, and the site. |
 | `PostType`, `PostStatus`, `MAX_LIST_PARAMETER` | The served post types, the statuses, and the list-parameter cap (100). |
 
-## `./http`
+## `./Http`
 
 `wordPressHttp(api)` is the API as an `effect/http` handler, `Effect<HttpServerResponse, never, HttpServerRequest | R>`: it reads the method, path and query pairs from the request URL, and the `If-None-Match` header, and answers a JSON response (an empty one for `HEAD`) with the API's status and headers. Mount it on the application's router under the prefix.
 

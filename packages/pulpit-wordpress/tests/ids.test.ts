@@ -14,8 +14,8 @@ import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { MAX_SET_VALUES } from "@thomasfosterau/pulpit/filter";
-import { integerIds, stringIds, UnencodableNodeId, type IdCodec } from "../src/ids.ts";
+import { MAX_SET_VALUES } from "@thomasfosterau/pulpit/Filter";
+import { integerIds, stringIds, UnencodableNodeId, type IdCodec } from "../src/Ids.ts";
 import { makeInMemoryIdCodec } from "../src/testing.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runSync(effect);

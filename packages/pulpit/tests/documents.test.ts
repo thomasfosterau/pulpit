@@ -2,7 +2,7 @@
  * The content-addressed document store: the hash contract (pinned to vectors
  * taken from Postgres), the never-rewritten invariant (`DOC-001`), the field
  * spread's projections, and a version chain whose rows carry document hashes.
- * The spec is gardeneria's `packages/database/src/documents.ts` and its
+ * The spec is gardeneria's `packages/database/src/Documents.ts` and its
  * `inline_documents` / `block_documents` tables.
  *
  * @module tests/documents
@@ -27,7 +27,7 @@ import {
   documentCheckHook,
   DocumentViolation,
   type DocumentCheck,
-} from "../src/documents.ts";
+} from "../src/Documents.ts";
 import {
   defineSubtype,
   ownedAccess,
@@ -35,9 +35,9 @@ import {
   type BeforeWriteEvent,
   type BeforeWriteHook,
   type LeafRow,
-} from "../src/subtype.ts";
-import type { LocalePatch, WriteAction } from "../src/version-chain.ts";
-import { defineVersionChain } from "../src/version-chain.ts";
+} from "../src/Subtype.ts";
+import type { LocalePatch, WriteAction } from "../src/VersionChain.ts";
+import { defineVersionChain } from "../src/VersionChain.ts";
 import { decodes, NOW } from "./fixtures.ts";
 import {
   makeInMemoryDocumentStore,

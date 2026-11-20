@@ -11,7 +11,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { always, evaluate, notPublished, published } from "../src/filter.ts";
+import { always, evaluate, notPublished, published } from "../src/Filter.ts";
 import {
   duePublications,
   isNotPublishedAt,
@@ -20,7 +20,7 @@ import {
   ModerationState,
   publishedFilter,
   serveablePolicy,
-} from "../src/publication.ts";
+} from "../src/Publication.ts";
 
 const NOW = DateTime.toDate(DateTime.makeUnsafe("2026-09-18T12:00:00.000Z"));
 const hourMs = 60 * 60 * 1000;

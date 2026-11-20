@@ -1,5 +1,5 @@
 /**
- * `./discovery` against the in-memory seams.
+ * `./Discovery` against the in-memory seams.
  *
  * - What is discoverable: for every visibility × draft × moderation state ×
  *   tombstone × path cell of an owned leaf, the feed and the sitemap list a
@@ -39,7 +39,7 @@ import {
   type DiscoveryPage,
   type DiscoveryRequest,
   type PurgeHint,
-} from "../src/discovery.ts";
+} from "../src/Discovery.ts";
 import {
   defineLocaleLevel,
   defineSubtype,
@@ -49,7 +49,7 @@ import {
   type SubtypeOps,
   type Viewer,
   type ViewerAccount,
-} from "../src/subtype.ts";
+} from "../src/Subtype.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryFollowers,
@@ -58,7 +58,7 @@ import {
   makeInMemoryPublication,
   type InMemoryFollowing,
 } from "../src/testing.ts";
-import type { ChainState, WriteAction } from "../src/version-chain.ts";
+import type { ChainState, WriteAction } from "../src/VersionChain.ts";
 import { follower, gardeneriaPolicy, member, NOW } from "./fixtures.ts";
 
 const as = (account: ViewerAccount): Viewer => Option.some(account);

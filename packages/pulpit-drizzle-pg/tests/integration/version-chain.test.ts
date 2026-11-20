@@ -24,7 +24,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
 import { afterAll, describe, expect, it } from "vite-plus/test";
-import { makeVersionChains } from "../../src/version-chain.ts";
+import { makeVersionChains } from "../../src/VersionChain.ts";
 import { tables, tree } from "../fixtures/tree.ts";
 
 const database = makePgDatabase({ relations: {}, key: "PulpitIntegrationDatabase" });

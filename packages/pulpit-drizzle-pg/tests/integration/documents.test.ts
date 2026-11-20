@@ -18,7 +18,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { makeDocumentStore } from "../../src/documents.ts";
+import { makeDocumentStore } from "../../src/Documents.ts";
 import { documents } from "../fixtures/tree.ts";
 
 const database = makePgDatabase({ relations: {}, key: "PulpitDocumentsDatabase" });

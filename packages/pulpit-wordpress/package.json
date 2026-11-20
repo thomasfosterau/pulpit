@@ -36,9 +36,9 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
-    "./api": "./src/api.ts",
-    "./http": "./src/http.ts",
-    "./ids": "./src/ids.ts",
+    "./Api": "./src/Api.ts",
+    "./Http": "./src/Http.ts",
+    "./Ids": "./src/Ids.ts",
     "./testing": "./src/testing.ts"
   },
   "publishConfig": {
@@ -47,17 +47,17 @@
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
       },
-      "./api": {
-        "types": "./dist/api.d.ts",
-        "default": "./dist/api.js"
+      "./Api": {
+        "types": "./dist/Api.d.ts",
+        "default": "./dist/Api.js"
       },
-      "./http": {
-        "types": "./dist/http.d.ts",
-        "default": "./dist/http.js"
+      "./Http": {
+        "types": "./dist/Http.d.ts",
+        "default": "./dist/Http.js"
       },
-      "./ids": {
-        "types": "./dist/ids.d.ts",
-        "default": "./dist/ids.js"
+      "./Ids": {
+        "types": "./dist/Ids.d.ts",
+        "default": "./dist/Ids.js"
       },
       "./testing": {
         "types": "./dist/testing.d.ts",

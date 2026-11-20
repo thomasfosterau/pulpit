@@ -12,7 +12,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import type { VersionChain, VersionChainEntry, VersionSnapshot } from "../version-chain.ts";
+import type { VersionChain, VersionChainEntry, VersionSnapshot } from "../VersionChain.ts";
 
 /**
  * The full state at `(id, version)`, or none when the chain has no

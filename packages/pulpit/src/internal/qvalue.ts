@@ -1,6 +1,6 @@
 /**
  * **An HTTP header range's weight**, shared by the `Accept-Language`
- * parser in `./subtype` and the `Accept` negotiation in `./media`, so the
+ * parser in `./Subtype` and the `Accept` negotiation in `./Media`, so the
  * two read a `q` parameter one way.
  *
  * Internal: not a package entry point (absent from `package.json`

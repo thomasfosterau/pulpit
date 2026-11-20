@@ -45,7 +45,7 @@ import {
   type EdgeRow,
   type EdgeValues,
   type EdgeWriteGate,
-} from "../src/edges.ts";
+} from "../src/Edges.ts";
 import {
   always,
   and,
@@ -67,7 +67,7 @@ import {
   notPublished,
   or,
   published,
-} from "../src/filter.ts";
+} from "../src/Filter.ts";
 import { renameColumns } from "../src/internal/filter-columns.ts";
 import {
   defineSubtype,
@@ -80,9 +80,9 @@ import {
   type LeafRow,
   type Viewer,
   type ViewerAccount,
-} from "../src/subtype.ts";
-import { audienceSeam } from "../src/audience.ts";
-import type { ColumnValue, VersionAction } from "../src/version-chain.ts";
+} from "../src/Subtype.ts";
+import { audienceSeam } from "../src/Audience.ts";
+import type { ColumnValue, VersionAction } from "../src/VersionChain.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryEdgeStore,
@@ -1855,7 +1855,7 @@ describe("a create racing another writer for the unique key", () => {
 });
 
 describe("qualifying a filter with an end's alias renames every node's column", () => {
-  /** `./edges`' `qualify`: what `endpointFilter` applies to each end's leaf filter. */
+  /** `./Edges`' `qualify`: what `endpointFilter` applies to each end's leaf filter. */
   const qualify = (alias: string, filter: ListFilter<Following>) =>
     renameColumns(filter, (column) => endpointColumn(alias, column));
 

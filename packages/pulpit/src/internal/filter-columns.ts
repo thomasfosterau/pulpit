@@ -1,5 +1,5 @@
 /**
- * **A list filter's columns, renamed**: `./edges` qualifies a leaf's filter
+ * **A list filter's columns, renamed**: `./Edges` qualifies a leaf's filter
  * with an end's alias through it, so a store can render that filter against
  * the view it joined under the alias.
  *
@@ -9,7 +9,7 @@
  * @internal
  */
 import * as Match from "effect/Match";
-import type { ListFilter } from "../filter.ts";
+import type { ListFilter } from "../Filter.ts";
 
 /**
  * Every column of `filter` rewritten by `rename`; the tree's shape and every

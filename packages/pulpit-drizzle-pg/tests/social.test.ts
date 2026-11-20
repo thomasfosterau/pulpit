@@ -9,7 +9,7 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
-import { makeSocialStore } from "../src/social.ts";
+import { makeSocialStore } from "../src/Social.ts";
 import { cannedTransaction, failingTransaction } from "./fixtures/canned.ts";
 import { database, relationships } from "./fixtures/tree.ts";
 

@@ -24,16 +24,16 @@ import {
   RATE_LIMITED,
   type BudgetCounter,
   type WriteBudget,
-} from "../src/budgets.ts";
-import { defineReports } from "../src/moderation.ts";
-import { defineProposals, InvalidProposalPatch } from "../src/proposals.ts";
+} from "../src/Budgets.ts";
+import { defineReports } from "../src/Moderation.ts";
+import { defineProposals, InvalidProposalPatch } from "../src/Proposals.ts";
 import {
   defineSubtype,
   ownedAccess,
   WriteRejected,
   type LeafRow,
   type Viewer,
-} from "../src/subtype.ts";
+} from "../src/Subtype.ts";
 import {
   makeInMemoryBudgetCounter,
   makeInMemoryVersionChain,

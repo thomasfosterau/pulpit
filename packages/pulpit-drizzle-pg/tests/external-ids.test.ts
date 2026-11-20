@@ -5,14 +5,14 @@
  * against PostgreSQL in `tests/integration/external-ids.test.ts`.
  */
 
-import { MAX_SET_VALUES } from "@thomasfosterau/pulpit/filter";
+import { MAX_SET_VALUES } from "@thomasfosterau/pulpit/Filter";
 import { getTableName } from "drizzle-orm";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
-import { makeExternalIdStore } from "../src/external-ids.ts";
+import { makeExternalIdStore } from "../src/ExternalIds.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
 import { database, externalIds } from "./fixtures/tree.ts";
 

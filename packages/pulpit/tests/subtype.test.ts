@@ -58,8 +58,8 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as TestClock from "effect/testing/TestClock";
 import { FlatQuery, Group, Resource } from "@thomasfosterau/effect-jsonapi";
-import type { Visibility } from "../src/content.ts";
-import { always, and, eq, evaluate, isIn, ne, never, or, type ListFilter } from "../src/filter.ts";
+import type { Visibility } from "../src/Content.ts";
+import { always, and, eq, evaluate, isIn, ne, never, or, type ListFilter } from "../src/Filter.ts";
 import {
   canViewOwned,
   defineSubtype,
@@ -100,7 +100,7 @@ import {
   type ResourceCacheSeam,
   type SubtypeOps,
   type VersionedResource,
-} from "../src/subtype.ts";
+} from "../src/Subtype.ts";
 import {
   defineVersionChain,
   VersionNotFound,
@@ -108,9 +108,9 @@ import {
   type ChainState,
   type ColumnValue,
   type Precondition,
-} from "../src/version-chain.ts";
-import { audienceSeam } from "../src/audience.ts";
-import { isPubliclyServeable } from "../src/publication.ts";
+} from "../src/VersionChain.ts";
+import { audienceSeam } from "../src/Audience.ts";
+import { isPubliclyServeable } from "../src/Publication.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryFollowers,

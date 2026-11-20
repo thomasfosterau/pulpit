@@ -18,10 +18,10 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
-import { blobKey, type BlobStore } from "../src/blobs.ts";
-import { definePurge, type PurgeDefinition } from "../src/purge.ts";
-import type { Viewer } from "../src/subtype.ts";
-import { defineVersionChain, type ChainState } from "../src/version-chain.ts";
+import { blobKey, type BlobStore } from "../src/Blobs.ts";
+import { definePurge, type PurgeDefinition } from "../src/Purge.ts";
+import type { Viewer } from "../src/Subtype.ts";
+import { defineVersionChain, type ChainState } from "../src/VersionChain.ts";
 import {
   type InMemoryBlobFailure,
   makeInMemoryBlobStore,

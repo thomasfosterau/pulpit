@@ -57,23 +57,23 @@ Every module is a namespace on the root export (`import { VersionChain } from "@
 
 | Subpath | Contents |
 | --- | --- |
-| [`./version-chain`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#version-chain) | `makeVersionChains`: the kernel's `VersionChain` port for every leaf of a tree. |
-| [`./leaf-store`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#leaf-store) | `makeLeafStores`: the kernel's `LeafStore` for every leaf view of a tree; `makeNodeOwnerTable`, the owner table. |
-| [`./publication`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#publication) | `makePublications`: the live pointer (`PublicationStore`, `LiveView`, the gated store) for every leaf of a pointer. |
-| [`./documents`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#documents) | `makeDocumentTable` / `makeDocumentStore`: the kernel's content-addressed `DocumentStore`, one table per family. |
-| [`./paths`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#paths) | `makePathTable` / `makePathStore`: the kernel's `PathStore`, one table per routable namespace. |
-| [`./proposals`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#proposals) | `makeProposalTable` / `makeProposalStore`: the kernel's `ProposalStore` (suggested edits) over one proposal table. |
-| [`./embeddings`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#embeddings) | `makeEmbeddingTables` / `makeEmbeddingStore`: the kernel's `EmbeddingStore`, a queue and a vector table per document family. |
-| [`./reactions`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#reactions) | `makeReactionTable` / `makeReactionStore`: the kernel's `ReactionStore`, one account's reaction to one node per row. |
-| [`./reports`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#reports) | `makeReportTable` / `makeReportStore`: the kernel's `ReportStore`, member reports against a tree's nodes (the moderation queue). |
-| [`./search`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#search) | `makeSearchBranch` / `fullTextRank`: the kernel's `SearchBranch`, one ranked and scoped statement over a view. |
-| [`./edges`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#edges) | `makeEdgeTable` / `makeEdgeStore`: the kernel's `EdgeStore`, one table per edge family, its ends joined to the tree's views. |
-| [`./collections`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#collections) | `makeCollectionTable` / `makeCollectionStore`: the kernel's `CollectionStore`, one membership table per ordered family. |
-| [`./external-ids`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#external-ids) | `makeExternalIdTable` / `makeExternalIdStore`: the kernel's `ExternalIdStore`, an authority's identifiers linked to nodes. |
-| [`./social`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#social) | `makeRelationshipTable` / `makeSocialStore`: the kernel's `SocialStore`, follows, mutes and blocks over one relationship table. |
-| [`./memberships`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#memberships) | `makeMembershipTable` / `makeMembershipStore` / `makeGroupOwners`: the kernel's `MembershipStore` (members and pending invitations) and `GroupOwnerStore`. |
-| [`./erasure`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#erasure) | `makePurgeStore` / `makeAccountErasureStore`: the kernel's erasure seams, the purge's references and dependents and the account erasure's owner records and redaction marker. |
-| [`./filter`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#filter) | `renderListFilter` / `renderListOrder`: the kernel's `ListFilter` and list order as Drizzle SQL. |
+| [`./VersionChain`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#version-chain) | `makeVersionChains`: the kernel's `VersionChain` port for every leaf of a tree. |
+| [`./LeafStore`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#leaf-store) | `makeLeafStores`: the kernel's `LeafStore` for every leaf view of a tree; `makeNodeOwnerTable`, the owner table. |
+| [`./Publication`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#publication) | `makePublications`: the live pointer (`PublicationStore`, `LiveView`, the gated store) for every leaf of a pointer. |
+| [`./Documents`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#documents) | `makeDocumentTable` / `makeDocumentStore`: the kernel's content-addressed `DocumentStore`, one table per family. |
+| [`./Paths`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#paths) | `makePathTable` / `makePathStore`: the kernel's `PathStore`, one table per routable namespace. |
+| [`./Proposals`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#proposals) | `makeProposalTable` / `makeProposalStore`: the kernel's `ProposalStore` (suggested edits) over one proposal table. |
+| [`./Embeddings`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#embeddings) | `makeEmbeddingTables` / `makeEmbeddingStore`: the kernel's `EmbeddingStore`, a queue and a vector table per document family. |
+| [`./Reactions`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#reactions) | `makeReactionTable` / `makeReactionStore`: the kernel's `ReactionStore`, one account's reaction to one node per row. |
+| [`./Reports`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#reports) | `makeReportTable` / `makeReportStore`: the kernel's `ReportStore`, member reports against a tree's nodes (the moderation queue). |
+| [`./Search`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#search) | `makeSearchBranch` / `fullTextRank`: the kernel's `SearchBranch`, one ranked and scoped statement over a view. |
+| [`./Edges`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#edges) | `makeEdgeTable` / `makeEdgeStore`: the kernel's `EdgeStore`, one table per edge family, its ends joined to the tree's views. |
+| [`./Collections`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#collections) | `makeCollectionTable` / `makeCollectionStore`: the kernel's `CollectionStore`, one membership table per ordered family. |
+| [`./ExternalIds`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#external-ids) | `makeExternalIdTable` / `makeExternalIdStore`: the kernel's `ExternalIdStore`, an authority's identifiers linked to nodes. |
+| [`./Social`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#social) | `makeRelationshipTable` / `makeSocialStore`: the kernel's `SocialStore`, follows, mutes and blocks over one relationship table. |
+| [`./Memberships`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#memberships) | `makeMembershipTable` / `makeMembershipStore` / `makeGroupOwners`: the kernel's `MembershipStore` (members and pending invitations) and `GroupOwnerStore`. |
+| [`./Erasure`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#erasure) | `makePurgeStore` / `makeAccountErasureStore`: the kernel's erasure seams, the purge's references and dependents and the account erasure's owner records and redaction marker. |
+| [`./Filter`](https://github.com/thomasfosterau/pulpit/blob/trunk/docs/drizzle-pg.md#filter) | `renderListFilter` / `renderListOrder`: the kernel's `ListFilter` and list order as Drizzle SQL. |
 
 ## Links
 

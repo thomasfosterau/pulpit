@@ -32,7 +32,7 @@ import {
   validateRegistry,
   type RegistryCheck,
   type RegistryEntry,
-} from "../src/registry.ts";
+} from "../src/Registry.ts";
 import { decodes } from "./fixtures.ts";
 
 const UUID = "00000000-0000-4000-8000-000000000000";

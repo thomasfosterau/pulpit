@@ -1,8 +1,8 @@
 # Content model
 
-The kernel's content model: the Content-axis field spreads (`./content`), the registry's flag vocabulary and checks (`./registry`), the content-addressed document store (`./documents`), and the read predicates as data (`./filter`), including the contract a SQL renderer of `ListFilter` must honour. Each export's own contract is in its TSDoc; this page holds the prose that spans exports.
+The kernel's content model: the Content-axis field spreads (`./Content`), the registry's flag vocabulary and checks (`./Registry`), the content-addressed document store (`./Documents`), and the read predicates as data (`./Filter`), including the contract a SQL renderer of `ListFilter` must honour. Each export's own contract is in its TSDoc; this page holds the prose that spans exports.
 
-## `./content`
+## `./Content`
 
 The Content-axis field spreads a Content subtype opens its `Resource.make` attributes with. One declaration drives the resource object, its documents and the create / update projections.
 
@@ -13,7 +13,7 @@ import {
   contentVisibilityResourceFields,
   ownedContentLeafResourceFields,
   ownerRef,
-} from "@thomasfosterau/pulpit/content";
+} from "@thomasfosterau/pulpit/Content";
 
 // The account family the owner linkage points at (the application's own).
 const UserResource = Resource.make("users", { attributes: { name: Schema.String } });
@@ -41,7 +41,7 @@ export const PostResource = Resource.make("posts", {
 | `ownerRef(() => Owner)` | The `owner` to-one linkage every owned leaf carries. The operation layer stamps it from the viewer. |
 | `ContentResource`, `ContentRef`, `makeContentResource(id)` | The base `content` resource, with the auto-derived id or the application's own brand. |
 
-## `./registry`
+## `./Registry`
 
 The flag vocabulary an application's resource registry is declared in, and the construction-time checks that keep it honest. The tree is the application's; the vocabulary and the checks are the kernel's.
 
@@ -54,9 +54,9 @@ import {
   validateRegistry,
   registryWireTypes,
   type RegistryEntry,
-} from "@thomasfosterau/pulpit/registry";
+} from "@thomasfosterau/pulpit/Registry";
 
-// In an application, the `PostResource` from the `./content` example above.
+// In an application, the `PostResource` from the `./Content` example above.
 const PostResource = Resource.make("posts", { attributes: { title: Schema.String } });
 
 const REGISTRY = [
@@ -87,7 +87,7 @@ registryWireTypes(REGISTRY, ["content"]).owned; // ["posts"]
 | `identifiersOf(members)` | The members' `identifier` schemas, for a linkage-ref union. |
 | `registryWireTypes(entries, roots)` | The wire types of every flag family and branch — what a wire-identity test pins and a subtype factory checks its `access` against. |
 
-## `./documents`
+## `./Documents`
 
 The content-addressed document store. A version row carries a document's hash rather than another copy of the document, so a long document edited many times is stored once per distinct content, and history (which is never pruned) stays small. A stored document is never rewritten and a changed document is a new hash (`DOC-001`), so `restoreVersion` restores the reference, and the old hash still reads back the old document.
 
@@ -95,8 +95,8 @@ The content-addressed document store. A version row carries a document's hash ra
 import { Resource } from "@thomasfosterau/effect-jsonapi";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { documentRef, type DocumentStore } from "@thomasfosterau/pulpit/documents";
-import { defineVersionChain, type VersionChain } from "@thomasfosterau/pulpit/version-chain";
+import { documentRef, type DocumentStore } from "@thomasfosterau/pulpit/Documents";
+import { defineVersionChain, type VersionChain } from "@thomasfosterau/pulpit/VersionChain";
 
 export const NoteResource = Resource.make("notes", {
   attributes: { ...documentRef("title"), ...documentRef("body") }, // each a DocumentHash
@@ -132,7 +132,7 @@ The document type is a parameter: its schema and validation are the application'
 | `checkedDocumentStore(store, field, check)` | The store with the field's grammar check before `put`: an off-grammar document fails `DocumentViolation` and is never stored (`DOC-001`). One per document field. |
 | `documentCheckHook({ type, fields, documents, check })`, `DocumentCheckDeclaration`, `DOCUMENT_VIOLATION` | The grammar check as a before-write hook: a `create`, `update` or `restore` whose patch (or any locale's) sets a declared document field is refused with `WriteRejected` (reason `DOCUMENT_VIOLATION <field>: <message>`) when the referenced document fails its check or isn't stored; one `getMany` per write. `restoreVersion` is exempt (it re-applies a checked version). |
 
-## `./filter`
+## `./Filter`
 
 The kernel's read predicates as data: a store renders a `ListFilter` to SQL, and `evaluate` runs it against an in-memory row, so a list filter and its row predicate can be proven to agree.
 

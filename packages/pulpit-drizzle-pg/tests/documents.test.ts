@@ -12,7 +12,7 @@ import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
-import { makeDocumentStore } from "../src/documents.ts";
+import { makeDocumentStore } from "../src/Documents.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
 import { database, documents } from "./fixtures/tree.ts";
 

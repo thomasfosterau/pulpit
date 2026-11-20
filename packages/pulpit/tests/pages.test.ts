@@ -1,5 +1,5 @@
 /**
- * `./pages` — the page recipe's one resolution read: a path and
+ * `./Pages` — the page recipe's one resolution read: a path and
  * a locale resolve to the node in the best locale it carries, to a redirect
  * from an alias, or to `PathNotFound`, over a routable, localised,
  * publish-gated leaf on the in-memory stores. A hidden, unpublished,
@@ -17,8 +17,8 @@ import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
-import { localeFallbacks, resolveLocalised, type LocalisedResolution } from "../src/pages.ts";
-import { routable } from "../src/paths.ts";
+import { localeFallbacks, resolveLocalised, type LocalisedResolution } from "../src/Pages.ts";
+import { routable } from "../src/Paths.ts";
 import {
   defineLocaleLevel,
   defineSubtype,
@@ -28,7 +28,7 @@ import {
   type PublishOptions,
   type Viewer,
   type ViewerAccount,
-} from "../src/subtype.ts";
+} from "../src/Subtype.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryLeafStore,
@@ -36,7 +36,7 @@ import {
   makeInMemoryPublication,
   type InMemoryFollowing,
 } from "../src/testing.ts";
-import { LOCALE_COLUMN } from "../src/filter.ts";
+import { LOCALE_COLUMN } from "../src/Filter.ts";
 import { gardeneriaPolicy, member, moderator, NOW, otherMember } from "./fixtures.ts";
 
 const as = (account: ViewerAccount): Viewer => Option.some(account);

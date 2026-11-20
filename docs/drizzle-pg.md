@@ -6,23 +6,23 @@ The module guide for [`@thomasfosterau/pulpit-drizzle-pg`](../packages/pulpit-dr
 
 **Not published** (`"private": true`, version `0.0.0`; see [PUBLISHING.md](PUBLISHING.md)). It lands in slices:
 
-- **Landed:** the `VersionChain` port over `-pg/chain` ([`./version-chain`](#version-chain)), passing the kernel's `versionChainConformance` against PostgreSQL; the `LeafStore` over the tree's leaf views and the owner table ([`./leaf-store`](#leaf-store)), with the `ListFilter` → SQL renderer and the list order ([`./filter`](#filter)), checked row by row against the kernel's in-memory store on PostgreSQL.
-- **Landed:** the live pointer, `PublicationStore` / `LiveView` and the gated store, over the tree's pointer level ([`./publication`](#publication)), checked against the kernel's in-memory publication on PostgreSQL.
-- **Landed:** the content-addressed `DocumentStore` ([`./documents`](#documents)), its hashes checked against the kernel's `canonicalText` on PostgreSQL.
-- **Landed:** the localised `LeafStore` over a tree's keyed views ([`./leaf-store`](#localised-leaves)), checked against the kernel's localised in-memory store on PostgreSQL.
-- **Landed:** the `PathStore` over a path table per routable namespace ([`./paths`](#paths)), checked step by step against the kernel's in-memory store on PostgreSQL.
-- **Landed:** `SearchBranch` over a tree's leaf and branch views and over a gated leaf's live rows ([`./search`](#search)), checked against the kernel's in-memory branch under every viewer's read scope on PostgreSQL.
-- **Landed:** the localised live view and gated store of a publish-gated keyed leaf ([`./publication`](#publication)), checked against the kernel's in-memory publication over a localised store on PostgreSQL.
-- **Landed:** the `ProposalStore` ([`./proposals`](#proposals)), checked against the kernel's in-memory store on PostgreSQL, its lock against a second transaction.
-- **Landed:** the `EdgeStore` ([`./edges`](#edges)), checked against the kernel's in-memory store on PostgreSQL, `members` through a leaf store's list and `countAt`'s lock against a second transaction.
-- **Landed:** the `EmbeddingStore` ([`./embeddings`](#embeddings)), checked against the kernel's in-memory store on PostgreSQL with `double precision[]` vectors; pgvector's form is pinned by unit tests.
-- **Landed:** the `ExternalIdStore` ([`./external-ids`](#external-ids)), checked against the kernel's in-memory store on PostgreSQL.
-- **Landed:** the `CollectionStore` ([`./collections`](#collections)), checked against the kernel's in-memory store on PostgreSQL.
-- **Landed:** the `ReactionStore` ([`./reactions`](#reactions)), checked against the kernel's in-memory store on PostgreSQL.
-- **Landed:** the `SocialStore` ([`./social`](#social)), checked against the kernel's in-memory store on PostgreSQL, a block racing a follow in two transactions.
-- **Landed:** the `MembershipStore` and `GroupOwnerStore` ([`./memberships`](#memberships)), checked against the kernel's in-memory stores on PostgreSQL.
-- **Landed:** the erasure seams, `PurgeStore` and `AccountErasureStore` ([`./erasure`](#erasure)), checked against the kernel's in-memory stores on PostgreSQL, the purge as the whole chain or nothing and the redaction marker.
-- **Landed:** the `ReportStore` ([`./reports`](#reports)), checked against the kernel's in-memory store on PostgreSQL, its lock against a second transaction and the purge cascade.
+- **Landed:** the `VersionChain` port over `-pg/chain` ([`./VersionChain`](#version-chain)), passing the kernel's `versionChainConformance` against PostgreSQL; the `LeafStore` over the tree's leaf views and the owner table ([`./LeafStore`](#leaf-store)), with the `ListFilter` → SQL renderer and the list order ([`./Filter`](#filter)), checked row by row against the kernel's in-memory store on PostgreSQL.
+- **Landed:** the live pointer, `PublicationStore` / `LiveView` and the gated store, over the tree's pointer level ([`./Publication`](#publication)), checked against the kernel's in-memory publication on PostgreSQL.
+- **Landed:** the content-addressed `DocumentStore` ([`./Documents`](#documents)), its hashes checked against the kernel's `canonicalText` on PostgreSQL.
+- **Landed:** the localised `LeafStore` over a tree's keyed views ([`./LeafStore`](#localised-leaves)), checked against the kernel's localised in-memory store on PostgreSQL.
+- **Landed:** the `PathStore` over a path table per routable namespace ([`./Paths`](#paths)), checked step by step against the kernel's in-memory store on PostgreSQL.
+- **Landed:** `SearchBranch` over a tree's leaf and branch views and over a gated leaf's live rows ([`./Search`](#search)), checked against the kernel's in-memory branch under every viewer's read scope on PostgreSQL.
+- **Landed:** the localised live view and gated store of a publish-gated keyed leaf ([`./Publication`](#publication)), checked against the kernel's in-memory publication over a localised store on PostgreSQL.
+- **Landed:** the `ProposalStore` ([`./Proposals`](#proposals)), checked against the kernel's in-memory store on PostgreSQL, its lock against a second transaction.
+- **Landed:** the `EdgeStore` ([`./Edges`](#edges)), checked against the kernel's in-memory store on PostgreSQL, `members` through a leaf store's list and `countAt`'s lock against a second transaction.
+- **Landed:** the `EmbeddingStore` ([`./Embeddings`](#embeddings)), checked against the kernel's in-memory store on PostgreSQL with `double precision[]` vectors; pgvector's form is pinned by unit tests.
+- **Landed:** the `ExternalIdStore` ([`./ExternalIds`](#external-ids)), checked against the kernel's in-memory store on PostgreSQL.
+- **Landed:** the `CollectionStore` ([`./Collections`](#collections)), checked against the kernel's in-memory store on PostgreSQL.
+- **Landed:** the `ReactionStore` ([`./Reactions`](#reactions)), checked against the kernel's in-memory store on PostgreSQL.
+- **Landed:** the `SocialStore` ([`./Social`](#social)), checked against the kernel's in-memory store on PostgreSQL, a block racing a follow in two transactions.
+- **Landed:** the `MembershipStore` and `GroupOwnerStore` ([`./Memberships`](#memberships)), checked against the kernel's in-memory stores on PostgreSQL.
+- **Landed:** the erasure seams, `PurgeStore` and `AccountErasureStore` ([`./Erasure`](#erasure)), checked against the kernel's in-memory stores on PostgreSQL, the purge as the whole chain or nothing and the redaction marker.
+- **Landed:** the `ReportStore` ([`./Reports`](#reports)), checked against the kernel's in-memory store on PostgreSQL, its lock against a second transaction and the purge cascade.
 - **Next:** the other stores that aren't tree-bound (budgets, working copies and the notification tables, unranked); dropping the local guards once effect-drizzle-ext ships them.
 
 ## End to end
@@ -58,9 +58,9 @@ const posts = defineSubtype({
 // Every operation needs `CurrentTransaction`: run it inside the application's `transact`.
 ```
 
-An ungated leaf takes `makeLeafStores({ tree, tables, views, owners, CurrentTransaction })[leaf]` as its `leaves` instead, and a localised one also passes `keyed` (see [`./publication`](#publication)).
+An ungated leaf takes `makeLeafStores({ tree, tables, views, owners, CurrentTransaction })[leaf]` as its `leaves` instead, and a localised one also passes `keyed` (see [`./Publication`](#publication)).
 
-## `./version-chain`
+## `./VersionChain`
 
 `makeVersionChains({ tree, tables, CurrentTransaction })` takes exactly what effect-drizzle-ext `-pg/chain`'s `makeVersionChain` takes and returns one kernel `VersionChain<EffectDrizzleQueryError, CurrentTransaction>` per leaf, keyed by leaf name, ready for the kernel's `defineVersionChain` and `defineSubtype`'s `chain`.
 
@@ -68,8 +68,8 @@ An ungated leaf takes `makeLeafStores({ tree, tables, views, owners, CurrentTran
 import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
 import { makeTreeTables } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
 import { makePgDatabase, pgClientFromPool } from "@thomasfosterau/effect-drizzle-ext-pg";
-import { makeVersionChains } from "@thomasfosterau/pulpit-drizzle-pg/version-chain";
-import { defineVersionChain } from "@thomasfosterau/pulpit/version-chain";
+import { makeVersionChains } from "@thomasfosterau/pulpit-drizzle-pg/VersionChain";
+import { defineVersionChain } from "@thomasfosterau/pulpit/VersionChain";
 import { pgSchema, text } from "drizzle-orm/pg-core";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -128,8 +128,8 @@ What each port does, over the leaf's tables:
 - **`create` / `update` / `restore` / `delete` / `restoreVersion` / `getVersion` / `history` / `head`** are `-pg/chain`'s own, so the kernel's invariants (append-only at `N_max + 1`, never an upsert, no resurrection by a plain `update`, no partial restore, bounded history, the expected-version precondition checked against the head the append extends) are the chain's. Its errors map one to one onto the kernel's: `NodeAlreadyExists`, `NodeNotFound`, `VersionNotFound`, `StaleVersion`, `VersionConflict`; `BrokenChain` stays a defect.
 - **State** is keyed by Drizzle field key across the leaf's whole path (a work's `title` and a post's `body` alike). A key that names no column of the path is not stored, and a column the state omits is `NULL` at create. Timestamps are the transaction's `now()` (the root version table's column default).
 - **`actorId`** is the root version row's actor. **`locales`** is the leaf's keyed level (`keyed: { name: "locale", columns }` in the tree); `getVersion` returns it as `locales`, and omits the key for a version that carries none. A translated column is never a shared one: the tree rejects a key both levels of one path declare.
-- **`proposedBy`** (the contributor whose accepted proposal a version applies, `./proposals`) is the root version row's `proposedBy` extra: declare `root.versionColumns: { proposedBy }` in `makeTreeTables` to accept proposals. An update carrying one over a tree without that column dies (`ProposedByUnrecorded`) rather than drop the contributor.
-- **`purge(id)`** deletes the node's identity row, scoped to the leaf's `type`, which cascades through every level of its chain: [`./purge`](erasure.md#purge)'s erasure. A no-op for an unknown id or another leaf's node.
+- **`proposedBy`** (the contributor whose accepted proposal a version applies, `./Proposals`) is the root version row's `proposedBy` extra: declare `root.versionColumns: { proposedBy }` in `makeTreeTables` to accept proposals. An update carrying one over a tree without that column dies (`ProposedByUnrecorded`) rather than drop the contributor.
+- **`purge(id)`** deletes the node's identity row, scoped to the leaf's `type`, which cascades through every level of its chain: [`./Purge`](erasure.md#purge)'s erasure. A no-op for an unknown id or another leaf's node.
 
 No operation opens a transaction: each requires the application's `CurrentTransaction`, the kernel's `R`, so the caller's `transact` is the boundary (and rolls back a `VersionConflict`'s aborted transaction).
 
@@ -140,13 +140,13 @@ No operation opens a transaction: each requires the application's `CurrentTransa
 | `VersionChainTables` | The tables it reads: `makeTreeTables`' output, with the identity table's `id` and `type`. |
 | `ChainQueryError<C>` | A `-pg/chain` leaf chain's query error (drizzle's `EffectDrizzleQueryError`). |
 
-## `./leaf-store`
+## `./LeafStore`
 
 `makeLeafStores({ tree, tables, views, owners, CurrentTransaction })` returns one kernel `LeafStore<LeafRow, SQLWrapper, EffectDrizzleQueryError, CurrentTransaction>` per leaf view, ready for `defineSubtype`'s `store`. `views` is `makeTreeViews(tree, tables, { schema })`, and `owners` the owner table:
 
 ```ts
 import { makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
-import { makeLeafStores, makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/leaf-store";
+import { makeLeafStores, makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/LeafStore";
 import { sql } from "drizzle-orm";
 
 const views = makeTreeViews(tree, tables, { schema: core });
@@ -195,12 +195,12 @@ The integration suite runs every read here against the kernel's `makeInMemoryLea
 | `OWNER_COLUMN` | `"ownerId"`, the key the owner joins in under. |
 | `StoreQueryError<Relations>` | The driver's query error. |
 
-## `./publication`
+## `./Publication`
 
 A publish-gated leaf (the kernel's `publication: { live, facts }`) over effect-drizzle-ext's pointer level: declare the pointer in `makeTreeTables` (`root: { pointers: ["live"] }`) and its leaves in `makeTreeViews` (`pointers: { live: ["post"] }`), then
 
 ```ts
-import { makePublications } from "@thomasfosterau/pulpit-drizzle-pg/publication";
+import { makePublications } from "@thomasfosterau/pulpit-drizzle-pg/Publication";
 
 const gated = makePublications({
   views,
@@ -218,14 +218,14 @@ const gated = makePublications({
 ```
 
 - **`facts`**, the `PublicationStore` over the append-only `live_pointer` log: `record` appends a fact (`version` `NULL` for an unpublish; `at` in the future schedules it); `effective(id)` is the latest by `seq` whose `at <= now()`; `facts(id, limit)` is the node's facts in record order; `scheduled(ids)` is, per node and in one read, the latest-recorded fact naming a version whose `at` is still ahead and that no later record overtakes (`DISTINCT ON (id) … NOT EXISTS (a later fact with at <= this at)`), the kernel's own SQL sketch.
-- **`live`**, the `LiveView`: `get` / `getMany` read the row at the effective fact's version, with that version as its `version`, the head's `action` (a tombstone hides it too), `draft = false` and the fact's `at` as `publishedAt`; `list` / `distinct` read the `UNION ALL` of the head rows matching `headFor` (the viewer's own) and the live rows of every other node, under the same filter, order and page as `./leaf-store`. `publishedAt <= now()` is the gate the kernel's `isPubliclyServeable` reads (`CACHE-AUTH-005`).
+- **`live`**, the `LiveView`: `get` / `getMany` read the row at the effective fact's version, with that version as its `version`, the head's `action` (a tombstone hides it too), `draft = false` and the fact's `at` as `publishedAt`; `list` / `distinct` read the `UNION ALL` of the head rows matching `headFor` (the viewer's own) and the live rows of every other node, under the same filter, order and page as `./LeafStore`. `publishedAt <= now()` is the gate the kernel's `isPubliclyServeable` reads (`CACHE-AUTH-005`).
 - **`leaves`**, the gated current-version store: the head rows with `draft` computed as `NOT EXISTS (a live row)`, a stored draft column ignored, as [Seams → the live pointer](seams.md#publicationstoree-r-and-liveviewrow-following-e-r-the-live-pointer) asks.
 - **`searchBranch(options)`**, the leaf's [`SearchBranch`](#search), one value for every viewer: each request ranks the rows `live.list` reads for its `headFor` (per node, its head when it matches `headFor`, else its live row). Pass the kernel's `searchHeadFor(leaf, viewer)` as `headFor`, the choice the leaf's `list` makes: every head on a head-reading rung, the viewer's own on an owned leaf, none for a reader. So a reader's search never scores a head's unpublished text, and an owner's finds their own.
 
 **A localised gated leaf**: a leaf with a keyed level, listed under the pointer in `makeTreeViews` (`pointers: { live: ["post"] }` derives `views.pointers.live.keyed.post` beside its leaf view), reads one row per locale once `keyed` names both its keyed head view (`views.keyed`) and the pointer's keyed view; a leaf named on one side only is a `DerivationError` at module load.
 
 - `live.list` / `distinct` read, per node, the locale rows of its head when its **shared** head matches `headFor` (as the kernel's `LiveView` reads it), else those of its live version: the `UNION ALL` of the keyed head rows of the matching nodes and the keyed live rows of every other.
-- `live.listLocalised` picks each node's most preferred carried locale over those same rows, then the filter, order and page, as [`./leaf-store`'s](#localised-leaves) does. A reader sees the live version's locales, an owner their head's.
+- `live.listLocalised` picks each node's most preferred carried locale over those same rows, then the filter, order and page, as [`./LeafStore`'s](#localised-leaves) does. A reader sees the live version's locales, an owner their head's.
 - `live.get` / `getMany` read the shared live row, one per node.
 - `leaves` is the localised store over the keyed head rows, `draft` computed as "no live row".
 - `searchBranch` still ranks the shared rows, one hit per node, since a search hit is a node.
@@ -236,7 +236,7 @@ An unkeyed gated leaf's `listLocalised` reads none on both. An id that is no can
 | --- | --- |
 | `makePublications(config)`, `Publications<Leaf, E, I>`, `PublishGated<E, I>` | One `{ facts, live, leaves }` per leaf of the pointer. |
 
-## `./documents`
+## `./Documents`
 
 The kernel's content-addressed `DocumentStore` ([Seams → `DocumentStore`](seams.md#documentstoredocument-e-r-the-content-addressed-document-store), `DOC-001`): one table per document family, built by `makeDocumentTable({ schema, name })`, with the hash the database generates to the kernel's contract:
 
@@ -258,7 +258,7 @@ The integration suite puts the same documents through this store and the kernel'
 | `makeDocumentTable({ schema, name })`, `DocumentTable` | One family's table.          |
 | `makeDocumentStore(config)`                            | The `DocumentStore` over it. |
 
-## `./paths`
+## `./Paths`
 
 The kernel's `PathStore` ([Seams → `PathStore`](seams.md#pathstoree-r-the-path-table)) for `routable`: one path table per routable namespace, `makePathTable({ schema, name, identity })`, `(path PRIMARY KEY, node_id → node.id ON DELETE CASCADE, canonical)` with a partial unique index (`node_id WHERE canonical`) holding at most one canonical row per node. `makePathStore({ table, CurrentTransaction })` binds it:
 
@@ -273,7 +273,7 @@ A node-level slug on the identity table (`identityColumns: { slug }`) is a diffe
 | `makePathTable({ schema, name, identity })`, `PathTable` | One namespace's path table. |
 | `makePathStore(config)`                                  | The `PathStore` over it.    |
 
-## `./proposals`
+## `./Proposals`
 
 The kernel's `ProposalStore` ([seams.md → `ProposalStore`](seams.md)), over one proposal table.
 
@@ -283,7 +283,7 @@ The kernel's `ProposalStore` ([seams.md → `ProposalStore`](seams.md)), over on
   - `author_id`, `target_node_id` and the pending rows are indexed.
 - **`makeProposalStore({ table, root, owners, CurrentTransaction })`** binds the store, every call in the caller's transaction.
   - **`get` and `list`** join the identity table for `targetType` and LEFT JOIN the owner table for `targetOwnerId`. The target's head version is a correlated `(SELECT MAX(version) … WHERE id = target_node_id)`.
-  - **`list`** renders its filter through [`./filter`](#filter), orders `submitted_at DESC, id DESC`, and reads the unpaged total off `count(*) OVER ()`.
+  - **`list`** renders its filter through [`./Filter`](#filter), orders `submitted_at DESC, id DESC`, and reads the unpaged total off `count(*) OVER ()`.
   - **`lock`** is the row `FOR UPDATE OF` the proposal alone, so two decisions on one proposal serialise.
   - **`close`** updates only a `pending` row.
   - **`mintId`** is `gen_random_uuid()`.
@@ -292,9 +292,9 @@ The kernel's `ProposalStore` ([seams.md → `ProposalStore`](seams.md)), over on
 
 The integration suite checks every method against the kernel's `makeInMemoryProposalStore` over the same writes, the composite foreign key, and the lock against a second transaction's `FOR UPDATE NOWAIT`.
 
-## `./reports`
+## `./Reports`
 
-The kernel's `ReportStore` ([seams.md → `ReportStore`](seams.md#reportstoree-r-the-member-report-table)): member reports against a tree's nodes, the moderation queue `./moderation`'s `defineReports` files into and resolves from.
+The kernel's `ReportStore` ([seams.md → `ReportStore`](seams.md#reportstoree-r-the-member-report-table)): member reports against a tree's nodes, the moderation queue `./Moderation`'s `defineReports` files into and resolves from.
 
 - **`makeReportTable({ schema, identity: tables.root.identity, name? })`** is the seam's schema (`report` by default).
   - `target_node_id` references the identity row and cascades, so `purge` takes a node's reports with it.
@@ -302,7 +302,7 @@ The kernel's `ReportStore` ([seams.md → `ReportStore`](seams.md#reportstoree-r
   - `reporter_id`, `target_node_id` and the open rows (`filed_at DESC, id DESC WHERE status = 'open'`, the queue's order) are indexed.
 - **`makeReportStore({ table, identity, CurrentTransaction })`** binds the store, every call in the caller's transaction.
   - **`get`, `lock` and `list`** join the identity table for `targetType`.
-  - **`list`** renders its filter over `id`, `reporterId`, `targetId`, `targetType` and `status` through [`./filter`](#filter), orders `filed_at DESC, id DESC`, and reads the unpaged total off `count(*) OVER ()`. A page past the end has no row to carry it, so it counts the matching rows again.
+  - **`list`** renders its filter over `id`, `reporterId`, `targetId`, `targetType` and `status` through [`./Filter`](#filter), orders `filed_at DESC, id DESC`, and reads the unpaged total off `count(*) OVER ()`. A page past the end has no row to carry it, so it counts the matching rows again.
   - **`lock`** is the row `FOR UPDATE OF` the report alone, so two resolutions of one report serialise.
   - **`close`** updates only an `open` row, and **`closeOpen`** every `open` row against one target, in one `UPDATE … RETURNING`, answering how many it closed.
   - **`mintId`** is `gen_random_uuid()`.
@@ -311,7 +311,7 @@ The kernel's `ReportStore` ([seams.md → `ReportStore`](seams.md#reportstoree-r
 
 The integration suite checks every method against the kernel's `makeInMemoryReportStore` over the same writes, the CHECKs, the lock against a second transaction's `FOR UPDATE NOWAIT`, and the purge cascade.
 
-## `./edges`
+## `./Edges`
 
 The kernel's `EdgeStore` ([seams.md → `EdgeStore`](seams.md)), one table per edge family.
 
@@ -321,7 +321,7 @@ The kernel's `EdgeStore` ([seams.md → `EdgeStore`](seams.md)), one table per e
   - the family's own `columns`;
   - a unique key over `uniqueKey`, `NULLS NOT DISTINCT`.
 - **`makeEdgeStore({ table, ends, uniqueKey?, identity, owners, CurrentTransaction })`** binds the store. `ends` is the family's ends by alias, each the edge column and the endpoint leaf's view.
-  - **The join.** `list`, `countAt`, `members` and `countBy` read the edge table INNER JOINed with each end's rows (its view, the owner joined in) under the end's alias. An edge whose end has no view row is never read. The family's filter renders through [`./filter`](#filter) over the edge's columns (bare) and each end's (`alias.column`: `subject.ownerId`, `object.action`).
+  - **The join.** `list`, `countAt`, `members` and `countBy` read the edge table INNER JOINed with each end's rows (its view, the owner joined in) under the end's alias. An edge whose end has no view row is never read. The family's filter renders through [`./Filter`](#filter) over the edge's columns (bare) and each end's (`alias.column`: `subject.ownerId`, `object.action`).
   - **`list`** orders `created_at, id`, with the window total (`0` for an empty page).
   - **`countAt`** first locks the node: `SELECT 1 FROM <identity> WHERE id = $node FOR NO KEY UPDATE`. That is not `FOR UPDATE`, which would block every insert keyed to the node; under the caller's READ COMMITTED transaction, two creates at one node serialise.
   - **`members`** is that join as a subquery (`SELECT e.<column> … WHERE e.<other>::text IN ($ids) AND <where>`), reading nothing. It is the `Following` the kernel's `memberFilter` / `nonMemberFilter` hand a leaf store's `in` / `not in`.
@@ -332,9 +332,9 @@ The kernel's `EdgeStore` ([seams.md → `EdgeStore`](seams.md)), one table per e
 
 The integration suite checks every method against the kernel's `makeInMemoryEdgeStore` over the same writes, under filters over the edge and each end. It also renders `members` through a leaf store's list, checks the unique key with a `NULL` in it, and runs `countAt`'s lock against a second transaction (a second lock fails `NOWAIT`; an insert keyed to the node goes through).
 
-## `./embeddings`
+## `./Embeddings`
 
-The kernel's `EmbeddingStore` ([seams.md → `SearchBranch` and `EmbeddingStore`](seams.md#searchbranchfollowing-e-r-and-embeddingstoree-r-search-and-embeddings)): the embedding queue and the vectors of one document family ([`./documents`](#documents)).
+The kernel's `EmbeddingStore` ([seams.md → `SearchBranch` and `EmbeddingStore`](seams.md#searchbranchfollowing-e-r-and-embeddingstoree-r-search-and-embeddings)): the embedding queue and the vectors of one document family ([`./Documents`](#documents)).
 
 - **`makeEmbeddingTables({ schema, name, documents, vector })`** builds two tables, each keyed by the document's `hash` and referencing the document table `ON DELETE CASCADE`, so purging a document takes its queue row and vector with it:
   - `${name}_queue`: `hash`, `queued_at` (`DEFAULT now()`, indexed) and a nullable `discarded_at`;
@@ -355,7 +355,7 @@ The integration suite runs the same calls through this store and the kernel's `m
 | `makeEmbeddingStore(config)` | The `EmbeddingStore` over them. |
 | `vectorLiteral(kind, values)` | A vector as its SQL literal. |
 
-## `./collections`
+## `./Collections`
 
 The kernel's `CollectionStore` ([seams.md → `CollectionStore`](seams.md#collectionstoree-r-the-membership-table)): the positioned members of an ordered family (a list's items, a bibliography's entries, a timeline's events, a website's pages), one membership table per family.
 
@@ -368,9 +368,9 @@ The kernel's `CollectionStore` ([seams.md → `CollectionStore`](seams.md#collec
 
 The integration suite runs the same replaces through this store and the kernel's `makeInMemoryCollectionStore` (reorders, appends, removals, an emptying, a tie on position, one member in two parents) and checks the entries agree. It also checks the duplicate and malformed-id handling, and that purging a member or a parent cascades.
 
-## `./external-ids`
+## `./ExternalIds`
 
-The kernel's `ExternalIdStore` ([seams.md → `ExternalIdStore`](seams.md)): `./reference-import`'s links between an authority's identifiers (a Wikidata QID, a DOI, an ISBN) and a tree's nodes.
+The kernel's `ExternalIdStore` ([seams.md → `ExternalIdStore`](seams.md)): `./ReferenceImport`'s links between an authority's identifiers (a Wikidata QID, a DOI, an ISBN) and a tree's nodes.
 
 - **`makeExternalIdTable({ schema, identity, name? })`** (`external_id` by default) has the columns `authority`, `external_id`, `node_id` (referencing the identity row, cascading) and `baseline` (`jsonb`, nullable). Its primary key is `(authority, external_id)`, and `(authority, node_id)` is unique.
 - **`makeExternalIdStore({ table, CurrentTransaction })`** binds the store:
@@ -380,7 +380,7 @@ The kernel's `ExternalIdStore` ([seams.md → `ExternalIdStore`](seams.md)): `./
 
 The integration suite checks every answer against the kernel's `makeInMemoryExternalIdStore` and checks that a node's purge cascades to its links.
 
-## `./reactions`
+## `./Reactions`
 
 The kernel's `ReactionStore` ([seams.md → `ReactionStore`](seams.md#reactionstoree-r-the-reaction-table)): one account's reaction to one node per row.
 
@@ -394,11 +394,11 @@ The kernel's `ReactionStore` ([seams.md → `ReactionStore`](seams.md#reactionst
 
 The integration suite runs the same calls through this store and the kernel's `makeInMemoryReactionStore` and checks every answer and the stored rows agree. It also checks the malformed-id handling, and that purging a node or deleting an account cascades.
 
-## `./social`
+## `./Social`
 
 The kernel's `SocialStore` ([seams.md → `SocialStore`](seams.md#socialstorefollowing-e-r-the-relationship-table)): follows, mutes and blocks between accounts. Its `Following` is a SQL subquery, the list filter's `in` set (the `followers` visibility predicate reads it).
 
-- **`makeRelationshipTable({ schema, accounts?, name? })`** (`relationship` by default) has the columns `kind` (`follow | mute | block`, CHECKed), `from_id`, `to_id` and `at` (`DEFAULT now()`). Its primary key is `(kind, from_id, to_id)`, and it is indexed on `(kind, to_id, at DESC)` and `(kind, from_id, at DESC)`. `accounts` is the application's `text` account key: given, both account columns reference it `ON DELETE CASCADE`; without it they have no foreign key and `eraseAccount` clears them (as [`./reactions`](#reactions) does).
+- **`makeRelationshipTable({ schema, accounts?, name? })`** (`relationship` by default) has the columns `kind` (`follow | mute | block`, CHECKed), `from_id`, `to_id` and `at` (`DEFAULT now()`). Its primary key is `(kind, from_id, to_id)`, and it is indexed on `(kind, to_id, at DESC)` and `(kind, from_id, at DESC)`. `accounts` is the application's `text` account key: given, both account columns reference it `ON DELETE CASCADE`; without it they have no foreign key and `eraseAccount` clears them (as [`./Reactions`](#reactions) does).
 - **`makeSocialStore({ table, CurrentTransaction })`** binds the store, every call in the caller's transaction:
   - **`addFollow` and `addBlock`** first take `pg_advisory_xact_lock` on the unordered account pair: its two keys hash the table's schema-qualified name with the lesser and the greater account id, so same-named tables in two schemas never share a lock. So the two are atomic against each other, and a block racing a follow never leaves the follow standing.
     - `addFollow` is then one statement, `INSERT … SELECT … WHERE NOT EXISTS (a block either way) ON CONFLICT DO NOTHING`. It answers `blocked` when a block stands, `added` when it wrote, and `present` otherwise.
@@ -410,14 +410,14 @@ The kernel's `SocialStore` ([seams.md → `SocialStore`](seams.md#socialstorefol
 
 The integration suite runs the same calls through this store and the kernel's `makeInMemorySocialStore` and checks every answer, every page and both subqueries' sets agree. It also races a block against a follow in two real transactions, and checks that deleting an account cascades.
 
-## `./memberships`
+## `./Memberships`
 
 The kernel's `MembershipStore` and `GroupOwnerStore` ([seams.md → `MembershipStore`](seams.md#membershipstorefollowing-e-r-the-membership-table) and [`GroupOwnerStore`](seams.md#groupownerstoree-r-the-groups-owners)): a group's members and pending invitations in one table, and the bounded owner reassignment over the application's own group table. A pending row is an invitation, not a membership. Every membership read (`roleOf`, `list`, `isMember`, `groupsOf`) and write (`remove`, `setRole`) takes the `active` rows alone, and only the invitation methods read or write a pending row.
 
 - **`makeMembershipTable({ schema, groups?, accounts?, name? })`** (`membership` by default) has the columns `group_id`, `account_id`, `role` (`member | admin`), `status` (`active | pending`), `invited_by` and `at` (`DEFAULT now()`).
   - Its primary key is `(group_id, account_id)`, and it is indexed on `account_id`.
   - A CHECK holds `invited_by` `NULL` exactly on an active row, so `add` over an invitation and `accept` both clear it.
-  - The keys are `text`. `groups` (the application's group id) and `accounts` (its account key), when given, make `group_id`, and `account_id` and `invited_by`, reference them `ON DELETE CASCADE`. Without them there is no foreign key, as in [`./reactions`](#reactions).
+  - The keys are `text`. `groups` (the application's group id) and `accounts` (its account key), when given, make `group_id`, and `account_id` and `invited_by`, reference them `ON DELETE CASCADE`. Without them there is no foreign key, as in [`./Reactions`](#reactions).
 - **`makeMembershipStore({ table, CurrentTransaction })`** binds the store, every call in the caller's transaction. Its `Following` is a SQL subquery.
   - **`add`** is `INSERT … ON CONFLICT (group_id, account_id) DO UPDATE SET status = 'active', role, at, invited_by = NULL WHERE status = 'pending' RETURNING`: a direct add activates a pending invitation, and an active row is untouched.
   - **`setRole`** is `UPDATE … WHERE … AND role <> $role RETURNING`, **`remove`** `DELETE … RETURNING`, **`roleOf`** one row's role, and **`isMember`** an `EXISTS`; a failing `isMember` reads as `false` (failing closed).
@@ -431,12 +431,12 @@ The kernel's `MembershipStore` and `GroupOwnerStore` ([seams.md → `MembershipS
 
 The integration suite runs the same calls through these stores and the kernel's `makeInMemoryMembershipStore` and `makeInMemoryGroupOwners`. It checks every answer, every page and the `groupsOf` set agree, and that the stored active and pending rows match the fakes'. It also checks that deleting a group or an account cascades.
 
-## `./erasure`
+## `./Erasure`
 
 The kernel's erasure seams ([seams.md → `PurgeStore`](seams.md#purgestoree-r-erasure) and [`AccountErasureStore`](seams.md#accounterasurestoree-r-owner-records-and-the-redaction-marker)). Erasure is the only path that deletes a version row, a document or bytes (`VERSION-CHAIN-001/002`, `DOC-001`). The version rows go through the leaf's `VersionChain.purge`, one identity-row delete that cascades through the chain, and nothing else may call this module's deletes. Every call runs in the caller's transaction, so `definePurge`'s single `transact` makes the purge the whole chain or nothing.
 
 - **`makePurgeStore({ documents?, blobs?, dependents?, CurrentTransaction })`** binds the `PurgeStore`.
-  - `documents` is `{ tables, references }`: the document tables ([`./documents`](#documents)) an unreferenced hash is deleted from, and every version column that may reference one, each `{ table, id, column }` (a `text` column holding the hex `DocumentHash`). Both lists are non-empty tuples.
+  - `documents` is `{ tables, references }`: the document tables ([`./Documents`](#documents)) an unreferenced hash is deleted from, and every version column that may reference one, each `{ table, id, column }` (a `text` column holding the hex `DocumentHash`). Both lists are non-empty tuples.
   - `blobs` is every version column that may carry a `ContentHash`, in the same shape, also non-empty.
   - `dependents` is every table of rows kept for a node that the identity row's `ON DELETE CASCADE` does not take, by its node-id column. Every store in this package cascades, so it is the application's own tables.
   - **It fails closed.** A document table without a reference column would leave the delete's `NOT EXISTS` guard empty, and a still-referenced document would go. So the types require both lists non-empty, and the constructor throws effect-drizzle-ext's `DerivationError` at module load when a cast or an untyped caller empties one (as `makeLeafStores` refuses a tree). The guard is built only from the declared columns, never from `TRUE`. Omitting `documents` deletes no document, and omitting `blobs` reports no blob unreferenced, since neither can be proven.
@@ -459,14 +459,14 @@ Every `DELETE` the module issues, with its bound:
 
 The integration suite runs the same purges through this store and the kernel's `makeInMemoryPurgeStore` over the same chains, and the same queries through `makeInMemoryAccountErasureStore`, and checks every answer agrees. Beyond the fakes, it checks that a failure after `VersionChain.purge` rolls back the owner row, every version and the documents. It also pins the redaction marker: a version by `redactedAs` with no `proposedBy` clears a node, one carrying a `proposedBy` does not, and a tombstoned head never needs redacting.
 
-## `./search`
+## `./Search`
 
 The kernel's `SearchBranch` ([Seams → `SearchBranch`](seams.md#searchbranchfollowing-e-r-and-embeddingstoree-r-search-and-embeddings)): one ranked query over a view, with the leaf's read scope rendered into the same statement, so a row outside the scope is never ranked and never shifts another hit's rank (`SEC-AUTH-ENUM-001`).
 
 ```ts
-import { fullTextRank, makeSearchBranch } from "@thomasfosterau/pulpit-drizzle-pg/search";
-import { searchHeadFor, searchScopeFilter } from "@thomasfosterau/pulpit/subtype";
-import { hybridSearch } from "@thomasfosterau/pulpit/search";
+import { fullTextRank, makeSearchBranch } from "@thomasfosterau/pulpit-drizzle-pg/Search";
+import { searchHeadFor, searchScopeFilter } from "@thomasfosterau/pulpit/Subtype";
+import { hybridSearch } from "@thomasfosterau/pulpit/Search";
 import { sql } from "drizzle-orm";
 
 // makeTreeViews(tree, tables, { schema, branches: { work: { project: (leaf, c) =>
@@ -487,10 +487,10 @@ const search = hybridSearch({ branches: [text /* , trigram, vector … */] });
 //   headFor: searchHeadFor(leaf, viewer), limit })
 ```
 
-- **`search({ query, scope, headFor, limit })`** is `SELECT id … WHERE rank.matches AND scope ORDER BY (rank.score)::float8 DESC NULLS LAST, id LIMIT limit`, over the view's rows with the owner joined in as `ownerId`. `scope` renders through [`renderListFilter`](#filter) over the same columns `./leaf-store`'s `list` renders it over. It is never rank, then filter. `limit` is clamped to `[0, MAX_PAGE_LIMIT]`, and a zero limit reads nothing.
+- **`search({ query, scope, headFor, limit })`** is `SELECT id … WHERE rank.matches AND scope ORDER BY (rank.score)::float8 DESC NULLS LAST, id LIMIT limit`, over the view's rows with the owner joined in as `ownerId`. `scope` renders through [`renderListFilter`](#filter) over the same columns `./LeafStore`'s `list` renders it over. It is never rank, then filter. `limit` is clamped to `[0, MAX_PAGE_LIMIT]`, and a zero limit reads nothing.
 - **The rank is the application's** (`SearchRank`: the source's columns and the query to `{ matches, score }`, or none to read nothing): full text, trigram `similarity`, a vector's `embedding <=> $query`, or a literal-id match. `fullTextRank({ vector, config? })` is the full-text one: `vector @@ websearch_to_tsquery(config, query)`, scored by `ts_rank_cd`, `'simple'` by default; a blank query matches nothing.
 - **A branch view** (`views.branches[marker]`, a `UNION ALL` over the marker's leaves with the `type` column and its `project` columns) ranks every leaf of the union. `eq("type", leaf)` narrows it to one leaf. A scope node over a column the union lacks is `false`, so a leaf's owned scope over a branch view without that leaf's access columns ranks none of it: it fails closed. Give the projection the columns the scope reads, or search the leaf view.
-- **A publish-gated leaf** searches through [`./publication`](#publication)'s `searchBranch(options)`, which ranks the rows `LiveView.list` reads for the request's `headFor` (`BranchRequest.headFor`). `makeSearchBranch` ignores `headFor`: a leaf or branch view has no live pointer.
+- **A publish-gated leaf** searches through [`./Publication`](#publication)'s `searchBranch(options)`, which ranks the rows `LiveView.list` reads for the request's `headFor` (`BranchRequest.headFor`). `makeSearchBranch` ignores `headFor`: a leaf or branch view has no live pointer.
 - **The hits are ids** for `hydrateSearchHits`, which re-reads each one through the leaf's gated `getMany`. The branch applies no other policy, never opens a transaction, and fails only with the driver's query error.
 
 The integration suite checks both branch kinds against the kernel's `makeInMemorySearchBranch` on PostgreSQL. A leaf view's branch runs under every viewer × `includeDeleted` through `searchScopeFilter`; a gated leaf's runs for each `headFor`. `fullTextRank` runs over a branch view, including the type narrowing and the fail-closed scope.
@@ -501,9 +501,9 @@ The integration suite checks both branch kinds against the kernel's `makeInMemor
 | `SearchBranchOptions`, `SearchRank` | Its name, weight and rank; the rank's shape. |
 | `fullTextRank({ vector, config? })` | The full-text `SearchRank` (`ts_rank_cd` over a `tsvector`). |
 
-## `./filter`
+## `./Filter`
 
-The kernel's read predicates as Drizzle SQL, to the contract table under the kernel's [`./filter`](content-model.md#filter), so the SQL store and the kernel's `evaluate` agree row for row (the integration suite checks every node, and every row × viewer through the kernel's own read scope, against the in-memory store):
+The kernel's read predicates as Drizzle SQL, to the contract table under the kernel's [`./Filter`](content-model.md#filter), so the SQL store and the kernel's `evaluate` agree row for row (the integration suite checks every node, and every row × viewer through the kernel's own read scope, against the in-memory store):
 
 - `renderListFilter(filter, columns)` is the `WHERE`, or `undefined` for `always`. A node over a column `columns` lacks is `false` (fail closed). `in` / `notIn` embed the seam's subquery. A string comparison and sort is by code point (`col::text COLLATE "C"`); a `uuid` column compares as text, so a value that is no UUID compares unequal instead of failing the query. A `NaN` or invalid-`Date` comparand, an empty `anyOf` and a set past `MAX_SET_VALUES` are `false`; an empty `noneOf` is `true`; `±Infinity` is bound as a `float8` literal. `anyOf` / `noneOf` render as `IN (…)` / `NOT IN (…)` lists of bound values, with the same `NULL` semantics as `= ANY` / `<> ALL`.
 - `renderListOrder(orderBy, columns, id)` is `<key> ASC|DESC NULLS LAST, …, id ASC`.

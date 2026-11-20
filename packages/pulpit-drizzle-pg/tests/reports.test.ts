@@ -5,14 +5,14 @@
  * nothing. The SQL runs against PostgreSQL in `tests/integration/reports.test.ts`.
  */
 
-import { always } from "@thomasfosterau/pulpit/filter";
-import type { ReportRow } from "@thomasfosterau/pulpit/moderation";
+import { always } from "@thomasfosterau/pulpit/Filter";
+import type { ReportRow } from "@thomasfosterau/pulpit/Moderation";
 import { getTableName } from "drizzle-orm";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
-import { makeReportStore } from "../src/reports.ts";
+import { makeReportStore } from "../src/Reports.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
 import { database, reports, tables } from "./fixtures/tree.ts";
 

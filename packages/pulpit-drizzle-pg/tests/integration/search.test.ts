@@ -17,14 +17,14 @@
  */
 
 import { pgClientFromUrl, makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
-import { always, eq, never, type FilterRow, type ListFilter } from "@thomasfosterau/pulpit/filter";
+import { always, eq, never, type FilterRow, type ListFilter } from "@thomasfosterau/pulpit/Filter";
 import {
   ownedAccess,
   searchScopeFilter,
   type AccessPolicy,
   type FollowerSeam,
   type Viewer,
-} from "@thomasfosterau/pulpit/subtype";
+} from "@thomasfosterau/pulpit/Subtype";
 import {
   makeInMemoryLeafStore,
   makeInMemoryPublication,
@@ -32,7 +32,7 @@ import {
   makeInMemoryVersionChain,
   type InMemoryFollowing,
 } from "@thomasfosterau/pulpit/testing";
-import type { ChainState } from "@thomasfosterau/pulpit/version-chain";
+import type { ChainState } from "@thomasfosterau/pulpit/VersionChain";
 import { getTableName, sql, type SQLWrapper } from "drizzle-orm";
 import * as Arr from "effect/Array";
 import * as Config from "effect/Config";
@@ -44,10 +44,10 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { makeLeafStores } from "../../src/leaf-store.ts";
-import { makePublications } from "../../src/publication.ts";
-import { fullTextRank, makeSearchBranch, type SearchRank } from "../../src/search.ts";
-import { makeVersionChains } from "../../src/version-chain.ts";
+import { makeLeafStores } from "../../src/LeafStore.ts";
+import { makePublications } from "../../src/Publication.ts";
+import { fullTextRank, makeSearchBranch, type SearchRank } from "../../src/Search.ts";
+import { makeVersionChains } from "../../src/VersionChain.ts";
 import { owners, tables, tree, views } from "../fixtures/tree.ts";
 
 const database = makePgDatabase({ relations: {}, key: "PulpitSearchDatabase" });

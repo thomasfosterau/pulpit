@@ -1,6 +1,6 @@
 # packages/pulpit-wordpress — `@thomasfosterau/pulpit-wordpress`
 
-A WordPress-compatible (`wp/v2`), read-only REST API over the kernel's chains: the read API (`./api`), its `effect/http` adapter (`./http`), the `IdCodec` seam (`./ids`) and its fakes (`./testing`). `src/internal/wire.ts` holds WordPress's wire vocabulary. Private until published ([docs/PUBLISHING.md](../../docs/PUBLISHING.md)).
+A WordPress-compatible (`wp/v2`), read-only REST API over the kernel's chains: the read API (`./Api`), its `effect/http` adapter (`./Http`), the `IdCodec` seam (`./Ids`) and its fakes (`./testing`). `src/internal/wire.ts` holds WordPress's wire vocabulary. Private until published ([docs/PUBLISHING.md](../../docs/PUBLISHING.md)).
 
 ## Boundary
 

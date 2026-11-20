@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
-import { MAX_SET_VALUES } from "../src/filter.ts";
+import { MAX_SET_VALUES } from "../src/Filter.ts";
 import { byCodePoint } from "../src/internal/list-order.ts";
 import {
   defineSubtype,
@@ -20,7 +20,7 @@ import {
   type LeafRow,
   type Viewer,
   type ViewerAccount,
-} from "../src/subtype.ts";
+} from "../src/Subtype.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryFollowers,

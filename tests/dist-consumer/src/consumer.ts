@@ -49,7 +49,7 @@ import {
   ownedContentLeafResourceFields,
   ownerRef,
   Visibility,
-} from "@thomasfosterau/pulpit/content";
+} from "@thomasfosterau/pulpit/Content";
 import {
   flaggedMembers,
   parent,
@@ -57,7 +57,7 @@ import {
   root,
   validateRegistry,
   type RegistryEntry,
-} from "@thomasfosterau/pulpit/registry";
+} from "@thomasfosterau/pulpit/Registry";
 import {
   defineVersionChain,
   diffLocales,
@@ -80,7 +80,7 @@ import {
   type VersionConflict,
   type VersionNotFound,
   type VersionSnapshot,
-} from "@thomasfosterau/pulpit/version-chain";
+} from "@thomasfosterau/pulpit/VersionChain";
 import {
   always,
   and,
@@ -108,7 +108,7 @@ import {
   type FilterRow,
   type ListFilter,
   type Scalar,
-} from "@thomasfosterau/pulpit/filter";
+} from "@thomasfosterau/pulpit/Filter";
 import {
   defineSubtype,
   ownedAccess,
@@ -143,13 +143,13 @@ import {
   type DistinctQuery,
   type OwnerSetTooLarge,
   type OwnersRequest,
-} from "@thomasfosterau/pulpit/subtype";
+} from "@thomasfosterau/pulpit/Subtype";
 import {
   duePublications,
   isPubliclyServeable,
   serveablePolicy,
   type ServeabilityOptions,
-} from "@thomasfosterau/pulpit/publication";
+} from "@thomasfosterau/pulpit/Publication";
 import {
   checkedDocumentStore,
   documentCheckHook,
@@ -160,7 +160,7 @@ import {
   type DocumentPut,
   type DocumentStore,
   type DocumentViolation,
-} from "@thomasfosterau/pulpit/documents";
+} from "@thomasfosterau/pulpit/Documents";
 import {
   defineEdgeOps,
   endpointColumn,
@@ -179,7 +179,7 @@ import {
   type EdgeWriteGate,
   type InvalidValidity,
   validAt,
-} from "@thomasfosterau/pulpit/edges";
+} from "@thomasfosterau/pulpit/Edges";
 import type {
   AccessPolicy,
   accessPolicyFromGuards,
@@ -192,8 +192,8 @@ import type {
   WriteRejected,
   ResourceCacheSeam,
   FollowerSeam,
-} from "@thomasfosterau/pulpit/subtype";
-import type { ChainPatch, WriteAction } from "@thomasfosterau/pulpit/version-chain";
+} from "@thomasfosterau/pulpit/Subtype";
+import type { ChainPatch, WriteAction } from "@thomasfosterau/pulpit/VersionChain";
 
 /** A compile-time assertion: `T` must be exactly `true`. */
 import {
@@ -203,8 +203,8 @@ import {
   type ProposalsDefinition,
   type ProposalRow,
   type ProposalStatus,
-} from "@thomasfosterau/pulpit/proposals";
-import type { ColumnValue, VersionRow } from "@thomasfosterau/pulpit/version-chain";
+} from "@thomasfosterau/pulpit/Proposals";
+import type { ColumnValue, VersionRow } from "@thomasfosterau/pulpit/VersionChain";
 import {
   defineModeration,
   defineReports,
@@ -212,9 +212,9 @@ import {
   moderationHook,
   type ModerationGrade,
   type ReportStatus,
-} from "@thomasfosterau/pulpit/moderation";
+} from "@thomasfosterau/pulpit/Moderation";
 
-import { defineFileWrites, fileUrl, type FileWrite } from "@thomasfosterau/pulpit/blobs";
+import { defineFileWrites, fileUrl, type FileWrite } from "@thomasfosterau/pulpit/Blobs";
 import {
   PathNotFound,
   PathTaken,
@@ -223,12 +223,12 @@ import {
   type PathStore,
   type Resolution,
   type RoutableOps,
-} from "@thomasfosterau/pulpit/paths";
+} from "@thomasfosterau/pulpit/Paths";
 import {
   localeFallbacks,
   resolveLocalised,
   type LocalisedResolution,
-} from "@thomasfosterau/pulpit/pages";
+} from "@thomasfosterau/pulpit/Pages";
 import {
   defineAlbum,
   defineRenditions,
@@ -238,22 +238,22 @@ import {
   type MediaItem,
   type RenditionNotFound,
   type RenditionOps,
-} from "@thomasfosterau/pulpit/media";
+} from "@thomasfosterau/pulpit/Media";
 
-import type { PublicationFact, PublicationOps, SubtypeOps } from "@thomasfosterau/pulpit/subtype";
-import { defineWorkingCopy } from "@thomasfosterau/pulpit/working-copy";
+import type { PublicationFact, PublicationOps, SubtypeOps } from "@thomasfosterau/pulpit/Subtype";
+import { defineWorkingCopy } from "@thomasfosterau/pulpit/WorkingCopy";
 import {
   CommentDepthExceeded,
   defineComments,
   type CommentListRequest,
   type CommentsDefinition,
-} from "@thomasfosterau/pulpit/comments";
+} from "@thomasfosterau/pulpit/Comments";
 import {
   definePurge,
   type PurgeDefinition,
   type PurgeOps,
   type PurgeReport,
-} from "@thomasfosterau/pulpit/purge";
+} from "@thomasfosterau/pulpit/Purge";
 import {
   defineAccountErasure,
   type AccountErasureDefinition,
@@ -262,7 +262,7 @@ import {
   type ErasureFamily,
   type ErasureSummary,
   type TombstoneErasure,
-} from "@thomasfosterau/pulpit/erasure";
+} from "@thomasfosterau/pulpit/Erasure";
 import {
   embedPending,
   fuseRankings,
@@ -274,7 +274,7 @@ import {
   type FusionOptions,
   type HybridSearchDefinition,
   type SearchBranch,
-} from "@thomasfosterau/pulpit/search";
+} from "@thomasfosterau/pulpit/Search";
 import {
   bindBudget,
   budgetHook,
@@ -285,24 +285,24 @@ import {
   type BudgetCounter,
   type BudgetRequest,
   type WriteBudget,
-} from "@thomasfosterau/pulpit/budgets";
+} from "@thomasfosterau/pulpit/Budgets";
 import {
   defineReactions,
   type InvalidReactionKind,
   type ReactionOps,
   type Tally,
-} from "@thomasfosterau/pulpit/reactions";
+} from "@thomasfosterau/pulpit/Reactions";
 import {
   makeResourceCache,
   type ResourceCache,
   type ResourceCacheOptions,
-} from "@thomasfosterau/pulpit/cache";
+} from "@thomasfosterau/pulpit/Cache";
 import {
   defineCollection,
   type CollectionDefinition,
   type CollectionMember,
   type CollectionOps,
-} from "@thomasfosterau/pulpit/collections";
+} from "@thomasfosterau/pulpit/Collections";
 import {
   DEFAULT_LINK_DEPTH,
   defineLinkList,
@@ -311,7 +311,7 @@ import {
   type LinkListDefinition,
   type LinkListOps,
   type LinkTarget,
-} from "@thomasfosterau/pulpit/links";
+} from "@thomasfosterau/pulpit/Links";
 import {
   defineSocial,
   socialFollowers,
@@ -320,7 +320,7 @@ import {
   type SocialDefinition,
   type SocialOps,
   type SocialStore,
-} from "@thomasfosterau/pulpit/social";
+} from "@thomasfosterau/pulpit/Social";
 import {
   audienceSeam,
   defineAudience,
@@ -328,7 +328,7 @@ import {
   type AudienceSeam,
   type GroupNotFound,
   type MembershipStore,
-} from "@thomasfosterau/pulpit/audience";
+} from "@thomasfosterau/pulpit/Audience";
 import {
   defineDiscovery,
   purgeHintHook,
@@ -338,7 +338,7 @@ import {
   type DiscoveryPage,
   type DiscoveryRequest,
   type PurgeHint,
-} from "@thomasfosterau/pulpit/discovery";
+} from "@thomasfosterau/pulpit/Discovery";
 import {
   acceptedAnswerGate,
   defineReshares,
@@ -346,7 +346,7 @@ import {
   type AnswerNotOfQuestion,
   type ReshareOps,
   type ReshareTarget,
-} from "@thomasfosterau/pulpit/relations";
+} from "@thomasfosterau/pulpit/Relations";
 import {
   defineTranslation,
   humanLineageHook,
@@ -354,7 +354,7 @@ import {
   type LocaleLineage,
   type SweepSummary,
   type TranslationOps,
-} from "@thomasfosterau/pulpit/translation";
+} from "@thomasfosterau/pulpit/Translation";
 import {
   defineNotifications,
   emitting,
@@ -367,7 +367,7 @@ import {
   type OutboxStore,
   // ./translation exports a `SweepSummary` too; each module keeps its own.
   type SweepSummary as NotificationSweepSummary,
-} from "@thomasfosterau/pulpit/notifications";
+} from "@thomasfosterau/pulpit/Notifications";
 import {
   defineReferenceImport,
   type ExternalIdStore,
@@ -375,7 +375,7 @@ import {
   type ImportBatchTooLarge,
   type ReferenceImportOps,
   type UnknownAuthority,
-} from "@thomasfosterau/pulpit/reference-import";
+} from "@thomasfosterau/pulpit/ReferenceImport";
 
 type Assert<T extends true> = T;
 type Equals<A, B> =

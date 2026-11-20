@@ -11,7 +11,7 @@
 
 import { executeRows } from "@thomasfosterau/effect-drizzle-ext/query";
 import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
-import type { Invitation, Membership } from "@thomasfosterau/pulpit/audience";
+import type { Invitation, Membership } from "@thomasfosterau/pulpit/Audience";
 import {
   makeInMemoryGroupOwners,
   makeInMemoryMembershipStore,
@@ -28,7 +28,7 @@ import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
 import * as Str from "effect/String";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { makeGroupOwners, makeMembershipStore } from "../../src/memberships.ts";
+import { makeGroupOwners, makeMembershipStore } from "../../src/Memberships.ts";
 import { accounts, groups, memberships } from "../fixtures/tree.ts";
 
 const database = makePgDatabase({ relations: {}, key: "PulpitMembershipDatabase" });

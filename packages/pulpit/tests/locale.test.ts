@@ -12,7 +12,7 @@ import * as R from "effect/Record";
 import * as Order from "effect/Order";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
-import { always, evaluate, locale, LOCALE_COLUMN, MAX_SET_VALUES, never } from "../src/filter.ts";
+import { always, evaluate, locale, LOCALE_COLUMN, MAX_SET_VALUES, never } from "../src/Filter.ts";
 import { renameColumns } from "../src/internal/filter-columns.ts";
 import {
   defineLocaleLevel,
@@ -26,7 +26,7 @@ import {
   type LifecycleHooks,
   type Viewer,
   type ViewerAccount,
-} from "../src/subtype.ts";
+} from "../src/Subtype.ts";
 import {
   type InMemoryFollowing,
   type InMemoryLeafStore,
@@ -41,7 +41,7 @@ import {
   diffLocales,
   localesOf,
   type ColumnValue,
-} from "../src/version-chain.ts";
+} from "../src/VersionChain.ts";
 import { gardeneriaPolicy, member, moderator, NOW, otherMember, textOf } from "./fixtures.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);

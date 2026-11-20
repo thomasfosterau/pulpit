@@ -25,8 +25,8 @@ import * as R from "effect/Record";
 import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
-import { makeResourceCache } from "../src/cache.ts";
-import { always } from "../src/filter.ts";
+import { makeResourceCache } from "../src/Cache.ts";
+import { always } from "../src/Filter.ts";
 import {
   acceptLanguage,
   defineLocaleLevel,
@@ -38,7 +38,7 @@ import {
   type LeafRow,
   type LocaleWire,
   type Viewer,
-} from "../src/subtype.ts";
+} from "../src/Subtype.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryFollowers,
@@ -364,7 +364,7 @@ describe("a localised leaf's cache, keyed by locale", () => {
     expect(cache.versionOf(after.id)).toEqual(Option.some(1n));
   });
 
-  /** The two caches the locale rules are checked on: the fake and `./cache`'s reference cache. */
+  /** The two caches the locale rules are checked on: the fake and `./Cache`'s reference cache. */
   const caches = [
     {
       label: "the in-memory fake",

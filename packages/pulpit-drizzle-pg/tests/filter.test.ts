@@ -26,14 +26,14 @@ import {
   or,
   published,
   type ListFilter,
-} from "@thomasfosterau/pulpit/filter";
+} from "@thomasfosterau/pulpit/Filter";
 import { getTableColumns, sql, type SQLWrapper } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
-import { distinctKey, renderListFilter, renderListOrder } from "../src/filter.ts";
+import { distinctKey, renderListFilter, renderListOrder } from "../src/Filter.ts";
 import { tables, views } from "./fixtures/tree.ts";
 
 const dialect = new PgDialect();

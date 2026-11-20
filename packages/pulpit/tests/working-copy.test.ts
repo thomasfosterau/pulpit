@@ -15,8 +15,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
-import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/subtype.ts";
-import { defineWorkingCopy } from "../src/working-copy.ts";
+import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/Subtype.ts";
+import { defineWorkingCopy } from "../src/WorkingCopy.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryFollowers,

@@ -8,7 +8,7 @@
  */
 
 import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
-import type { ReactionRow } from "@thomasfosterau/pulpit/reactions";
+import type { ReactionRow } from "@thomasfosterau/pulpit/Reactions";
 import { makeInMemoryReactionStore } from "@thomasfosterau/pulpit/testing";
 import { getTableName, sql } from "drizzle-orm";
 import * as Arr from "effect/Array";
@@ -22,8 +22,8 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Str from "effect/String";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { makeReactionStore } from "../../src/reactions.ts";
-import { makeVersionChains } from "../../src/version-chain.ts";
+import { makeReactionStore } from "../../src/Reactions.ts";
+import { makeVersionChains } from "../../src/VersionChain.ts";
 import { accounts, reactions, tables, tree } from "../fixtures/tree.ts";
 
 const database = makePgDatabase({ relations: {}, key: "PulpitReactionDatabase" });

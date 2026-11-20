@@ -4,7 +4,7 @@
  * (`rest-api/endpoints/class-wp-rest-{posts,controller}.php`,
  * `class-wp-rest-server.php`): the error envelope, the date format, the
  * query string's list parameters, the `Link` header and `_fields`. Internal:
- * the `./api` module is its only reader.
+ * the `./Api` module is its only reader.
  *
  * @internal
  */

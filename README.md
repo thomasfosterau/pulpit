@@ -18,7 +18,7 @@ Node.js 22 or newer.
 ```ts
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { defineVersionChain } from "@thomasfosterau/pulpit/version-chain";
+import { defineVersionChain } from "@thomasfosterau/pulpit/VersionChain";
 import { makeInMemoryVersionChain } from "@thomasfosterau/pulpit/testing";
 
 const chain = defineVersionChain("posts", makeInMemoryVersionChain("posts"));

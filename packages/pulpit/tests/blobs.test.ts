@@ -28,8 +28,8 @@ import {
   fileUsageEnds,
   sha256Hex,
   type FileWrite,
-} from "../src/blobs.ts";
-import { defineSubtype, ownedAccess, type LeafRow } from "../src/subtype.ts";
+} from "../src/Blobs.ts";
+import { defineSubtype, ownedAccess, type LeafRow } from "../src/Subtype.ts";
 import {
   makeInMemoryBlobStore,
   makeInMemoryVersionChain,

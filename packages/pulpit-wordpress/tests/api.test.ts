@@ -1,5 +1,5 @@
 /**
- * `./api` — the `wp/v2` read API over leaves bound to WordPress's post types,
+ * `./Api` — the `wp/v2` read API over leaves bound to WordPress's post types,
  * against the kernel's in-memory fakes (phase 1): the read rule
  * (`SEC-AUTH-ENUM-001`) through `/posts/{id}` and `/posts`, the collection
  * headers, related nodes the viewer can't read, `_embed`'s batching, the
@@ -19,9 +19,9 @@ import * as Order from "effect/Order";
 import * as P from "effect/Predicate";
 import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
-import { Visibility } from "@thomasfosterau/pulpit/content";
-import { always } from "@thomasfosterau/pulpit/filter";
-import { hybridSearch } from "@thomasfosterau/pulpit/search";
+import { Visibility } from "@thomasfosterau/pulpit/Content";
+import { always } from "@thomasfosterau/pulpit/Filter";
+import { hybridSearch } from "@thomasfosterau/pulpit/Search";
 import {
   defineLocaleLevel,
   defineSubtype,
@@ -32,9 +32,9 @@ import {
   type LeafRow,
   type Viewer,
   type ViewerAccount,
-} from "@thomasfosterau/pulpit/subtype";
-import { defineEdgeOps, type EdgeRow, type EdgeValues } from "@thomasfosterau/pulpit/edges";
-import { routable } from "@thomasfosterau/pulpit/paths";
+} from "@thomasfosterau/pulpit/Subtype";
+import { defineEdgeOps, type EdgeRow, type EdgeValues } from "@thomasfosterau/pulpit/Edges";
+import { routable } from "@thomasfosterau/pulpit/Paths";
 import {
   makeInMemoryVersionChain,
   makeInMemoryEdgeStore,
@@ -45,7 +45,7 @@ import {
   type InMemoryFollowing,
   makeInMemoryPublication,
 } from "@thomasfosterau/pulpit/testing";
-import type { ColumnValue, LocaleStates } from "@thomasfosterau/pulpit/version-chain";
+import type { ColumnValue, LocaleStates } from "@thomasfosterau/pulpit/VersionChain";
 import {
   bind,
   bindTaxonomy,
@@ -61,8 +61,8 @@ import {
   type Taxonomy,
   type TermFields,
   type WordPressResponse,
-} from "../src/api.ts";
-import { integerIds } from "../src/ids.ts";
+} from "../src/Api.ts";
+import { integerIds } from "../src/Ids.ts";
 import { makeInMemoryIdCodec } from "../src/testing.ts";
 import {
   ATTACHMENT_FORM,
@@ -2221,7 +2221,7 @@ describe("the wp/v2 read API — media from a file leaf", () => {
 });
 
 describe("the wp/v2 read API — a routable leaf's paths", () => {
-  /** A post written through `./paths`' `routable`, so its slug is its claimed path. */
+  /** A post written through `./Paths`' `routable`, so its slug is its claimed path. */
   const routed = () => {
     const wp = site();
     const paths = makeInMemoryPathStore();

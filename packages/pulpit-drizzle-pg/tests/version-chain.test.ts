@@ -18,7 +18,7 @@ import {
   StaleVersion,
   VersionConflict,
   VersionNotFound,
-} from "@thomasfosterau/pulpit/version-chain";
+} from "@thomasfosterau/pulpit/VersionChain";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -34,7 +34,7 @@ import {
   ProposedByUnrecorded,
   type ErasedLeafChain,
 } from "../src/internal/leaf-chain.ts";
-import { makeVersionChains } from "../src/version-chain.ts";
+import { makeVersionChains } from "../src/VersionChain.ts";
 import { database, plainTables, tables, tree } from "./fixtures/tree.ts";
 
 /** Each kernel error re-raised as the `-pg/chain` class of the same name. */

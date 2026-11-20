@@ -26,8 +26,8 @@
  *
  * Internal: not a package entry point (absent from `package.json`
  * `exports`) and excluded from the generated API docs (`docgen.json`).
- * Typed structurally, so it never imports `./subtype`. Only server-side
- * modules reach it (`./registry` and `./content` never import effect-auth).
+ * Typed structurally, so it never imports `./Subtype`. Only server-side
+ * modules reach it (`./Registry` and `./Content` never import effect-auth).
  *
  * @internal
  */
@@ -37,13 +37,13 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Str from "effect/String";
-import { Visibility } from "../content.ts";
-import type { ColumnValue } from "../version-chain.ts";
+import { Visibility } from "../Content.ts";
+import type { ColumnValue } from "../VersionChain.ts";
 
 const isVisibility = Schema.is(Visibility);
 
 /**
- * The parts of `./subtype`'s viewer, policy and follower seam the bridge
+ * The parts of `./Subtype`'s viewer, policy and follower seam the bridge
  * reads, structurally.
  *
  * @internal

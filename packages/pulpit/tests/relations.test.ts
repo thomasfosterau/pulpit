@@ -19,11 +19,11 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as HashMap from "effect/HashMap";
 import * as Option from "effect/Option";
-import { defineCollection } from "../src/collections.ts";
-import { defineEdgeOps, type EdgeRow, type EdgeValues } from "../src/edges.ts";
-import { always } from "../src/filter.ts";
-import { acceptedAnswerGate, defineReshares, nodeWriteGate } from "../src/relations.ts";
-import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/subtype.ts";
+import { defineCollection } from "../src/Collections.ts";
+import { defineEdgeOps, type EdgeRow, type EdgeValues } from "../src/Edges.ts";
+import { always } from "../src/Filter.ts";
+import { acceptedAnswerGate, defineReshares, nodeWriteGate } from "../src/Relations.ts";
+import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/Subtype.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryCollectionStore,

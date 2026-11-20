@@ -1,6 +1,6 @@
 /**
  * The version-chain discipline against the in-memory store — every invariant
- * `src/version-chain.ts` lists, each on the minimal chain that exercises it.
+ * `src/VersionChain.ts` lists, each on the minimal chain that exercises it.
  * The spec is gardeneria's node writers (`packages/database/src/nodes.ts`)
  * and `defineVersionOpsE` (`apps/api/src/operations/subtype.ts`).
  *
@@ -25,7 +25,7 @@ import {
   type ChainPatch,
   type ChainState,
   type VersionChain,
-} from "../src/version-chain.ts";
+} from "../src/VersionChain.ts";
 import {
   makeInMemoryVersionChain,
   versionChainConformance,

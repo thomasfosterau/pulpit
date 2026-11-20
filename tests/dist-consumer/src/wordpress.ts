@@ -20,7 +20,7 @@ import {
   type WireId,
   type WireIdMode,
   type WireIds,
-} from "@thomasfosterau/pulpit-wordpress/ids";
+} from "@thomasfosterau/pulpit-wordpress/Ids";
 import {
   bind,
   defineWordPress,
@@ -38,9 +38,9 @@ import {
   type WordPressConfig,
   type WordPressRequest,
   type WordPressResponse,
-} from "@thomasfosterau/pulpit-wordpress/api";
-import { wordPressHttp } from "@thomasfosterau/pulpit-wordpress/http";
-import type { ListFilter } from "@thomasfosterau/pulpit/filter";
+} from "@thomasfosterau/pulpit-wordpress/Api";
+import { wordPressHttp } from "@thomasfosterau/pulpit-wordpress/Http";
+import type { ListFilter } from "@thomasfosterau/pulpit/Filter";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import type * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as Schema from "effect/Schema";

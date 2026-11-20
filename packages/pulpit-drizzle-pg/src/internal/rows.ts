@@ -6,7 +6,7 @@
  * kernel `LeafRow` per row (the leaf view's columns with the owner joined
  * in, a gated head's computed `draft`, a live row's pointed version), with
  * its columns by field key. Each read renders the kernel's filter and order
- * over the source's columns (`../filter.ts`), so every seam reads, pages
+ * over the source's columns (`../Filter.ts`), so every seam reads, pages
  * and counts the same way, in the caller's `CurrentTransaction`.
  *
  * @since 0.0.0
@@ -19,8 +19,8 @@ import {
   LOCALE_COLUMN,
   MAX_SET_VALUES,
   type ListFilter,
-} from "@thomasfosterau/pulpit/filter";
-import type { BranchRequest, RankedHit, SearchBranch } from "@thomasfosterau/pulpit/search";
+} from "@thomasfosterau/pulpit/Filter";
+import type { BranchRequest, RankedHit, SearchBranch } from "@thomasfosterau/pulpit/Search";
 import {
   MAX_PAGE_LIMIT,
   type DistinctQuery,
@@ -29,8 +29,8 @@ import {
   type ListOrder,
   type LocalisedListQuery,
   type Page,
-} from "@thomasfosterau/pulpit/subtype";
-import { VersionAction } from "@thomasfosterau/pulpit/version-chain";
+} from "@thomasfosterau/pulpit/Subtype";
+import { VersionAction } from "@thomasfosterau/pulpit/VersionChain";
 import {
   and,
   Column,
@@ -57,7 +57,7 @@ import {
   renderListOrder,
   type FilterColumn,
   type FilterColumns,
-} from "../filter.ts";
+} from "../Filter.ts";
 import { isNodeId } from "./node-id.ts";
 import { OWNER_COLUMN, type NodeOwnerTable, type StoreQueryError } from "./owners.ts";
 import { PgColumn, QueryBuilder, type PgView } from "drizzle-orm/pg-core";

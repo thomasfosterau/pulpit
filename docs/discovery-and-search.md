@@ -1,8 +1,8 @@
 # Discovery and search
 
-Hybrid search and the embedding pipeline (`./search`), and the discovery feed and sitemap enumeration (`./discovery`). The searchable projection, the read scope a search runs under and hit hydration are `./subtype`'s: see [Read model → Search](read-model.md#subtype).
+Hybrid search and the embedding pipeline (`./Search`), and the discovery feed and sitemap enumeration (`./Discovery`). The searchable projection, the read scope a search runs under and hit hydration are `./Subtype`'s: see [Read model → Search](read-model.md#subtype).
 
-## `./search`
+## `./Search`
 
 Hybrid search: the parts of the apps' search pipeline that are not SQL. The ranked queries stay the application's, as [`SearchBranch`](seams.md#searchbranchfollowing-e-r-and-embeddingstoree-r-search-and-embeddings) seams; pulpit fuses them, lets a reranker reorder the result, and runs the embedding pipeline over seams.
 
@@ -11,8 +11,8 @@ The optional members (a branch's `weight`, `FusionOptions`' `k`, `limit` and `pe
 ```ts
 import { deepStrictEqual } from "node:assert";
 import * as Effect from "effect/Effect";
-import { always, never } from "@thomasfosterau/pulpit/filter";
-import { hybridSearch } from "@thomasfosterau/pulpit/search";
+import { always, never } from "@thomasfosterau/pulpit/Filter";
+import { hybridSearch } from "@thomasfosterau/pulpit/Search";
 
 const search = hybridSearch({
   branches: [
@@ -43,7 +43,7 @@ deepStrictEqual(
 | `hybridSearch(definition)`, `HybridSearchDefinition`, `SearchBranch`, `BranchRequest`, `SearchScopeLeak` | The branches under one scope, fused and reranked; the branch seam and its request; the failure `scopeCheckedBranch` raises. |
 | `enqueueEmbeddings`, `embedPending`, `sweepEmbeddings`, `EmbeddingStore`, `Embedder`, `EmbeddingPipeline`, `EmbeddingBatch`, `EmbeddingMismatch` | The embedding pipeline, its seams, a batch's result and its one failure. |
 
-## `./discovery`
+## `./Discovery`
 
 Discovery, after website's `packages/database/src/discovery.ts` and gardeneria's `lib/server/discovery.ts`: what a site's feeds and sitemap list. The kernel owns _what is discoverable_ and the metadata; the serialisers stay the application's.
 
@@ -52,7 +52,7 @@ The optional members (a cursor's and a request's `locale`, the request's `after`
 ```ts
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { defineDiscovery, lastModified, purgeHintHook } from "@thomasfosterau/pulpit/discovery";
+import { defineDiscovery, lastModified, purgeHintHook } from "@thomasfosterau/pulpit/Discovery";
 
 const discovery = defineDiscovery({
   leaf: postsDefinition, // the leaf's own `SubtypeDefinition`
@@ -86,8 +86,8 @@ const hooks = { before: [], after: [purgeHintHook({ publishGated: true, emit: pu
 - **What is discoverable.** A node is listed only when **an anonymous reader may list it**, **its resource is publicly serveable** and **it has a canonical path**. The first is the leaf's own `list`, bound to the anonymous viewer: a `private`, `followers`, draft, unapproved or tombstoned row is never listed, by the filters every read uses (`SEC-AUTH-ENUM-001`). On a publish-gated leaf it is the **live** version, never the head, and a node never published, unpublished or published only at a future stamp is not listed. The second is `isPubliclyServeable` (`CACHE-AUTH-005`), `serveablePolicy` at the leaf's posture unless the family declares `serveable`: whatever a feed lists, a public cache may hold. The resource is read as JSON:API (`attributes`); on a gated leaf it must carry `publishedAt`.
 - **Keyset paging.** The feed orders by `feedColumn` descending, `NULL`s last, then `id` ascending; the sitemap by `id`. `next` is the cursor after the last row the page _read_, so a page the guards thinned may hold fewer items than `limit` (clamped to `MAX_PAGE_LIMIT`) and paging never skips or repeats a node. `feedColumn` must be a sortable column of the leaf (on a gated leaf one of `LeafStore.columns` the live view projects, such as `publishedAt`) holding a timestamp, text or number; anything else is a defect. Each item's path is one `PathStore.canonicalOf` read, so a page costs up to `limit` of them.
 - **The metadata projection** (`DiscoveryMetadata`: title, summary, image, schema.org type, published and modified dates) is per family, read from the anonymous resource, and is what the feed item, the page head and its JSON-LD all read, so one mapping serves the three. `lastModified(metadata)` is the sitemap's `lastmod`.
-- **Purge hints.** `purgeHintHook({ publishGated, emit })` is an after hook (it runs once the write has committed) emitting `{ type, id, tags: ["discovery:<type>", "node:<type>:<id>"] }` for every write that can change what the family lists: on a gated leaf `publish`, `unpublish`, `delete`, `restore` and `restoreVersion` (a `create` or `update` touches only the head); on any other leaf, every write. A scheduled publication whose stamp arrives later fires no hook: purge from the sweep over `./publication`'s `duePublications`.
-- **A localised leaf** lists one item per `(node, locale)` its view lists, each carrying its `locale` (none for a node whose version carries no locale), under the same three checks on that locale's row: on a publish-gated leaf, a locale only the unpublished head carries is not listed. The **feed** orders by `feedColumn`, then the locale (`NULL`s last), then `id`, and its cursor carries the locale, so a page may end inside a node's locales without a skip or a repeat; `request.locale` narrows it to one language (`./filter`'s `locale` arm). The **sitemap** orders by node and never splits a node's locales across pages (a page that would end inside a node ends before it; a page holding only that node holds all of its locales, even past `limit`), so each item's `alternates`, the node's other listed locales by code point, is complete: the sitemap's `hreflang` set. The canonical path stays per node and is read once per node; each alternate's URL is the application's to build from the path and the locale.
+- **Purge hints.** `purgeHintHook({ publishGated, emit })` is an after hook (it runs once the write has committed) emitting `{ type, id, tags: ["discovery:<type>", "node:<type>:<id>"] }` for every write that can change what the family lists: on a gated leaf `publish`, `unpublish`, `delete`, `restore` and `restoreVersion` (a `create` or `update` touches only the head); on any other leaf, every write. A scheduled publication whose stamp arrives later fires no hook: purge from the sweep over `./Publication`'s `duePublications`.
+- **A localised leaf** lists one item per `(node, locale)` its view lists, each carrying its `locale` (none for a node whose version carries no locale), under the same three checks on that locale's row: on a publish-gated leaf, a locale only the unpublished head carries is not listed. The **feed** orders by `feedColumn`, then the locale (`NULL`s last), then `id`, and its cursor carries the locale, so a page may end inside a node's locales without a skip or a repeat; `request.locale` narrows it to one language (`./Filter`'s `locale` arm). The **sitemap** orders by node and never splits a node's locales across pages (a page that would end inside a node ends before it; a page holding only that node holds all of its locales, even past `limit`), so each item's `alternates`, the node's other listed locales by code point, is complete: the sitemap's `hreflang` set. The canonical path stays per node and is read once per node; each alternate's URL is the application's to build from the path and the locale.
 
 | Export | What it is |
 | --- | --- |

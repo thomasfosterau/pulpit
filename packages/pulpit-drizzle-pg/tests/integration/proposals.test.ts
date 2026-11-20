@@ -8,8 +8,8 @@
  */
 
 import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
-import { always, and, eq, isNull, type ListFilter } from "@thomasfosterau/pulpit/filter";
-import type { ProposalRow } from "@thomasfosterau/pulpit/proposals";
+import { always, and, eq, isNull, type ListFilter } from "@thomasfosterau/pulpit/Filter";
+import type { ProposalRow } from "@thomasfosterau/pulpit/Proposals";
 import {
   makeInMemoryLeafStore,
   makeInMemoryProposalStore,
@@ -26,9 +26,9 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { makeLeafStores } from "../../src/leaf-store.ts";
-import { makeProposalStore } from "../../src/proposals.ts";
-import { makeVersionChains } from "../../src/version-chain.ts";
+import { makeLeafStores } from "../../src/LeafStore.ts";
+import { makeProposalStore } from "../../src/Proposals.ts";
+import { makeVersionChains } from "../../src/VersionChain.ts";
 import { owners, proposals, tables, tree, views } from "../fixtures/tree.ts";
 
 const database = makePgDatabase({ relations: {}, key: "PulpitProposalDatabase" });

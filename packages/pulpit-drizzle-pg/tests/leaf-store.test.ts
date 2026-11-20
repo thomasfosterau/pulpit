@@ -11,7 +11,7 @@ import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
 import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
 import { getTableName } from "drizzle-orm";
 import { pgSchema, text, timestamp } from "drizzle-orm/pg-core";
-import { always, eq } from "@thomasfosterau/pulpit/filter";
+import { always, eq } from "@thomasfosterau/pulpit/Filter";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -20,7 +20,7 @@ import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
 import * as Str from "effect/String";
 import { describe, expect, it } from "vite-plus/test";
-import { makeLeafStores, makeNodeOwnerTable, OWNER_COLUMN } from "../src/leaf-store.ts";
+import { makeLeafStores, makeNodeOwnerTable, OWNER_COLUMN } from "../src/LeafStore.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";
 import { database, owners, tables, tree, views } from "./fixtures/tree.ts";
 

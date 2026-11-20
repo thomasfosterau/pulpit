@@ -28,7 +28,7 @@ import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
 import * as R from "effect/Record";
 import * as Schema from "effect/Schema";
-import { defineFileWrites, sha256Hex, type Upload } from "../src/blobs.ts";
+import { defineFileWrites, sha256Hex, type Upload } from "../src/Blobs.ts";
 import {
   defineAlbum,
   defineMediaUploads,
@@ -41,8 +41,8 @@ import {
   renditionWidth,
   type MediaMetadata,
   type RenditionPolicy,
-} from "../src/media.ts";
-import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/subtype.ts";
+} from "../src/Media.ts";
+import { defineSubtype, ownedAccess, type LeafRow, type Viewer } from "../src/Subtype.ts";
 import {
   makeInMemoryBlobStore,
   makeInMemoryVersionChain,

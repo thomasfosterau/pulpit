@@ -4,7 +4,7 @@
  * One `-pg/chain` `LeafChain` as the kernel's `VersionChain` port
  *: the kernel's inputs mapped onto the chain's, and
  * the chain's tagged errors mapped one to one onto the kernel's. Off the
- * public surface: `makeVersionChains` (`../version-chain.ts`) builds every
+ * public surface: `makeVersionChains` (`../VersionChain.ts`) builds every
  * leaf's port through it, and the unit suite drives it over a fake chain.
  *
  * @since 0.0.0
@@ -24,7 +24,7 @@ import {
   type UpdateInput,
   type VersionChain,
   type VersionSnapshot,
-} from "@thomasfosterau/pulpit/version-chain";
+} from "@thomasfosterau/pulpit/VersionChain";
 import * as Pg from "@thomasfosterau/effect-drizzle-ext-pg/chain";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -35,7 +35,7 @@ import { isNodeId } from "./node-id.ts";
 /**
  * The root version table's injected extras the port writes: the contributor
  * whose accepted proposal a version applies (`versionColumns: { proposedBy }`
- * in the tree's `makeTreeTables` config, docs/drizzle-pg.md → `./version-chain`).
+ * in the tree's `makeTreeTables` config, docs/drizzle-pg.md → `./VersionChain`).
  *
  * @since 0.0.0
  */

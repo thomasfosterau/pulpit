@@ -19,7 +19,7 @@ import {
   ReferenceImportDeclarationError,
   type ImportBatch,
   type MergeMode,
-} from "../src/reference-import.ts";
+} from "../src/ReferenceImport.ts";
 import {
   defineSubtype,
   ownedAccess,
@@ -28,7 +28,7 @@ import {
   type LeafRow,
   type Viewer,
   type ViewerAccount,
-} from "../src/subtype.ts";
+} from "../src/Subtype.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryExternalIdStore,

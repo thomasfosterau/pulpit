@@ -14,8 +14,8 @@ import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as TestClock from "effect/testing/TestClock";
-import { published } from "../src/filter.ts";
-import { defineVersionChain } from "../src/version-chain.ts";
+import { published } from "../src/Filter.ts";
+import { defineVersionChain } from "../src/VersionChain.ts";
 import {
   makeInMemoryVersionChain,
   makeInMemoryEdgeStore,

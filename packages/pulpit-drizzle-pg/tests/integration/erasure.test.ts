@@ -15,7 +15,7 @@
  */
 
 import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
-import type { DocumentHash } from "@thomasfosterau/pulpit/documents";
+import type { DocumentHash } from "@thomasfosterau/pulpit/Documents";
 import {
   makeInMemoryAccountErasureStore,
   makeInMemoryDocumentStore,
@@ -33,10 +33,10 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { makeDocumentStore } from "../../src/documents.ts";
-import { makeAccountErasureStore, makePurgeStore } from "../../src/erasure.ts";
-import { makeLeafStores } from "../../src/leaf-store.ts";
-import { makeVersionChains } from "../../src/version-chain.ts";
+import { makeDocumentStore } from "../../src/Documents.ts";
+import { makeAccountErasureStore, makePurgeStore } from "../../src/Erasure.ts";
+import { makeLeafStores } from "../../src/LeafStore.ts";
+import { makeVersionChains } from "../../src/VersionChain.ts";
 import { documents, owners, tables, tree, views } from "../fixtures/tree.ts";
 
 const database = makePgDatabase({ relations: {}, key: "PulpitErasureDatabase" });
