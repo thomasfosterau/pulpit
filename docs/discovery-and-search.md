@@ -36,12 +36,7 @@ deepStrictEqual(
 
 `/ask`-style retrieval stays application code over these reads.
 
-| Export | What it is |
-| --- | --- |
-| `fuseRankings(branches, options?)`, `BranchRanking`, `RankedHit`, `FusedHit`, `FusionOptions`, `RRF_K` | Reciprocal rank fusion and its inputs, output and options. |
-| `applyReranking(candidates, order)`, `RerankerSeam` | A reranker's reordering, which can't add or drop a hit, and the seam. |
-| `hybridSearch(definition)`, `HybridSearchDefinition`, `SearchBranch`, `BranchRequest`, `SearchScopeLeak` | The branches under one scope, fused and reranked; the branch seam and its request; the failure `scopeCheckedBranch` raises. |
-| `enqueueEmbeddings`, `embedPending`, `sweepEmbeddings`, `EmbeddingStore`, `Embedder`, `EmbeddingPipeline`, `EmbeddingBatch`, `EmbeddingMismatch` | The embedding pipeline, its seams, a batch's result and its one failure. |
+**Entry points:** `hybridSearch` (branches fused by `fuseRankings`, reordered by a `RerankerSeam`), and the embedding pipeline's `enqueueEmbeddings`, `embedPending` and `sweepEmbeddings`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Discovery`
 
@@ -89,10 +84,4 @@ const hooks = { before: [], after: [purgeHintHook({ publishGated: true, emit: pu
 - **Purge hints.** `purgeHintHook({ publishGated, emit })` is an after hook (it runs once the write has committed) emitting `{ type, id, tags: ["discovery:<type>", "node:<type>:<id>"] }` for every write that can change what the family lists: on a gated leaf `publish`, `unpublish`, `delete`, `restore` and `restoreVersion` (a `create` or `update` touches only the head); on any other leaf, every write. A scheduled publication whose stamp arrives later fires no hook: purge from the sweep over `./Publication`'s `duePublications`.
 - **A localised leaf** lists one item per `(node, locale)` its view lists, each carrying its `locale` (none for a node whose version carries no locale), under the same three checks on that locale's row: on a publish-gated leaf, a locale only the unpublished head carries is not listed. The **feed** orders by `feedColumn`, then the locale (`NULL`s last), then `id`, and its cursor carries the locale, so a page may end inside a node's locales without a skip or a repeat; `request.locale` narrows it to one language (`./Filter`'s `locale` arm). The **sitemap** orders by node and never splits a node's locales across pages (a page that would end inside a node ends before it; a page holding only that node holds all of its locales, even past `limit`), so each item's `alternates`, the node's other listed locales by code point, is complete: the sitemap's `hreflang` set. The canonical path stays per node and is read once per node; each alternate's URL is the application's to build from the path and the locale.
 
-| Export | What it is |
-| --- | --- |
-| `defineDiscovery(definition)`, `DiscoveryDefinition`, `DiscoveryOps` | The factory, its declaration and the two reads. |
-| `DiscoveryRequest`, `DiscoveryCursor`, `DiscoveryPage`, `DiscoveryItem` | A page request, its cursor, a page and one item. |
-| `DiscoveryMetadata`, `DiscoveryImage`, `lastModified` | The metadata projection and the sitemap's `lastmod`. |
-| `purgeHintHook(options)`, `PurgeHint` | The purge-hint after hook and its event. |
-| `DiscoveryDeclarationError` | The defect for a feed column that doesn't order. |
+**Entry points:** `defineDiscovery` for the feed and sitemap reads, and `purgeHintHook` for the purge hints. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).

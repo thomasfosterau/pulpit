@@ -30,11 +30,7 @@ const posts = definePurge({
 - **A dedicated rung.** `canPurge` is checked before anything is read, so a caller below it gets `Unauthorized` or `Forbidden` for every id alike. Erasure is one step: a live node purges as a tombstoned one does.
 - **The writes bypass `subtypeHandlers`** and the leaf's lifecycle hooks. Pass the leaf's `cache` so no cached copy outlives the erasure (`CACHE-AUTH-005`).
 
-| Export | What it is |
-| --- | --- |
-| `definePurge(definition)`, `PurgeDefinition`, `PurgeOps` | The operation (`purge`) and what it binds. |
-| `PurgeStore`, `ErasedReferences` | The erasure seam (see [Seams](seams.md#seams)) and the hashes an erased node referenced. |
-| `PurgeReport` | What a purge did: the documents and bytes deleted, and the bytes left behind. |
+**Entry points:** `definePurge`, over the `PurgeStore` seam ([Seams](seams.md#seams)); `PurgeReport` is what a purge did. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Erasure`
 
@@ -90,9 +86,4 @@ const erasure = defineAccountErasure({
 - **The gate:** `canErase(actor, accountId)` is checked before anything is read (`Unauthorized` / `Forbidden`), and erasing the tombstone account itself fails `TombstoneErasure`.
 - **The application deletes the account row itself** once a run answers `complete: true`; nothing the kernel stores names it then, save the earlier versions' attribution, kept by design (so a version table's actor column must not hold a foreign key that blocks the delete, or must point at an account row kept for it).
 
-| Export | What it is |
-| --- | --- |
-| `defineAccountErasure(definition)`, `AccountErasureDefinition`, `AccountErasureOps` | The operation (`erase`) and what it binds. |
-| `Disposition`, `ErasurePresets`, `ErasureFamily` | A family's declaration (its chain, cache and `accountColumns`), and the owner's defaults. |
-| `AccountErasureStore`, `AccountRelation` | The owner-record seam, with the redaction marker's read (see [Seams](seams.md#seams)), and an application relation. |
-| `ErasureSummary`, `TombstoneErasure`, `DEFAULT_ERASURE_BATCH` | What a run did, the tombstone refusal, the default batch. |
+**Entry points:** `defineAccountErasure`, with `ErasurePresets` for the owner's defaults and the `AccountErasureStore` seam ([Seams](seams.md#seams)); `ErasureSummary` is what a run did. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).

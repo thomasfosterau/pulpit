@@ -125,17 +125,7 @@ const wp = defineWordPress({
 - **Caching** (`CACHE-AUTH-005`). `Cache-Control: public` only for an anonymous viewer when every item, embeds included, is its binding's `serveable`; otherwise `private, no-store`.
 - **Batched reads** (`PERF-DB-001`). One response is one node `encode`, one author `encode` (plus one profile read with `_embed`), one `render`, and one `getMany` per related type, however many items it carries. `orderby=include` reads the whole `include` list (at most 100 items) and orders it in memory.
 
-| Export | What it is |
-| --- | --- |
-| `defineWordPress(config)`, `WordPressConfig`, `WordPressApi`, `WordPressRequest`, `WordPressResponse` | The API, its declaration, and one request and response. |
-| `bind(binding)`, `PostTypeBinding`, `BoundPostType`, `ShownItem` | One leaf bound to a post type: its gated operations (`get`, `getMany`, `list`, `owners`), view columns, field mapper and serveability. |
-| `bindTaxonomy(binding)`, `TaxonomyBinding`, `BoundTaxonomy`, `ShownTerm`, `TermFields`, `TermColumns`, `AssignmentEnd`, `Taxonomy` | One term leaf and its assignment edge family bound to a taxonomy (`category`, `post_tag`): the leaf's gated operations, the family's `list` / `memberFilter` / `countBy`, its two ends, and the mappers. |
-| `SearchRequest` | What a binding's `search` is asked: the text, the request's other filters as `where`, the soft-delete arm and the hit cap. |
-| `LocalisedReads`, `LocalisedItem` | A bound localised leaf's `?lang=` reads (`BoundPostType.localised`): its default locale, the fallback read of one node and the per-node fallback list, and the item with the locale it was served in. |
-| `PostFields`, `MediaFields`, `PostColumns` | What a binding reads off its resource, and the view columns its parameters filter and sort by. |
-| `fileMediaFields(file, blobs, described)` | An attachment's `MediaFields` from a `./Blobs` file version. |
-| `RenderRequest`, `Author`, `AuthorSeam`, `Site` | The render seam's request, the author seam and its profile, and the site. |
-| `PostType`, `PostStatus`, `MAX_LIST_PARAMETER` | The served post types, the statuses, and the list-parameter cap (100). |
+**Entry points:** `defineWordPress`, with `bind` for a post type and `bindTaxonomy` for a taxonomy. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Http`
 
