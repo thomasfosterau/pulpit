@@ -112,16 +112,7 @@ const termsOf = <Following, E, R>(
 ) => ops.list({ limit: 50, offset: 0, where: eq("noteId", noteId) });
 ```
 
-| Export | What it is |
-| --- | --- |
-| `defineEdgeOps(definition)`, `EdgeDefinition`, `EdgeOps` | The factory, its declaration (type, ends, store, viewer seams, create mapping, conflict policy, write gate, row → resource mapper) and the operations it produces. |
-| `EdgeEnd`, `EdgeEnds`, `EndpointView` | One end (its edge column, endpoint type and access, the endpoint view, `maxEdges`), the ends by alias, and the endpoint view a `LeafStore` satisfies. |
-| `canViewEndpoint`, `endpointFilter`, `endpointColumn(alias, column)` | The per-endpoint read predicate, the same facts as a list filter over every end, and the filter column naming an end's node column. |
-| `EdgeWriteGate`, `EdgeWriteRequest`, `corpusWriteGate`, `rungGate(rung)` | The write gate, what it is asked about, the default corpus-rung gate, and a gate on any rung. |
-| `EdgeStore`, `EdgeRow`, `EdgeValues`, `EdgeListRequest`, `EdgeWrite` | The edge-table seam, its row and column values, the list request, and a create's outcome. |
-| `EdgeNotFound`, `EdgeConflict`, `EdgeCardinalityExceeded` | A missing or hidden edge (404), an unresolved unique-key collision (409, never naming the stored edge), and a create past a declared limit (409). |
-| `EdgeValidity`, `validAt(validity, at)`, `CloseValidity`, `InvalidValidity` | A family's validity interval columns, the list filter for the edges valid at an instant, the store's interval-closing method, and a malformed or widening interval (422). |
-| `EdgeDeclarationError` | A malformed family (an end alias with a `.`, a `maxEdges` that isn't a positive safe integer, a `validity` naming one column twice, or a `validity` over a store without `closeValidity`), thrown by `defineEdgeOps` when the family is declared, never as an Effect failure. |
+**Entry points:** `defineEdgeOps`, `EdgeDefinition`, `EdgeOps`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Paths`
 
@@ -143,12 +134,7 @@ pages.resolve("about"); // { kind: "node", id, resource } | { kind: "redirect", 
 
 Free-form redirects (patterns, a 404 log) are the site's. The path's syntax is the attribute's schema (effect-schema-ext's `Ids.slug`, once it publishes).
 
-| Export | What it is |
-| --- | --- |
-| `routable(ops, config)`, `RoutableOps`, `RoutableConfig` | A leaf's operations with path claims and `resolve`, and what it takes: the path column, the `PathStore` and the chain store. |
-| `Resolution` | What a path resolves to: `{ kind: "node", id, resource }` or `{ kind: "redirect", id, path }`. |
-| `PathStore`, `PathEntry` | The path-table seam and one stored path (its node, canonical or alias). |
-| `PathTaken`, `PathNotFound` | Another node holds the path canonically (409); no node the viewer can read answers to it (404). |
+**Entry points:** `routable`, `RoutableOps`, `RoutableConfig`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Pages`
 
@@ -190,11 +176,7 @@ resolve("about", "pt-BR");
 
 Navigation menus are an [ordered link list](#links) over `./Collections`, and there is no page builder.
 
-| Export | What it is |
-| --- | --- |
-| `resolveLocalised(ops, config)`, `LocalisedRoutes`, `LocalisedRoutesConfig` | The page resolution read over a routable, localised leaf, the two reads it joins, and its default locale. |
-| `LocalisedResolution` | What it answers: `{ kind: "node", id, locale, resource }` or `{ kind: "redirect", id, path }`. |
-| `localeFallbacks(requested, defaultLocale)` | The locale order a read tries. |
+**Entry points:** `resolveLocalised`, `LocalisedRoutes`, `LocalisedRoutesConfig`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Collections`
 
@@ -228,12 +210,7 @@ items.list(listId, { limit: 50, offset: 0 }); // { rows: [{ memberId, index, res
 - **Bounded** (`SEC-INPUT-003`). A collection holds at most `MAX_COLLECTION_SIZE` (1000) members (`CollectionFull` past it), so every read and reorder reads the whole order once. Pages are clamped to `MAX_PAGE_LIMIT`.
 - **Failures.** Adding a member twice is `AlreadyMember` (409); moving or removing one that isn't there is `NotMember` (404). `move` clamps the index to the order's bounds.
 
-| Export | What it is |
-| --- | --- |
-| `defineCollection(definition)`, `CollectionDefinition`, `CollectionOps`, `CollectionMode`, `CollectionMember` | The factory, its declaration, the operations (`list`, `append`, `move`, `remove`, `resync`), the two models and a listed member. |
-| `hideRecordedOrder(column, toResource)` | A parent leaf's `toResource` without a versioned family's order column (`EDGE-001`). |
-| `CollectionStore`, `CollectionEntry`, `MAX_COLLECTION_SIZE` | The membership table seam (see [Seams](seams.md#seams)), one member's place and the size bound. |
-| `AlreadyMember`, `NotMember`, `CollectionFull` | The failures: 409, 404, 409. |
+**Entry points:** `defineCollection`, `CollectionDefinition`, `CollectionOps`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Links`
 
@@ -274,11 +251,7 @@ nav.list(menuId, "pt-BR");
 - **Nested lists, read in place.** A `{ kind: "list", id }` target is read by the same gated read, recursively, and returned as `{ kind: "list", id, links }` with its links renumbered from 0. It is omitted like any hidden entry (`SEC-AUTH-ENUM-001`) when the viewer can't read its parent, when none of its links is one they may follow (it is never returned empty), when it is the list it sits in or one above it (a cycle), and when it would sit deeper than `maxDepth` levels (the top list is level 1; `1` reads a flat list; `DEFAULT_LINK_DEPTH`, 3, when absent). A list reached by two entries, not above either, is read under each. Cycles are cut at read time, not refused at write time: the collection's writes know nothing of what an entry targets.
 - **Bounded** (`SEC-INPUT-003`): at most `MAX_COLLECTION_SIZE` entries over every level together, each read through its own gate, taken in reading order (the top list's entries, then each nested list where its entry sits); a nested list the budget leaves empty is omitted.
 
-| Export | What it is |
-| --- | --- |
-| `defineLinkList(definition)`, `LinkListDefinition`, `LinkListOps` | The factory, its declaration and its one read, `list`. |
-| `Link`, `LinkTarget`, `FollowedTarget` | A returned link, what an entry points at (a path, a node or a nested list), and what that resolved to. |
-| `DEFAULT_LINK_DEPTH` | The nesting cap a definition without `maxDepth` reads under: 3. |
+**Entry points:** `defineLinkList`, `LinkListDefinition`, `LinkListOps`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Relations`
 
@@ -340,8 +313,4 @@ const byline = defineCollection({ type: "post-authors", parent: posts, members: 
 - **Accepted answers.** `acceptedAnswerGate` runs after `./Edges` has checked that the viewer can read both ends. It is the question's own write gate (`authorize`: its owner or the moderate rung on an owned question, the corpus-write rung on a reference one), then the constraint that the answer's `parentColumn` names the question (`AnswerNotOfQuestion`, 422, otherwise; only a writer of the question learns it). `maxEdges: 1` at the question holds one accepted answer; changing it is a delete (gated the same way) and a create.
 - **Bylines are credit only**. They are an ordered collection (`./Collections`) of the accounts' profile nodes, read through the profile leaf's own gate and written through the post's write gate. A credited co-author gets no write right: the post's `requireWriter` reads the owner record, never the byline, so a co-author's `update` is `Forbidden`, and so is their edit of the byline.
 
-| Export | What it is |
-| --- | --- |
-| `defineReshares(definition)`, `ReshareDefinition`, `ReshareOps`, `ReshareTarget` | The reshare reads: the target through its own gate, or the placeholder. |
-| `nodeWriteGate(column, type, leaf)` | An edge write gate admitting whoever may write the node at one end. |
-| `acceptedAnswerGate(declaration)`, `AcceptedAnswerDeclaration`, `AnswerNotOfQuestion` | The accepted-answer write gate and its 422. |
+**Entry points:** `defineReshares`, `ReshareDefinition`, `ReshareOps`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).

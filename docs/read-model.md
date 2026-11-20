@@ -100,46 +100,13 @@ It reveals no hidden row and changes no total. Declare `sortable` to sort only b
 - **Durable delivery is the application's.** An after hook runs once, in process, after the commit; a side effect that must not be lost (a queue message, a webhook) belongs in a before hook, as an outbox row the same transaction writes.
 - **Events fire on explicit writes only.** A delete of an already tombstoned node writes nothing and emits nothing. A version stamped to publish in the future emits nothing when its stamp arrives: drive a sweep from a cron with `./Publication`'s `duePublications(since, now)` instead.
 
-| Export | What it is |
-| --- | --- |
-| `defineSubtype(definition)`, `SubtypeDefinition`, `SubtypeOps` | The factory, its declaration (type, access, stores, viewer seams, row → resource mapper) and the operations it produces. |
-| `subtypeHandlers(ops, config)`, `SubtypeHandlers`, `SubtypeHandlersConfig`, `ResourceCacheSeam` | The handler record with cache write-through, its `transact` boundary, the `inTransaction` signal that turns the write-through into an eviction inside an outer transaction, and the cache's write side. |
-| `subtypeResourceHandlers(handlers, config, locale?)`, `SubtypeResourceHandlersConfig` | The record as effect-jsonapi's `ResourceHandlers.make` CRUD handlers, with the decoded-input mappings (see [Seams](seams.md#subtypehandlers-the-handler-record)); given a `LocaleWire`, a localised leaf's (see Localisation, above). |
-| `acceptLanguage(header)`, `localePreferences(requested, defaultLocale)`, `LocaleWire` | The locale on the wire: an `Accept-Language` header's tags by weight, the fallback order a read tries (each tag, its prefixes, the default), and the request-header seam the localised handlers read. |
-| `LifecycleHooks`, `BeforeWriteHook`, `BeforeWriteEvent`, `AfterWriteHook`, `AfterWriteEvent`, `WriteRejected` | The lifecycle hook seam: a leaf's before hooks (inside the write; may transform the patch or refuse with `WriteRejected`) and after hooks (after the commit; never fail the write), and their events. |
-| `composeHooks(...sets)`, `noHooks()`, `cacheWriteThrough(cache)` | Concatenate hook sets in order; the empty set; the resource cache's write-through as an after hook. |
-| `LeafAccess`, `ownedAccess(options?)` | The gate selector (`reference`, with an optional `followersOfColumn` and `groupColumn`, / `owned` with its view columns, the draft, moderation and group columns among them), and the owned declaration with the conventional column names (`{ draft?, moderation?, group? }`). |
-| `Viewer`, `ViewerAccount`, `AccessPolicy` | The viewer seam and the four role axes (`canViewPrivate`, `canViewDeleted`, `canModerate`, `canWriteCorpus`). |
-| `FollowerSeam`, `nobodyFollows(nobody)` | The follower seam and its fail-closed default. |
-| `ReadScope`, `readScopeFor(viewer, policy, followers)` | A viewer's owned-material read scope (`all` / `public` / `member`). |
-| `canViewOwned`, `OwnedFacts` | The owned-row read predicate and the facts it reads. |
-| `ownedListFilter`, `softDeleteFilter`, `referencePrivacyFilter` | The list arms: owned visibility, the soft-delete axis, and the reference privacy axis (given `Option.some({ access, followers })`, with its followers arm). Pass that fourth argument whenever the leaf declares `followersOfColumn`: the three-argument form agrees with `get` only for a leaf without it. |
-| `requireCreator`, `requireWriter` | The write gates for a create and for a write to an existing row. On a reference leaf `requireWriter` is the rung check alone; `defineSubtype` follows it with `get`'s read check. |
-| `Unauthorized`, `Forbidden`, `InvalidListOrder` | The gates' failures: no signed-in viewer (401); a viewer below the rung (403, never used to hide a row). The first two are effect-auth's `Guard` errors, re-exported, so they carry a `message` and an optional `code`. And `list`'s: an order key on a column that isn't sortable, or not shaped as an order (400; `column: ""` when the failing key has no string column). |
-| `SubtypeDeclarationError` | Thrown by `defineSubtype` when the leaf is declared: a `sortable`, `search` or `locales` entry that isn't a column of the view, or a translated column the read gate reads; and by `defineSearchProjection` and `defineLocaleLevel`, for a malformed declaration. |
-| `defineLocaleLevel(declaration)`, `LocaleLevel`, `LocalisedResource`, `SubtypeOps.getLocalised`, `CreateRequest`, `RestoreRequest` | A localised leaf's translated columns, the fallback read's `{ locale, resource }`, the read itself, and the write inputs that carry a locale level (see Localisation, above). |
-| `SubtypeOps.listLocalised`, `LocalisedListQuery` | The per-node fallback list and the store query it reads (`LeafStore` / `LiveView.listLocalised`; see Seams). |
-| `defineSearchProjection(declaration)`, `SearchProjection`, `SearchField`, `SearchWeight` | A leaf's searchable projection: its indexed view columns, their weights (`A`–`D`) and its language column. |
-| `searchScopeFilter(leaf, viewer, request)`, `searchHeadFor(leaf, viewer)`, `hydrateSearchHits(ops, hits)` | The read scope a search applies to its hits, the same filter `list` reads under; the heads a search over a publish-gated leaf ranks, the `headFor` `list` hands `LiveView.list`; and the hits' gated re-read, in rank order. |
-| `LeafStore`, `LeafRow`, `Page`, `ListRequest`, `ListOrder`, `MAX_PAGE_LIMIT` | The current-version view seam, its row (with the head `version`) and page shapes, the list request and one key of its order, and the page cap (1000). |
-| `versionMeta(row)`, `VersionMeta`, `versionEtag(resource)`, `VersionedResource` | The resource object's `meta` for the row's head version (`{ version: "3" }`), and a single-resource response's `ETag` value read back from it (`Option.some('"3"')`, none without a decimal `meta.version`). |
-| `PublicationDeclaration`, `LiveView`, `PublicationStore`, `PublicationFact` | The live pointer's opt-in: the live-version view and the append-only publication log (see [Seams](seams.md#seams)), and one fact. |
-| `PublicationOps`, `PublishOptions`, `PublicationWrite`, `NotPublished` | The publication operations (`publish`, `unpublish`, `discardDraft`, `facts`, `scheduled`), what `publish` takes and what both report, and `discardDraft`'s failure with nothing live (409). |
-| `SubtypeOps.owners(request)`, `OwnersRequest`, `readableOwners(leaves, request)`, `OwnerSetTooLarge` | The accounts that own at least one row the viewer may list. `owners` is one leaf's distinct owner ids, read under exactly `list`'s scope (and its head-or-live choice on a publish-gated leaf), in code-point order with the distinct total, optionally narrowed to `among` (empty on a reference leaf). `readableOwners` is the exact union across leaves, one read per leaf; a leaf with more than `MAX_PAGE_LIMIT` readable owners fails `OwnerSetTooLarge` rather than answer a short union. A hidden row never contributes its owner (`SEC-AUTH-ENUM-001`). |
-| `SubtypeOps.publicResource`, `SubtypeOps.authorize` | The resource as an anonymous reader gets it (what a public cache may hold), and the write gate on its own, for a surface outside the chain. |
+**Entry points:** `defineSubtype`, `SubtypeDefinition`, `SubtypeOps`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Publication`
 
 The publication axis (stamped AND arrived), the moderation state, and the KV cache's serveability policy. `ServeabilityOptions`' `owned`, `publishGated` and `now` are bare `?: T`: a caller that has no value omits the key rather than passing `undefined`.
 
-| Export | What it is |
-| --- | --- |
-| `isPublishedAt(stamp, now)` / `isNotPublishedAt` | Stamped AND arrived, and its exact complement (a future stamp is scheduled, not out). |
-| `publishedFilter(column, wanted)` | The axis as a list-filter arm; none in, no predicate out. |
-| `duePublications(since, now, column?)` | The rows whose stamp arrived in `(since, now]`, as a list filter, for an application's cron to sweep scheduled publications: a write's events fire when it is made, never when a future stamp arrives. Abutting windows (each run's `now` the next run's `since`) see each row once. |
-| `ModerationState` | `pending \| approved \| rejected`. |
-| `isPubliclyServeable(resource, { owned?, publishGated?, now? })` | The KV cache's security gate (`CACHE-AUTH-005`): only what every viewer may read is serveable. |
-| `serveablePolicy(options)` | The same gate as a resource cache's `serveable` hook (see [Seams](seams.md#seams)). |
+**Entry points:** `isPubliclyServeable`, the cache's gate, and the publication predicates `isPublishedAt` and `isNotPublishedAt`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Cache`
 
@@ -173,8 +140,4 @@ postCache.get(id); // Option<Post>
 - **Locale keys under one generation**. A `set` or `get` that names a locale (a localised leaf's read-through fill) uses its own `(id, locale)` key, and the id's own key holds the **generation**, the rank of the newest write the id has seen. A locale `set` raises the generation first, with the same conditional write, and writes its entry only if that succeeded; a locale entry is served only while its rank equals the generation. So a fill behind the id's version, in any locale, is a no-op, a newer version in one locale retires every other locale's entry, an eviction wins a tie in every locale, and `delete` evicts every locale with one conditional write. The locale key is the id's key, U+001F and the locale; an id never holds U+001F. `get(id, locale)` reads a locale entry; an unlocalised `set` / `get` is unchanged.
 - **Never fails.** A KV failure reads as a miss and skips a write: the store stays the source of truth.
 
-| Export | What it is |
-| --- | --- |
-| `makeResourceCache(options)`, `ResourceCacheOptions`, `ResourceCache` | The cache, its options, and the seam plus `get`. |
-| `VersionedKv`, `KvEntry` | The KV seam (see [Seams](seams.md#seams)) and one stored entry (its rank and encoded value, none for an eviction). |
-| `DEFAULT_TOMBSTONE_TTL_SECONDS` | How long an eviction is kept by default: 86 400 seconds. |
+**Entry points:** `makeResourceCache`, `ResourceCacheOptions`, `ResourceCache`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).

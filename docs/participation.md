@@ -38,11 +38,7 @@ const comments = defineComments({
   - A `maxDepth` that isn't a non-negative safe integer throws `CommentDeclarationError` when the family is declared.
 - **Stays outside the kernel:** the document grammar (prosekit-utilities), captcha and spam handling, and the UI. Reactions are [`./Reactions`](#reactions).
 
-| Export | What it is |
-| --- | --- |
-| `defineComments(definition)`, `CommentsDefinition`, `CommentOps`, `CommentCreate`, `CommentListRequest`, `CommentTarget` | The family, its declaration, the operations (`create`, `get`, `listByTarget`), their inputs, and a target leaf's read. |
-| `canViewModerated`, `moderationListFilter`, `ModeratedColumns` | The moderation gate as a row predicate and as a list filter, and the columns it reads. |
-| `CommentDepthExceeded`, `CommentDeclarationError` | A reply past `maxDepth` (422); a malformed `maxDepth`, thrown at declaration. |
+**Entry points:** `defineComments`, `CommentsDefinition`, `CommentOps`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Reactions`
 
@@ -69,12 +65,7 @@ reactions.tally(pageOfPostIds); // HashMap<postId, { counts, total }>
 - **Account erasure** deletes a member's reactions through the store's `eraseAccount`; no reaction operation exposes it.
 - **Block and mute** suppress interaction only: a family gates `react` on the social graph once it lands; a tally counts every account's reaction.
 
-| Export | What it is |
-| --- | --- |
-| `defineReactions(definition)`, `ReactionsDefinition`, `ReactionOps`, `Tally` | The factory, its declaration, the operations (`react`, `unreact`, `tally`, `mine`) and a node's tally. |
-| `reactionKinds(kinds)`, `ReactionKinds`, `ReactionDeclarationError` | The family's vocabulary and its import-time check. |
-| `ReactionStore`, `ReactionRow` | The table seam (see [Seams](seams.md#seams)) and one stored reaction. |
-| `InvalidReactionKind` | An undeclared kind: 422. |
+**Entry points:** `defineReactions`, `ReactionsDefinition`, `ReactionOps`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Budgets`
 
@@ -107,13 +98,7 @@ const reports = defineReports({ /* … */ budget }); // throttles file
 - **One counter seam, two shapes**. `countingCounter(store)` is gardeneria's count within the write's transaction: one indexed `count(*)` of the account's writes since the window opened, with the write's own row as the spend. It is exact but not atomic: two concurrent transactions can both count `limit - 1` and both write. A family that must hold its limit under concurrency fills `BudgetCounter.take` with an atomic counter instead (a Durable Object, a row taken `FOR UPDATE`); see [Seams](seams.md#seams).
 - **A malformed budget** (a `limit` or `windowSeconds` that isn't a positive safe integer) throws `BudgetDeclarationError` when it is bound, never as an Effect failure.
 
-| Export | What it is |
-| --- | --- |
-| `WriteBudget`, `bindBudget(definition)`, `BoundBudget` | The declaration (limit, window, exempt rung), its binding to a family's type, counter and policy, and the bound budget's `spend`. |
-| `budgetHook(bound, actions?)` | The bound budget as a chain write's before hook. |
-| `BudgetCounter`, `BudgetRequest`, `countingCounter(store)`, `WriteCountStore` | The counter seam and what it is asked; the count-within-the-transaction counter and the count it reads (see [Seams](seams.md#seams)). |
-| `RATE_LIMITED`, `isRateLimited(error)` | The refusal's reason, and the test for it. |
-| `BudgetDeclarationError` | A malformed budget, thrown by `bindBudget`. |
+**Entry points:** `WriteBudget`, `bindBudget`, `BoundBudget`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Social`
 
@@ -139,12 +124,7 @@ social.silencedFilter("ownerId"); // the opt-in read filter: drop the authors th
 - **The follower seam.** `socialFollowers(store)` is `./Subtype`'s `FollowerSeam` over the graph, so a `followers` row is readable by its owner's followers, and stops being the moment the follow ends.
 - **Account erasure** deletes every relationship from or to a member through the store's `eraseAccount`.
 
-| Export | What it is |
-| --- | --- |
-| `defineSocial(definition)`, `SocialDefinition`, `SocialOps`, `SocialPageRequest`, `Related`, `RelatedPage` | The factory, its declaration, the operations, a page request, a listed account and a public list's page. |
-| `socialFollowers(store)` | The follower seam over the graph. |
-| `SocialStore`, `Relationship`, `RelationshipKind`, `AccountVisibility` | The relationship table seam (see [Seams](seams.md#seams)), one relationship, its kinds, and the application's account visibility. |
-| `InteractionBlocked`, `SelfRelationship` | The failures: 403 and 422. |
+**Entry points:** `defineSocial`, `SocialDefinition`, `SocialOps`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Audience`
 
@@ -175,12 +155,7 @@ audience.accept(groupId); // the invitee: the pending invitation becomes a membe
 - **Never cache-serveable.** A `group` row isn't `public`, so `isPubliclyServeable` refuses it (`CACHE-AUTH-005`).
 - **Account erasure** deletes an account's memberships through the store's `eraseAccount`, with its pending invitations and the pending invitations it sent, in bounded batches. **A group the erased account owns is reassigned to the tombstone account first**, through the application's `GroupOwnerStore`, so its members keep reading its `group` rows; `GroupOwnership.ownerOf` then answers the tombstone account, which holds no membership. The erasure definition's `disposeGroups` overrides that (see [`./Erasure`](erasure.md#erasure)).
 
-| Export | What it is |
-| --- | --- |
-| `defineAudience(definition)`, `AudienceDefinition`, `AudienceOps`, `MembersPageRequest` | The factory, its declaration, the operations and a page request. |
-| `audienceSeam(store)`, `AudienceSeam` | The audience half of the follower seam, over the membership store. |
-| `MembershipStore`, `GroupOwnership`, `GroupOwnerStore`, `Membership`, `MembershipRole`, `Invitation` | The membership table seam (see [Seams](seams.md#seams)), the application's group owners, their bounded reassignment for account erasure (see [Seams](seams.md#seams)), one membership, its roles, and one pending invitation. |
-| `GroupNotFound`, `MemberNotFound`, `GroupOwnerMembership`, `InvitationNotFound`, `AlreadyMember`, `SelfInvitation` | The failures: 404, 404, 409, 404, 409 and 422. |
+**Entry points:** `defineAudience`, `AudienceDefinition`, `AudienceOps`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Notifications`
 
@@ -235,13 +210,7 @@ const sweep = Effect.gen(function* () {
 - **At-least-once.** The batch is marked processed after its deliveries, so a sweep that stops part-way re-delivers the unprocessed events; `deliver` gets the event, whose `id` is the transport's idempotency key, and the inbox is keyed by it, so a re-run adds no second entry.
 - **The inbox is the viewer's own**: `inbox({ unreadOnly, limit, offset })` newest first, `markRead(ids)` (another account's ids change nothing), `unreadCount`, and `preferences` / `setPreferences` (the declared defaults until set). Each fails `Unauthorized` when anonymous.
 
-| Export | What it is |
-| --- | --- |
-| `defineNotifications(definition)`, `NotificationsDefinition`, `NotificationOps`, `SweepSummary` | The factory, its declaration, the sweep and the inbox operations. |
-| `notificationHook(options)`, `emitting(outbox, write, derive)` | The two ways a write emits, both inside its transaction. |
-| `commentRepliedHook`, `moderationDecidedHook`, `contentFlagged`, `proposalDecided`, `followCreated`, `mentionCreatedHook` (`MentionDeclaration`), `mentionDrafts` | The kernel kinds' derivations. |
-| `KernelNotificationKind`, `NotificationDraft`, `NotificationEvent`, `NotificationSubject` (`nodeSubject`, `accountSubject`), `InboxEntry`, `NotificationPreferences` | The vocabulary. |
-| `OutboxStore`, `InboxStore`, `PreferenceStore`, `DeliverySeam`, `SubjectGate` (`subjectGateFromGet`), `SocialSuppression` (`socialSuppression`), `MentionExtractor` | The seams (see [Seams](seams.md#seams)). |
+**Entry points:** `defineNotifications`, `NotificationsDefinition`, `NotificationOps`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Translation`
 
@@ -281,13 +250,7 @@ const nightly = Effect.gen(function* () {
 - **Human edits.** `humanLineageHook(declaration)` is a before hook: a write that sets a derived locale's translatable column, but no lineage column, is stamped `human`, keeping its source and source version, so a person's revision still goes stale when the source moves on. `stampHumanLineage` is the same transform for a chain-level `ChainHooks.beforeAppendLocales`.
 - **Documents.** The `Translator` seam takes the source locale's translatable column values as they are. A ProseKit document column is the application's to translate segment by segment, without the model ever seeing its structure (prosekit-utilities).
 
-| Export | What it is |
-| --- | --- |
-| `defineTranslation(definition)`, `TranslationDeclaration`, `TranslationOps` | The factory, its declaration and the two operations (`pending`, `sweep`). |
-| `TranslationPair`, `TranslationPageRequest`, `PendingPage`, `SweepSummary`, `SweepConflict` | One pending locale, a page request, a page of pairs, a sweep page's summary and its conflict entries. |
-| `Translator`, `TranslationCandidates`, `TranslationLanding` | The model seam, the candidate-node seam and the landing mode. |
-| `LineageColumns`, `defaultLineageColumns`, `LocaleLineage`, `TranslationMethod`, `lineageOf`, `lineagePatch` | The lineage columns, their default names, a read lineage, its method, and its read and write. |
-| `humanLineageHook(declaration)`, `stampHumanLineage` | The before hook that marks a person's edit, and its pure transform. |
+**Entry points:** `defineTranslation`, `TranslationDeclaration`, `TranslationOps`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./ReferenceImport`
 
@@ -323,10 +286,4 @@ const nightly = Effect.gen(function* () {
 - **A batch, and its conflicts.** At most `MAX_IMPORT_BATCH` records (`PERF-DB-001`; `ImportBatchTooLarge` otherwise, and `UnknownAuthority` for an undeclared authority, both before anything is read), their links read in one `lookup`, the records written in order. A record that loses a race (`StaleVersion`, `VersionConflict`), meets a tombstone, is refused by a before hook (`WriteRejected`), loses a link race or repeats an earlier id is a conflict entry with its reason (`stale`, `deleted`, `rejected`, `taken`, `duplicate`), never a failed batch. Run each batch in one transaction.
 - **No cache write-through.** The import writes through the operations, not `subtypeHandlers`: evict each `written` entry's `(id, version)` from the resource cache once the batch commits.
 
-| Export | What it is |
-| --- | --- |
-| `defineReferenceImport(definition)`, `ReferenceImportDefinition`, `ReferenceImportOps` | The factory, its declaration, and `run` / `attach`. |
-| `MergeMode`, `MAX_IMPORT_BATCH` | The three merge modes and the batch cap. |
-| `ImportBatch`, `ImportRecord`, `ImportSummary`, `ImportWrite`, `ImportConflict`, `ImportConflictReason` | A batch, a record, the summary, a write and a conflict. |
-| `ExternalIdStore`, `ExternalIdLink` | The external-identifier table seam (see [Seams](seams.md#seams)) and one link. |
-| `UnknownAuthority`, `ImportBatchTooLarge`, `ExternalIdTaken`, `ReferenceImportDeclarationError` | The failures: 422, 413 and 409, and the declaration error (thrown). |
+**Entry points:** `defineReferenceImport`, `ReferenceImportDefinition`, `ReferenceImportOps`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).

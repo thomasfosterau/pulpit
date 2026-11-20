@@ -32,17 +32,7 @@ These are the port's invariants, which every implementation holds and `./testing
 
 **Comparing versions.** `diffStates(from, to)` is the field-level change set between two states: one entry per column that is `added`, `removed` or `changed`, each with its `before` and `after` values. Unchanged columns are omitted, so equal states diff to `{}`. A `null` is a value, so a column cleared to `null` is `changed`, and only a column with no key is absent (`added` / `removed`). Values compare structurally with Effect's `Equal.equals`: JSON objects and arrays by content (ignoring key order), a `Date` by its instant, and a `bigint` by value. A content-addressed document is held as its hash (`documentRef`), so it compares by hash, and a textual diff of the document is the UI's job. `compare(id, from, to)` makes two `getVersion` reads and returns both snapshots with `changes: diffStates(from.state, to.state)`. It fails `VersionNotFound` for either version, checking `from` first. A tombstone is the version's `action`, never an attribute: a version compared with the tombstone after it has no changes, and `to.action === "delete"` says the node was deleted there. The chain's `compare`, like its `getVersion`, applies no gate; `./Subtype`'s `compare` is the gated one (see [`./Subtype`](read-model.md#subtype)).
 
-| Export | What it is |
-| --- | --- |
-| `defineVersionChain(type, chain, hooks?)` | The operations (`create`, `update`, `restore`, `delete`, `getVersion`, `compare`, `restoreVersion`, `history`) for one leaf type, over its `VersionChain`, running the before-append hooks. |
-| `ChainHooks`, `ChainAppendEvent`, `WriteAction` | The chain's one hook point, `beforeAppend`: shown each write's action (`create`, `update`, `delete`, `restore`, `restoreVersion`), the head it extends and its patch, after the head read and before the append, and returning the patch to apply. A hooked create without an id is shown a freshly minted UUID; a `restoreVersion` whose state the hook changes is appended through the port's `restore`; a hook may refuse a `delete` but not change it (a non-empty patch for one is a defect). `./Subtype`'s before hooks run through it. |
-| `VersionChain<E, R>` | The operation-level port, one per leaf (see [Seams](seams.md#seams)). |
-| `ChainState`, `ChainPatch`, `applyPatch` | A leaf's state at one version, the tri-state patch over it (a value sets, `null` clears, `undefined` carries forward), and the merge. |
-| `LocaleStates`, `LocalePatch`, `applyLocalePatch`, `localesOf` | A localised leaf's locale level at one version (its translated columns per locale, beside the shared `state`), the per-locale tri-state patch over it (a patch updates a locale, `null` drops it, absent carries it forward), its merge, and a snapshot's level (`{}` for none). See [Localisation](read-model.md#subtype). |
-| `diffLocales(from, to)`, `LocaleDiff`, `LocaleChange` | The per-locale change set (`added` / `removed` / `changed`, the last with its column `StateDiff`); `compare` returns it as `locales`, beside the shared `changes`. |
-| `Precondition` | The optional `expectedVersion` every write to an existing node takes. |
-| `diffStates(from, to)`, `StateDiff`, `AttributeChange`, `VersionComparison` | The pure field-level change set between two states, its shape (`added` / `removed` / `changed` per column, with `before` / `after`), and what `compare` returns. |
-| `NodeNotFound`, `VersionNotFound`, `NodeAlreadyExists`, `StaleVersion`, `VersionConflict` | The tagged failures: the wire's 404 / 404 / 409, a failed expected-version precondition (412 for an `If-Match`, or 409; it carries the head), and a concurrent writer's `(id, version)` collision, which is never retried. |
+**Entry points:** `defineVersionChain`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./WorkingCopy`
 
@@ -61,11 +51,7 @@ const copies = defineWorkingCopy({ leaf: postOps, chain, store: workingCopies })
 - **`commit` appends the copy** through the leaf's `update`, expecting that base, and clears it. If an edit landed in between, it fails `StaleVersion` and keeps the copy, so a commit never overwrites work its editor didn't see. With no copy it fails `WorkingCopyNotFound`.
 - **Every operation runs the leaf's write gate** (`authorize`), since a copy shows unpublished state.
 
-| Export | What it is |
-| --- | --- |
-| `defineWorkingCopy(definition)`, `WorkingCopyOps` | The operations (`save`, `get`, `discard`, `commit`). |
-| `WorkingCopyStore`, `WorkingCopy`, `WorkingCopyKey` | The buffer seam (see [Seams](seams.md#seams)), one copy, and its `(id, userId)` key. |
-| `WorkingCopyNotFound` | `commit` with no copy (404). |
+**Entry points:** `defineWorkingCopy`, `WorkingCopyOps`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Proposals`
 
@@ -110,14 +96,7 @@ const program = Effect.gen(function* () {
 
 A [write budget](participation.md#budgets) throttles `submit` when the definition passes one as `budget`. Notifications and the wire shape (a JSON:API `proposals` resource) are the application's.
 
-| Export | What it is |
-| --- | --- |
-| `defineProposals(definition)`, `ProposalsDefinition`, `ProposalOps` | The factory, its declaration and the operations (`submit`, `get`, `list`, `review`, `accept`, `reject`, `withdraw`). |
-| `ProposalStore`, `ProposalRow`, `ProposalListing`, `ProposalDecision` | The table seam (see [Seams](seams.md#seams)), its row, a read's row with the target's head version, and the write that closes a pending row. |
-| `ProposalStatus`, `ProposalView`, `ProposalReview` | The status vocabulary, and a read's and a review's result. |
-| `classifyProposalBase`, `classifyProposalConflict`, `ProposalBaseState`, `ProposalConflictState`, `ProposalConflictVerdict`, `TouchedLocales` | The two tiers of classification and their verdicts, and the translated columns a proposal touches by locale. |
-| `validateProposalPatch`, `ValidatedPatch`, `PROPOSAL_FORBIDDEN_KEYS` | The patch rules, a patch that passed them, and the keys no proposal may carry. |
-| `ProposalNotFound`, `ProposalClosed`, `ProposalConflict`, `InvalidProposalPatch` | The failures: 404, 409 (already decided), 409 (the target changed underneath), 422. |
+**Entry points:** `defineProposals`, `ProposalsDefinition`, `ProposalOps`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Moderation`
 
@@ -201,11 +180,4 @@ const moderation = defineModeration({ target: comments, declaration, viewer, pol
 
 Which rows a viewer below the moderate rung may _read_ in each state (gardeneria shows an unapproved comment to its author and the rung only) is still the application's read rule, as `PUB-005` records; `isPubliclyServeable` already refuses every state but `approved` from the cache.
 
-| Export | What it is |
-| --- | --- |
-| `moderationHook(declaration, policy)`, `moderatePatch`, `isModerationTransition`, `ModerationDeclaration`, `moderatedColumns(reReviewOn)` | The transition rules as a before hook, as a pure function, and the transition table; the leaf's columns and re-review triggers, and the declaration with the conventional names. |
-| `defineModeration(definition)`, `ModerationOps` | The decision (`moderate`). |
-| `reviewQueueFilter(viewer, policy, column?)` | The queue's leaf half as a list filter. |
-| `gradeScores`, `ModerationScores`, `ModerationGrade`, `ModerationPriority`, `DEFAULT_MODERATION_THRESHOLD` | Threshold grading and its shapes. |
-| `defineReports(definition)`, `ReportOps`, `ReportStore`, `ReportRow`, `ReportResolution`, `ReportStatus`, `ReportNotFound`, `ReportClosed` | Member reports: the operations, the table seam (see [Seams](seams.md#seams)), its row, the closing write, the status vocabulary and the failures (404, 409). |
-| `isReportTransition`, `reportOutcomeOf`, `withReports(definition)` | The report state machine, the report outcome a content decision settles, and the content decision that settles the target's reports. |
+**Entry points:** `moderationHook` and `defineModeration` for the decision, `defineReports` and `withReports` for member reports, and `gradeScores` for a classifier's report. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).

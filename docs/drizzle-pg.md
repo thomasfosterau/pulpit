@@ -133,12 +133,7 @@ What each port does, over the leaf's tables:
 
 No operation opens a transaction: each requires the application's `CurrentTransaction`, the kernel's `R`, so the caller's `transact` is the boundary (and rolls back a `VersionConflict`'s aborted transaction).
 
-| Export | What it is |
-| --- | --- |
-| `makeVersionChains(config)` | One kernel `VersionChain` per leaf of `config.tree`, over `config.tables`. Throws effect-drizzle-ext's `DerivationError` at module load for tables not built from the tree. |
-| `VersionChains<Leaf, E, I>` | Its result: `{ readonly [K in Leaf]: VersionChain<E, I> }`. |
-| `VersionChainTables` | The tables it reads: `makeTreeTables`' output, with the identity table's `id` and `type`. |
-| `ChainQueryError<C>` | A `-pg/chain` leaf chain's query error (drizzle's `EffectDrizzleQueryError`). |
+**Entry points:** `makeVersionChains`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./LeafStore`
 
@@ -187,13 +182,7 @@ The integration suite runs every read here against the kernel's `makeInMemoryLea
 
 **The view-merge trap is refused at module load.** A tree view merges its sources by key (`{ ...identityExtras, ...levels, timestamp, createdAt }`), so a key two sources share keeps the later silently: an identity `slug` shadowed by a level's `slug`, or a level column named `createdAt` shadowed by the birth timestamp. `makeLeafStores` throws a `DerivationError` naming both sources instead, for any key an identity extra, a level on the leaf's path and the view's own projection (`id`, `version`, `action`, `timestamp`, `createdAt`, `ownerId`) share.
 
-| Export | What it is |
-| --- | --- |
-| `makeLeafStores(config)` | One `LeafStore` per leaf view. |
-| `LeafStores<Leaf, E, I>` | Its result. |
-| `makeNodeOwnerTable({ schema, identity, name? })`, `NodeOwnerTable` | The owner table (`node_owner` by default): `node_id` primary key, cascading from the identity row, and `owner_id`, indexed. |
-| `OWNER_COLUMN` | `"ownerId"`, the key the owner joins in under. |
-| `StoreQueryError<Relations>` | The driver's query error. |
+**Entry points:** `makeLeafStores`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Publication`
 
@@ -232,9 +221,7 @@ const gated = makePublications({
 
 An unkeyed gated leaf's `listLocalised` reads none on both. An id that is no canonical UUID names no node and has no facts.
 
-| Export | What it is |
-| --- | --- |
-| `makePublications(config)`, `Publications<Leaf, E, I>`, `PublishGated<E, I>` | One `{ facts, live, leaves }` per leaf of the pointer. |
+**Entry points:** `makePublications`, `Publications`, `PublishGated`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Documents`
 
@@ -253,10 +240,7 @@ document jsonb NOT NULL
 
 The integration suite puts the same documents through this store and the kernel's `makeInMemoryDocumentStore` (whose hash is `canonicalText`'s) and checks every hash agrees, escapes, key order and exponent-free numbers included.
 
-| Export                                                 | What it is                   |
-| ------------------------------------------------------ | ---------------------------- |
-| `makeDocumentTable({ schema, name })`, `DocumentTable` | One family's table.          |
-| `makeDocumentStore(config)`                            | The `DocumentStore` over it. |
+**Entry points:** `makeDocumentTable` and `makeDocumentStore`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Paths`
 
@@ -268,10 +252,7 @@ The kernel's `PathStore` ([Seams → `PathStore`](seams.md#pathstoree-r-the-path
 
 A node-level slug on the identity table (`identityColumns: { slug }`) is a different thing: `makeLeafStores` refuses one that shares a key with a level column (the view-merge trap).
 
-| Export                                                   | What it is                  |
-| -------------------------------------------------------- | --------------------------- |
-| `makePathTable({ schema, name, identity })`, `PathTable` | One namespace's path table. |
-| `makePathStore(config)`                                  | The `PathStore` over it.    |
+**Entry points:** `makePathTable` and `makePathStore`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Proposals`
 
@@ -349,11 +330,7 @@ The kernel's `EmbeddingStore` ([seams.md → `SearchBranch` and `EmbeddingStore`
 
 The integration suite runs the same calls through this store and the kernel's `makeInMemoryEmbeddingStore` and checks the queue and vectors agree. It also pins the sweep, the discard and the cascade, which the fake does not model. Its fixture uses `double precision[]`, so CI's `postgres:17` service needs no pgvector; the pgvector column type and literal are checked by unit tests and by the dist-consumer types.
 
-| Export | What it is |
-| --- | --- |
-| `makeEmbeddingTables(options)`, `EmbeddingTables`, `VectorKind` | One family's queue and vector tables. |
-| `makeEmbeddingStore(config)` | The `EmbeddingStore` over them. |
-| `vectorLiteral(kind, values)` | A vector as its SQL literal. |
+**Entry points:** `makeEmbeddingTables`, `EmbeddingTables`, `VectorKind`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Collections`
 
@@ -495,11 +472,7 @@ const search = hybridSearch({ branches: [text /* , trigram, vector … */] });
 
 The integration suite checks both branch kinds against the kernel's `makeInMemorySearchBranch` on PostgreSQL. A leaf view's branch runs under every viewer × `includeDeleted` through `searchScopeFilter`; a gated leaf's runs for each `headFor`. `fullTextRank` runs over a branch view, including the type narrowing and the fail-closed scope.
 
-| Export | What it is |
-| --- | --- |
-| `makeSearchBranch(config)` | A `SearchBranch<SQLWrapper, EffectDrizzleQueryError, CurrentTransaction>` over one view. |
-| `SearchBranchOptions`, `SearchRank` | Its name, weight and rank; the rank's shape. |
-| `fullTextRank({ vector, config? })` | The full-text `SearchRank` (`ts_rank_cd` over a `tsvector`). |
+**Entry points:** `makeSearchBranch`. Each export's contract, error channel and invariant IDs are in its TSDoc (`vp run -r docgen`).
 
 ## `./Filter`
 
