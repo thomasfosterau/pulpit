@@ -265,8 +265,9 @@ export default defineConfig({
         cache: false,
       },
       // Every package's `check` and the dist-consumer declaration check; list a new package here.
+      // Then the root configs (tsconfig.config.json), which no package covers.
       check: {
-        command: "echo 'check: every type gate green'",
+        command: "tsc -p tsconfig.config.json",
         dependsOn: [
           "@thomasfosterau/pulpit#check",
           "@thomasfosterau/pulpit-wordpress#check",
