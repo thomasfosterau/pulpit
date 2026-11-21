@@ -204,8 +204,8 @@ catalogs:
       specifier: ^0.5.2
       version: 0.5.2
     '@thomasfosterau/effect-drizzle-ext':
-      specifier: ^0.5.0
-      version: 0.5.0
+      specifier: ^0.7.0
+      version: 0.7.0
     '@thomasfosterau/effect-drizzle-ext-pg':
       specifier: ^0.7.0
       version: 0.7.0
@@ -341,7 +341,7 @@ importers:
         version: 4.1.4(effect@4.1.4)(vitest@5.1.0)
       '@thomasfosterau/effect-drizzle-ext':
         specifier: 'catalog:'
-        version: 0.5.0(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(@thomasfosterau/effect-jsonapi@0.22.1(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(effect@4.1.4))(drizzle-orm@1.0.0-rc.5(@effect/sql-pg@4.1.4(effect@4.1.4))(effect@4.1.4))(effect@4.1.4)
+        version: 0.7.0(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(@thomasfosterau/effect-jsonapi@0.22.1(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(effect@4.1.4))(drizzle-orm@1.0.0-rc.5(@effect/sql-pg@4.1.4(effect@4.1.4))(effect@4.1.4))(effect@4.1.4)
       '@thomasfosterau/effect-drizzle-ext-pg':
         specifier: 'catalog:'
         version: 0.7.0(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(@effect/sql-pg@4.1.4(effect@4.1.4))(@thomasfosterau/effect-jsonapi@0.22.1(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(effect@4.1.4))(drizzle-kit@1.0.0-rc.5(drizzle-orm@1.0.0-rc.5(@effect/sql-pg@4.1.4(effect@4.1.4))(effect@4.1.4)))(drizzle-orm@1.0.0-rc.5(@effect/sql-pg@4.1.4(effect@4.1.4))(effect@4.1.4))(effect@4.1.4)
@@ -407,7 +407,7 @@ importers:
         version: 0.5.2(@thomasfosterau/effect-jsonapi@0.22.1(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(effect@4.1.4))(effect@4.1.4)
       '@thomasfosterau/effect-drizzle-ext':
         specifier: 'catalog:'
-        version: 0.5.0(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(@thomasfosterau/effect-jsonapi@0.22.1(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(effect@4.1.4))(drizzle-orm@1.0.0-rc.5(@effect/sql-pg@4.1.4(effect@4.1.4))(effect@4.1.4))(effect@4.1.4)
+        version: 0.7.0(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(@thomasfosterau/effect-jsonapi@0.22.1(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(effect@4.1.4))(drizzle-orm@1.0.0-rc.5(@effect/sql-pg@4.1.4(effect@4.1.4))(effect@4.1.4))(effect@4.1.4)
       '@thomasfosterau/effect-drizzle-ext-pg':
         specifier: 'catalog:'
         version: 0.7.0(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(@effect/sql-pg@4.1.4(effect@4.1.4))(@thomasfosterau/effect-jsonapi@0.22.1(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(effect@4.1.4))(drizzle-kit@1.0.0-rc.5(drizzle-orm@1.0.0-rc.5(@effect/sql-pg@4.1.4(effect@4.1.4))(effect@4.1.4)))(drizzle-orm@1.0.0-rc.5(@effect/sql-pg@4.1.4(effect@4.1.4))(effect@4.1.4))(effect@4.1.4)
@@ -1319,17 +1319,6 @@ packages:
       '@testcontainers/postgresql':
         optional: true
       drizzle-kit:
-        optional: true
-
-  '@thomasfosterau/effect-drizzle-ext@0.5.0':
-    resolution: {integrity: sha512-Dhq5zsjHZ5NhRE1AYLLJQPOoQy4KgD12tmU9gYlGYdZjjQHA3YGzjacqKLII0Z5EaMrNCLn3QX3+Y+5V65KhMw==}
-    engines: {node: '>=22.18'}
-    peerDependencies:
-      '@thomasfosterau/effect-jsonapi': '>=0.16.0'
-      drizzle-orm: '>=1.0.0-rc.5'
-      effect: 4.1.4
-    peerDependenciesMeta:
-      '@thomasfosterau/effect-jsonapi':
         optional: true
 
   '@thomasfosterau/effect-drizzle-ext@0.7.0':
@@ -3370,18 +3359,6 @@ snapshots:
       - '@effect/platform-browser'
       - '@effect/platform-node'
       - '@thomasfosterau/effect-jsonapi'
-      - '@thomasfosterau/effect-parse'
-
-  '@thomasfosterau/effect-drizzle-ext@0.5.0(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(@thomasfosterau/effect-jsonapi@0.22.1(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(effect@4.1.4))(drizzle-orm@1.0.0-rc.5(@effect/sql-pg@4.1.4(effect@4.1.4))(effect@4.1.4))(effect@4.1.4)':
-    dependencies:
-      '@thomasfosterau/effect-ext': 0.3.0(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(effect@4.1.4)
-      drizzle-orm: 1.0.0-rc.5(@effect/sql-pg@4.1.4(effect@4.1.4))(effect@4.1.4)
-      effect: 4.1.4
-    optionalDependencies:
-      '@thomasfosterau/effect-jsonapi': 0.22.1(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(effect@4.1.4)
-    transitivePeerDependencies:
-      - '@effect/platform-browser'
-      - '@effect/platform-node'
       - '@thomasfosterau/effect-parse'
 
   '@thomasfosterau/effect-drizzle-ext@0.7.0(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(@thomasfosterau/effect-jsonapi@0.22.1(@effect/platform-node@4.1.4(effect@4.1.4)(redis@6.3.0))(effect@4.1.4))(drizzle-orm@1.0.0-rc.5(@effect/sql-pg@4.1.4(effect@4.1.4))(effect@4.1.4))(effect@4.1.4)':
