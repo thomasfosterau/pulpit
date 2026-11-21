@@ -30,3 +30,4 @@ dist/
 
 # Generated API documentation (`vp run -r docgen`). Regenerated; never committed.
 packages/*/docs/
+.vitest/

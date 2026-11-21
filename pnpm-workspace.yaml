@@ -16,8 +16,8 @@ catalog:
   # effect-drizzle-ext-pg's required peer, for pulpit-drizzle-pg's tests; moves with `effect`.
   "@effect/sql-pg": 4.1.4
   "@enfect/oxlint": ^0.10.0
-  # Patches `@typescript/native` and vite-plus's oxlint; moves with both (see its `components` table).
-  "@effect/tsgo": 0.69.0
+  # Patches `@typescript/native` and vite-plus's oxlint and tsrs; moves with them (see its `components` table).
+  "@effect/tsgo": 0.73.2
   # The tests' runner bridge (`it.effect`, `layer`); moves with `effect`.
   "@effect/vitest": 4.1.4
   "@thomasfosterau/effect-drizzle-ext": ^0.5.0
@@ -37,9 +37,10 @@ catalog:
   # TS6 for JS-API consumers (docgen, editors); `@typescript/native` is TS7.
   typescript: "npm:@typescript/typescript6@6.0.2"
   "@typescript/native": "npm:typescript@7.0.2"
-  # `vite`, `vitest` and the devcontainer image tag follow vite-plus.
-  vite-plus: 1.6.0
-  vite: npm:@voidzero-dev/vite-plus-core@1.6.0
+  # `vite` and `vitest` equal what vite-plus depends on (`npm view vite-plus@<v>
+  # dependencies`), not vite-plus itself; the devcontainer image tag follows vite-plus.
+  vite-plus: 1.7.0
+  vite: npm:@voidzero-dev/vite-plus-core@8.3.8000
   vitest: 5.1.0
 
 # Published peer ranges (the adapters peer on the kernel with `workspace:^`).
@@ -57,8 +58,8 @@ catalogs:
 
 overrides:
   effect: "catalog:"
-  vite: "catalog:"
-  vitest: "catalog:"
+  vite@*: "catalog:"
+  vitest@*: "catalog:"
 nodeLinker: hoisted
 allowBuilds:
   esbuild: true
@@ -79,13 +80,6 @@ permissions:
 skills:
   dirs: [.claude/skills]
 
-peerDependencyRules:
-  allowAny:
-    - vite
-    - vitest
-  allowedVersions:
-    vite: "*"
-    vitest: "*"
 # Supply-chain delay, in minutes.
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:

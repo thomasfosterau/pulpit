@@ -1,0 +1,8 @@
+{
+  "$schema": "./node_modules/@effect/tsgo/schema.json",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["vite.config.ts", "vite.package.ts"]
+}
