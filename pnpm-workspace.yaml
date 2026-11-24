@@ -28,8 +28,8 @@ catalog:
   # Must equal the vitest vite-plus bundles.
   "@vitest/coverage-istanbul": 5.1.0
   # Exact: a release candidate; effect-drizzle-ext is built against it. Kit and ORM move together.
-  drizzle-orm: 1.0.0-rc.5
-  drizzle-kit: 1.0.0-rc.5
+  drizzle-orm: 1.0.0-rc.6
+  drizzle-kit: 1.0.0-rc.6
   effect: 4.1.4
   fallow: 3.46.0
   # Only for @effect/docgen, which spawns it.
