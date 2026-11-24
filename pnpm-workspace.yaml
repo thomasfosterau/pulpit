@@ -31,7 +31,7 @@ catalog:
   drizzle-orm: 1.0.0-rc.6
   drizzle-kit: 1.0.0-rc.6
   effect: 4.1.5
-  fallow: 3.46.0
+  fallow: 3.48.0
   # Only for @effect/docgen, which spawns it.
   tsx: ^4.23.13
   # TS6 for JS-API consumers (docgen, editors); `@typescript/native` is TS7.
