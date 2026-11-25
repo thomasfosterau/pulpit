@@ -24,7 +24,7 @@ catalog:
   "@thomasfosterau/effect-drizzle-ext-pg": ^0.7.0
   "@thomasfosterau/effect-jsonapi": ^0.22.2
   "@thomasfosterau/effect-auth": ^0.8.0
-  "@types/node": ^26.6.6
+  "@types/node": ^26.6.7
   # Must equal the vitest vite-plus bundles.
   "@vitest/coverage-istanbul": 5.1.0
   # Exact: a release candidate; effect-drizzle-ext is built against it. Kit and ORM move together.
