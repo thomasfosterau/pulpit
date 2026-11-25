@@ -203,16 +203,15 @@ export const makeReportStore = <I, Relations extends AnyRelations>(config: {
   };
 
   /** The rows matching `where`, counted (a page past the end reads no window total). */
-  const counted = (where: Option.Option<SQL>) =>
-    Effect.gen(function* () {
-      const tx = yield* CurrentTransaction;
-      const rows = yield* tx
-        .select({ n: sql<number>`count(*)::int` })
-        .from(table)
-        .innerJoin(identity, eq(identity.id, table.targetId))
-        .where(Option.getOrUndefined(where));
-      return yield* countOf(rows);
-    });
+  const counted = Effect.fnUntraced(function* (where: Option.Option<SQL>) {
+    const tx = yield* CurrentTransaction;
+    const rows = yield* tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(table)
+      .innerJoin(identity, eq(identity.id, table.targetId))
+      .where(Option.getOrUndefined(where));
+    return yield* countOf(rows);
+  });
 
   /** The report at `id` (joined for its `targetType`), the row locked `FOR UPDATE` when `locked`. */
   const byId = (id: string, locked: boolean) =>
@@ -231,20 +230,19 @@ export const makeReportStore = <I, Relations extends AnyRelations>(config: {
       : Effect.succeedNone;
 
   /** Close the open rows `where` picks with `resolution`: the ids it closed. */
-  const closeWhere = (where: SQL, resolution: ReportResolution) =>
-    Effect.gen(function* () {
-      const tx = yield* CurrentTransaction;
-      return yield* tx
-        .update(table)
-        .set({
-          status: resolution.status,
-          resolvedAt: resolution.resolvedAt,
-          resolvedBy: resolution.resolvedBy,
-          resolutionNote: Option.getOrNull(resolution.resolutionNote),
-        })
-        .where(and(where, eq(table.status, "open")))
-        .returning({ id: table.id });
-    });
+  const closeWhere = Effect.fnUntraced(function* (where: SQL, resolution: ReportResolution) {
+    const tx = yield* CurrentTransaction;
+    return yield* tx
+      .update(table)
+      .set({
+        status: resolution.status,
+        resolvedAt: resolution.resolvedAt,
+        resolvedBy: resolution.resolvedBy,
+        resolutionNote: Option.getOrNull(resolution.resolutionNote),
+      })
+      .where(and(where, eq(table.status, "open")))
+      .returning({ id: table.id });
+  });
 
   return {
     mintId: Effect.flatMap(CurrentTransaction, mintUuid),

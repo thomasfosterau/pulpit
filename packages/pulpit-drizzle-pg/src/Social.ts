@@ -153,16 +153,15 @@ export const makeSocialStore = <I, Relations extends AnyRelations>(config: {
       Arr.map(kinds, (kind) => sql`${kind}`),
       sql`, `,
     )}) AND ${table.fromId} = ${from})`;
-  const exists = (kind: RelationshipKind, from: string, to: string) =>
-    Effect.gen(function* () {
-      const tx = yield* CurrentTransaction;
-      const rows = yield* tx
-        .select({ kind: table.kind })
-        .from(table)
-        .where(key(kind, from, to))
-        .limit(1);
-      return Arr.isReadonlyArrayNonEmpty(rows);
-    });
+  const exists = Effect.fnUntraced(function* (kind: RelationshipKind, from: string, to: string) {
+    const tx = yield* CurrentTransaction;
+    const rows = yield* tx
+      .select({ kind: table.kind })
+      .from(table)
+      .where(key(kind, from, to))
+      .limit(1);
+    return Arr.isReadonlyArrayNonEmpty(rows);
+  });
 
   return {
     add: (relationship) =>
