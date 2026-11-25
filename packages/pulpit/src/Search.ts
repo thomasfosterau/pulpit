@@ -47,6 +47,7 @@ import * as HashMap from "effect/HashMap";
 import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { onDocumentInsert, type DocumentHash, type DocumentStore } from "./Documents.ts";
 import type { ListFilter } from "./Filter.ts";
@@ -536,20 +537,20 @@ export const embedPending = <Document, E, R>(
 export const sweepEmbeddings = <Document, E, R>(
   pipeline: EmbeddingPipeline<Document, E, R>,
   maxBatches: number,
-): Effect.Effect<EmbeddingBatch, E | EmbeddingMismatch, R> => {
-  const step = (
-    left: number,
-    total: EmbeddingBatch,
-  ): Effect.Effect<EmbeddingBatch, E | EmbeddingMismatch, R> =>
-    Effect.flatMap(embedPending(pipeline), (batch) => {
-      const next = {
-        embedded: total.embedded + batch.embedded,
-        discarded: total.discarded + batch.discarded,
-      };
-      const done = batch.embedded + batch.discarded === 0 || left <= 1;
-      return done ? Effect.succeed(next) : step(left - 1, next);
-    });
-  return step(Math.max(1, Math.trunc(maxBatches) || 1), { embedded: 0, discarded: 0 }).pipe(
-    Effect.withSpan("search.sweepEmbeddings"),
-  );
-};
+): Effect.Effect<EmbeddingBatch, E | EmbeddingMismatch, R> =>
+  Effect.gen(function* () {
+    const total = yield* Ref.make<EmbeddingBatch>({ embedded: 0, discarded: 0 });
+    yield* embedPending(pipeline).pipe(
+      Effect.tap((batch) =>
+        Ref.update(total, (sum) => ({
+          embedded: sum.embedded + batch.embedded,
+          discarded: sum.discarded + batch.discarded,
+        })),
+      ),
+      Effect.repeat({
+        times: Math.max(1, Math.trunc(maxBatches) || 1) - 1,
+        until: (batch) => batch.embedded + batch.discarded === 0,
+      }),
+    );
+    return yield* Ref.get(total);
+  }).pipe(Effect.withSpan("search.sweepEmbeddings"));

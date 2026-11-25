@@ -494,4 +494,17 @@ describe("the embedding pipeline", () => {
       expect(yield* sweepEmbeddings(pipeline, 10)).toEqual({ embedded: 0, discarded: 0 });
     }),
   );
+
+  it.effect("runs exactly one batch when maxBatches is 1, or clamps below 1 to 1", () =>
+    Effect.gen(function* () {
+      const { documents, calls, pipeline } = setup(1);
+      yield* Effect.forEach(["a", "bb", "ccc", "dddd"], (text) => documents.put({ text }), {
+        concurrency: 1,
+      });
+      expect(yield* sweepEmbeddings(pipeline, 1)).toEqual({ embedded: 1, discarded: 0 });
+      expect(yield* sweepEmbeddings(pipeline, 0)).toEqual({ embedded: 1, discarded: 0 });
+      expect(yield* sweepEmbeddings(pipeline, Number.NaN)).toEqual({ embedded: 1, discarded: 0 });
+      expect(calls).toHaveLength(3);
+    }),
+  );
 });
