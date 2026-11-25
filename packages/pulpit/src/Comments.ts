@@ -310,25 +310,24 @@ export const defineComments = <Resource, Following, E, R>(
     });
 
   /** The comment row a viewer may read, through all three gates, or `NodeNotFound`. */
-  const readableRow = (viewer: Viewer, id: string) =>
-    Effect.gen(function* () {
-      const resource = yield* comments.get(id);
-      const row = yield* leaves.get(id);
-      if (Option.isNone(row) || !canViewModerated(viewer, policy, columns, row.value)) {
-        return yield* new NodeNotFound({ type, id });
-      }
-      const targetType = row.value["targetType"];
-      const targetId = row.value["targetId"];
-      if (!P.isString(targetType) || !P.isString(targetId)) {
-        return yield* new NodeNotFound({ type, id });
-      }
-      // A comment on a target the viewer can't read is missing to them.
-      yield* Effect.mapError(
-        targetReadable(targetType, targetId),
-        () => new NodeNotFound({ type, id }),
-      );
-      return { resource, row: row.value };
-    });
+  const readableRow = Effect.fnUntraced(function* (viewer: Viewer, id: string) {
+    const resource = yield* comments.get(id);
+    const row = yield* leaves.get(id);
+    if (Option.isNone(row) || !canViewModerated(viewer, policy, columns, row.value)) {
+      return yield* new NodeNotFound({ type, id });
+    }
+    const targetType = row.value["targetType"];
+    const targetId = row.value["targetId"];
+    if (!P.isString(targetType) || !P.isString(targetId)) {
+      return yield* new NodeNotFound({ type, id });
+    }
+    // A comment on a target the viewer can't read is missing to them.
+    yield* Effect.mapError(
+      targetReadable(targetType, targetId),
+      () => new NodeNotFound({ type, id }),
+    );
+    return { resource, row: row.value };
+  });
 
   const create = Effect.fn(`${type}.comments.create`)(function* (input: CommentCreate) {
     const viewer = yield* knownViewerOf(definition.viewer);

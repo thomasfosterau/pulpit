@@ -508,145 +508,148 @@ export const defineReferenceImport = <Row extends LeafRow, Resource, Following, 
       ),
     );
 
-  const create = (
+  const create = Effect.fnUntraced(function* (
     authority: string,
     record: ImportRecord,
     feed: Readonly<Record<string, ColumnValue>>,
     linked: Option.Option<string>,
-  ) =>
-    Effect.gen(function* () {
-      const id = yield* Option.match(linked, {
-        onSome: (nodeId) => Effect.succeedSome(nodeId),
-        onNone: () =>
-          Effect.flatMap(mintNodeId, (minted) =>
-            Effect.map(ids.link(authority, record.externalId, minted), (result) =>
-              result === "taken" ? Option.none<string>() : Option.some(minted),
-            ),
+  ) {
+    const id = yield* Option.match(linked, {
+      onSome: (nodeId) => Effect.succeedSome(nodeId),
+      onNone: () =>
+        Effect.flatMap(mintNodeId, (minted) =>
+          Effect.map(ids.link(authority, record.externalId, minted), (result) =>
+            result === "taken" ? Option.none<string>() : Option.some(minted),
           ),
-      });
-      if (Option.isNone(id)) return conflict(record.externalId, "taken");
-      const written = yield* settled(
-        record.externalId,
-        Effect.map(asActor.create({ id, state: feed }), (write): Outcome => ({
-          kind: "written",
-          write: { externalId: record.externalId, ...write, action: "created" },
-        })),
-      );
-      return written;
+        ),
     });
+    if (Option.isNone(id)) return conflict(record.externalId, "taken");
+    const written = yield* settled(
+      record.externalId,
+      Effect.map(asActor.create({ id, state: feed }), (write): Outcome => ({
+        kind: "written",
+        write: { externalId: record.externalId, ...write, action: "created" },
+      })),
+    );
+    return written;
+  });
 
-  const update = (
+  const update = Effect.fnUntraced(function* (
     record: ImportRecord,
     feed: Readonly<Record<string, ColumnValue>>,
     link: ExternalIdLink,
-  ) =>
-    Effect.gen(function* () {
-      const head = yield* leaf.chain.head(link.nodeId);
-      if (Option.isNone(head)) return Option.none<Outcome>();
-      if (head.value.action === "delete") {
-        return Option.some(conflict(record.externalId, "deleted"));
-      }
-      const outcome = yield* settled(
-        record.externalId,
-        Effect.flatMap(asActor.getVersion(link.nodeId, head.value.version), (snapshot) => {
-          const patch = mergePatch(fields, snapshot.state, feed, link.baseline);
-          return R.isEmptyRecord(diffStates(snapshot.state, applyPatch(snapshot.state, patch)))
-            ? Effect.succeed<Outcome>({ kind: "unchanged" })
-            : Effect.map(
-                asActor.update({
-                  id: link.nodeId,
-                  patch,
-                  expectedVersion: head.value.version,
-                }),
-                (write): Outcome => ({
-                  kind: "written",
-                  write: { externalId: record.externalId, ...write, action: "updated" },
-                }),
-              );
-        }),
-      );
-      return Option.some(outcome);
-    });
+  ) {
+    const head = yield* leaf.chain.head(link.nodeId);
+    if (Option.isNone(head)) return Option.none<Outcome>();
+    if (head.value.action === "delete") {
+      return Option.some(conflict(record.externalId, "deleted"));
+    }
+    const outcome = yield* settled(
+      record.externalId,
+      Effect.flatMap(asActor.getVersion(link.nodeId, head.value.version), (snapshot) => {
+        const patch = mergePatch(fields, snapshot.state, feed, link.baseline);
+        return R.isEmptyRecord(diffStates(snapshot.state, applyPatch(snapshot.state, patch)))
+          ? Effect.succeed<Outcome>({ kind: "unchanged" })
+          : Effect.map(
+              asActor.update({
+                id: link.nodeId,
+                patch,
+                expectedVersion: head.value.version,
+              }),
+              (write): Outcome => ({
+                kind: "written",
+                write: { externalId: record.externalId, ...write, action: "updated" },
+              }),
+            );
+      }),
+    );
+    return Option.some(outcome);
+  });
 
-  const one = (authority: string, record: ImportRecord, link: Option.Option<ExternalIdLink>) =>
-    Effect.gen(function* () {
-      const feed = spoken(fields, record.values);
-      const updated = yield* Option.match(link, {
-        onNone: () => Effect.succeed(Option.none<Outcome>()),
-        onSome: (stored) => update(record, feed, stored),
-      });
-      // A link whose node is gone (a create that failed after its link was
-      // written) is completed with the linked id.
-      const outcome = Option.isSome(updated)
-        ? updated.value
-        : yield* create(
-            authority,
-            record,
-            feed,
-            Option.map(link, (stored) => stored.nodeId),
-          );
-      if (outcome.kind !== "conflict") {
-        const previous = Option.getOrElse(
-          Option.flatMap(link, (stored) => stored.baseline),
-          (): ChainState => ({}),
+  const one = Effect.fnUntraced(function* (
+    authority: string,
+    record: ImportRecord,
+    link: Option.Option<ExternalIdLink>,
+  ) {
+    const feed = spoken(fields, record.values);
+    const updated = yield* Option.match(link, {
+      onNone: () => Effect.succeed(Option.none<Outcome>()),
+      onSome: (stored) => update(record, feed, stored),
+    });
+    // A link whose node is gone (a create that failed after its link was
+    // written) is completed with the linked id.
+    const outcome = Option.isSome(updated)
+      ? updated.value
+      : yield* create(
+          authority,
+          record,
+          feed,
+          Option.map(link, (stored) => stored.nodeId),
         );
-        yield* ids.recordBaseline(authority, record.externalId, { ...previous, ...feed });
-      }
-      return outcome;
-    });
+    if (outcome.kind !== "conflict") {
+      const previous = Option.getOrElse(
+        Option.flatMap(link, (stored) => stored.baseline),
+        (): ChainState => ({}),
+      );
+      yield* ids.recordBaseline(authority, record.externalId, { ...previous, ...feed });
+    }
+    return outcome;
+  });
 
-  const run = (batch: ImportBatch) =>
-    Effect.gen(function* () {
-      yield* declared(batch.authority);
-      if (batch.records.length > MAX_IMPORT_BATCH) {
-        return yield* new ImportBatchTooLarge({
-          type,
-          size: batch.records.length,
-          max: MAX_IMPORT_BATCH,
-        });
-      }
-      const links = yield* ids.lookup(
-        batch.authority,
-        Arr.dedupe(Arr.map(batch.records, (record) => record.externalId)),
-      );
-      // Records run one after another, in the batch's order, so a repeated
-      // id is a conflict against the earlier record, never a race with it.
-      const firsts = Arr.reduce(
-        batch.records,
-        HashMap.empty<string, number>(),
-        (seen, record, index) =>
-          HashMap.has(seen, record.externalId) ? seen : HashMap.set(seen, record.externalId, index),
-      );
-      const outcomes = yield* Effect.forEach(
-        batch.records,
-        (record, index) =>
-          Option.contains(HashMap.get(firsts, record.externalId), index)
-            ? one(batch.authority, record, HashMap.get(links, record.externalId))
-            : Effect.succeed(conflict(record.externalId, "duplicate")),
-        { concurrency: 1 },
-      );
-      const written = Arr.filterMap(outcomes, (outcome) =>
-        outcome.kind === "written" ? Result.succeed(outcome.write) : Result.failVoid,
-      );
-      return {
-        created: Arr.filter(written, (write) => write.action === "created").length,
-        updated: Arr.filter(written, (write) => write.action === "updated").length,
-        unchanged: Arr.filter(outcomes, (outcome) => outcome.kind === "unchanged").length,
-        written,
-        conflicts: Arr.filterMap(outcomes, (outcome) =>
-          outcome.kind === "conflict" ? Result.succeed(outcome.conflict) : Result.failVoid,
-        ),
-      } satisfies ImportSummary;
-    });
+  const run = Effect.fn(`${type}.import.run`)(function* (batch: ImportBatch) {
+    yield* declared(batch.authority);
+    if (batch.records.length > MAX_IMPORT_BATCH) {
+      return yield* new ImportBatchTooLarge({
+        type,
+        size: batch.records.length,
+        max: MAX_IMPORT_BATCH,
+      });
+    }
+    const links = yield* ids.lookup(
+      batch.authority,
+      Arr.dedupe(Arr.map(batch.records, (record) => record.externalId)),
+    );
+    // Records run one after another, in the batch's order, so a repeated
+    // id is a conflict against the earlier record, never a race with it.
+    const firsts = Arr.reduce(
+      batch.records,
+      HashMap.empty<string, number>(),
+      (seen, record, index) =>
+        HashMap.has(seen, record.externalId) ? seen : HashMap.set(seen, record.externalId, index),
+    );
+    const outcomes = yield* Effect.forEach(
+      batch.records,
+      (record, index) =>
+        Option.contains(HashMap.get(firsts, record.externalId), index)
+          ? one(batch.authority, record, HashMap.get(links, record.externalId))
+          : Effect.succeed(conflict(record.externalId, "duplicate")),
+      { concurrency: 1 },
+    );
+    const written = Arr.filterMap(outcomes, (outcome) =>
+      outcome.kind === "written" ? Result.succeed(outcome.write) : Result.failVoid,
+    );
+    return {
+      created: Arr.filter(written, (write) => write.action === "created").length,
+      updated: Arr.filter(written, (write) => write.action === "updated").length,
+      unchanged: Arr.filter(outcomes, (outcome) => outcome.kind === "unchanged").length,
+      written,
+      conflicts: Arr.filterMap(outcomes, (outcome) =>
+        outcome.kind === "conflict" ? Result.succeed(outcome.conflict) : Result.failVoid,
+      ),
+    } satisfies ImportSummary;
+  });
 
-  const attach: ReferenceImportOps<E, R>["attach"] = ({ authority, externalId, id }) =>
-    Effect.gen(function* () {
-      yield* declared(authority);
-      yield* asViewer.authorize(id);
-      const result = yield* ids.link(authority, externalId, id);
-      if (result === "taken") return yield* new ExternalIdTaken({ type, authority, externalId });
-      return { changed: result === "linked" };
-    });
+  const attach = Effect.fn(`${type}.import.attach`)(function* ({
+    authority,
+    externalId,
+    id,
+  }: Parameters<ReferenceImportOps<E, R>["attach"]>[0]) {
+    yield* declared(authority);
+    yield* asViewer.authorize(id);
+    const result = yield* ids.link(authority, externalId, id);
+    if (result === "taken") return yield* new ExternalIdTaken({ type, authority, externalId });
+    return { changed: result === "linked" };
+  });
 
   return { run, attach };
 };

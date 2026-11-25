@@ -526,15 +526,14 @@ export const defineAudience = <Following, E, R>(
     );
 
   /** The signed-in viewer, if they own the group or are one of its admins; else `Forbidden`. */
-  const manager = (groupId: string) =>
-    Effect.gen(function* () {
-      const account = yield* signedIn;
-      const owner = yield* ownerOf(groupId);
-      if (account.id === owner) return { account, owner };
-      const role = yield* store.roleOf(groupId, account.id);
-      if (Option.contains(role, "admin")) return { account, owner };
-      return yield* new Forbidden({ message: "Only the group's owner or an admin may manage it." });
-    });
+  const manager = Effect.fnUntraced(function* (groupId: string) {
+    const account = yield* signedIn;
+    const owner = yield* ownerOf(groupId);
+    if (account.id === owner) return { account, owner };
+    const role = yield* store.roleOf(groupId, account.id);
+    if (Option.contains(role, "admin")) return { account, owner };
+    return yield* new Forbidden({ message: "Only the group's owner or an admin may manage it." });
+  });
 
   const addMember = Effect.fn("audience.addMember")(function* (
     groupId: string,

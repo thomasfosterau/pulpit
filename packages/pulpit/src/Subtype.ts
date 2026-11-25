@@ -2083,13 +2083,12 @@ export const defineSubtype = <Row extends LeafRow, Resource, Following, E, R>(
    * {@link NodeNotFound} (SEC-AUTH-ENUM-001). `get` and the reference write
    * gate both read through it, so they can never disagree.
    */
-  const visibleRow = (viewer: Viewer, id: string): Effect.Effect<Row, NodeNotFound | E, R> =>
-    Effect.gen(function* () {
-      const head = yield* leaves.get(id);
-      const row = Option.isSome(head) ? yield* chosenRow(viewer, head.value) : Option.none();
-      if (Option.isSome(row) && (yield* visible(viewer, row.value))) return row.value;
-      return yield* new NodeNotFound({ type, id });
-    });
+  const visibleRow = Effect.fnUntraced(function* (viewer: Viewer, id: string) {
+    const head = yield* leaves.get(id);
+    const row = Option.isSome(head) ? yield* chosenRow(viewer, head.value) : Option.none();
+    if (Option.isSome(row) && (yield* visible(viewer, row.value))) return row.value;
+    return yield* new NodeNotFound({ type, id });
+  });
 
   /** Whether this request holds a preview grant for `id` (a publish-gated leaf's alone). */
   const previewing = (id: string): Effect.Effect<boolean, never, R> =>
@@ -3303,19 +3302,20 @@ const splitTranslated = <V>(
  * `Accept-Language` preferences, then the default; the locale served is
  * reported through {@link LocaleWire.served}.
  */
-const localisedGet =
-  <Resource, E, R>(handlers: SubtypeHandlers<Resource, E, R>, wire: LocaleWire<R>) =>
-  (id: string): Effect.Effect<Resource, NodeNotFound | E, R> =>
-    Effect.gen(function* () {
-      const written = Arr.flatMap(Option.toArray(yield* wire.contentLanguage), acceptLanguageTags);
-      const asked = acceptLanguage(Option.getOrUndefined(yield* wire.acceptLanguage));
-      const found = yield* handlers.getLocalised(
-        id,
-        localePreferences([...written, ...asked], wire.defaultLocale),
-      );
-      yield* wire.served(found.locale);
-      return found.resource;
-    });
+const localisedGet = <Resource, E, R>(
+  handlers: SubtypeHandlers<Resource, E, R>,
+  wire: LocaleWire<R>,
+) =>
+  Effect.fnUntraced(function* (id: string) {
+    const written = Arr.flatMap(Option.toArray(yield* wire.contentLanguage), acceptLanguageTags);
+    const asked = acceptLanguage(Option.getOrUndefined(yield* wire.acceptLanguage));
+    const found = yield* handlers.getLocalised(
+      id,
+      localePreferences([...written, ...asked], wire.defaultLocale),
+    );
+    yield* wire.served(found.locale);
+    return found.resource;
+  });
 
 /**
  * `list` over the per-node locale fallback: the request's
@@ -3323,21 +3323,22 @@ const localisedGet =
  * share a locale reports it through {@link LocaleWire.served}; any other
  * reports {@link LocaleWire.varied}.
  */
-const localisedList =
-  <Resource, E, R>(handlers: SubtypeHandlers<Resource, E, R>, wire: LocaleWire<R>) =>
-  (request: ListRequest): Effect.Effect<Page<Resource>, InvalidListOrder | E, R> =>
-    Effect.gen(function* () {
-      const asked = acceptLanguage(Option.getOrUndefined(yield* wire.acceptLanguage));
-      const page = yield* handlers.listLocalised({
-        ...request,
-        locales: localePreferences(asked, wire.defaultLocale),
-      });
-      const served = Arr.dedupe(Arr.map(page.rows, (row) => row.locale));
-      yield* served.length === 1 && Arr.isReadonlyArrayNonEmpty(served)
-        ? wire.served(served[0])
-        : wire.varied;
-      return { rows: Arr.map(page.rows, (row) => row.resource), total: page.total };
+const localisedList = <Resource, E, R>(
+  handlers: SubtypeHandlers<Resource, E, R>,
+  wire: LocaleWire<R>,
+) =>
+  Effect.fnUntraced(function* (request: ListRequest) {
+    const asked = acceptLanguage(Option.getOrUndefined(yield* wire.acceptLanguage));
+    const page = yield* handlers.listLocalised({
+      ...request,
+      locales: localePreferences(asked, wire.defaultLocale),
     });
+    const served = Arr.dedupe(Arr.map(page.rows, (row) => row.locale));
+    yield* served.length === 1 && Arr.isReadonlyArrayNonEmpty(served)
+      ? wire.served(served[0])
+      : wire.varied;
+    return { rows: Arr.map(page.rows, (row) => row.resource), total: page.total };
+  });
 
 // ── effect-jsonapi's ResourceHandlers ─────────────────────────────────
 

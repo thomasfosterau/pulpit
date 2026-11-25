@@ -954,12 +954,11 @@ export const defineEdgeOps = <Create, Row extends EdgeRow, Resource, Following, 
    * of an edge the count would admit, readable with every end live. The view-deleted rung reads an edge to a
    * tombstone but can't link to one, so it can't resolve to one either.
    */
-  const resolveCollision = (viewer: Viewer, id: string) =>
-    Effect.gen(function* () {
-      if (onConflict === "fail") return yield* new EdgeConflict({ type });
-      if (Option.isNone(yield* countedEdge(viewer, id))) return yield* new EdgeConflict({ type });
-      return { id, created: false };
-    });
+  const resolveCollision = Effect.fnUntraced(function* (viewer: Viewer, id: string) {
+    if (onConflict === "fail") return yield* new EdgeConflict({ type });
+    if (Option.isNone(yield* countedEdge(viewer, id))) return yield* new EdgeConflict({ type });
+    return { id, created: false };
+  });
 
   /**
    * An end's declared `maxEdges`, checked against the edges its node already
