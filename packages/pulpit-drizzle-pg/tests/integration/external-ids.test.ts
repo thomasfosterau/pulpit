@@ -6,7 +6,7 @@
  * Beyond the fake, a node's purge cascades to its links.
  */
 
-import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import { makeInMemoryExternalIdStore } from "@thomasfosterau/pulpit/testing";
 import { getTableName, sql } from "drizzle-orm";
 import * as Arr from "effect/Array";

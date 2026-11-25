@@ -4,7 +4,7 @@
  * the uniqueness guard under two concurrent claims of one path.
  */
 
-import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import type { PathStore, PathTaken } from "@thomasfosterau/pulpit/Paths";
 import { makeInMemoryPathStore } from "@thomasfosterau/pulpit/testing";
 import { getTableName, sql } from "drizzle-orm";

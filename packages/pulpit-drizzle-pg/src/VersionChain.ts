@@ -4,10 +4,10 @@
  * @copyright Thomas Foster
  *
  * The kernel's `VersionChain` port over effect-drizzle-ext
- * `-pg/chain`: one port per leaf of an application's tree,
+ * `-pg/Chain`: one port per leaf of an application's tree,
  * written straight over the tables `makeTreeTables` derives from it.
  *
- * Every operation but `purge` is `-pg/chain`'s own, so every invariant of the
+ * Every operation but `purge` is `-pg/Chain`'s own, so every invariant of the
  * kernel's `./VersionChain` (append-only, never an upsert, no resurrection
  * by a plain update, no partial restore, bounded history, and the
  * expected-version precondition checked against the head the append
@@ -25,8 +25,8 @@ import {
   makeVersionChain,
   type ChainTables,
   type ChainTree,
-} from "@thomasfosterau/effect-drizzle-ext-pg/chain";
-import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
+} from "@thomasfosterau/effect-drizzle-ext-pg/Chain";
+import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import type { VersionChain } from "@thomasfosterau/pulpit/VersionChain";
 import { and, eq, getTableColumns, type AnyRelations } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
@@ -36,7 +36,7 @@ import * as R from "effect/Record";
 import { fromLeafChain, type ErasedLeafChain } from "./internal/leaf-chain.ts";
 
 /**
- * The query failure a `-pg/chain` leaf chain reports: the driver's own
+ * The query failure a `-pg/Chain` leaf chain reports: the driver's own
  * error (drizzle's `EffectDrizzleQueryError`).
  *
  * @since 0.0.0
@@ -74,7 +74,7 @@ export interface VersionChainTables extends ChainTables {
 }
 
 /**
- * Bind the kernel's `VersionChain` port to every leaf of a tree: `-pg/chain`'s
+ * Bind the kernel's `VersionChain` port to every leaf of a tree: `-pg/Chain`'s
  * `makeVersionChain` over the same `{ tree, tables, CurrentTransaction }`,
  * each leaf's chain mapped onto the port.
  *
@@ -96,14 +96,14 @@ export interface VersionChainTables extends ChainTables {
  *   another leaf's node.
  *
  * Throws effect-drizzle-ext's `DerivationError` at module load when the
- * tables were not built from the tree (`-pg/chain`'s own check).
+ * tables were not built from the tree (`-pg/Chain`'s own check).
  *
  * @example
  * ```ts
  * import { deepStrictEqual } from "node:assert";
- * import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
- * import { makeTreeTables } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
- * import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
+ * import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext/Annotation";
+ * import { makeTreeTables } from "@thomasfosterau/effect-drizzle-ext/VersionedChain";
+ * import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
  * import { makeVersionChains } from "@thomasfosterau/pulpit-drizzle-pg/VersionChain";
  * import { defineVersionChain } from "@thomasfosterau/pulpit/VersionChain";
  * import { pgSchema, text } from "drizzle-orm/pg-core";

@@ -11,7 +11,7 @@
  * @since 0.0.0
  */
 
-import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
+import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import { MAX_SET_VALUES } from "@thomasfosterau/pulpit/Filter";
 import type { ExternalIdLink, ExternalIdStore } from "@thomasfosterau/pulpit/ReferenceImport";
 import { and, eq, inArray, sql, type AnyRelations } from "drizzle-orm";
@@ -42,8 +42,8 @@ import type { VersionChainTables } from "./VersionChain.ts";
  * @example
  * ```ts
  * import { strictEqual } from "node:assert";
- * import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
- * import { makeTreeTables } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
+ * import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext/Annotation";
+ * import { makeTreeTables } from "@thomasfosterau/effect-drizzle-ext/VersionedChain";
  * import { makeExternalIdTable } from "@thomasfosterau/pulpit-drizzle-pg/ExternalIds";
  * import { getTableName } from "drizzle-orm";
  * import { pgSchema, text } from "drizzle-orm/pg-core";

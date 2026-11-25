@@ -6,7 +6,7 @@
  *
  * Each module is exported here as a namespace, and as a subpath of its own,
  * following the kernel's convention: the `VersionChain` port over
- * `-pg/chain` (`VersionChain`, `./VersionChain`), the
+ * `-pg/Chain` (`VersionChain`, `./VersionChain`), the
  * `LeafStore` over the tree's leaf views (`LeafStore`, `./LeafStore`) and
  * the `ListFilter` → SQL renderer it reads through (`Filter`, `./Filter`),
  * the live pointer, `PublicationStore` / `LiveView` over the tree's
@@ -32,7 +32,7 @@
  * @module pulpit-drizzle-pg
  */
 
-/** The kernel's `VersionChain` port, one per leaf, over effect-drizzle-ext `-pg/chain`. */
+/** The kernel's `VersionChain` port, one per leaf, over effect-drizzle-ext `-pg/Chain`. */
 export * as VersionChain from "./VersionChain.ts";
 
 /** The kernel's `LeafStore`, one per leaf, over the tree's current-version views, and the owner table. */

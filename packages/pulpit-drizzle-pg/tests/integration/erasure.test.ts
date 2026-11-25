@@ -14,7 +14,7 @@
  *   head never needs it.
  */
 
-import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import type { DocumentHash } from "@thomasfosterau/pulpit/Documents";
 import {
   makeInMemoryAccountErasureStore,

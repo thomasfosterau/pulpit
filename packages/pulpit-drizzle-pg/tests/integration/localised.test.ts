@@ -7,7 +7,7 @@
  * carried locale, and `get` / `getMany` over the shared rows.
  */
 
-import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import { always, eq, locale, type ListFilter } from "@thomasfosterau/pulpit/Filter";
 import type { LeafRow, ListOrder } from "@thomasfosterau/pulpit/Subtype";
 import { makeInMemoryLeafStore, makeInMemoryVersionChain } from "@thomasfosterau/pulpit/testing";

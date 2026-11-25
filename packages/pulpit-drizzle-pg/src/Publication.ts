@@ -26,9 +26,9 @@
  * @since 0.0.0
  */
 
-import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
-import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
-import type { PointerTable } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
+import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/Derive";
+import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
+import type { PointerTable } from "@thomasfosterau/effect-drizzle-ext/VersionedChain";
 import type { ListFilter } from "@thomasfosterau/pulpit/Filter";
 import type { SearchBranch } from "@thomasfosterau/pulpit/Search";
 import type {
@@ -148,9 +148,9 @@ const predicate = (filter: ListFilter<SQLWrapper>, source: RowSource): SQL =>
  * // from effect-drizzle-ext, the ports from this package, the leaf's
  * // operations from the kernel's `defineSubtype`.
  * import { deepStrictEqual } from "node:assert";
- * import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
- * import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
- * import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
+ * import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext/Annotation";
+ * import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/VersionedChain";
+ * import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
  * import { makeLeafStores, makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/LeafStore";
  * import { makePublications } from "@thomasfosterau/pulpit-drizzle-pg/Publication";
  * import { makeVersionChains } from "@thomasfosterau/pulpit-drizzle-pg/VersionChain";

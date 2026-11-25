@@ -12,7 +12,7 @@
  * with the unique violation a concurrent writer would raise.
  */
 
-import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import { versionChainConformance } from "@thomasfosterau/pulpit/testing";
 import { and, eq, getTableName, sql } from "drizzle-orm";
 import * as Cause from "effect/Cause";

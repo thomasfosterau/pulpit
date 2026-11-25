@@ -14,7 +14,7 @@
  * @since 0.0.0
  */
 
-import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
+import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import type { SearchBranch } from "@thomasfosterau/pulpit/Search";
 import { sql, type AnyRelations, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { PgView } from "drizzle-orm/pg-core";
@@ -76,9 +76,9 @@ export interface SearchBranchOptions {
  * @example
  * ```ts
  * import { strictEqual } from "node:assert";
- * import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
- * import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
- * import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
+ * import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext/Annotation";
+ * import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/VersionedChain";
+ * import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
  * import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/LeafStore";
  * import { fullTextRank, makeSearchBranch } from "@thomasfosterau/pulpit-drizzle-pg/Search";
  * import { sql } from "drizzle-orm";

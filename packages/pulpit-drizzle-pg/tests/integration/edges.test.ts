@@ -15,7 +15,7 @@
  *   insert keyed to it does not.
  */
 
-import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import type { EdgeEnds, EdgeRow, EdgeValues } from "@thomasfosterau/pulpit/Edges";
 import {
   always,

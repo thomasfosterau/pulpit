@@ -14,7 +14,7 @@
  */
 
 import { mintUuid, selectRows } from "./internal/query.ts";
-import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
+import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import {
   ProposalStatus,
   type ProposalListing,
@@ -70,8 +70,8 @@ export type ProposalRoot = VersionChainTables["root"] & {
  * @example
  * ```ts
  * import { strictEqual } from "node:assert";
- * import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
- * import { makeTreeTables } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
+ * import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext/Annotation";
+ * import { makeTreeTables } from "@thomasfosterau/effect-drizzle-ext/VersionedChain";
  * import { makeProposalTable } from "@thomasfosterau/pulpit-drizzle-pg/Proposals";
  * import { getTableName } from "drizzle-orm";
  * import { pgSchema, text } from "drizzle-orm/pg-core";

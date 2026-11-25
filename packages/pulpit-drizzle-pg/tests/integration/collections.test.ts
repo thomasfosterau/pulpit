@@ -8,7 +8,7 @@
  * or a parent cascades.
  */
 
-import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import type { CollectionEntry } from "@thomasfosterau/pulpit/Collections";
 import { makeInMemoryCollectionStore } from "@thomasfosterau/pulpit/testing";
 import { getTableName, sql } from "drizzle-orm";

@@ -4,7 +4,7 @@ The append-only version chain and its compare (`./VersionChain`), an editor's au
 
 ## `./VersionChain`
 
-The append-only chain, written and read through a `VersionChain` port the application supplies, one per leaf: in production pulpit-drizzle-pg over effect-drizzle-ext's `-pg/chain`, in tests `./testing`'s `makeInMemoryVersionChain`. `defineVersionChain` binds a leaf's operations over it, running the leaf's before-append hooks and adding `compare`.
+The append-only chain, written and read through a `VersionChain` port the application supplies, one per leaf: in production pulpit-drizzle-pg over effect-drizzle-ext's `-pg/Chain`, in tests `./testing`'s `makeInMemoryVersionChain`. `defineVersionChain` binds a leaf's operations over it, running the leaf's before-append hooks and adding `compare`.
 
 ```ts
 import * as Effect from "effect/Effect";

@@ -6,7 +6,7 @@
  * return what was stored.
  */
 
-import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import { makeInMemoryDocumentStore } from "@thomasfosterau/pulpit/testing";
 import { count, getTableName, sql } from "drizzle-orm";
 import * as Arr from "effect/Array";

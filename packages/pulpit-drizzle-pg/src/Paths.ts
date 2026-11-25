@@ -14,7 +14,7 @@
  * @since 0.0.0
  */
 
-import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
+import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import { PathTaken, type PathStore } from "@thomasfosterau/pulpit/Paths";
 import { and, eq, ne, sql, type AnyRelations } from "drizzle-orm";
 import {
@@ -43,8 +43,8 @@ import type { VersionChainTables } from "./VersionChain.ts";
  * @example
  * ```ts
  * import { strictEqual } from "node:assert";
- * import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
- * import { makeTreeTables } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
+ * import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext/Annotation";
+ * import { makeTreeTables } from "@thomasfosterau/effect-drizzle-ext/VersionedChain";
  * import { makePathTable } from "@thomasfosterau/pulpit-drizzle-pg/Paths";
  * import { getTableName } from "drizzle-orm";
  * import { pgSchema, text } from "drizzle-orm/pg-core";

@@ -3,7 +3,7 @@
  * resolves to the rows it is given.
  */
 
-import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
+import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as R from "effect/Record";

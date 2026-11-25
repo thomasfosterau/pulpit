@@ -16,7 +16,7 @@
  * reference can compute it exactly.
  */
 
-import { pgClientFromUrl, makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { pgClientFromUrl, makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import { always, eq, never, type FilterRow, type ListFilter } from "@thomasfosterau/pulpit/Filter";
 import {
   ownedAccess,

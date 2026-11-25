@@ -6,9 +6,9 @@
  * `tests/integration/leaf-store.test.ts`.
  */
 
-import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
-import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
-import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
+import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext/Annotation";
+import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/Derive";
+import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/VersionedChain";
 import { getTableName } from "drizzle-orm";
 import { pgSchema, text, timestamp } from "drizzle-orm/pg-core";
 import { always, eq } from "@thomasfosterau/pulpit/Filter";

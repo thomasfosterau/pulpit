@@ -104,7 +104,7 @@ export default defineConfig({
         },
       },
       // pulpit-drizzle-pg's `makeVersionChains` is the type-erasure seam
-      // between effect-drizzle-ext `-pg/chain`'s per-leaf typed chains and
+      // between effect-drizzle-ext `-pg/Chain`'s per-leaf typed chains and
       // the kernel's untyped `VersionChain` port. Each leaf's chain is typed
       // by conditional types over the application's unresolved tree (`S`,
       // `T`: `ChainState<S, T, K>`, `LeafOf<S>`), and its inputs are
@@ -112,7 +112,7 @@ export default defineConfig({
       // `ChainState` neither way, and the result record's keys exist only at
       // the type level. The two `// SAFETY:`-commented assertions (the
       // erased chains, and the ports under the tree's leaf names) are the
-      // whole crossing; `-pg/chain` crosses the same seam the other way.
+      // whole crossing; `-pg/Chain` crosses the same seam the other way.
       // pulpit-drizzle-pg's unit suites drive each store over a stand-in for
       // Drizzle's transaction (`tests/fixtures/canned.ts`): an Effect of
       // canned rows whose builder methods return itself. A real

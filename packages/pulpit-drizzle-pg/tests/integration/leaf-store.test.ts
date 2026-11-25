@@ -9,7 +9,7 @@
  * id-keyed reads and the owner stamp.
  */
 
-import { pgClientFromUrl, makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { pgClientFromUrl, makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import {
   always,
   and,

@@ -7,9 +7,9 @@
  * executed; type-checked only.
  */
 
-import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
-import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
-import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext/Annotation";
+import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/VersionedChain";
+import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import * as DrizzlePg from "@thomasfosterau/pulpit-drizzle-pg";
 import {
   makeVersionChains,

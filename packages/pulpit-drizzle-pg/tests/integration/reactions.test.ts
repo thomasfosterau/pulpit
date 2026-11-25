@@ -7,7 +7,7 @@
  * purging a node or deleting an account cascades.
  */
 
-import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import type { ReactionRow } from "@thomasfosterau/pulpit/Reactions";
 import { makeInMemoryReactionStore } from "@thomasfosterau/pulpit/testing";
 import { getTableName, sql } from "drizzle-orm";

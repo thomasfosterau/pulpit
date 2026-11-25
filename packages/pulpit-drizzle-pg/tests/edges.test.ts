@@ -6,7 +6,7 @@
  * `tests/integration/edges.test.ts`.
  */
 
-import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
+import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/Derive";
 import { always } from "@thomasfosterau/pulpit/Filter";
 import { getTableName } from "drizzle-orm";
 import * as DateTime from "effect/DateTime";
