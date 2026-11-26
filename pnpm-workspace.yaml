@@ -38,7 +38,7 @@ catalog:
   # `vite` and `vitest` equal what vite-plus depends on (`npm view vite-plus@<v>
   # dependencies`), not vite-plus itself; the devcontainer image tag follows vite-plus.
   vite-plus: 1.8.0
-  vite: npm:@voidzero-dev/vite-plus-core@8.3.8000
+  vite: npm:@voidzero-dev/vite-plus-core@8.3.8001
   vitest: 5.1.1
 
 # Published peer ranges (the adapters peer on the kernel with `workspace:^`).
@@ -84,3 +84,7 @@ skills:
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - "@thomasfosterau/*"
+# Vite+ selects Node.js (.node-version) and pnpm (packageManager); pnpm
+# must not download or switch to its own.
+runtimeOnFail: ignore
+pmOnFail: ignore
