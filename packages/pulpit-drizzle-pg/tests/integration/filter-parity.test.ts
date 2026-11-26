@@ -6,7 +6,7 @@
  * comparand of its column's type, millisecond instants, no `NaN`.
  */
 
-import { pgClientFromUrl, makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import {
   and,
   anyOf,

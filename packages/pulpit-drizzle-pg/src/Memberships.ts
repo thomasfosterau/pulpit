@@ -165,43 +165,40 @@ export const makeMembershipStore = <I, Relations extends AnyRelations>(config: {
   const keyed = (groupId: string, accountId: string, status: "active" | "pending") =>
     and(eq(table.groupId, groupId), eq(table.accountId, accountId), eq(table.status, status));
   /** Run a statement that returns one row per row it wrote; whether any did. */
-  const wrote = (statement: SQL) =>
-    Effect.gen(function* () {
-      const tx = yield* CurrentTransaction;
-      const rows = yield* selectRows(
-        tx,
-        sql`WITH written AS (${statement}) SELECT count(*)::int AS n FROM written`,
-        Schema.Struct({ n: Schema.Int }),
-      );
-      return yield* countOf(rows);
-    });
+  const wrote = Effect.fnUntraced(function* (statement: SQL) {
+    const tx = yield* CurrentTransaction;
+    const rows = yield* selectRows(
+      tx,
+      sql`WITH written AS (${statement}) SELECT count(*)::int AS n FROM written`,
+      Schema.Struct({ n: Schema.Int }),
+    );
+    return yield* countOf(rows);
+  });
   /** The rows matching `where`, counted (a page past the end reads no window total). */
-  const counted = (where: SQL) =>
-    Effect.gen(function* () {
-      const tx = yield* CurrentTransaction;
-      const rows = yield* tx
-        .select({ n: sql<number>`count(*)::int` })
-        .from(table)
-        .where(where);
-      return yield* countOf(rows);
-    });
+  const counted = Effect.fnUntraced(function* (where: SQL) {
+    const tx = yield* CurrentTransaction;
+    const rows = yield* tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(table)
+      .where(where);
+    return yield* countOf(rows);
+  });
   const totalOf = (page: ReadonlyArray<{ readonly total: number }>, where: SQL) =>
     Option.match(Arr.head(page), {
       onSome: ({ total }) => Effect.succeed(total),
       onNone: () => counted(where),
     });
   const window = sql<number>`(count(*) over ())::int`;
-  const roleOf = (groupId: string, accountId: string) =>
-    Effect.gen(function* () {
-      const tx = yield* CurrentTransaction;
-      const rows = yield* tx
-        .select({ role: table.role })
-        .from(table)
-        .where(keyed(groupId, accountId, "active"))
-        .limit(1);
-      const roles = yield* Effect.orDie(decodeRoles(rows));
-      return Option.map(Arr.head(roles), ({ role }) => role);
-    });
+  const roleOf = Effect.fnUntraced(function* (groupId: string, accountId: string) {
+    const tx = yield* CurrentTransaction;
+    const rows = yield* tx
+      .select({ role: table.role })
+      .from(table)
+      .where(keyed(groupId, accountId, "active"))
+      .limit(1);
+    const roles = yield* Effect.orDie(decodeRoles(rows));
+    return Option.map(Arr.head(roles), ({ role }) => role);
+  });
 
   return {
     add: (membership: Membership) =>

@@ -217,21 +217,20 @@ export const routable = <Resource, E, R>(
 
   // The claim the written state calls for: its path while it is live, none
   // for a tombstone or a state whose path column holds no string.
-  const follow = ({ id, version }: ChainWrite) =>
-    Effect.gen(function* () {
-      const written = yield* snapshotOf(chain, id, version);
-      const path = Option.flatMap(written, (snapshot) =>
-        snapshot.action === "delete"
-          ? Option.none()
-          : Option.liftPredicate(snapshot.state[column], P.isString),
-      );
-      const held = yield* paths.canonicalOf(id);
-      if (Option.makeEquivalence(Equivalence.String)(path, held)) return;
-      yield* Option.match(path, {
-        onNone: () => paths.release(id),
-        onSome: (claimed) => paths.claim(id, claimed),
-      });
+  const follow = Effect.fnUntraced(function* ({ id, version }: ChainWrite) {
+    const written = yield* snapshotOf(chain, id, version);
+    const path = Option.flatMap(written, (snapshot) =>
+      snapshot.action === "delete"
+        ? Option.none()
+        : Option.liftPredicate(snapshot.state[column], P.isString),
+    );
+    const held = yield* paths.canonicalOf(id);
+    if (Option.makeEquivalence(Equivalence.String)(path, held)) return;
+    yield* Option.match(path, {
+      onNone: () => paths.release(id),
+      onSome: (claimed) => paths.claim(id, claimed),
     });
+  });
   const claiming = <A extends ChainWrite, E2, R2>(write: Effect.Effect<A, E2, R2>) =>
     Effect.tap(write, follow);
 

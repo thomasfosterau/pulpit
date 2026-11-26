@@ -137,23 +137,22 @@ export const readsOver = <I, Relations extends AnyRelations>(
         );
 
   /** The source's rows under `where`, at most `limit` of them. */
-  const where = (source: RowSource, predicate: SQL, limit: number) =>
-    Effect.gen(function* () {
-      const tx = yield* CurrentTransaction;
-      const rows = yield* tx
-        .select(source.columns)
-        .from(source.relation)
-        .where(predicate)
-        .limit(limit);
-      return yield* asLeafRows(rows);
-    });
+  const where = Effect.fnUntraced(function* (source: RowSource, predicate: SQL, limit: number) {
+    const tx = yield* CurrentTransaction;
+    const rows = yield* tx
+      .select(source.columns)
+      .from(source.relation)
+      .where(predicate)
+      .limit(limit);
+    return yield* asLeafRows(rows);
+  });
 
   /** The source's rows with these ids (canonical UUIDs, deduplicated by the caller). */
   const byIds = (source: RowSource, ids: Arr.NonEmptyReadonlyArray<string>) =>
     where(source, sql`${source.id} IN ${ids}`, ids.length);
 
   /** A page under the kernel's filter and order, with the unpaged total (`count(*) OVER ()`). */
-  const page = (
+  const page = Effect.fnUntraced(function* (
     source: RowSource,
     query: {
       readonly where: ListFilter<SQLWrapper>;
@@ -161,24 +160,23 @@ export const readsOver = <I, Relations extends AnyRelations>(
       readonly limit: number;
       readonly offset: number;
     },
-  ) =>
-    Effect.gen(function* () {
-      const tx = yield* CurrentTransaction;
-      const rows = yield* tx
-        .select({ ...source.columns, pageTotal: sql<number>`(count(*) over ())::int` })
-        .from(source.relation)
-        .where(Option.getOrUndefined(renderListFilter(query.where, source.columns)))
-        .orderBy(...renderListOrder(query.orderBy, source.columns, source.id))
-        .limit(query.limit)
-        .offset(query.offset);
-      return {
-        rows: yield* asLeafRows(Arr.map(rows, ({ pageTotal: _total, ...row }) => row)),
-        total: Option.getOrElse(
-          Option.map(Arr.head(rows), (row) => row.pageTotal),
-          () => 0,
-        ),
-      };
-    });
+  ) {
+    const tx = yield* CurrentTransaction;
+    const rows = yield* tx
+      .select({ ...source.columns, pageTotal: sql<number>`(count(*) over ())::int` })
+      .from(source.relation)
+      .where(Option.getOrUndefined(renderListFilter(query.where, source.columns)))
+      .orderBy(...renderListOrder(query.orderBy, source.columns, source.id))
+      .limit(query.limit)
+      .offset(query.offset);
+    return {
+      rows: yield* asLeafRows(Arr.map(rows, ({ pageTotal: _total, ...row }) => row)),
+      total: Option.getOrElse(
+        Option.map(Arr.head(rows), (row) => row.pageTotal),
+        () => 0,
+      ),
+    };
+  });
 
   /** One column's distinct string values under the filter, by code point, with the distinct count. */
   const distinct = (source: RowSource, query: DistinctQuery<SQLWrapper>) =>

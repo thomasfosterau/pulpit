@@ -1772,25 +1772,23 @@ export const defineWordPress = <R, Following = never>(
    * `nonMemberFilter` does, so an unknown or hidden term never narrows the
    * list differently from an absent one.
    */
-  const termMembership = (
+  const termMembership = Effect.fnUntraced(function* (
     params: CollectionParams,
     decoded: ReadonlyArray<ReadonlyArray<string>>,
-  ): Effect.Effect<ListFilter<Following>, WpRestError, R> =>
-    Effect.gen(function* () {
-      if (!Arr.isReadonlyArrayNonEmpty(params.terms)) return always;
-      const filters = yield* Effect.forEach(
-        Arr.zip(params.terms, decoded),
-        ([[taxonomy, mode], termIds]) =>
-          Option.match(Option.fromNullishOr(config.taxonomies?.[taxonomy]), {
-            onNone: () =>
-              Effect.succeed<ListFilter<Following>>(mode === "include" ? never : always),
-            onSome: (binding) =>
-              internal(mode === "include" ? binding.members(termIds) : binding.nonMembers(termIds)),
-          }),
-        { concurrency: 1 },
-      );
-      return params.taxRelation === "OR" ? or(...filters) : and(...filters);
-    });
+  ) {
+    if (!Arr.isReadonlyArrayNonEmpty(params.terms)) return always;
+    const filters = yield* Effect.forEach(
+      Arr.zip(params.terms, decoded),
+      ([[taxonomy, mode], termIds]) =>
+        Option.match(Option.fromNullishOr(config.taxonomies?.[taxonomy]), {
+          onNone: () => Effect.succeed<ListFilter<Following>>(mode === "include" ? never : always),
+          onSome: (binding) =>
+            internal(mode === "include" ? binding.members(termIds) : binding.nonMembers(termIds)),
+        }),
+      { concurrency: 1 },
+    );
+    return params.taxRelation === "OR" ? or(...filters) : and(...filters);
+  });
 
   /** The bound type's `getMany`, skipped for no ids. */
   const readable = (type: PostType, nodeIds: ReadonlyArray<string>) =>
@@ -1854,88 +1852,87 @@ export const defineWordPress = <R, Following = never>(
     );
 
   /** Read everything a set of items points at, each kind in one batch. */
-  const relate = (
+  const relate = Effect.fnUntraced(function* (
     type: PostType,
     items: ReadonlyArray<ShownItem>,
     embed: (rel: string) => boolean,
-  ) =>
-    Effect.gen(function* () {
-      const now = DateTime.toDateUtc(yield* DateTime.now);
-      const parentType = parentTypeOf(type);
-      const media = yield* readable(
-        "attachment",
-        Arr.dedupe(Arr.getSomes(items.map(({ fields }) => fields.featuredMedia))),
-      );
-      const parents = yield* readable(
-        parentType,
-        Arr.dedupe(Arr.getSomes(items.map(({ fields }) => fields.parent))),
-      );
-      const terms = yield* Effect.forEach(
-        taxonomiesOf(type),
-        ([taxonomy, binding]) =>
-          Effect.map(
-            internal(binding.termsOf(items.map(({ fields }) => fields.id))),
-            (byItem) => [taxonomy, byItem] as const,
-          ),
-        { concurrency: 1 },
-      );
-      const termIds = Arr.dedupe(
-        Arr.flatMap(terms, ([, byItem]) => Arr.flatten(HashMap.toValues(byItem))),
-      );
-      const termItems = embed("wp:term")
-        ? yield* readTerms(terms.map(([taxonomy, byItem]) => [taxonomy, byItem] as const))
-        : HashMap.empty<string, ShownTerm>();
-      const embeddedMedia = embed("wp:featuredmedia") ? HashMap.toValues(media) : [];
-      const embeddedParents = embed("up") ? HashMap.toValues(parents) : [];
-      const nodeIds = Arr.dedupe([
-        ...items.map(({ fields }) => fields.id),
-        ...HashMap.keys(media),
-        ...HashMap.keys(parents),
-        ...termIds,
-      ]);
-      const encoded = Arr.isReadonlyArrayNonEmpty(nodeIds)
-        ? yield* internal(ids.encode(nodeIds))
-        : [];
-      const authorIds = Arr.dedupe(
-        Arr.getSomes(
-          [...items, ...embeddedMedia, ...embeddedParents].map(({ fields }) => fields.author),
+  ) {
+    const now = DateTime.toDateUtc(yield* DateTime.now);
+    const parentType = parentTypeOf(type);
+    const media = yield* readable(
+      "attachment",
+      Arr.dedupe(Arr.getSomes(items.map(({ fields }) => fields.featuredMedia))),
+    );
+    const parents = yield* readable(
+      parentType,
+      Arr.dedupe(Arr.getSomes(items.map(({ fields }) => fields.parent))),
+    );
+    const terms = yield* Effect.forEach(
+      taxonomiesOf(type),
+      ([taxonomy, binding]) =>
+        Effect.map(
+          internal(binding.termsOf(items.map(({ fields }) => fields.id))),
+          (byItem) => [taxonomy, byItem] as const,
         ),
-      );
-      const authorEncoded = Arr.isReadonlyArrayNonEmpty(authorIds)
-        ? yield* internal(authors.ids.encode(authorIds))
-        : [];
-      const profiles =
-        embed("author") && Arr.isReadonlyArrayNonEmpty(authorIds)
-          ? yield* internal(authors.getMany(authorIds))
-          : HashMap.empty<string, Author>();
-      const toRender: ReadonlyArray<readonly [PostType, ShownItem]> = [
-        ...items.map((item): readonly [PostType, ShownItem] => [type, item]),
-        ...embeddedMedia.map((item): readonly [PostType, ShownItem] => ["attachment", item]),
-        ...embeddedParents.map((item): readonly [PostType, ShownItem] => [parentType, item]),
-      ];
-      const requests = Arr.flatMap(toRender, ([itemType, item]) =>
-        renderRequests(itemType, item).map((request) => [item.fields.id, request] as const),
-      );
-      const html = Arr.isReadonlyArrayNonEmpty(requests)
-        ? yield* internal(config.render(requests.map(([, request]) => request)))
-        : [];
-      return {
-        media,
-        parents,
-        wire: HashMap.fromIterable(Arr.zip(nodeIds, encoded)),
-        authorWire: HashMap.fromIterable(Arr.zip(authorIds, authorEncoded)),
-        profiles,
-        rendered: HashMap.fromIterable(
-          Arr.zip(
-            requests.map(([id, request]) => renderKey(id, request.field)),
-            html,
-          ),
+      { concurrency: 1 },
+    );
+    const termIds = Arr.dedupe(
+      Arr.flatMap(terms, ([, byItem]) => Arr.flatten(HashMap.toValues(byItem))),
+    );
+    const termItems = embed("wp:term")
+      ? yield* readTerms(terms.map(([taxonomy, byItem]) => [taxonomy, byItem] as const))
+      : HashMap.empty<string, ShownTerm>();
+    const embeddedMedia = embed("wp:featuredmedia") ? HashMap.toValues(media) : [];
+    const embeddedParents = embed("up") ? HashMap.toValues(parents) : [];
+    const nodeIds = Arr.dedupe([
+      ...items.map(({ fields }) => fields.id),
+      ...HashMap.keys(media),
+      ...HashMap.keys(parents),
+      ...termIds,
+    ]);
+    const encoded = Arr.isReadonlyArrayNonEmpty(nodeIds)
+      ? yield* internal(ids.encode(nodeIds))
+      : [];
+    const authorIds = Arr.dedupe(
+      Arr.getSomes(
+        [...items, ...embeddedMedia, ...embeddedParents].map(({ fields }) => fields.author),
+      ),
+    );
+    const authorEncoded = Arr.isReadonlyArrayNonEmpty(authorIds)
+      ? yield* internal(authors.ids.encode(authorIds))
+      : [];
+    const profiles =
+      embed("author") && Arr.isReadonlyArrayNonEmpty(authorIds)
+        ? yield* internal(authors.getMany(authorIds))
+        : HashMap.empty<string, Author>();
+    const toRender: ReadonlyArray<readonly [PostType, ShownItem]> = [
+      ...items.map((item): readonly [PostType, ShownItem] => [type, item]),
+      ...embeddedMedia.map((item): readonly [PostType, ShownItem] => ["attachment", item]),
+      ...embeddedParents.map((item): readonly [PostType, ShownItem] => [parentType, item]),
+    ];
+    const requests = Arr.flatMap(toRender, ([itemType, item]) =>
+      renderRequests(itemType, item).map((request) => [item.fields.id, request] as const),
+    );
+    const html = Arr.isReadonlyArrayNonEmpty(requests)
+      ? yield* internal(config.render(requests.map(([, request]) => request)))
+      : [];
+    return {
+      media,
+      parents,
+      wire: HashMap.fromIterable(Arr.zip(nodeIds, encoded)),
+      authorWire: HashMap.fromIterable(Arr.zip(authorIds, authorEncoded)),
+      profiles,
+      rendered: HashMap.fromIterable(
+        Arr.zip(
+          requests.map(([id, request]) => renderKey(id, request.field)),
+          html,
         ),
-        now,
-        terms,
-        termItems,
-      } satisfies Related;
-    });
+      ),
+      now,
+      terms,
+      termItems,
+    } satisfies Related;
+  });
 
   const linksOf = (type: PostType, item: ShownItem, related: Related): Schema.JsonObject => {
     const { fields } = item;
@@ -2373,32 +2370,31 @@ export const defineWordPress = <R, Following = never>(
    * the live version is never asked. The pending instant is the item's
    * `date`, and its status `future`.
    */
-  const withSchedules = (
+  const withSchedules = Effect.fnUntraced(function* (
     type: PostType,
     binding: BoundPostType<R, Following>,
     items: ReadonlyArray<ShownItem>,
-  ): Effect.Effect<ReadonlyArray<ShownItem>, WpRestError, R> =>
-    Effect.gen(function* () {
-      // An attachment has no `future`: it is `inherit` once it is not a draft.
-      const undecided = Arr.filter(
-        items,
-        ({ fields }) => type !== "attachment" && fields.draft && !fields.deleted,
-      );
-      if (!Arr.isReadonlyArrayNonEmpty(undecided)) return items;
-      const pending = yield* internal(
-        binding.scheduled(Arr.map(undecided, ({ fields }) => fields.id)),
-      );
-      return Arr.map(items, (item) =>
-        Option.match(HashMap.get(pending, item.fields.id), {
-          onNone: () => item,
-          onSome: (at): ShownItem => ({
-            ...item,
-            scheduled: Option.some(at),
-            fields: { ...item.fields, date: Option.some(at) },
-          }),
+  ) {
+    // An attachment has no `future`: it is `inherit` once it is not a draft.
+    const undecided = Arr.filter(
+      items,
+      ({ fields }) => type !== "attachment" && fields.draft && !fields.deleted,
+    );
+    if (!Arr.isReadonlyArrayNonEmpty(undecided)) return items;
+    const pending = yield* internal(
+      binding.scheduled(Arr.map(undecided, ({ fields }) => fields.id)),
+    );
+    return Arr.map(items, (item) =>
+      Option.match(HashMap.get(pending, item.fields.id), {
+        onNone: () => item,
+        onSome: (at): ShownItem => ({
+          ...item,
+          scheduled: Option.some(at),
+          fields: { ...item.fields, date: Option.some(at) },
         }),
-      );
-    });
+      }),
+    );
+  });
 
   /** The `?lang=` bound of a type: its localised reads, or `lang` is not supported for it. */
   const localisedOf = (binding: BoundPostType<R, Following>) =>
@@ -2407,276 +2403,274 @@ export const defineWordPress = <R, Following = never>(
     );
 
   /** One item in `tag`'s fallback order: the requested tag, its prefixes, then the leaf's default. */
-  const localisedItem = (binding: BoundPostType<R, Following>, id: string, tag: string) =>
-    Effect.gen(function* () {
-      const reads = yield* localisedOf(binding);
-      const found = yield* shownOr(
-        reads.get(id, localePreferences([tag], reads.defaultLocale)),
-        invalidId,
-      );
-      return { item: found.item, served: Option.some(found.locale) };
-    });
+  const localisedItem = Effect.fnUntraced(function* (
+    binding: BoundPostType<R, Following>,
+    id: string,
+    tag: string,
+  ) {
+    const reads = yield* localisedOf(binding);
+    const found = yield* shownOr(
+      reads.get(id, localePreferences([tag], reads.defaultLocale)),
+      invalidId,
+    );
+    return { item: found.item, served: Option.some(found.locale) };
+  });
 
-  const getItem = (
+  const getItem = Effect.fnUntraced(function* (
     type: PostType,
     binding: BoundPostType<R, Following>,
     rawId: string,
     query: Query,
-  ) =>
-    Effect.gen(function* () {
-      const lang = yield* Option.match(query.scalar("lang"), {
-        onNone: () => Effect.succeedNone,
-        onSome: (tag) =>
-          LANG_TAG.test(tag)
-            ? Effect.asSome(Effect.succeed(tag))
-            : Effect.fail(invalidParams({ lang: LANG_MESSAGE })),
-      });
-      const id = yield* decodeOne(ids, rawId, invalidId);
-      const { item: found, served } = yield* Option.match(lang, {
-        onNone: () =>
-          Effect.map(shownOr(binding.get(id), invalidId), (item) => ({
-            item,
-            served: Option.none<string>(),
-          })),
-        onSome: (tag) => localisedItem(binding, id, tag),
-      });
-      const [item = found] = yield* withSchedules(type, binding, [found]);
-      const viewer = yield* config.viewer;
-      // The 404 comes first, so a refused context never confirms the row.
-      if (Option.contains(query.scalar("context"), "edit")) {
-        return yield* editRefused(viewer, "Sorry, you are not allowed to edit this post.");
-      }
-      const context = Option.contains(query.scalar("context"), "embed") ? "embed" : "view";
-      const embed = embedsOf(query);
-      const related = yield* relate(type, [item], embed);
-      return respond(200, itemResponse(type, item, related, context, query), [
-        cacheControl(publicly(viewer, [item], related, embed)),
-        ...Arr.fromOption(Option.map(served, (tag) => ["content-language", tag] as const)),
-      ]);
+  ) {
+    const lang = yield* Option.match(query.scalar("lang"), {
+      onNone: () => Effect.succeedNone,
+      onSome: (tag) =>
+        LANG_TAG.test(tag)
+          ? Effect.asSome(Effect.succeed(tag))
+          : Effect.fail(invalidParams({ lang: LANG_MESSAGE })),
     });
+    const id = yield* decodeOne(ids, rawId, invalidId);
+    const { item: found, served } = yield* Option.match(lang, {
+      onNone: () =>
+        Effect.map(shownOr(binding.get(id), invalidId), (item) => ({
+          item,
+          served: Option.none<string>(),
+        })),
+      onSome: (tag) => localisedItem(binding, id, tag),
+    });
+    const [item = found] = yield* withSchedules(type, binding, [found]);
+    const viewer = yield* config.viewer;
+    // The 404 comes first, so a refused context never confirms the row.
+    if (Option.contains(query.scalar("context"), "edit")) {
+      return yield* editRefused(viewer, "Sorry, you are not allowed to edit this post.");
+    }
+    const context = Option.contains(query.scalar("context"), "embed") ? "embed" : "view";
+    const embed = embedsOf(query);
+    const related = yield* relate(type, [item], embed);
+    return respond(200, itemResponse(type, item, related, context, query), [
+      cacheControl(publicly(viewer, [item], related, embed)),
+      ...Arr.fromOption(Option.map(served, (tag) => ["content-language", tag] as const)),
+    ]);
+  });
 
   /** The decoded node ids of each id list, in one `decode`. */
-  const decodeLists = (
+  const decodeLists = Effect.fnUntraced(function* (
     wireIds: WireIds<WireId, unknown, unknown, R>,
     lists: ReadonlyArray<ReadonlyArray<string>>,
-  ) =>
-    Effect.gen(function* () {
-      const flat = Arr.flatten(lists);
-      const decodedIds = Arr.isReadonlyArrayNonEmpty(flat)
-        ? yield* internal(wireIds.decode(flat))
-        : [];
-      const starts = Arr.scan(lists, 0, (at, list) => at + list.length);
-      return lists.map((list, index) =>
-        Arr.getSomes(decodedIds.slice(starts[index] ?? 0, (starts[index] ?? 0) + list.length)),
+  ) {
+    const flat = Arr.flatten(lists);
+    const decodedIds = Arr.isReadonlyArrayNonEmpty(flat)
+      ? yield* internal(wireIds.decode(flat))
+      : [];
+    const starts = Arr.scan(lists, 0, (at, list) => at + list.length);
+    return lists.map((list, index) =>
+      Arr.getSomes(decodedIds.slice(starts[index] ?? 0, (starts[index] ?? 0) + list.length)),
+    );
+  });
+
+  const listItems = Effect.fnUntraced(function* (
+    type: PostType,
+    binding: BoundPostType<R, Following>,
+    query: Query,
+  ) {
+    const { columns } = binding;
+    const taxonomies = taxonomiesOf(type);
+    const params = yield* collectionParams(
+      type,
+      query,
+      columns,
+      site.timezone,
+      taxonomies.map(([taxonomy]) => taxonomy),
+    );
+    const viewer = yield* config.viewer;
+    if (Option.contains(query.scalar("context"), "edit")) {
+      return yield* editRefused(
+        viewer,
+        "Sorry, you are not allowed to edit posts in this post type.",
       );
+    }
+    yield* checkStatuses(type, params.statuses, viewer, policy);
+    // `lang`: the fallback order of the requested tag, for a leaf that declares a default.
+    const localised = yield* Option.match(params.lang, {
+      onNone: () => Effect.succeedNone,
+      onSome: (tag) =>
+        Effect.map(localisedOf(binding), (reads) =>
+          Option.some({ reads, order: localePreferences([tag], reads.defaultLocale) }),
+        ),
     });
 
-  const listItems = (type: PostType, binding: BoundPostType<R, Following>, query: Query) =>
-    Effect.gen(function* () {
-      const { columns } = binding;
-      const taxonomies = taxonomiesOf(type);
-      const params = yield* collectionParams(
-        type,
-        query,
-        columns,
-        site.timezone,
-        taxonomies.map(([taxonomy]) => taxonomy),
-      );
-      const viewer = yield* config.viewer;
-      if (Option.contains(query.scalar("context"), "edit")) {
-        return yield* editRefused(
-          viewer,
-          "Sorry, you are not allowed to edit posts in this post type.",
-        );
-      }
-      yield* checkStatuses(type, params.statuses, viewer, policy);
-      // `lang`: the fallback order of the requested tag, for a leaf that declares a default.
-      const localised = yield* Option.match(params.lang, {
-        onNone: () => Effect.succeedNone,
-        onSome: (tag) =>
-          Effect.map(localisedOf(binding), (reads) =>
-            Option.some({ reads, order: localePreferences([tag], reads.defaultLocale) }),
-          ),
-      });
-
-      // Every node id parameter decodes in one batch, every author id in another.
-      const [include = [], exclude = [], parent = [], parentExclude = [], ...termIds] =
-        yield* decodeLists(ids, [
-          Option.getOrElse(params.include, () => []),
-          params.exclude,
-          Option.getOrElse(params.parent, () => []),
-          params.parentExclude,
-          ...params.terms.map(([, , values]) => values),
-        ]);
-      const membership = yield* termMembership(params, termIds);
-      const [author = [], authorExclude = []] = yield* decodeLists(authors.ids, [
-        Option.getOrElse(params.author, () => []),
-        params.authorExclude,
+    // Every node id parameter decodes in one batch, every author id in another.
+    const [include = [], exclude = [], parent = [], parentExclude = [], ...termIds] =
+      yield* decodeLists(ids, [
+        Option.getOrElse(params.include, () => []),
+        params.exclude,
+        Option.getOrElse(params.parent, () => []),
+        params.parentExclude,
+        ...params.terms.map(([, , values]) => values),
       ]);
+    const membership = yield* termMembership(params, termIds);
+    const [author = [], authorExclude = []] = yield* decodeLists(authors.ids, [
+      Option.getOrElse(params.author, () => []),
+      params.authorExclude,
+    ]);
 
-      /** A filter over a bound column; collectionParams refused a parameter whose column is absent. */
-      const onColumn = (
-        key: keyof PostColumns,
-        filter: (column: string) => ListFilter<never>,
-      ): ListFilter<never> =>
-        Option.match(columnOf(columns, key), { onNone: () => never, onSome: filter });
-      const where = and<Following>(
-        or<never>(...params.statuses.map((status) => statusFilter(type, columns, status))),
-        whenGiven(params.include, () => anyOf("id", include)),
-        unless(exclude, () => noneOf("id", exclude)),
-        whenGiven(params.slug, (slugs) => anyOf(columns.slug, slugs)),
-        whenGiven(params.author, () => onColumn("author", (column) => anyOf(column, author))),
-        unless(authorExclude, () =>
-          onColumn("author", (column) => excluding(column, authorExclude)),
+    /** A filter over a bound column; collectionParams refused a parameter whose column is absent. */
+    const onColumn = (
+      key: keyof PostColumns,
+      filter: (column: string) => ListFilter<never>,
+    ): ListFilter<never> =>
+      Option.match(columnOf(columns, key), { onNone: () => never, onSome: filter });
+    const where = and<Following>(
+      or<never>(...params.statuses.map((status) => statusFilter(type, columns, status))),
+      whenGiven(params.include, () => anyOf("id", include)),
+      unless(exclude, () => noneOf("id", exclude)),
+      whenGiven(params.slug, (slugs) => anyOf(columns.slug, slugs)),
+      whenGiven(params.author, () => onColumn("author", (column) => anyOf(column, author))),
+      unless(authorExclude, () => onColumn("author", (column) => excluding(column, authorExclude))),
+      whenGiven(params.parent, () => onColumn("parent", (column) => anyOf(column, parent))),
+      unless(parentExclude, () => onColumn("parent", (column) => excluding(column, parentExclude))),
+      whenGiven(params.menuOrder, (value) => onColumn("menuOrder", (column) => eq(column, value))),
+      whenGiven(params.mimeType, (value) => onColumn("mimeType", (column) => eq(column, value))),
+      whenGiven(params.mediaType, (types) =>
+        onColumn("mediaType", (column) => anyOf(column, types)),
+      ),
+      whenGiven(params.after, (at) => gt(columns.date, at)),
+      whenGiven(params.before, (at) => lt(columns.date, at)),
+      whenGiven(params.modifiedAfter, (at) => gt(columns.modified, at)),
+      whenGiven(params.modifiedBefore, (at) => lt(columns.modified, at)),
+      membership,
+    );
+    const sortBy = Match.value(params.orderby).pipe(
+      Match.when("author", () => columnOf(columns, "author")),
+      Match.when("id", () => Option.some(columns.id ?? "id")),
+      Match.when("modified", () => Option.some(columns.modified)),
+      Match.when("slug", () => Option.some(columns.slug)),
+      Match.when("title", () => columnOf(columns, "title")),
+      Match.when("parent", () => columnOf(columns, "parent")),
+      Match.when("menu_order", () => columnOf(columns, "menuOrder")),
+      // `date`, and `include`'s reading before its own reorder.
+      Match.orElse(() => Option.some(columns.date)),
+    );
+    const column = yield* Effect.fromOption(sortBy).pipe(
+      Effect.mapError(() =>
+        invalidParams({
+          orderby: `orderby ${params.orderby} is not supported for this post type.`,
+        }),
+      ),
+    );
+    const orderBy: ReadonlyArray<ListOrder> = [{ column, direction: params.order }];
+    const offset = Option.getOrElse(params.offset, () => (params.page - 1) * params.perPage);
+    // `orderby=include` orders by the include list, at most MAX_LIST_PARAMETER long: read it whole, then page it here.
+    const byInclude = params.orderby === "include";
+    const plain = Effect.fn("wordpress.listPlain")(function* () {
+      const request = {
+        where,
+        orderBy,
+        includeDeleted: Arr.contains(params.statuses, "trash"),
+        limit: byInclude ? MAX_LIST_PARAMETER : params.perPage,
+        offset: byInclude ? 0 : offset,
+      };
+      const page = yield* Option.match(localised, {
+        onNone: () => binding.list(request),
+        // One row per node, in its best locale, paged by the store (`total` counts nodes).
+        onSome: ({ reads, order }) =>
+          Effect.map(reads.list({ ...request, locales: order }), ({ rows, total }) => ({
+            rows: rows.map(({ item }) => item),
+            total,
+          })),
+      }).pipe(
+        Effect.catchIf(Schema.is(InvalidListOrder), () =>
+          Effect.fail(
+            invalidParams({
+              orderby: `orderby ${params.orderby} is not sortable for this post type.`,
+            }),
+          ),
         ),
-        whenGiven(params.parent, () => onColumn("parent", (column) => anyOf(column, parent))),
-        unless(parentExclude, () =>
-          onColumn("parent", (column) => excluding(column, parentExclude)),
-        ),
-        whenGiven(params.menuOrder, (value) =>
-          onColumn("menuOrder", (column) => eq(column, value)),
-        ),
-        whenGiven(params.mimeType, (value) => onColumn("mimeType", (column) => eq(column, value))),
-        whenGiven(params.mediaType, (types) =>
-          onColumn("mediaType", (column) => anyOf(column, types)),
-        ),
-        whenGiven(params.after, (at) => gt(columns.date, at)),
-        whenGiven(params.before, (at) => lt(columns.date, at)),
-        whenGiven(params.modifiedAfter, (at) => gt(columns.modified, at)),
-        whenGiven(params.modifiedBefore, (at) => lt(columns.modified, at)),
-        membership,
+        Effect.mapError((error) => (Schema.is(WpRestError)(error) ? error : internalError())),
       );
-      const sortBy = Match.value(params.orderby).pipe(
-        Match.when("author", () => columnOf(columns, "author")),
-        Match.when("id", () => Option.some(columns.id ?? "id")),
-        Match.when("modified", () => Option.some(columns.modified)),
-        Match.when("slug", () => Option.some(columns.slug)),
-        Match.when("title", () => columnOf(columns, "title")),
-        Match.when("parent", () => columnOf(columns, "parent")),
-        Match.when("menu_order", () => columnOf(columns, "menuOrder")),
-        // `date`, and `include`'s reading before its own reorder.
-        Match.orElse(() => Option.some(columns.date)),
-      );
-      const column = yield* Effect.fromOption(sortBy).pipe(
+      return {
+        rows: byInclude
+          ? Arr.sort(
+              page.rows,
+              Order.mapInput(Order.Number, (item: ShownItem) => include.indexOf(item.fields.id)),
+            ).slice(offset, offset + params.perPage)
+          : page.rows,
+        total: page.total,
+      };
+    });
+    // `search`: one capped ranked read, hydrated through the viewer's own gate, ordered and paged here.
+    const searched = Effect.fn("wordpress.listSearched")(function* (text: string) {
+      const search = yield* Effect.fromOption(binding.search).pipe(
         Effect.mapError(() =>
-          invalidParams({
-            orderby: `orderby ${params.orderby} is not supported for this post type.`,
+          invalidParams({ search: "search is not supported for this post type." }),
+        ),
+      );
+      const hits = Arr.dedupe(
+        yield* internal(
+          search({
+            query: text,
+            where,
+            includeDeleted: Arr.contains(params.statuses, "trash"),
+            limit: MAX_PAGE_LIMIT,
           }),
         ),
       );
-      const orderBy: ReadonlyArray<ListOrder> = [{ column, direction: params.order }];
-      const offset = Option.getOrElse(params.offset, () => (params.page - 1) * params.perPage);
-      // `orderby=include` orders by the include list, at most MAX_LIST_PARAMETER long: read it whole, then page it here.
-      const byInclude = params.orderby === "include";
-      const plain = Effect.fn("wordpress.listPlain")(function* () {
-        const request = {
-          where,
-          orderBy,
-          includeDeleted: Arr.contains(params.statuses, "trash"),
-          limit: byInclude ? MAX_LIST_PARAMETER : params.perPage,
-          offset: byInclude ? 0 : offset,
-        };
-        const page = yield* Option.match(localised, {
-          onNone: () => binding.list(request),
-          // One row per node, in its best locale, paged by the store (`total` counts nodes).
-          onSome: ({ reads, order }) =>
-            Effect.map(reads.list({ ...request, locales: order }), ({ rows, total }) => ({
-              rows: rows.map(({ item }) => item),
-              total,
-            })),
-        }).pipe(
-          Effect.catchIf(Schema.is(InvalidListOrder), () =>
-            Effect.fail(
-              invalidParams({
-                orderby: `orderby ${params.orderby} is not sortable for this post type.`,
-              }),
-            ),
-          ),
-          Effect.mapError((error) => (Schema.is(WpRestError)(error) ? error : internalError())),
-        );
-        return {
-          rows: byInclude
-            ? Arr.sort(
-                page.rows,
-                Order.mapInput(Order.Number, (item: ShownItem) => include.indexOf(item.fields.id)),
-              ).slice(offset, offset + params.perPage)
-            : page.rows,
-          total: page.total,
-        };
+      const shown = Arr.isReadonlyArrayNonEmpty(hits)
+        ? yield* internal(binding.getMany(hits))
+        : HashMap.empty<string, ShownItem>();
+      // The hits the viewer's read gate lets through, best first.
+      const hydrated = Arr.flatMap(hits, (id) => Option.toArray(HashMap.get(shown, id)));
+      const wire =
+        Arr.isReadonlyArrayNonEmpty(hydrated) && params.orderby === "id"
+          ? HashMap.fromIterable(
+              Arr.zip(
+                hydrated.map(({ fields }) => fields.id),
+                yield* internal(ids.encode(hydrated.map(({ fields }) => fields.id))),
+              ),
+            )
+          : HashMap.empty<string, WireId>();
+      const ordered = searchOrder(params, include, wire);
+      const sorted = Option.match(ordered, {
+        onNone: () => hydrated,
+        onSome: (order) => Arr.sort(hydrated, order),
       });
-      // `search`: one capped ranked read, hydrated through the viewer's own gate, ordered and paged here.
-      const searched = Effect.fn("wordpress.listSearched")(function* (text: string) {
-        const search = yield* Effect.fromOption(binding.search).pipe(
-          Effect.mapError(() =>
-            invalidParams({ search: "search is not supported for this post type." }),
-          ),
-        );
-        const hits = Arr.dedupe(
-          yield* internal(
-            search({
-              query: text,
-              where,
-              includeDeleted: Arr.contains(params.statuses, "trash"),
-              limit: MAX_PAGE_LIMIT,
-            }),
-          ),
-        );
-        const shown = Arr.isReadonlyArrayNonEmpty(hits)
-          ? yield* internal(binding.getMany(hits))
-          : HashMap.empty<string, ShownItem>();
-        // The hits the viewer's read gate lets through, best first.
-        const hydrated = Arr.flatMap(hits, (id) => Option.toArray(HashMap.get(shown, id)));
-        const wire =
-          Arr.isReadonlyArrayNonEmpty(hydrated) && params.orderby === "id"
-            ? HashMap.fromIterable(
-                Arr.zip(
-                  hydrated.map(({ fields }) => fields.id),
-                  yield* internal(ids.encode(hydrated.map(({ fields }) => fields.id))),
-                ),
-              )
-            : HashMap.empty<string, WireId>();
-        const ordered = searchOrder(params, include, wire);
-        const sorted = Option.match(ordered, {
-          onNone: () => hydrated,
-          onSome: (order) => Arr.sort(hydrated, order),
-        });
-        return {
-          rows: sorted.slice(offset, offset + params.perPage),
-          total: sorted.length,
-        };
-      });
-      const { rows: shownRows, total } = yield* Option.match(params.search, {
-        onNone: () => plain(),
-        onSome: searched,
-      });
-      const maxPages = Math.ceil(total / params.perPage);
-      if (params.page > maxPages && total > 0) {
-        return yield* new WpRestError({
-          code: "rest_post_invalid_page_number",
-          message: "The page number requested is larger than the number of pages available.",
-          status: 400,
-        });
-      }
-      const embed = embedsOf(query);
-      const rows = yield* withSchedules(type, binding, shownRows);
-      const related = yield* relate(type, rows, embed);
-      const collection = restUrl(`/wp/v2/${baseOf(type)}`);
-      const pageLink = (to: number, rel: string): readonly [string, string] => [
-        "link",
-        linkValue(withQuery(collection, query.pairs, Option.some(to)), rel),
-      ];
-      return respond(
-        200,
-        rows.map((item) => itemResponse(type, item, related, params.context, query)),
-        [
-          ["x-wp-total", String(total)],
-          ["x-wp-totalpages", String(maxPages)],
-          cacheControl(publicly(viewer, rows, related, embed)),
-          ...(params.page > 1 ? [pageLink(Math.min(params.page - 1, maxPages), "prev")] : []),
-          ...(maxPages > params.page ? [pageLink(params.page + 1, "next")] : []),
-        ],
-      );
+      return {
+        rows: sorted.slice(offset, offset + params.perPage),
+        total: sorted.length,
+      };
     });
+    const { rows: shownRows, total } = yield* Option.match(params.search, {
+      onNone: () => plain(),
+      onSome: searched,
+    });
+    const maxPages = Math.ceil(total / params.perPage);
+    if (params.page > maxPages && total > 0) {
+      return yield* new WpRestError({
+        code: "rest_post_invalid_page_number",
+        message: "The page number requested is larger than the number of pages available.",
+        status: 400,
+      });
+    }
+    const embed = embedsOf(query);
+    const rows = yield* withSchedules(type, binding, shownRows);
+    const related = yield* relate(type, rows, embed);
+    const collection = restUrl(`/wp/v2/${baseOf(type)}`);
+    const pageLink = (to: number, rel: string): readonly [string, string] => [
+      "link",
+      linkValue(withQuery(collection, query.pairs, Option.some(to)), rel),
+    ];
+    return respond(
+      200,
+      rows.map((item) => itemResponse(type, item, related, params.context, query)),
+      [
+        ["x-wp-total", String(total)],
+        ["x-wp-totalpages", String(maxPages)],
+        cacheControl(publicly(viewer, rows, related, embed)),
+        ...(params.page > 1 ? [pageLink(Math.min(params.page - 1, maxPages), "prev")] : []),
+        ...(maxPages > params.page ? [pageLink(params.page + 1, "next")] : []),
+      ],
+    );
+  });
 
   // ── Terms ───────────────────────────────────────────────────────────
 
@@ -2692,109 +2686,105 @@ export const defineWordPress = <R, Following = never>(
   };
 
   /** Terms on the wire: their ids and readable parents encoded in one batch. */
-  const termBodies = (
+  const termBodies = Effect.fnUntraced(function* (
     taxonomy: Taxonomy,
     binding: BoundTaxonomy<R, Following>,
     terms: ReadonlyArray<ShownTerm>,
     counts: HashMap.HashMap<string, number>,
     context: "view" | "embed",
-  ) =>
-    Effect.gen(function* () {
-      const parents = yield* readableParents(binding, terms);
-      const nodeIds = Arr.dedupe([
-        ...terms.map(({ fields }) => fields.id),
-        ...HashMap.keys(parents),
-      ]);
-      const encoded = Arr.isReadonlyArrayNonEmpty(nodeIds)
-        ? yield* internal(ids.encode(nodeIds))
-        : [];
-      const wire = HashMap.fromIterable(Arr.zip(nodeIds, encoded));
-      const wireOfNode = (id: Option.Option<string>): WireId =>
-        Option.getOrElse(
-          Option.flatMap(id, (node) => HashMap.get(wire, node)),
-          () => 0,
-        );
-      return terms.map((term) =>
-        termBody(
-          taxonomy,
-          term,
-          wireOfNode(Option.some(term.fields.id)),
-          context,
-          Option.getOrElse(HashMap.get(counts, term.fields.id), () => 0),
-          wireOfNode(Option.filter(term.fields.parent, (parent) => HashMap.has(parents, parent))),
-        ),
+  ) {
+    const parents = yield* readableParents(binding, terms);
+    const nodeIds = Arr.dedupe([...terms.map(({ fields }) => fields.id), ...HashMap.keys(parents)]);
+    const encoded = Arr.isReadonlyArrayNonEmpty(nodeIds)
+      ? yield* internal(ids.encode(nodeIds))
+      : [];
+    const wire = HashMap.fromIterable(Arr.zip(nodeIds, encoded));
+    const wireOfNode = (id: Option.Option<string>): WireId =>
+      Option.getOrElse(
+        Option.flatMap(id, (node) => HashMap.get(wire, node)),
+        () => 0,
       );
-    });
+    return terms.map((term) =>
+      termBody(
+        taxonomy,
+        term,
+        wireOfNode(Option.some(term.fields.id)),
+        context,
+        Option.getOrElse(HashMap.get(counts, term.fields.id), () => 0),
+        wireOfNode(Option.filter(term.fields.parent, (parent) => HashMap.has(parents, parent))),
+      ),
+    );
+  });
 
-  const getTerm = (
+  const getTerm = Effect.fnUntraced(function* (
     taxonomy: Taxonomy,
     binding: BoundTaxonomy<R, Following>,
     rawId: string,
     query: Query,
-  ) =>
-    Effect.gen(function* () {
-      const id = yield* decodeOne(ids, rawId, invalidTerm);
-      const term = yield* shownOr(binding.get(id), invalidTerm);
-      const viewer = yield* config.viewer;
-      if (Option.contains(query.scalar("context"), "edit")) {
-        return yield* editRefused(viewer, "Sorry, you are not allowed to edit this term.");
-      }
-      const context = Option.contains(query.scalar("context"), "embed") ? "embed" : "view";
-      const counts = yield* internal(binding.counts([id]));
-      const [body = {}] = yield* termBodies(taxonomy, binding, [term], counts, context);
-      return respond(200, fieldsFilterOf(query)(body), [
-        cacheControl(Option.isNone(viewer) && term.serveable),
-      ]);
-    });
+  ) {
+    const id = yield* decodeOne(ids, rawId, invalidTerm);
+    const term = yield* shownOr(binding.get(id), invalidTerm);
+    const viewer = yield* config.viewer;
+    if (Option.contains(query.scalar("context"), "edit")) {
+      return yield* editRefused(viewer, "Sorry, you are not allowed to edit this term.");
+    }
+    const context = Option.contains(query.scalar("context"), "embed") ? "embed" : "view";
+    const counts = yield* internal(binding.counts([id]));
+    const [body = {}] = yield* termBodies(taxonomy, binding, [term], counts, context);
+    return respond(200, fieldsFilterOf(query)(body), [
+      cacheControl(Option.isNone(viewer) && term.serveable),
+    ]);
+  });
 
   /** The item `post=` names, read through the post types the taxonomy applies to; a hidden one is unknown. */
-  const termsOfPost = (binding: BoundTaxonomy<R, Following>, postId: string) =>
-    Effect.gen(function* () {
-      const found = yield* Effect.forEach(
-        Arr.getSomes(binding.postTypes.map(bound)),
-        (postBinding) => internal(postBinding.get(postId)),
-        { concurrency: 1 },
-      );
-      if (!Arr.some(found, Option.isSome)) {
-        return yield* new WpRestError({
-          code: "rest_post_invalid_id",
-          message: "Invalid post ID.",
-          status: 400,
-        });
-      }
-      const byPost = yield* internal(binding.termsOf([postId]));
-      return Option.getOrElse(HashMap.get(byPost, postId), () => []);
-    });
+  const termsOfPost = Effect.fnUntraced(function* (
+    binding: BoundTaxonomy<R, Following>,
+    postId: string,
+  ) {
+    const found = yield* Effect.forEach(
+      Arr.getSomes(binding.postTypes.map(bound)),
+      (postBinding) => internal(postBinding.get(postId)),
+      { concurrency: 1 },
+    );
+    if (!Arr.some(found, Option.isSome)) {
+      return yield* new WpRestError({
+        code: "rest_post_invalid_id",
+        message: "Invalid post ID.",
+        status: 400,
+      });
+    }
+    const byPost = yield* internal(binding.termsOf([postId]));
+    return Option.getOrElse(HashMap.get(byPost, postId), () => []);
+  });
 
   /**
    * Every matching term at once (at most `MAX_SET_VALUES`), with its count:
    * what `hide_empty` and `orderby=count` read, since neither is a column.
    * A larger match is `400 rest_invalid_param` rather than a short answer.
    */
-  const everyTerm = (
+  const everyTerm = Effect.fnUntraced(function* (
     binding: BoundTaxonomy<R, Following>,
     params: TermParams,
     request: ListRequest,
-  ) =>
-    Effect.gen(function* () {
-      const all = yield* termPage(binding, { ...request, limit: MAX_SET_VALUES, offset: 0 });
-      if (all.total > all.rows.length) {
-        const name = params.hideEmpty ? "hide_empty" : "orderby";
-        return yield* invalidParams({
-          [name]: `${name} is not supported for more than ${MAX_SET_VALUES} matching terms.`,
-        });
-      }
-      const counts = yield* internal(binding.counts(all.rows.map(({ fields }) => fields.id)));
-      const countOf = (term: ShownTerm) =>
-        Option.getOrElse(HashMap.get(counts, term.fields.id), () => 0);
-      const kept = params.hideEmpty ? Arr.filter(all.rows, (term) => countOf(term) > 0) : all.rows;
-      const byCount = Order.mapInput(Order.Number, countOf);
-      const sorted =
-        params.orderby === "count"
-          ? Arr.sort(kept, params.order === "desc" ? Order.flip(byCount) : byCount)
-          : kept;
-      return { rows: sorted, total: sorted.length, counts };
-    });
+  ) {
+    const all = yield* termPage(binding, { ...request, limit: MAX_SET_VALUES, offset: 0 });
+    if (all.total > all.rows.length) {
+      const name = params.hideEmpty ? "hide_empty" : "orderby";
+      return yield* invalidParams({
+        [name]: `${name} is not supported for more than ${MAX_SET_VALUES} matching terms.`,
+      });
+    }
+    const counts = yield* internal(binding.counts(all.rows.map(({ fields }) => fields.id)));
+    const countOf = (term: ShownTerm) =>
+      Option.getOrElse(HashMap.get(counts, term.fields.id), () => 0);
+    const kept = params.hideEmpty ? Arr.filter(all.rows, (term) => countOf(term) > 0) : all.rows;
+    const byCount = Order.mapInput(Order.Number, countOf);
+    const sorted =
+      params.orderby === "count"
+        ? Arr.sort(kept, params.order === "desc" ? Order.flip(byCount) : byCount)
+        : kept;
+    return { rows: sorted, total: sorted.length, counts };
+  });
 
   /** One page of terms, an undeclared order answering `400 rest_invalid_param`. */
   const termPage = (binding: BoundTaxonomy<R, Following>, request: ListRequest) =>
@@ -2826,101 +2816,103 @@ export const defineWordPress = <R, Following = never>(
     ];
   };
 
-  const listTerms = (taxonomy: Taxonomy, binding: BoundTaxonomy<R, Following>, query: Query) =>
-    Effect.gen(function* () {
-      const { columns } = binding;
-      const params = yield* termParams(taxonomy, query, columns, site.timezone);
-      const viewer = yield* config.viewer;
-      if (Option.contains(query.scalar("context"), "edit")) {
-        return yield* editRefused(
-          viewer,
-          "Sorry, you are not allowed to edit terms in this taxonomy.",
-        );
-      }
-      const parentWire = Option.filter(params.parent, (parent) => parent > 0);
-      const postWire = Option.filter(params.post, (post) => post > 0);
-      const [include = [], exclude = [], parent = [], post = []] = yield* decodeLists(ids, [
-        Option.getOrElse(params.include, () => []),
-        params.exclude,
-        Option.toArray(Option.map(parentWire, String)),
-        Option.toArray(Option.map(postWire, String)),
-      ]);
-      const ofPost = Option.isSome(postWire)
-        ? Option.some(
-            yield* Option.match(Arr.head(post), {
-              onNone: () =>
-                Effect.fail(
-                  new WpRestError({
-                    code: "rest_post_invalid_id",
-                    message: "Invalid post ID.",
-                    status: 400,
-                  }),
-                ),
-              onSome: (postId) => termsOfPost(binding, postId),
-            }),
-          )
-        : Option.none<ReadonlyArray<string>>();
-      const where = and<never>(
-        whenSome(params.include, () => anyOf("id", include)),
-        Arr.isReadonlyArrayNonEmpty(exclude) ? noneOf("id", exclude) : always,
-        whenSome(params.slug, (slugs) => anyOf(columns.slug, slugs)),
-        whenSome(params.parent, (wire) =>
-          Option.match(Option.fromNullishOr(columns.parent), {
-            onNone: () => never,
-            onSome: (column) => (wire === 0 ? isNull(column) : anyOf(column, parent)),
+  const listTerms = Effect.fnUntraced(function* (
+    taxonomy: Taxonomy,
+    binding: BoundTaxonomy<R, Following>,
+    query: Query,
+  ) {
+    const { columns } = binding;
+    const params = yield* termParams(taxonomy, query, columns, site.timezone);
+    const viewer = yield* config.viewer;
+    if (Option.contains(query.scalar("context"), "edit")) {
+      return yield* editRefused(
+        viewer,
+        "Sorry, you are not allowed to edit terms in this taxonomy.",
+      );
+    }
+    const parentWire = Option.filter(params.parent, (parent) => parent > 0);
+    const postWire = Option.filter(params.post, (post) => post > 0);
+    const [include = [], exclude = [], parent = [], post = []] = yield* decodeLists(ids, [
+      Option.getOrElse(params.include, () => []),
+      params.exclude,
+      Option.toArray(Option.map(parentWire, String)),
+      Option.toArray(Option.map(postWire, String)),
+    ]);
+    const ofPost = Option.isSome(postWire)
+      ? Option.some(
+          yield* Option.match(Arr.head(post), {
+            onNone: () =>
+              Effect.fail(
+                new WpRestError({
+                  code: "rest_post_invalid_id",
+                  message: "Invalid post ID.",
+                  status: 400,
+                }),
+              ),
+            onSome: (postId) => termsOfPost(binding, postId),
           }),
-        ),
-        whenSome(ofPost, (termIds) => anyOf("id", termIds)),
-      );
-      const column = Match.value(params.orderby).pipe(
-        Match.when("id", () => columns.id ?? "id"),
-        Match.when("slug", () => columns.slug),
-        Match.orElse(() => columns.name),
-      );
-      const request: ListRequest = {
-        where,
-        orderBy: [{ column, direction: params.orderby === "count" ? "asc" : params.order }],
-        includeDeleted: false,
-        limit: params.perPage,
-        offset: Option.getOrElse(params.offset, () => (params.page - 1) * params.perPage),
-      };
-      const inMemory =
-        params.hideEmpty || params.orderby === "count" || params.orderby === "include";
-      const { rows, total, counts } = inMemory
-        ? yield* Effect.map(everyTerm(binding, params, request), (all) => {
-            const ordered =
-              params.orderby === "include"
-                ? Arr.sort(
-                    all.rows,
-                    Order.mapInput(Order.Number, (term: ShownTerm) =>
-                      include.indexOf(term.fields.id),
-                    ),
-                  )
-                : all.rows;
-            return {
-              rows: ordered.slice(request.offset, request.offset + request.limit),
-              total: all.total,
-              counts: all.counts,
-            };
-          })
-        : yield* Effect.flatMap(termPage(binding, request), (page) =>
-            Effect.map(
-              internal(binding.counts(page.rows.map(({ fields }) => fields.id))),
-              (termCounts) => ({ ...page, counts: termCounts }),
-            ),
-          );
-      const bodies = yield* termBodies(taxonomy, binding, rows, counts, params.context);
-      return respond(200, bodies.map(fieldsFilterOf(query)), [
-        ...pagingHeaders(
-          `/wp/v2/${taxonomyBase(taxonomy)}`,
-          query,
-          total,
-          params.page,
-          params.perPage,
-        ),
-        cacheControl(Option.isNone(viewer) && Arr.every(rows, (term) => term.serveable)),
-      ]);
-    });
+        )
+      : Option.none<ReadonlyArray<string>>();
+    const where = and<never>(
+      whenSome(params.include, () => anyOf("id", include)),
+      Arr.isReadonlyArrayNonEmpty(exclude) ? noneOf("id", exclude) : always,
+      whenSome(params.slug, (slugs) => anyOf(columns.slug, slugs)),
+      whenSome(params.parent, (wire) =>
+        Option.match(Option.fromNullishOr(columns.parent), {
+          onNone: () => never,
+          onSome: (column) => (wire === 0 ? isNull(column) : anyOf(column, parent)),
+        }),
+      ),
+      whenSome(ofPost, (termIds) => anyOf("id", termIds)),
+    );
+    const column = Match.value(params.orderby).pipe(
+      Match.when("id", () => columns.id ?? "id"),
+      Match.when("slug", () => columns.slug),
+      Match.orElse(() => columns.name),
+    );
+    const request: ListRequest = {
+      where,
+      orderBy: [{ column, direction: params.orderby === "count" ? "asc" : params.order }],
+      includeDeleted: false,
+      limit: params.perPage,
+      offset: Option.getOrElse(params.offset, () => (params.page - 1) * params.perPage),
+    };
+    const inMemory = params.hideEmpty || params.orderby === "count" || params.orderby === "include";
+    const { rows, total, counts } = inMemory
+      ? yield* Effect.map(everyTerm(binding, params, request), (all) => {
+          const ordered =
+            params.orderby === "include"
+              ? Arr.sort(
+                  all.rows,
+                  Order.mapInput(Order.Number, (term: ShownTerm) =>
+                    include.indexOf(term.fields.id),
+                  ),
+                )
+              : all.rows;
+          return {
+            rows: ordered.slice(request.offset, request.offset + request.limit),
+            total: all.total,
+            counts: all.counts,
+          };
+        })
+      : yield* Effect.flatMap(termPage(binding, request), (page) =>
+          Effect.map(
+            internal(binding.counts(page.rows.map(({ fields }) => fields.id))),
+            (termCounts) => ({ ...page, counts: termCounts }),
+          ),
+        );
+    const bodies = yield* termBodies(taxonomy, binding, rows, counts, params.context);
+    return respond(200, bodies.map(fieldsFilterOf(query)), [
+      ...pagingHeaders(
+        `/wp/v2/${taxonomyBase(taxonomy)}`,
+        query,
+        total,
+        params.page,
+        params.perPage,
+      ),
+      cacheControl(Option.isNone(viewer) && Arr.every(rows, (term) => term.serveable)),
+    ]);
+  });
 
   // ── Users ───────────────────────────────────────────────────────────
 
@@ -2928,124 +2920,123 @@ export const defineWordPress = <R, Following = never>(
    * The accounts owning a row the viewer may list, across every bound post
    * type (`readableOwners`, `SEC-AUTH-ENUM-001`), narrowed to `among`.
    */
-  const readableAuthors = (among: Option.Option<ReadonlyArray<string>>) =>
-    Effect.gen(function* () {
-      const leaves = Arr.getSomes(
-        ROUTES.map(([, type]) =>
-          Option.map(bound(type), (binding) => ({ type, owners: binding.owners })),
-        ),
-      );
-      const request = { limit: MAX_PAGE_LIMIT, offset: 0, includeDeleted: false };
-      const page = yield* internal(
-        readableOwners(
-          leaves,
-          Option.match(among, {
-            onNone: () => request,
-            onSome: (accounts) => ({ ...request, among: accounts }),
-          }),
-        ),
-      );
-      // The union of several leaves can pass one page; answering a short list would hide authors.
-      if (page.total > page.rows.length) return yield* internalError();
-      return page.rows;
-    });
+  const readableAuthors = Effect.fnUntraced(function* (
+    among: Option.Option<ReadonlyArray<string>>,
+  ) {
+    const leaves = Arr.getSomes(
+      ROUTES.map(([, type]) =>
+        Option.map(bound(type), (binding) => ({ type, owners: binding.owners })),
+      ),
+    );
+    const request = { limit: MAX_PAGE_LIMIT, offset: 0, includeDeleted: false };
+    const page = yield* internal(
+      readableOwners(
+        leaves,
+        Option.match(among, {
+          onNone: () => request,
+          onSome: (accounts) => ({ ...request, among: accounts }),
+        }),
+      ),
+    );
+    // The union of several leaves can pass one page; answering a short list would hide authors.
+    if (page.total > page.rows.length) return yield* internalError();
+    return page.rows;
+  });
 
-  const getUser = (rawId: string, query: Query) =>
-    Effect.gen(function* () {
-      const id = yield* decodeOne(authors.ids, rawId, invalidUser);
-      const owners = yield* readableAuthors(Option.some([id]));
-      if (!Arr.contains(owners, id)) return yield* invalidUser();
-      const profile = yield* Effect.fromOption(
-        HashMap.get(yield* internal(authors.getMany([id])), id),
-      ).pipe(Effect.mapError(invalidUser));
-      const viewer = yield* config.viewer;
-      if (Option.contains(query.scalar("context"), "edit")) {
-        return yield* editRefused(viewer, "Sorry, you are not allowed to edit this user.");
-      }
-      const [wireId = 0] = yield* internal(authors.ids.encode([id]));
-      const body = Option.contains(query.scalar("context"), "embed")
-        ? authorBody(wireId, profile)
-        : userBody(wireId, profile);
-      return respond(200, fieldsFilterOf(query)(body), [cacheControl(false)]);
-    });
+  const getUser = Effect.fnUntraced(function* (rawId: string, query: Query) {
+    const id = yield* decodeOne(authors.ids, rawId, invalidUser);
+    const owners = yield* readableAuthors(Option.some([id]));
+    if (!Arr.contains(owners, id)) return yield* invalidUser();
+    const profile = yield* Effect.fromOption(
+      HashMap.get(yield* internal(authors.getMany([id])), id),
+    ).pipe(Effect.mapError(invalidUser));
+    const viewer = yield* config.viewer;
+    if (Option.contains(query.scalar("context"), "edit")) {
+      return yield* editRefused(viewer, "Sorry, you are not allowed to edit this user.");
+    }
+    const [wireId = 0] = yield* internal(authors.ids.encode([id]));
+    const body = Option.contains(query.scalar("context"), "embed")
+      ? authorBody(wireId, profile)
+      : userBody(wireId, profile);
+    return respond(200, fieldsFilterOf(query)(body), [cacheControl(false)]);
+  });
 
-  const listUsers = (query: Query) =>
-    Effect.gen(function* () {
-      const params = yield* userParams(query, site.timezone);
-      const viewer = yield* config.viewer;
-      if (Option.contains(query.scalar("context"), "edit")) {
-        return yield* editRefused(viewer, "Sorry, you are not allowed to list users.");
-      }
-      if (Option.isSome(params.forbiddenOrderby)) {
-        return yield* new WpRestError({
-          code: "rest_forbidden_orderby",
-          message: "Sorry, you are not allowed to order users by this parameter.",
-          status: authorizationStatus(Option.isSome(viewer)),
-        });
-      }
-      const [include = [], exclude = []] = yield* decodeLists(authors.ids, [
-        Option.getOrElse(params.include, () => []),
-        params.exclude,
-      ]);
-      const owners = Arr.filter(
-        yield* readableAuthors(Option.map(params.include, () => include)),
-        (owner) => !Arr.contains(exclude, owner),
-      );
-      const profiles = Arr.isReadonlyArrayNonEmpty(owners)
-        ? yield* internal(authors.getMany(owners))
-        : HashMap.empty<string, Author>();
-      const shown = Arr.filter(
-        Arr.getSomes(
-          owners.map((owner) =>
-            Option.map(HashMap.get(profiles, owner), (profile) => [owner, profile] as const),
-          ),
+  const listUsers = Effect.fnUntraced(function* (query: Query) {
+    const params = yield* userParams(query, site.timezone);
+    const viewer = yield* config.viewer;
+    if (Option.contains(query.scalar("context"), "edit")) {
+      return yield* editRefused(viewer, "Sorry, you are not allowed to list users.");
+    }
+    if (Option.isSome(params.forbiddenOrderby)) {
+      return yield* new WpRestError({
+        code: "rest_forbidden_orderby",
+        message: "Sorry, you are not allowed to order users by this parameter.",
+        status: authorizationStatus(Option.isSome(viewer)),
+      });
+    }
+    const [include = [], exclude = []] = yield* decodeLists(authors.ids, [
+      Option.getOrElse(params.include, () => []),
+      params.exclude,
+    ]);
+    const owners = Arr.filter(
+      yield* readableAuthors(Option.map(params.include, () => include)),
+      (owner) => !Arr.contains(exclude, owner),
+    );
+    const profiles = Arr.isReadonlyArrayNonEmpty(owners)
+      ? yield* internal(authors.getMany(owners))
+      : HashMap.empty<string, Author>();
+    const shown = Arr.filter(
+      Arr.getSomes(
+        owners.map((owner) =>
+          Option.map(HashMap.get(profiles, owner), (profile) => [owner, profile] as const),
         ),
-        ([, profile]) =>
-          Option.match(params.slug, {
-            onNone: () => true,
-            onSome: (slugs) => Arr.contains(slugs, profile.slug),
-          }),
-      );
-      const encoded = Arr.isReadonlyArrayNonEmpty(shown)
-        ? yield* internal(authors.ids.encode(shown.map(([owner]) => owner)))
-        : [];
-      const users = Arr.zip(shown, encoded).map(([[owner, profile], wireId]) => ({
-        owner,
-        profile,
-        wireId,
-      }));
-      type User = (typeof users)[number];
-      // An integer id sorts by value (zero-padded past any safe integer), a string id by code point.
-      const byWireId = Order.mapInput(Order.String, (user: User) =>
-        P.isNumber(user.wireId) ? String(user.wireId).padStart(20, "0") : user.wireId,
-      );
-      const ascending = Match.value(params.orderby).pipe(
-        Match.when("id", () => byWireId),
-        Match.when("slug", () => Order.mapInput(Order.String, (user: User) => user.profile.slug)),
-        Match.when("include", () =>
-          Order.mapInput(Order.Number, (user: User) => include.indexOf(user.owner)),
+      ),
+      ([, profile]) =>
+        Option.match(params.slug, {
+          onNone: () => true,
+          onSome: (slugs) => Arr.contains(slugs, profile.slug),
+        }),
+    );
+    const encoded = Arr.isReadonlyArrayNonEmpty(shown)
+      ? yield* internal(authors.ids.encode(shown.map(([owner]) => owner)))
+      : [];
+    const users = Arr.zip(shown, encoded).map(([[owner, profile], wireId]) => ({
+      owner,
+      profile,
+      wireId,
+    }));
+    type User = (typeof users)[number];
+    // An integer id sorts by value (zero-padded past any safe integer), a string id by code point.
+    const byWireId = Order.mapInput(Order.String, (user: User) =>
+      P.isNumber(user.wireId) ? String(user.wireId).padStart(20, "0") : user.wireId,
+    );
+    const ascending = Match.value(params.orderby).pipe(
+      Match.when("id", () => byWireId),
+      Match.when("slug", () => Order.mapInput(Order.String, (user: User) => user.profile.slug)),
+      Match.when("include", () =>
+        Order.mapInput(Order.Number, (user: User) => include.indexOf(user.owner)),
+      ),
+      Match.orElse(() => Order.mapInput(Order.String, (user: User) => user.profile.name)),
+    );
+    const sorted = Arr.sort(
+      users,
+      params.order === "desc" && params.orderby !== "include" ? Order.flip(ascending) : ascending,
+    );
+    const offset = Option.getOrElse(params.offset, () => (params.page - 1) * params.perPage);
+    const rows = sorted.slice(offset, offset + params.perPage);
+    return respond(
+      200,
+      rows.map(({ wireId, profile }) =>
+        fieldsFilterOf(query)(
+          params.context === "embed" ? authorBody(wireId, profile) : userBody(wireId, profile),
         ),
-        Match.orElse(() => Order.mapInput(Order.String, (user: User) => user.profile.name)),
-      );
-      const sorted = Arr.sort(
-        users,
-        params.order === "desc" && params.orderby !== "include" ? Order.flip(ascending) : ascending,
-      );
-      const offset = Option.getOrElse(params.offset, () => (params.page - 1) * params.perPage);
-      const rows = sorted.slice(offset, offset + params.perPage);
-      return respond(
-        200,
-        rows.map(({ wireId, profile }) =>
-          fieldsFilterOf(query)(
-            params.context === "embed" ? authorBody(wireId, profile) : userBody(wireId, profile),
-          ),
-        ),
-        [
-          ...pagingHeaders("/wp/v2/users", query, sorted.length, params.page, params.perPage),
-          cacheControl(false),
-        ],
-      );
-    });
+      ),
+      [
+        ...pagingHeaders("/wp/v2/users", query, sorted.length, params.page, params.perPage),
+        cacheControl(false),
+      ],
+    );
+  });
 
   const indexBody = () =>
     Effect.map(DateTime.now, (now): Schema.JsonObject => ({
@@ -3102,36 +3093,35 @@ export const defineWordPress = <R, Following = never>(
   /** `/users` is routed when any post type is bound: its authors are the only accounts it lists. */
   const servesUsers = () => Arr.some(ROUTES, ([, type]) => Option.isSome(bound(type)));
 
-  const route = (request: WordPressRequest) =>
-    Effect.gen(function* () {
-      if (request.method !== "GET" && request.method !== "HEAD") return yield* noRoute();
-      if (!request.path.startsWith(prefix)) return yield* noRoute();
-      const rest = request.path.slice(prefix.length).replace(/\/+$/, "");
-      const query = readQuery(request.query);
-      if (rest === "") return respond(200, yield* indexBody(), [cacheControl(true)]);
-      if (rest === "/wp/v2") {
-        return respond(200, { namespace: "wp/v2", routes: routesBody() }, [cacheControl(true)]);
-      }
-      const [, base, rawId] = /^\/wp\/v2\/([a-z]+)(?:\/([^/]+))?$/.exec(rest) ?? [];
-      const routed = yield* routeOther(
-        Option.fromNullishOr(base),
-        Option.fromNullishOr(rawId),
-        query,
-        tagged(request),
-      );
-      if (Option.isSome(routed)) return routed.value;
-      const type = yield* Effect.fromOption(
-        Option.flatMap(Option.fromNullishOr(base), typeOf),
-      ).pipe(Effect.mapError(noRoute));
-      const binding = yield* Effect.fromOption(bound(type)).pipe(Effect.mapError(noRoute));
-      if (rawId === undefined) return yield* listItems(type, binding, query);
-      // An integer route matches digits only, as core's `(?P<id>[\d]+)` does.
-      if (ids.mode === "integer" && !/^\d+$/.test(rawId)) return yield* noRoute();
-      return yield* Effect.flatMap(
-        getItem(type, binding, decodeURIComponent(rawId), query),
-        tagged(request),
-      );
-    });
+  const route = Effect.fnUntraced(function* (request: WordPressRequest) {
+    if (request.method !== "GET" && request.method !== "HEAD") return yield* noRoute();
+    if (!request.path.startsWith(prefix)) return yield* noRoute();
+    const rest = request.path.slice(prefix.length).replace(/\/+$/, "");
+    const query = readQuery(request.query);
+    if (rest === "") return respond(200, yield* indexBody(), [cacheControl(true)]);
+    if (rest === "/wp/v2") {
+      return respond(200, { namespace: "wp/v2", routes: routesBody() }, [cacheControl(true)]);
+    }
+    const [, base, rawId] = /^\/wp\/v2\/([a-z]+)(?:\/([^/]+))?$/.exec(rest) ?? [];
+    const routed = yield* routeOther(
+      Option.fromNullishOr(base),
+      Option.fromNullishOr(rawId),
+      query,
+      tagged(request),
+    );
+    if (Option.isSome(routed)) return routed.value;
+    const type = yield* Effect.fromOption(Option.flatMap(Option.fromNullishOr(base), typeOf)).pipe(
+      Effect.mapError(noRoute),
+    );
+    const binding = yield* Effect.fromOption(bound(type)).pipe(Effect.mapError(noRoute));
+    if (rawId === undefined) return yield* listItems(type, binding, query);
+    // An integer route matches digits only, as core's `(?P<id>[\d]+)` does.
+    if (ids.mode === "integer" && !/^\d+$/.test(rawId)) return yield* noRoute();
+    return yield* Effect.flatMap(
+      getItem(type, binding, decodeURIComponent(rawId), query),
+      tagged(request),
+    );
+  });
 
   return {
     prefix,

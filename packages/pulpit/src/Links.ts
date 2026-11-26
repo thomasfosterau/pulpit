@@ -344,67 +344,66 @@ export const defineLinkList = <Entry, E, R>(
    * lists on the way down, `parentId` last, so its length is this list's
    * depth.
    */
-  const readList = (
+  const readList = Effect.fnUntraced(function* (
     parentId: string,
     locale: string,
     open: Arr.NonEmptyReadonlyArray<string>,
     budget: Ref.Ref<number>,
-  ): Effect.Effect<ReadonlyArray<Link<Entry>>, NodeNotFound | E, R> =>
-    Effect.gen(function* () {
-      // The collection's own gates: the parent (`NodeNotFound`) and each entry.
-      const page = yield* entries.list(parentId, { limit: MAX_COLLECTION_SIZE, offset: 0 });
-      const rows = yield* Ref.modify(budget, (left) => {
-        const taken = Arr.take(page.rows, left);
-        return [taken, left - taken.length] as const;
-      });
-      const locales = localeFallbacks(locale, defaultLocale);
-      const read = Arr.getSomes(
-        yield* Effect.forEach(rows, (row) => readEntry(row.memberId, locales), {
-          concurrency: 1,
+  ) {
+    // The collection's own gates: the parent (`NodeNotFound`) and each entry.
+    const page = yield* entries.list(parentId, { limit: MAX_COLLECTION_SIZE, offset: 0 });
+    const rows = yield* Ref.modify(budget, (left) => {
+      const taken = Arr.take(page.rows, left);
+      return [taken, left - taken.length] as const;
+    });
+    const locales = localeFallbacks(locale, defaultLocale);
+    const read = Arr.getSomes(
+      yield* Effect.forEach(rows, (row) => readEntry(row.memberId, locales), {
+        concurrency: 1,
+      }),
+    );
+    const targeted = Arr.getSomes(
+      Arr.map(read, (found) => Option.map(target(found.resource), (to) => ({ found, to }))),
+    );
+    // One gated read for every node target.
+    const nodeIds = Arr.dedupe(
+      Arr.getSomes(
+        Arr.map(targeted, ({ to }) => (to.kind === "node" ? Option.some(to.id) : Option.none())),
+      ),
+    );
+    const readable = Arr.isReadonlyArrayNonEmpty(nodeIds)
+      ? yield* nodes.getMany(nodeIds)
+      : HashMap.empty<string, unknown>();
+    const follow = (to: LinkTarget): Effect.Effect<Option.Option<FollowedTarget<Entry>>, E, R> =>
+      Match.value(to).pipe(
+        Match.discriminatorsExhaustive("kind")({
+          path: (path) => followPath(path.path, locale),
+          node: (node) =>
+            Effect.succeed(
+              HashMap.has(readable, node.id)
+                ? Option.some<FollowedTarget<Entry>>({ kind: "node", id: node.id })
+                : Option.none(),
+            ),
+          list: (nested) => followList(nested.id, locale, open, budget),
         }),
       );
-      const targeted = Arr.getSomes(
-        Arr.map(read, (found) => Option.map(target(found.resource), (to) => ({ found, to }))),
-      );
-      // One gated read for every node target.
-      const nodeIds = Arr.dedupe(
-        Arr.getSomes(
-          Arr.map(targeted, ({ to }) => (to.kind === "node" ? Option.some(to.id) : Option.none())),
+    const followed = yield* Effect.forEach(
+      targeted,
+      ({ found, to }) =>
+        Effect.map(
+          follow(to),
+          Option.map((resolved) => ({ found, resolved })),
         ),
-      );
-      const readable = Arr.isReadonlyArrayNonEmpty(nodeIds)
-        ? yield* nodes.getMany(nodeIds)
-        : HashMap.empty<string, unknown>();
-      const follow = (to: LinkTarget): Effect.Effect<Option.Option<FollowedTarget<Entry>>, E, R> =>
-        Match.value(to).pipe(
-          Match.discriminatorsExhaustive("kind")({
-            path: (path) => followPath(path.path, locale),
-            node: (node) =>
-              Effect.succeed(
-                HashMap.has(readable, node.id)
-                  ? Option.some<FollowedTarget<Entry>>({ kind: "node", id: node.id })
-                  : Option.none(),
-              ),
-            list: (nested) => followList(nested.id, locale, open, budget),
-          }),
-        );
-      const followed = yield* Effect.forEach(
-        targeted,
-        ({ found, to }) =>
-          Effect.map(
-            follow(to),
-            Option.map((resolved) => ({ found, resolved })),
-          ),
-        { concurrency: 1 },
-      );
-      return Arr.map(Arr.getSomes(followed), ({ found, resolved }, index): Link<Entry> => ({
-        entryId: found.entryId,
-        index,
-        locale: found.locale,
-        entry: found.resource,
-        target: resolved,
-      }));
-    });
+      { concurrency: 1 },
+    );
+    return Arr.map(Arr.getSomes(followed), ({ found, resolved }, index): Link<Entry> => ({
+      entryId: found.entryId,
+      index,
+      locale: found.locale,
+      entry: found.resource,
+      target: resolved,
+    }));
+  });
 
   /**
    * A nested list, as a target: none for a cycle (a list already open above

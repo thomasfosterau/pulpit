@@ -40,8 +40,8 @@
  */
 
 import { Resource } from "@thomasfosterau/effect-jsonapi";
-import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -111,11 +111,7 @@ export const sha256Hex = (bytes: Uint8Array): Effect.Effect<ContentHash> =>
   }).pipe(
     // Web Crypto's SHA-256 over bytes has no failure a caller could act on.
     Effect.orDie,
-    Effect.map((digest) =>
-      Arr.map(Arr.fromIterable(new Uint8Array(digest)), (byte) =>
-        byte.toString(16).padStart(2, "0"),
-      ).join(""),
-    ),
+    Effect.map((digest) => Hex.encode(new Uint8Array(digest))),
   );
 
 /**
@@ -310,19 +306,18 @@ export const defineFileWrites = <Resource, E, R>(definition: {
   const { leaf, blobs, transact } = definition;
 
   /** The upload's columns, pending unless the store already holds its bytes. */
-  const columnsOf = (upload: Upload) =>
-    Effect.gen(function* () {
-      const contentHash = yield* sha256Hex(upload.bytes);
-      const stored = yield* blobs.head(blobKey(contentHash));
-      const columns: FileColumns = {
-        contentHash,
-        byteSize: upload.bytes.byteLength,
-        mediaType: upload.mediaType,
-        filename: upload.filename,
-        bytesPending: Option.isNone(stored),
-      };
-      return columns;
-    });
+  const columnsOf = Effect.fnUntraced(function* (upload: Upload) {
+    const contentHash = yield* sha256Hex(upload.bytes);
+    const stored = yield* blobs.head(blobKey(contentHash));
+    const columns: FileColumns = {
+      contentHash,
+      byteSize: upload.bytes.byteLength,
+      mediaType: upload.mediaType,
+      filename: upload.filename,
+      bytesPending: Option.isNone(stored),
+    };
+    return columns;
+  });
 
   /**
    * `bytesPending: false`, appended in its own transaction over exactly the
@@ -336,26 +331,29 @@ export const defineFileWrites = <Resource, E, R>(definition: {
    * After the commit: put the bytes and confirm them. A failure of either
    * leaves the node pending, never failing the write that committed.
    */
-  const afterCommit = (written: ChainWrite, columns: FileColumns, upload: Upload) =>
-    Effect.gen(function* () {
-      if (!columns.bytesPending) {
-        return { ...written, contentHash: columns.contentHash, bytesPending: false };
-      }
-      const confirmed = yield* Effect.exit(
-        Effect.andThen(
-          blobs.put(blobKey(columns.contentHash), upload.bytes, {
-            byteSize: columns.byteSize,
-            mediaType: columns.mediaType,
-          }),
-          confirm(written.id, written.version),
-        ),
-      );
-      if (Exit.isFailure(confirmed)) {
-        yield* Effect.logWarning(`${leaf.type} ${written.id}: bytes left pending`, confirmed.cause);
-        return { ...written, contentHash: columns.contentHash, bytesPending: true };
-      }
-      return { ...confirmed.value, contentHash: columns.contentHash, bytesPending: false };
-    });
+  const afterCommit = Effect.fnUntraced(function* (
+    written: ChainWrite,
+    columns: FileColumns,
+    upload: Upload,
+  ) {
+    if (!columns.bytesPending) {
+      return { ...written, contentHash: columns.contentHash, bytesPending: false };
+    }
+    const confirmed = yield* Effect.exit(
+      Effect.andThen(
+        blobs.put(blobKey(columns.contentHash), upload.bytes, {
+          byteSize: columns.byteSize,
+          mediaType: columns.mediaType,
+        }),
+        confirm(written.id, written.version),
+      ),
+    );
+    if (Exit.isFailure(confirmed)) {
+      yield* Effect.logWarning(`${leaf.type} ${written.id}: bytes left pending`, confirmed.cause);
+      return { ...written, contentHash: columns.contentHash, bytesPending: true };
+    }
+    return { ...confirmed.value, contentHash: columns.contentHash, bytesPending: false };
+  });
 
   const create = Effect.fn(`${leaf.type}.files.create`)(function* (input: {
     readonly id: Option.Option<string>;

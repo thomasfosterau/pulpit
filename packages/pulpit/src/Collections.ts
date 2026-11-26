@@ -330,13 +330,12 @@ export const defineCollection = <Parent, Member, E, R>(
     );
 
   /** Write the new order to the store and, on a versioned family, to the parent's chain. */
-  const commit = (parentId: string, ids: ReadonlyArray<string>) =>
-    Effect.gen(function* () {
-      yield* store.replace(parentId, renumber(ids));
-      if (mode.kind === "versioned") {
-        yield* parent.update({ id: parentId, patch: { [mode.column]: [...ids] } });
-      }
-    });
+  const commit = Effect.fnUntraced(function* (parentId: string, ids: ReadonlyArray<string>) {
+    yield* store.replace(parentId, renumber(ids));
+    if (mode.kind === "versioned") {
+      yield* parent.update({ id: parentId, patch: { [mode.column]: [...ids] } });
+    }
+  });
 
   const list = Effect.fn(`${type}.list`)(function* (
     parentId: string,

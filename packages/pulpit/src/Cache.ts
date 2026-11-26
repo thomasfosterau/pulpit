@@ -221,30 +221,29 @@ export const makeResourceCache = <Resource, E, R>(
    * the same rank, a tombstone rank when it isn't serveable. Nothing is
    * written to the entry when the generation is ahead, or its write failed.
    */
-  const setLocale = (
+  const setLocale = Effect.fnUntraced(function* (
     id: string,
     locale: string,
     version: bigint,
     encoded: Option.Option<Schema.Json>,
-  ) =>
-    Effect.gen(function* () {
-      const current = yield* Effect.orElseSucceed(
-        kv.putIfNotBehind(
-          keyOf(id),
-          { version: valueRank(version), value: Option.none() },
-          tombstoneTtl,
-        ),
-        () => false,
-      );
-      if (!current) return;
-      yield* Effect.ignore(
-        kv.putIfNotBehind(
-          localeKeyOf(id, locale),
-          { version: valueRank(version) + (Option.isNone(encoded) ? 1n : 0n), value: encoded },
-          Option.isNone(encoded) ? tombstoneTtl : ttl,
-        ),
-      );
-    });
+  ) {
+    const current = yield* Effect.orElseSucceed(
+      kv.putIfNotBehind(
+        keyOf(id),
+        { version: valueRank(version), value: Option.none() },
+        tombstoneTtl,
+      ),
+      () => false,
+    );
+    if (!current) return;
+    yield* Effect.ignore(
+      kv.putIfNotBehind(
+        localeKeyOf(id, locale),
+        { version: valueRank(version) + (Option.isNone(encoded) ? 1n : 0n), value: encoded },
+        Option.isNone(encoded) ? tombstoneTtl : ttl,
+      ),
+    );
+  });
 
   const set = (id: string, resource: Resource, version: bigint, locale?: string) => {
     // Refuse (and evict) what the policy doesn't serve, or what doesn't encode.
@@ -257,42 +256,43 @@ export const makeResourceCache = <Resource, E, R>(
   const read = (key: string) => Effect.orElseSucceed(kv.get(key), () => Option.none<KvEntry>());
 
   /** Serve a stored value, or evict it (with `evictIt`) when it no longer decodes or serves. */
-  const serve = (entry: KvEntry, evictIt: Effect.Effect<void, never, R>) =>
-    Effect.gen(function* () {
-      if (Option.isNone(entry.value)) return Option.none<Resource>();
-      const resource = decode(entry.value.value);
-      if (Option.isNone(resource) || !serveable(resource.value)) {
-        // Decode or evict, and never serve what the policy now refuses (CACHE-AUTH-005).
-        yield* evictIt;
-        return Option.none<Resource>();
-      }
-      return resource;
-    });
+  const serve = Effect.fnUntraced(function* (
+    entry: KvEntry,
+    evictIt: Effect.Effect<void, never, R>,
+  ) {
+    if (Option.isNone(entry.value)) return Option.none<Resource>();
+    const resource = decode(entry.value.value);
+    if (Option.isNone(resource) || !serveable(resource.value)) {
+      // Decode or evict, and never serve what the policy now refuses (CACHE-AUTH-005).
+      yield* evictIt;
+      return Option.none<Resource>();
+    }
+    return resource;
+  });
 
-  const get = (id: string, locale?: string) =>
-    Effect.gen(function* () {
-      const generation = yield* read(keyOf(id));
-      if (Option.isNone(generation)) return Option.none<Resource>();
-      if (locale === undefined) {
-        return yield* serve(generation.value, evict(id, generation.value.version / 2n));
-      }
-      // A locale entry speaks for the id only at the generation's own value rank.
-      const entry = yield* read(localeKeyOf(id, locale));
-      if (Option.isNone(entry) || entry.value.version !== generation.value.version) {
-        return Option.none<Resource>();
-      }
-      const version = entry.value.version / 2n;
-      return yield* serve(
-        entry.value,
-        Effect.ignore(
-          kv.putIfNotBehind(
-            localeKeyOf(id, locale),
-            { version: valueRank(version) + 1n, value: Option.none() },
-            tombstoneTtl,
-          ),
+  const get = Effect.fnUntraced(function* (id: string, locale?: string) {
+    const generation = yield* read(keyOf(id));
+    if (Option.isNone(generation)) return Option.none<Resource>();
+    if (locale === undefined) {
+      return yield* serve(generation.value, evict(id, generation.value.version / 2n));
+    }
+    // A locale entry speaks for the id only at the generation's own value rank.
+    const entry = yield* read(localeKeyOf(id, locale));
+    if (Option.isNone(entry) || entry.value.version !== generation.value.version) {
+      return Option.none<Resource>();
+    }
+    const version = entry.value.version / 2n;
+    return yield* serve(
+      entry.value,
+      Effect.ignore(
+        kv.putIfNotBehind(
+          localeKeyOf(id, locale),
+          { version: valueRank(version) + 1n, value: Option.none() },
+          tombstoneTtl,
         ),
-      );
-    });
+      ),
+    );
+  });
 
   return { set, delete: evict, get };
 };

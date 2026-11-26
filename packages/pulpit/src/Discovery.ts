@@ -372,35 +372,37 @@ export const defineDiscovery = <Row extends LeafRow, Resource, Following, E, R>(
   });
 
   /** One node's listed reads as items: its path read once, every locale's alternates the others'. */
-  const itemsOf = (reads: Arr.NonEmptyReadonlyArray<Read<Row, Resource>>, alternates: boolean) =>
-    Effect.gen(function* () {
-      const listed = Arr.filter(reads, (read) => serveable(read.resource));
-      if (!Arr.isReadonlyArrayNonEmpty(listed)) return [];
-      const id = listed[0].row.id;
-      const path = yield* paths.canonicalOf(id);
-      const locales = Arr.sort(
-        Arr.getSomes(Arr.map(listed, (read) => localeOf(read.row))),
-        byCodePoint,
-      );
-      return Option.match(path, {
-        onNone: () => [],
-        onSome: (canonical) =>
-          Arr.map(listed, (read): DiscoveryItem<Resource> => {
-            const locale = localeOf(read.row);
-            return {
-              type,
-              id,
-              path: canonical,
-              resource: read.resource,
-              metadata: project(read.resource),
-              locale,
-              alternates: alternates
-                ? Arr.filter(locales, (tag) => !Option.contains(locale, tag))
-                : [],
-            };
-          }),
-      });
+  const itemsOf = Effect.fnUntraced(function* (
+    reads: Arr.NonEmptyReadonlyArray<Read<Row, Resource>>,
+    alternates: boolean,
+  ) {
+    const listed = Arr.filter(reads, (read) => serveable(read.resource));
+    if (!Arr.isReadonlyArrayNonEmpty(listed)) return [];
+    const id = listed[0].row.id;
+    const path = yield* paths.canonicalOf(id);
+    const locales = Arr.sort(
+      Arr.getSomes(Arr.map(listed, (read) => localeOf(read.row))),
+      byCodePoint,
+    );
+    return Option.match(path, {
+      onNone: () => [],
+      onSome: (canonical) =>
+        Arr.map(listed, (read): DiscoveryItem<Resource> => {
+          const locale = localeOf(read.row);
+          return {
+            type,
+            id,
+            path: canonical,
+            resource: read.resource,
+            metadata: project(read.resource),
+            locale,
+            alternates: alternates
+              ? Arr.filter(locales, (tag) => !Option.contains(locale, tag))
+              : [],
+          };
+        }),
     });
+  });
 
   /** The reads grouped into runs of one node each, in page order. */
   const byNode = (
@@ -427,78 +429,76 @@ export const defineDiscovery = <Row extends LeafRow, Resource, Following, E, R>(
       })
       .pipe(Effect.catchTag("InvalidListOrder", (error) => Effect.die(error)));
 
-  const feed = (request: DiscoveryRequest): Effect.Effect<DiscoveryPage<Resource>, E, R> =>
-    Effect.gen(function* () {
-      const read = yield* page(
-        request,
-        request.after === undefined ? always : afterInFeed(feedColumn, localised, request.after),
-        localised
-          ? [
-              { column: feedColumn, direction: "desc" },
-              { column: LOCALE_COLUMN, direction: "asc" },
-            ]
-          : [{ column: feedColumn, direction: "desc" }],
-        clampLimit(request.limit),
-      );
-      const items = Arr.flatten(
-        yield* Effect.forEach(
-          Arr.map(read.rows, (row) => [row] as const),
-          (one) => itemsOf(one, false),
-          { concurrency: 1 },
-        ),
-      );
-      const next =
-        read.total > read.rows.length
-          ? yield* Effect.transposeOption(
-              Option.map(Arr.last(read.rows), ({ row }) =>
-                Effect.map(
-                  keyOf(type, feedColumn, Option.fromUndefinedOr(row[feedColumn])),
-                  (key): DiscoveryCursor =>
-                    Option.match(localeOf(row), {
-                      onNone: () => ({ id: row.id, key }),
-                      onSome: (locale) => ({ id: row.id, key, locale }),
-                    }),
-                ),
+  const feed = Effect.fn(`${type}.discovery.feed`)(function* (request: DiscoveryRequest) {
+    const read = yield* page(
+      request,
+      request.after === undefined ? always : afterInFeed(feedColumn, localised, request.after),
+      localised
+        ? [
+            { column: feedColumn, direction: "desc" },
+            { column: LOCALE_COLUMN, direction: "asc" },
+          ]
+        : [{ column: feedColumn, direction: "desc" }],
+      clampLimit(request.limit),
+    );
+    const items = Arr.flatten(
+      yield* Effect.forEach(
+        Arr.map(read.rows, (row) => [row] as const),
+        (one) => itemsOf(one, false),
+        { concurrency: 1 },
+      ),
+    );
+    const next =
+      read.total > read.rows.length
+        ? yield* Effect.transposeOption(
+            Option.map(Arr.last(read.rows), ({ row }) =>
+              Effect.map(
+                keyOf(type, feedColumn, Option.fromUndefinedOr(row[feedColumn])),
+                (key): DiscoveryCursor =>
+                  Option.match(localeOf(row), {
+                    onNone: () => ({ id: row.id, key }),
+                    onSome: (locale) => ({ id: row.id, key, locale }),
+                  }),
               ),
-            )
-          : Option.none<DiscoveryCursor>();
-      return { items, next };
-    });
+            ),
+          )
+        : Option.none<DiscoveryCursor>();
+    return { items, next };
+  });
 
-  const sitemap = (request: DiscoveryRequest): Effect.Effect<DiscoveryPage<Resource>, E, R> =>
-    Effect.gen(function* () {
-      const where = request.after === undefined ? always : gt("id", request.after.id);
-      const read = yield* page(request, where, [], clampLimit(request.limit));
-      const more = read.total > read.rows.length;
-      const runs = byNode(read.rows);
-      // A localised page that may end part-way through its last node ends
-      // before that node; a page holding only that node reads all of it.
-      const complete: ReadonlyArray<Arr.NonEmptyReadonlyArray<Read<Row, Resource>>> =
-        !localised || !more
-          ? runs
-          : runs.length > 1
-            ? runs.slice(0, -1)
-            : yield* Effect.map(
-                page(
-                  request,
-                  and<Following>(where, eq("id", read.rows[0]?.row.id ?? "")),
-                  [],
-                  MAX_PAGE_LIMIT,
-                ),
-                (whole) => byNode(whole.rows),
-              );
-      const items = Arr.flatten(
-        yield* Effect.forEach(complete, (run) => itemsOf(run, localised), { concurrency: 1 }),
-      );
-      const last = Arr.last(Arr.flatten(complete));
-      const ended = Option.map(last, ({ row }): DiscoveryCursor => ({
-        id: row.id,
-        key: Option.none(),
-      }));
-      // More rows remain past the last complete node when the read was cut short.
-      const remains = more || complete.length < runs.length;
-      return { items, next: remains ? ended : Option.none() };
-    });
+  const sitemap = Effect.fn(`${type}.discovery.sitemap`)(function* (request: DiscoveryRequest) {
+    const where = request.after === undefined ? always : gt("id", request.after.id);
+    const read = yield* page(request, where, [], clampLimit(request.limit));
+    const more = read.total > read.rows.length;
+    const runs = byNode(read.rows);
+    // A localised page that may end part-way through its last node ends
+    // before that node; a page holding only that node reads all of it.
+    const complete: ReadonlyArray<Arr.NonEmptyReadonlyArray<Read<Row, Resource>>> =
+      !localised || !more
+        ? runs
+        : runs.length > 1
+          ? runs.slice(0, -1)
+          : yield* Effect.map(
+              page(
+                request,
+                and<Following>(where, eq("id", read.rows[0]?.row.id ?? "")),
+                [],
+                MAX_PAGE_LIMIT,
+              ),
+              (whole) => byNode(whole.rows),
+            );
+    const items = Arr.flatten(
+      yield* Effect.forEach(complete, (run) => itemsOf(run, localised), { concurrency: 1 }),
+    );
+    const last = Arr.last(Arr.flatten(complete));
+    const ended = Option.map(last, ({ row }): DiscoveryCursor => ({
+      id: row.id,
+      key: Option.none(),
+    }));
+    // More rows remain past the last complete node when the read was cut short.
+    const remains = more || complete.length < runs.length;
+    return { items, next: remains ? ended : Option.none() };
+  });
 
   return { type, feed, sitemap };
 };

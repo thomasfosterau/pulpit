@@ -498,33 +498,32 @@ export const validateProposalPatch = <R>(
   if (Option.isSome(localeProblem)) return invalid(localeProblem.value);
   return Option.match(keyViolation(keys, options.attributes, options.forbidden), {
     onSome: invalid,
-    onNone: () =>
-      Effect.gen(function* () {
-        const decoded = Arr.isReadonlyArrayNonEmpty(keys) ? yield* options.decode(patch) : {};
-        const decodedLocales = yield* Effect.forEach(
-          locales,
-          ([locale, changes]) =>
-            Effect.map(
-              options.decode(changes),
-              (decodedChanges) => [locale, decodedChanges] as const,
-            ),
-          { concurrency: 1 },
-        );
-        return {
-          patch: decoded,
-          touchedKeys: Arr.filter(options.attributes, (key) => Arr.contains(keys, key)),
-          locales: R.fromEntries(decodedLocales),
-          touchedLocales: R.fromEntries(
-            Arr.map(locales, ([locale, changes]) => {
-              const touched = Option.match(jsonMembers(changes), {
-                onNone: () => [],
-                onSome: Arr.map(([key]) => key),
-              });
-              return [locale, Arr.filter(translated, (key) => Arr.contains(touched, key))] as const;
-            }),
+    onNone: Effect.fnUntraced(function* () {
+      const decoded = Arr.isReadonlyArrayNonEmpty(keys) ? yield* options.decode(patch) : {};
+      const decodedLocales = yield* Effect.forEach(
+        locales,
+        ([locale, changes]) =>
+          Effect.map(
+            options.decode(changes),
+            (decodedChanges) => [locale, decodedChanges] as const,
           ),
-        };
-      }),
+        { concurrency: 1 },
+      );
+      return {
+        patch: decoded,
+        touchedKeys: Arr.filter(options.attributes, (key) => Arr.contains(keys, key)),
+        locales: R.fromEntries(decodedLocales),
+        touchedLocales: R.fromEntries(
+          Arr.map(locales, ([locale, changes]) => {
+            const touched = Option.match(jsonMembers(changes), {
+              onNone: () => [],
+              onSome: Arr.map(([key]) => key),
+            });
+            return [locale, Arr.filter(translated, (key) => Arr.contains(touched, key))] as const;
+          }),
+        ),
+      };
+    }),
   });
 };
 
@@ -829,18 +828,17 @@ export const defineProposals = <Resource, E, R>(
     );
 
   /** The locked row, the target's write gate passed, still pending. */
-  const pendingForDecision = (id: string) =>
-    Effect.gen(function* () {
-      const row = yield* proposals.lock(id);
-      if (Option.isNone(row) || row.value.targetType !== type) {
-        return yield* new ProposalNotFound({ id });
-      }
-      const account = yield* writerOf(row.value.targetId);
-      if (row.value.status !== "pending") {
-        return yield* new ProposalClosed({ id, status: row.value.status });
-      }
-      return { row: row.value, account };
-    });
+  const pendingForDecision = Effect.fnUntraced(function* (id: string) {
+    const row = yield* proposals.lock(id);
+    if (Option.isNone(row) || row.value.targetType !== type) {
+      return yield* new ProposalNotFound({ id });
+    }
+    const account = yield* writerOf(row.value.targetId);
+    if (row.value.status !== "pending") {
+      return yield* new ProposalClosed({ id, status: row.value.status });
+    }
+    return { row: row.value, account };
+  });
 
   /** The target's head entry, or `NodeNotFound`. */
   const headOf = (targetId: string) =>
@@ -849,20 +847,19 @@ export const defineProposals = <Resource, E, R>(
     );
 
   /** Re-validate the stored patch and classify it, through the target's gated `compare`. */
-  const classify = (row: ProposalRow, head: bigint) =>
-    Effect.gen(function* () {
-      const validated = yield* validate(row.patch, row.locales);
-      const comparison = yield* target.compare(row.targetId, row.baseVersion, head);
-      return {
-        validated,
-        conflict: classifyProposalConflict(
-          comparison.from,
-          comparison.to,
-          validated.touchedKeys,
-          validated.touchedLocales,
-        ),
-      };
-    });
+  const classify = Effect.fnUntraced(function* (row: ProposalRow, head: bigint) {
+    const validated = yield* validate(row.patch, row.locales);
+    const comparison = yield* target.compare(row.targetId, row.baseVersion, head);
+    return {
+      validated,
+      conflict: classifyProposalConflict(
+        comparison.from,
+        comparison.to,
+        validated.touchedKeys,
+        validated.touchedLocales,
+      ),
+    };
+  });
 
   const close = (
     id: string,

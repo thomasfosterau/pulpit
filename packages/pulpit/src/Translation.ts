@@ -406,130 +406,129 @@ export const defineTranslation = <E, R, LE>(
     );
 
   /** A node's pending pairs, from its head snapshot. */
-  const pairsOf = (id: string, head: VersionSnapshot) =>
-    Effect.gen(function* () {
-      const locales = localesOf(head);
-      const derived = Arr.getSomes(
-        Arr.map(R.toEntries(locales), ([locale, state]) =>
-          Option.match(lineageOf(lineage, state), {
-            onNone: () => Option.none(),
-            onSome: (found) =>
-              found.source === locale || !R.has(locales, found.source)
-                ? Option.none()
-                : Option.some({ locale, lineage: found }),
+  const pairsOf = Effect.fnUntraced(function* (id: string, head: VersionSnapshot) {
+    const locales = localesOf(head);
+    const derived = Arr.getSomes(
+      Arr.map(R.toEntries(locales), ([locale, state]) =>
+        Option.match(lineageOf(lineage, state), {
+          onNone: () => Option.none(),
+          onSome: (found) =>
+            found.source === locale || !R.has(locales, found.source)
+              ? Option.none()
+              : Option.some({ locale, lineage: found }),
+        }),
+      ),
+    );
+    const versions = Arr.dedupe(Arr.map(derived, ({ lineage: found }) => found.sourceVersion));
+    const then = yield* Effect.forEach(
+      versions,
+      (version) => Effect.map(readVersion(id, version), (snapshot) => [version, snapshot] as const),
+      { concurrency: 1 },
+    );
+    const at = (version: bigint) =>
+      Option.flatten(
+        Option.map(
+          Arr.findFirst(then, ([v]) => v === version),
+          ([, snapshot]) => snapshot,
+        ),
+      );
+    const stale = Arr.getSomes(
+      Arr.map(derived, ({ locale, lineage: found }) => {
+        const now = pick(locales[found.source] ?? {});
+        const isStale = Option.match(at(found.sourceVersion), {
+          onNone: () => true,
+          onSome: (snapshot) =>
+            !R.isEmptyRecord(diffStates(pick(localesOf(snapshot)[found.source] ?? {}), now)),
+        });
+        return isStale
+          ? Option.some<TranslationPair>({
+              id,
+              locale,
+              source: found.source,
+              reason: "stale",
+              headVersion: head.version,
+            })
+          : Option.none();
+      }),
+    );
+    const missing = R.has(locales, sourceLocale)
+      ? Arr.getSomes(
+          Arr.map(targets, (locale) =>
+            locale === sourceLocale || R.has(locales, locale)
+              ? Option.none()
+              : Option.some<TranslationPair>({
+                  id,
+                  locale,
+                  source: sourceLocale,
+                  reason: "missing",
+                  headVersion: head.version,
+                }),
+          ),
+        )
+      : [];
+    return [...stale, ...missing];
+  });
+
+  const page = Effect.fnUntraced(function* (request: TranslationPageRequest) {
+    const limit = Math.min(Math.max(Math.trunc(request.limit) || 1, 1), MAX_PAGE_LIMIT);
+    const ids = yield* candidates.nodes({ after: request.after, limit });
+    const empty: ReadonlyArray<TranslationPair> = [];
+    const nodes = yield* Effect.forEach(
+      ids,
+      (id) =>
+        Effect.flatMap(headOf(id), (head) =>
+          Option.match(head, {
+            onNone: () => Effect.succeed({ id, head, pairs: empty }),
+            onSome: (snapshot) =>
+              Effect.map(pairsOf(id, snapshot), (pairs) => ({ id, head, pairs })),
           }),
         ),
-      );
-      const versions = Arr.dedupe(Arr.map(derived, ({ lineage: found }) => found.sourceVersion));
-      const then = yield* Effect.forEach(
-        versions,
-        (version) =>
-          Effect.map(readVersion(id, version), (snapshot) => [version, snapshot] as const),
-        { concurrency: 1 },
-      );
-      const at = (version: bigint) =>
-        Option.flatten(
-          Option.map(
-            Arr.findFirst(then, ([v]) => v === version),
-            ([, snapshot]) => snapshot,
-          ),
-        );
-      const stale = Arr.getSomes(
-        Arr.map(derived, ({ locale, lineage: found }) => {
-          const now = pick(locales[found.source] ?? {});
-          const isStale = Option.match(at(found.sourceVersion), {
-            onNone: () => true,
-            onSome: (snapshot) =>
-              !R.isEmptyRecord(diffStates(pick(localesOf(snapshot)[found.source] ?? {}), now)),
-          });
-          return isStale
-            ? Option.some<TranslationPair>({
-                id,
-                locale,
-                source: found.source,
-                reason: "stale",
-                headVersion: head.version,
-              })
-            : Option.none();
-        }),
-      );
-      const missing = R.has(locales, sourceLocale)
-        ? Arr.getSomes(
-            Arr.map(targets, (locale) =>
-              locale === sourceLocale || R.has(locales, locale)
-                ? Option.none()
-                : Option.some<TranslationPair>({
-                    id,
-                    locale,
-                    source: sourceLocale,
-                    reason: "missing",
-                    headVersion: head.version,
-                  }),
-            ),
-          )
-        : [];
-      return [...stale, ...missing];
-    });
-
-  const page = (request: TranslationPageRequest) =>
-    Effect.gen(function* () {
-      const limit = Math.min(Math.max(Math.trunc(request.limit) || 1, 1), MAX_PAGE_LIMIT);
-      const ids = yield* candidates.nodes({ after: request.after, limit });
-      const empty: ReadonlyArray<TranslationPair> = [];
-      const nodes = yield* Effect.forEach(
-        ids,
-        (id) =>
-          Effect.flatMap(headOf(id), (head) =>
-            Option.match(head, {
-              onNone: () => Effect.succeed({ id, head, pairs: empty }),
-              onSome: (snapshot) =>
-                Effect.map(pairsOf(id, snapshot), (pairs) => ({ id, head, pairs })),
-            }),
-          ),
-        { concurrency: 1 },
-      );
-      const next = ids.length < limit ? Option.none() : Arr.last(ids);
-      return { nodes, next };
-    });
+      { concurrency: 1 },
+    );
+    const next = ids.length < limit ? Option.none() : Arr.last(ids);
+    return { nodes, next };
+  });
 
   /** Translate a node's pairs into one locale patch, or the conflict that stops it. */
-  const translateNode = (head: VersionSnapshot, pairs: ReadonlyArray<TranslationPair>) =>
-    Effect.gen(function* () {
-      const locales = localesOf(head);
-      const translated = yield* Effect.forEach(
-        pairs,
-        (pair) =>
-          Effect.map(
-            translator.translate({
-              id: pair.id,
-              from: pair.source,
-              to: pair.locale,
-              values: pick(locales[pair.source] ?? {}),
-            }),
-            (values) => [pair, values] as const,
-          ),
-        { concurrency: 1 },
-      );
-      const outside = Arr.some(translated, ([, values]) =>
-        Arr.some(R.keys(values), (column) => !HashSet.has(translatable, column)),
-      );
-      if (outside) return Option.none<LocalePatch>();
-      return Option.some<LocalePatch>(
-        R.fromEntries(
-          Arr.map(translated, ([pair, values]) => [
-            pair.locale,
-            {
-              ...values,
-              ...lineagePatch(lineage, {
-                source: pair.source,
-                sourceVersion: pair.headVersion,
-                method: "machine",
-              }),
-            },
-          ]),
+  const translateNode = Effect.fnUntraced(function* (
+    head: VersionSnapshot,
+    pairs: ReadonlyArray<TranslationPair>,
+  ) {
+    const locales = localesOf(head);
+    const translated = yield* Effect.forEach(
+      pairs,
+      (pair) =>
+        Effect.map(
+          translator.translate({
+            id: pair.id,
+            from: pair.source,
+            to: pair.locale,
+            values: pick(locales[pair.source] ?? {}),
+          }),
+          (values) => [pair, values] as const,
         ),
-      );
-    });
+      { concurrency: 1 },
+    );
+    const outside = Arr.some(translated, ([, values]) =>
+      Arr.some(R.keys(values), (column) => !HashSet.has(translatable, column)),
+    );
+    if (outside) return Option.none<LocalePatch>();
+    return Option.some<LocalePatch>(
+      R.fromEntries(
+        Arr.map(translated, ([pair, values]) => [
+          pair.locale,
+          {
+            ...values,
+            ...lineagePatch(lineage, {
+              source: pair.source,
+              sourceVersion: pair.headVersion,
+              method: "machine",
+            }),
+          },
+        ]),
+      ),
+    );
+  });
 
   const land = (
     id: string,
@@ -603,49 +602,48 @@ export const defineTranslation = <E, R, LE>(
         pairs: Arr.flatMap(nodes, ({ pairs }) => pairs),
         next,
       })),
-    sweep: (request) =>
-      Effect.gen(function* () {
-        const { nodes, next } = yield* page(request);
-        const none: ReadonlyArray<TranslationPair> = [];
-        const noConflicts: ReadonlyArray<SweepConflict> = [];
-        const outcomes = yield* Effect.forEach(
-          nodes,
-          ({ id, head, pairs }) =>
-            Effect.gen(function* () {
-              if (Option.isNone(head) || Arr.isReadonlyArrayEmpty(pairs)) {
-                return { landed: none, skipped: none, conflicts: noConflicts };
-              }
-              const [todo, skipped] = yield* pendingOf(pairs);
-              if (Arr.isReadonlyArrayEmpty(todo))
-                return { landed: none, skipped, conflicts: noConflicts };
-              const patch = yield* translateNode(head.value, todo);
-              const locales = Arr.map(todo, (pair) => pair.locale);
-              if (Option.isNone(patch)) {
-                return {
-                  landed: none,
-                  skipped,
-                  conflicts: [{ id, locales, reason: "TRANSLATOR_COLUMNS" }],
-                };
-              }
-              const refused = yield* land(id, head.value, patch.value);
-              return Option.match(refused, {
-                onNone: () => ({ landed: todo, skipped, conflicts: noConflicts }),
-                onSome: (reason) => ({
-                  landed: none,
-                  skipped,
-                  conflicts: [{ id, locales, reason }],
-                }),
-              });
-            }),
-          { concurrency: 1 },
-        );
-        return {
-          landed: Arr.flatMap(outcomes, (outcome) => outcome.landed),
-          skipped: Arr.flatMap(outcomes, (outcome) => outcome.skipped),
-          conflicts: Arr.flatMap(outcomes, (outcome) => outcome.conflicts),
-          next,
-        };
-      }),
+    sweep: Effect.fn("translation.sweep")(function* (request: TranslationPageRequest) {
+      const { nodes, next } = yield* page(request);
+      const none: ReadonlyArray<TranslationPair> = [];
+      const noConflicts: ReadonlyArray<SweepConflict> = [];
+      const outcomes = yield* Effect.forEach(
+        nodes,
+        ({ id, head, pairs }) =>
+          Effect.gen(function* () {
+            if (Option.isNone(head) || Arr.isReadonlyArrayEmpty(pairs)) {
+              return { landed: none, skipped: none, conflicts: noConflicts };
+            }
+            const [todo, skipped] = yield* pendingOf(pairs);
+            if (Arr.isReadonlyArrayEmpty(todo))
+              return { landed: none, skipped, conflicts: noConflicts };
+            const patch = yield* translateNode(head.value, todo);
+            const locales = Arr.map(todo, (pair) => pair.locale);
+            if (Option.isNone(patch)) {
+              return {
+                landed: none,
+                skipped,
+                conflicts: [{ id, locales, reason: "TRANSLATOR_COLUMNS" }],
+              };
+            }
+            const refused = yield* land(id, head.value, patch.value);
+            return Option.match(refused, {
+              onNone: () => ({ landed: todo, skipped, conflicts: noConflicts }),
+              onSome: (reason) => ({
+                landed: none,
+                skipped,
+                conflicts: [{ id, locales, reason }],
+              }),
+            });
+          }),
+        { concurrency: 1 },
+      );
+      return {
+        landed: Arr.flatMap(outcomes, (outcome) => outcome.landed),
+        skipped: Arr.flatMap(outcomes, (outcome) => outcome.skipped),
+        conflicts: Arr.flatMap(outcomes, (outcome) => outcome.conflicts),
+        next,
+      };
+    }),
   };
 };
 

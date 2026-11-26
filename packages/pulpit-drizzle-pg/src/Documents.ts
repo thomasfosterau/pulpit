@@ -119,18 +119,17 @@ export const makeDocumentStore = <
           .returning({ hash: hashText(table) });
         return yield* Option.match(Arr.head(inserted), {
           onSome: ({ hash }) => Effect.succeed({ hash, inserted: true }),
-          onNone: () =>
-            Effect.gen(function* () {
-              const rows = yield* selectRows(
-                tx,
-                sql`SELECT encode(digest(${asJsonb(text)}::text, 'sha256'), 'hex') AS hash`,
-                Schema.Struct({ hash: Schema.String }),
-              );
-              const hash = yield* Effect.orDie(
-                Effect.fromOption(Option.map(Arr.head(rows), (row) => row.hash)),
-              );
-              return { hash, inserted: false };
-            }),
+          onNone: Effect.fnUntraced(function* () {
+            const rows = yield* selectRows(
+              tx,
+              sql`SELECT encode(digest(${asJsonb(text)}::text, 'sha256'), 'hex') AS hash`,
+              Schema.Struct({ hash: Schema.String }),
+            );
+            const hash = yield* Effect.orDie(
+              Effect.fromOption(Option.map(Arr.head(rows), (row) => row.hash)),
+            );
+            return { hash, inserted: false };
+          }),
         });
       }),
     get: (hash) =>

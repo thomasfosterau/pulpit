@@ -537,28 +537,30 @@ export const defineAccountErasure = <E, EB, R>(
    * outlived its chain has nothing to purge: its owner record is removed,
    * so the next batch moves past it.
    */
-  const purgeOwned = (family: ErasureFamily<E, R>, accountId: string, limit: number) =>
-    Effect.gen(function* () {
-      const base = { type: family.type, chain: family.chain, store: definition.purge, transact };
-      const withBlobs =
-        definition.blobs === undefined ? base : { ...base, blobs: definition.blobs };
-      const purge = purgeNode<E, EB, R>(
-        family.cache === undefined ? withBlobs : { ...withBlobs, cache: family.cache },
-      );
-      const ids = yield* transact(store.ownedNodes({ accountId, type: family.type, limit }));
-      const reports = yield* Effect.forEach(
-        ids,
-        (id) =>
-          Effect.catchIf(Effect.asSome(purge(id)), isNodeNotFound, () =>
-            Effect.as(
-              transact(store.setOwner({ type: family.type, id, ownerId: Option.none() })),
-              Option.none<PurgeReport>(),
-            ),
+  const purgeOwned = Effect.fnUntraced(function* (
+    family: ErasureFamily<E, R>,
+    accountId: string,
+    limit: number,
+  ) {
+    const base = { type: family.type, chain: family.chain, store: definition.purge, transact };
+    const withBlobs = definition.blobs === undefined ? base : { ...base, blobs: definition.blobs };
+    const purge = purgeNode<E, EB, R>(
+      family.cache === undefined ? withBlobs : { ...withBlobs, cache: family.cache },
+    );
+    const ids = yield* transact(store.ownedNodes({ accountId, type: family.type, limit }));
+    const reports = yield* Effect.forEach(
+      ids,
+      (id) =>
+        Effect.catchIf(Effect.asSome(purge(id)), isNodeNotFound, () =>
+          Effect.as(
+            transact(store.setOwner({ type: family.type, id, ownerId: Option.none() })),
+            Option.none<PurgeReport>(),
           ),
-        { concurrency: 1 },
-      );
-      return { changed: ids.length, purged: Arr.getSomes(reports) };
-    });
+        ),
+      { concurrency: 1 },
+    );
+    return { changed: ids.length, purged: Arr.getSomes(reports) };
+  });
 
   /**
    * The redacting patch over the head's state: each declared account
@@ -592,8 +594,8 @@ export const defineAccountErasure = <E, EB, R>(
    * as the disposition says and with no `proposedBy`. A node with no
    * head, or a tombstone, gets none.
    */
-  const redactNode = (family: ErasureFamily<E, R>, accountId: string, id: string) =>
-    Effect.gen(function* () {
+  const redactNode = Effect.fnUntraced(
+    function* (family: ErasureFamily<E, R>, accountId: string, id: string) {
       const head = yield* family.chain.head(id);
       if (Option.isNone(head) || head.value.action === "delete") return Option.none<ChainWrite>();
       const patch = yield* redactingPatch(family, accountId, id, head.value.version);
@@ -604,7 +606,9 @@ export const defineAccountErasure = <E, EB, R>(
         expectedVersion: head.value.version,
       });
       return Option.some(write);
-    }).pipe(Effect.catchIf(isNodeNotFound, () => Effect.succeedNone));
+    },
+    Effect.catchIf(isNodeNotFound, () => Effect.succeedNone),
+  );
 
   /**
    * One batch of the family's nodes still to redact (the store's marker

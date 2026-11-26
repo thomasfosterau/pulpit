@@ -929,17 +929,16 @@ export const defineVersionChain = <E, R>(
     );
 
   /** The head and its full state. A head without a state is a broken chain: a defect, not a miss. */
-  const current = (id: string) =>
-    Effect.gen(function* () {
-      const head = yield* chain.head(id);
-      if (Option.isNone(head)) return Option.none<VersionSnapshot>();
-      const snapshot = yield* Effect.catchTag(
-        chain.getVersion(id, head.value.version),
-        "VersionNotFound",
-        () => Effect.die(new BrokenChain({ type, id, version: head.value.version })),
-      );
-      return Option.some(snapshot);
-    });
+  const current = Effect.fnUntraced(function* (id: string) {
+    const head = yield* chain.head(id);
+    if (Option.isNone(head)) return Option.none<VersionSnapshot>();
+    const snapshot = yield* Effect.catchTag(
+      chain.getVersion(id, head.value.version),
+      "VersionNotFound",
+      () => Effect.die(new BrokenChain({ type, id, version: head.value.version })),
+    );
+    return Option.some(snapshot);
+  });
 
   const create = Effect.fn(`${type}.create`)(function* (input: CreateInput) {
     if (!hooked) return yield* chain.create(input);
@@ -961,29 +960,28 @@ export const defineVersionChain = <E, R>(
     return yield* chain.create(R.isEmptyRecord(locales) ? next : { ...next, locales });
   });
 
-  const merge = (input: UpdateInput, allowDeleted: boolean) =>
-    Effect.gen(function* () {
-      if (!hooked) return yield* allowDeleted ? chain.restore(input) : chain.update(input);
-      const head = yield* current(input.id);
-      if (Option.isNone(head) || (head.value.action === "delete" && !allowDeleted)) {
-        return yield* new NodeNotFound({ type, id: input.id });
-      }
-      const written = yield* patches({
-        action: allowDeleted ? "restore" : "update",
-        id: input.id,
-        prior: head,
-        patch: input.patch,
-        locales: input.locales ?? {},
-        actorId: input.actorId,
-      });
-      const next: UpdateInput = {
-        ...input,
-        patch: written.patch,
-        locales: written.locales,
-        ...pinned(input, head.value),
-      };
-      return yield* allowDeleted ? chain.restore(next) : chain.update(next);
+  const merge = Effect.fnUntraced(function* (input: UpdateInput, allowDeleted: boolean) {
+    if (!hooked) return yield* allowDeleted ? chain.restore(input) : chain.update(input);
+    const head = yield* current(input.id);
+    if (Option.isNone(head) || (head.value.action === "delete" && !allowDeleted)) {
+      return yield* new NodeNotFound({ type, id: input.id });
+    }
+    const written = yield* patches({
+      action: allowDeleted ? "restore" : "update",
+      id: input.id,
+      prior: head,
+      patch: input.patch,
+      locales: input.locales ?? {},
+      actorId: input.actorId,
     });
+    const next: UpdateInput = {
+      ...input,
+      patch: written.patch,
+      locales: written.locales,
+      ...pinned(input, head.value),
+    };
+    return yield* allowDeleted ? chain.restore(next) : chain.update(next);
+  });
 
   const update = Effect.fn(`${type}.update`)(function* (input: UpdateInput) {
     return yield* merge(input, false);

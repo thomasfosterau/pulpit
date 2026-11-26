@@ -425,16 +425,15 @@ export const makeInMemoryVersionChain = (type: string): InMemoryVersionChain => 
     });
 
   /** The head and its full state. A head without a state is a broken chain: a defect. */
-  const current = (id: string) =>
-    Effect.gen(function* () {
-      const entry = yield* head(id);
-      if (Option.isNone(entry)) return Option.none<VersionSnapshot>();
-      const state = yield* snapshot(id, entry.value.version);
-      if (Option.isNone(state)) {
-        return yield* Effect.die(new BrokenChain({ type, id, version: entry.value.version }));
-      }
-      return state;
-    });
+  const current = Effect.fnUntraced(function* (id: string) {
+    const entry = yield* head(id);
+    if (Option.isNone(entry)) return Option.none<VersionSnapshot>();
+    const state = yield* snapshot(id, entry.value.version);
+    if (Option.isNone(state)) {
+      return yield* Effect.die(new BrokenChain({ type, id, version: entry.value.version }));
+    }
+    return state;
+  });
 
   /**
    * Append at `previous + 1`, after checking the precondition against that
@@ -442,7 +441,7 @@ export const makeInMemoryVersionChain = (type: string): InMemoryVersionChain => 
    * so a writer that lands in between takes `previous + 1` first and this
    * append fails the log's key.
    */
-  const appendNext = (
+  const appendNext = Effect.fnUntraced(function* (
     id: string,
     previous: VersionChainEntry,
     action: VersionAction,
@@ -450,34 +449,32 @@ export const makeInMemoryVersionChain = (type: string): InMemoryVersionChain => 
     actorId: Option.Option<string>,
     precondition: Precondition,
     proposedBy: Option.Option<string> = Option.none(),
-  ) =>
-    Effect.gen(function* () {
-      const expected = precondition.expectedVersion;
-      if (expected !== undefined && expected !== previous.version) {
-        return yield* new StaleVersion({ type, id, expected, current: previous.version });
-      }
-      const version = previous.version + 1n;
-      const timestamp = yield* writeClock;
-      yield* append({ id, type, version, action, timestamp, ...content, actorId, proposedBy });
-      return { id, version };
-    });
+  ) {
+    const expected = precondition.expectedVersion;
+    if (expected !== undefined && expected !== previous.version) {
+      return yield* new StaleVersion({ type, id, expected, current: previous.version });
+    }
+    const version = previous.version + 1n;
+    const timestamp = yield* writeClock;
+    yield* append({ id, type, version, action, timestamp, ...content, actorId, proposedBy });
+    return { id, version };
+  });
 
-  const merge = (input: UpdateInput, allowDeleted: boolean) =>
-    Effect.gen(function* () {
-      const prior = yield* current(input.id);
-      if (Option.isNone(prior) || (prior.value.action === "delete" && !allowDeleted)) {
-        return yield* new NodeNotFound({ type, id: input.id });
-      }
-      return yield* appendNext(
-        input.id,
-        prior.value,
-        "update",
-        nextContent(prior.value, input.patch, input.locales ?? {}),
-        input.actorId,
-        input,
-        input.proposedBy,
-      );
-    });
+  const merge = Effect.fnUntraced(function* (input: UpdateInput, allowDeleted: boolean) {
+    const prior = yield* current(input.id);
+    if (Option.isNone(prior) || (prior.value.action === "delete" && !allowDeleted)) {
+      return yield* new NodeNotFound({ type, id: input.id });
+    }
+    return yield* appendNext(
+      input.id,
+      prior.value,
+      "update",
+      nextContent(prior.value, input.patch, input.locales ?? {}),
+      input.actorId,
+      input,
+      input.proposedBy,
+    );
+  });
 
   return {
     type,
