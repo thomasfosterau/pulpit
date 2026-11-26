@@ -1,6 +1,7 @@
 # One PR per group; a dependency joins the first group that matches it. The
-# toolchain, effect, drizzle and own-library groups must move together; the
-# rest is grouped to cut noise. By-hand steps: docs/CONTRIBUTING.md.
+# effect, drizzle and thomasfosterau groups must move together; toolchain is
+# vite-plus's set plus the rest of the dev tooling. By-hand steps:
+# docs/CONTRIBUTING.md.
 version: 2
 updates:
   - package-ecosystem: "npm"
@@ -27,6 +28,11 @@ updates:
           - "vitest"
           - "@vitest/*"
           - "@effect/tsgo"
+          - "@changesets/*"
+          - "@effect/language-service"
+          - "@enfect/oxlint"
+          - "@types/*"
+          - "fallow"
       effect:
         applies-to: version-updates
         patterns:
@@ -41,19 +47,10 @@ updates:
           - "drizzle-orm"
           - "drizzle-kit"
       # effect-drizzle-ext and effect-drizzle-ext-pg move together.
-      own-libraries:
+      thomasfosterau:
         applies-to: version-updates
         patterns:
           - "@thomasfosterau/*"
-      dev-tooling:
-        applies-to: version-updates
-        patterns:
-          - "@changesets/*"
-          - "@effect/language-service"
-          - "@enfect/oxlint"
-          - "@types/*"
-          - "fallow"
-          - "tsx"
 
   - package-ecosystem: "github-actions"
     directory: "/"
