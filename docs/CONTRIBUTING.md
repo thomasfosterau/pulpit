@@ -46,6 +46,8 @@ Run `vp run ci` (CI runs exactly that, on Node LTS and latest, with a PostgreSQL
 
 ## Dependencies
 
+Dependabot ([dependabot.yml](../.github/dependabot.yml)) opens `@thomasfosterau/*` updates daily and every other update weekly, on Wednesday morning Melbourne time: the named runtime sets (`effect` and the like) each in one PR, and every other development dependency in the single `toolchain` group. Security updates skip the schedule and open as soon as an advisory lands, one PR each. Vite+ selects Node.js from `.node-version` and pnpm from `packageManager`; pnpm's own switching is off (`runtimeOnFail` / `pmOnFail`), so one version of each is installed and used.
+
 Every external version lives in the `pnpm-workspace.yaml` catalog (`catalogMode: strict`); after editing it, run `vp install` and commit `pnpm-lock.yaml`. Dependabot groups the sets that must move together, and the rest of the dev tooling (with vite-plus's set), the `@thomasfosterau/*` libraries and GitHub Actions to cut noise. It can't make the moves below: make them in a PR from a new branch started from its PR's head (never push to a `dependabot/*` branch, which stops it rebasing), and it closes its own PR once yours merges:
 
 - The npm aliases `vite` (equal to `vite-plus`), `typescript` and `@typescript/native`, and the devcontainer image tag (equal to `vite-plus`).
