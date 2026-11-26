@@ -6,7 +6,7 @@ The module guide for [`@thomasfosterau/pulpit-drizzle-pg`](../packages/pulpit-dr
 
 **Not published** (`"private": true`, version `0.0.0`; see [PUBLISHING.md](PUBLISHING.md)). It lands in slices:
 
-- **Landed:** the `VersionChain` port over `-pg/chain` ([`./VersionChain`](#version-chain)), passing the kernel's `versionChainConformance` against PostgreSQL; the `LeafStore` over the tree's leaf views and the owner table ([`./LeafStore`](#leaf-store)), with the `ListFilter` → SQL renderer and the list order ([`./Filter`](#filter)), checked row by row against the kernel's in-memory store on PostgreSQL.
+- **Landed:** the `VersionChain` port over `-pg/Chain` ([`./VersionChain`](#version-chain)), passing the kernel's `versionChainConformance` against PostgreSQL; the `LeafStore` over the tree's leaf views and the owner table ([`./LeafStore`](#leaf-store)), with the `ListFilter` → SQL renderer and the list order ([`./Filter`](#filter)), checked row by row against the kernel's in-memory store on PostgreSQL.
 - **Landed:** the live pointer, `PublicationStore` / `LiveView` and the gated store, over the tree's pointer level ([`./Publication`](#publication)), checked against the kernel's in-memory publication on PostgreSQL.
 - **Landed:** the content-addressed `DocumentStore` ([`./Documents`](#documents)), its hashes checked against the kernel's `canonicalText` on PostgreSQL.
 - **Landed:** the localised `LeafStore` over a tree's keyed views ([`./LeafStore`](#localised-leaves)), checked against the kernel's localised in-memory store on PostgreSQL.
@@ -62,12 +62,12 @@ An ungated leaf takes `makeLeafStores({ tree, tables, views, owners, CurrentTran
 
 ## `./VersionChain`
 
-`makeVersionChains({ tree, tables, CurrentTransaction })` takes exactly what effect-drizzle-ext `-pg/chain`'s `makeVersionChain` takes and returns one kernel `VersionChain<EffectDrizzleQueryError, CurrentTransaction>` per leaf, keyed by leaf name, ready for the kernel's `defineVersionChain` and `defineSubtype`'s `chain`.
+`makeVersionChains({ tree, tables, CurrentTransaction })` takes exactly what effect-drizzle-ext `-pg/Chain`'s `makeVersionChain` takes and returns one kernel `VersionChain<EffectDrizzleQueryError, CurrentTransaction>` per leaf, keyed by leaf name, ready for the kernel's `defineVersionChain` and `defineSubtype`'s `chain`.
 
 ```ts
-import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
-import { makeTreeTables } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
-import { makePgDatabase, pgClientFromPool } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext/Annotation";
+import { makeTreeTables } from "@thomasfosterau/effect-drizzle-ext/VersionedChain";
+import { makePgDatabase, pgClientFromPool } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import { makeVersionChains } from "@thomasfosterau/pulpit-drizzle-pg/VersionChain";
 import { defineVersionChain } from "@thomasfosterau/pulpit/VersionChain";
 import { pgSchema, text } from "drizzle-orm/pg-core";
@@ -125,7 +125,7 @@ Effect.runPromise(program.pipe(Effect.provide(DatabaseLive)));
 
 What each port does, over the leaf's tables:
 
-- **`create` / `update` / `restore` / `delete` / `restoreVersion` / `getVersion` / `history` / `head`** are `-pg/chain`'s own, so the kernel's invariants (append-only at `N_max + 1`, never an upsert, no resurrection by a plain `update`, no partial restore, bounded history, the expected-version precondition checked against the head the append extends) are the chain's. Its errors map one to one onto the kernel's: `NodeAlreadyExists`, `NodeNotFound`, `VersionNotFound`, `StaleVersion`, `VersionConflict`; `BrokenChain` stays a defect.
+- **`create` / `update` / `restore` / `delete` / `restoreVersion` / `getVersion` / `history` / `head`** are `-pg/Chain`'s own, so the kernel's invariants (append-only at `N_max + 1`, never an upsert, no resurrection by a plain `update`, no partial restore, bounded history, the expected-version precondition checked against the head the append extends) are the chain's. Its errors map one to one onto the kernel's: `NodeAlreadyExists`, `NodeNotFound`, `VersionNotFound`, `StaleVersion`, `VersionConflict`; `BrokenChain` stays a defect.
 - **State** is keyed by Drizzle field key across the leaf's whole path (a work's `title` and a post's `body` alike). A key that names no column of the path is not stored, and a column the state omits is `NULL` at create. Timestamps are the transaction's `now()` (the root version table's column default).
 - **`actorId`** is the root version row's actor. **`locales`** is the leaf's keyed level (`keyed: { name: "locale", columns }` in the tree); `getVersion` returns it as `locales`, and omits the key for a version that carries none. A translated column is never a shared one: the tree rejects a key both levels of one path declare.
 - **`proposedBy`** (the contributor whose accepted proposal a version applies, `./Proposals`) is the root version row's `proposedBy` extra: declare `root.versionColumns: { proposedBy }` in `makeTreeTables` to accept proposals. An update carrying one over a tree without that column dies (`ProposedByUnrecorded`) rather than drop the contributor.
@@ -140,7 +140,7 @@ No operation opens a transaction: each requires the application's `CurrentTransa
 `makeLeafStores({ tree, tables, views, owners, CurrentTransaction })` returns one kernel `LeafStore<LeafRow, SQLWrapper, EffectDrizzleQueryError, CurrentTransaction>` per leaf view, ready for `defineSubtype`'s `store`. `views` is `makeTreeViews(tree, tables, { schema })`, and `owners` the owner table:
 
 ```ts
-import { makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
+import { makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/VersionedChain";
 import { makeLeafStores, makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/LeafStore";
 import { sql } from "drizzle-orm";
 

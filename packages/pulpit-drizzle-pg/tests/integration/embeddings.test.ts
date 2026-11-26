@@ -12,7 +12,7 @@
  * checked in `tests/embeddings.test.ts`.
  */
 
-import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import type { DocumentHash } from "@thomasfosterau/pulpit/Documents";
 import { makeInMemoryEmbeddingStore } from "@thomasfosterau/pulpit/testing";
 import { getTableName, sql } from "drizzle-orm";

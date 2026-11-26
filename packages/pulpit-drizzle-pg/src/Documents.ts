@@ -18,7 +18,7 @@
  */
 
 import { selectRows } from "./internal/query.ts";
-import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
+import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import { DocumentHash, type DocumentStore } from "@thomasfosterau/pulpit/Documents";
 import { sql, type AnyRelations, type SQL } from "drizzle-orm";
 import { bytea, jsonb, type PgSchema } from "drizzle-orm/pg-core";

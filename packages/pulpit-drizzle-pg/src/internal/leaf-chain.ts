@@ -1,7 +1,7 @@
 /**
  * @copyright Thomas Foster
  *
- * One `-pg/chain` `LeafChain` as the kernel's `VersionChain` port
+ * One `-pg/Chain` `LeafChain` as the kernel's `VersionChain` port
  *: the kernel's inputs mapped onto the chain's, and
  * the chain's tagged errors mapped one to one onto the kernel's. Off the
  * public surface: `makeVersionChains` (`../VersionChain.ts`) builds every
@@ -25,7 +25,7 @@ import {
   type VersionChain,
   type VersionSnapshot,
 } from "@thomasfosterau/pulpit/VersionChain";
-import * as Pg from "@thomasfosterau/effect-drizzle-ext-pg/chain";
+import * as Pg from "@thomasfosterau/effect-drizzle-ext-pg/Chain";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as R from "effect/Record";
@@ -44,24 +44,28 @@ export interface ProposedByExtra {
 }
 
 /**
- * A leaf's `-pg/chain` operations with the leaf's own state types erased to
+ * A leaf's `-pg/Chain` operations with the leaf's own state types erased to
  * the kernel's: a state is a {@link ChainState} keyed by Drizzle field, a
  * patch a {@link ChainPatch}, the keyed level the kernel's locale level. The
  * kernel's state is untyped by design (a leaf's `Resource` schema validates
- * it above the port), so this is the shape the port hands the chain.
+ * it above the port), so this is the shape the port hands the chain. Only
+ * the operations the port delegates to are named.
  *
  * @since 0.0.0
  */
-export type ErasedLeafChain<E, I> = Pg.LeafChain<
-  ChainState,
-  ChainState,
-  ChainPatch,
-  never,
-  ProposedByExtra,
-  E,
-  I,
-  LocaleStates,
-  LocalePatch
+export type ErasedLeafChain<E, I> = Pick<
+  Pg.LeafChain<
+    ChainState,
+    ChainState,
+    ChainPatch,
+    never,
+    ProposedByExtra,
+    E,
+    I,
+    LocaleStates,
+    LocalePatch
+  >,
+  "create" | "update" | "restore" | "delete" | "restoreVersion" | "getVersion" | "history" | "head"
 >;
 
 /**
@@ -116,7 +120,7 @@ const toSnapshot = (snapshot: Pg.ChainSnapshot<ChainState, LocaleStates>): Versi
 };
 
 // The chain's errors carry the kernel's names and fields (effect-drizzle-ext
-// `-pg/chain`), so each maps onto the kernel's class of the same name. The
+// `-pg/Chain`), so each maps onto the kernel's class of the same name. The
 // mapping narrows by class, since the driver's own error `E` stays generic.
 const nodeNotFound = (error: Pg.NodeNotFound) =>
   new NodeNotFound({ type: error.type, id: error.id });
@@ -145,7 +149,7 @@ const writeError = <E>(error: E | Pg.NodeNotFound | Pg.StaleVersion | Pg.Version
         : error;
 
 /**
- * One leaf's `-pg/chain` operations as the kernel's {@link VersionChain}
+ * One leaf's `-pg/Chain` operations as the kernel's {@link VersionChain}
  * port. `actorId` becomes the chain's `actor`, `proposedBy` the root version
  * row's `proposedBy` extra, `locales` the chain's keyed level (`keyed`), and
  * each of the chain's tagged errors the kernel's of the same name

@@ -8,7 +8,7 @@
  * computed as "no live row".
  */
 
-import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import { always, eq, locale, never, type ListFilter } from "@thomasfosterau/pulpit/Filter";
 import type { LeafRow, ListOrder } from "@thomasfosterau/pulpit/Subtype";
 import {

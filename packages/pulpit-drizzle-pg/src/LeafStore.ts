@@ -21,9 +21,9 @@
  * @since 0.0.0
  */
 
-import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
-import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
-import type { ChainTree } from "@thomasfosterau/effect-drizzle-ext-pg/chain";
+import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/Derive";
+import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
+import type { ChainTree } from "@thomasfosterau/effect-drizzle-ext-pg/Chain";
 import type { LeafRow, LeafStore } from "@thomasfosterau/pulpit/Subtype";
 import { getTableColumns, type AnyRelations, type SQLWrapper } from "drizzle-orm";
 import type { PgTable, PgView } from "drizzle-orm/pg-core";
@@ -52,8 +52,8 @@ export const OWNER_COLUMN = Owners.OWNER_COLUMN;
  * @example
  * ```ts
  * import { strictEqual } from "node:assert";
- * import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
- * import { makeTreeTables } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
+ * import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext/Annotation";
+ * import { makeTreeTables } from "@thomasfosterau/effect-drizzle-ext/VersionedChain";
  * import { makeNodeOwnerTable } from "@thomasfosterau/pulpit-drizzle-pg/LeafStore";
  * import { getTableName } from "drizzle-orm";
  * import { pgSchema, text } from "drizzle-orm/pg-core";

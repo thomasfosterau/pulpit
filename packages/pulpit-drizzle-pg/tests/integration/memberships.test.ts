@@ -9,8 +9,8 @@
  * Beyond the fakes, deleting a group or an account cascades.
  */
 
-import { executeRows } from "@thomasfosterau/effect-drizzle-ext/query";
-import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { executeRows } from "@thomasfosterau/effect-drizzle-ext/Query";
+import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import type { Invitation, Membership } from "@thomasfosterau/pulpit/Audience";
 import {
   makeInMemoryGroupOwners,

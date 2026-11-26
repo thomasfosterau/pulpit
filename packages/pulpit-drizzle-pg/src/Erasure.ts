@@ -17,10 +17,10 @@
  */
 
 import { selectRows } from "./internal/query.ts";
-import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
+import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import { ContentHash } from "@thomasfosterau/pulpit/Blobs";
 import { DocumentHash } from "@thomasfosterau/pulpit/Documents";
-import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
+import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/Derive";
 import type { AccountErasureStore } from "@thomasfosterau/pulpit/Erasure";
 import type { ErasedReferences, PurgeStore } from "@thomasfosterau/pulpit/Purge";
 import { and, asc, eq, getTableColumns, sql, type AnyRelations, type SQL } from "drizzle-orm";

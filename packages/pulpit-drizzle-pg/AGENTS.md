@@ -7,7 +7,7 @@ The kernel's tree-bound seams over the tables and views `@thomasfosterau/effect-
 - `src/` imports only `effect`, `@thomasfosterau/pulpit`, `@thomasfosterau/effect-drizzle-ext(-pg)` and `drizzle-orm` (peers); never `@effect/sql-pg`, `pg` or `node:*`. The pool is the application's. Tests may use the dev-only `@effect/sql-pg`, `@effect/platform-node` and `drizzle-kit`.
 - Import the kernel by name through its exports only, as `pulpit-wordpress` does ([its AGENTS.md](../pulpit-wordpress/AGENTS.md#boundary)).
 - No pulpit vocabulary in effect-drizzle-ext: the owner row, `proposedBy` and the list filter are spelled here. A capability it lacks is a change there, never a patch here.
-- **Delegate the chain discipline.** Every `VersionChain` operation but `purge` is `-pg/chain`'s own; map inputs and errors one to one and add nothing between the head read and the append. `versionChainConformance` proves it against PostgreSQL.
+- **Delegate the chain discipline.** Every `VersionChain` operation but `purge` is `-pg/Chain`'s own; map inputs and errors one to one and add nothing between the head read and the append. `versionChainConformance` proves it against PostgreSQL.
 
 ## Invariants
 
@@ -27,6 +27,6 @@ The kernel's tree-bound seams over the tables and views `@thomasfosterau/effect-
 
 ## Tests
 
-- `test:unit` needs no database: the conformance suite over a fake `-pg/chain`, and construction over `tests/fixtures/tree.ts`.
+- `test:unit` needs no database: the conformance suite over a fake `-pg/Chain`, and construction over `tests/fixtures/tree.ts`.
 - `test:integration` runs against PostgreSQL: `DATABASE_URL_TEST` (already migrated) wins; else the `PG*` server, on which it builds its own database from the fixture schema; else Testcontainers (needs Docker and `@testcontainers/postgresql`, not installed). CI runs it with a `postgres` service. Each case starts from truncated tables; the race faults are real rows and triggers.
 - docgen `@example`s build the stores but never run them against a database.

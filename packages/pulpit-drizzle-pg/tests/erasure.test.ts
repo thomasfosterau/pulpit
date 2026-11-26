@@ -11,7 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { it } from "@effect/vitest";
 import { describe, expect } from "vite-plus/test";
-import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
+import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/Derive";
 import { makeAccountErasureStore, makePurgeStore, type HashColumn } from "../src/Erasure.ts";
 import { makeNodeOwnerTable } from "../src/LeafStore.ts";
 import { cannedTransaction } from "./fixtures/canned.ts";

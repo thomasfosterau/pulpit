@@ -10,13 +10,13 @@
  * Beside the tree's DDL it installs the conformance harness's race switch: a
  * `race` table whose row for a node makes that node's next identity or root
  * version insert raise the unique violation a concurrent writer would, with
- * the real constraint name, so `-pg/chain` reports it exactly as it reports a
+ * the real constraint name, so `-pg/Chain` reports it exactly as it reports a
  * lost race.
  */
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { applyMigrationList } from "@thomasfosterau/effect-drizzle-ext-pg/migrations";
-import { provisionTestDatabase } from "@thomasfosterau/effect-drizzle-ext-pg/testing";
+import { applyMigrationList } from "@thomasfosterau/effect-drizzle-ext-pg/Migrations";
+import { provisionTestDatabase } from "@thomasfosterau/effect-drizzle-ext-pg/Testing";
 import * as PgClient from "@effect/sql-pg/PgClient";
 import { generateDrizzleJson, generateMigration } from "drizzle-kit/api-postgres";
 import { getTableName } from "drizzle-orm";

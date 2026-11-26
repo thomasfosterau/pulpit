@@ -7,7 +7,7 @@
  * holding the row `FOR UPDATE` against a second transaction.
  */
 
-import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import { always, and, eq, isNull, type ListFilter } from "@thomasfosterau/pulpit/Filter";
 import type { ProposalRow } from "@thomasfosterau/pulpit/Proposals";
 import {

@@ -1,12 +1,12 @@
 /**
  * The `VersionChain` port's mapping, with no database: `fromLeafChain` over a
- * fake `-pg/chain` leaf chain (the kernel's in-memory chain re-spoken in
- * `-pg/chain`'s inputs and errors) passes the kernel's conformance suite, so
+ * fake `-pg/Chain` leaf chain (the kernel's in-memory chain re-spoken in
+ * `-pg/Chain`'s inputs and errors) passes the kernel's conformance suite, so
  * every input and error crosses the seam one to one. The same suite runs
  * over PostgreSQL in `tests/integration/`.
  */
 
-import * as Pg from "@thomasfosterau/effect-drizzle-ext-pg/chain";
+import * as Pg from "@thomasfosterau/effect-drizzle-ext-pg/Chain";
 import {
   makeInMemoryVersionChain,
   versionChainConformance,
@@ -38,7 +38,7 @@ import {
 import { makeVersionChains } from "../src/VersionChain.ts";
 import { database, plainTables, tables, tree } from "./fixtures/tree.ts";
 
-/** Each kernel error re-raised as the `-pg/chain` class of the same name. */
+/** Each kernel error re-raised as the `-pg/Chain` class of the same name. */
 const pg = {
   NodeNotFound: (error: NodeNotFound) => new Pg.NodeNotFound({ type: error.type, id: error.id }),
   VersionNotFound: (error: VersionNotFound) =>
@@ -56,7 +56,7 @@ const pg = {
     new Pg.VersionConflict({ id: error.id, version: error.version }),
 };
 
-/** A create's errors, as `-pg/chain` raises them. */
+/** A create's errors, as `-pg/Chain` raises them. */
 const createErrors = Match.type<NodeAlreadyExists | VersionConflict>().pipe(
   Match.tagsExhaustive({
     NodeAlreadyExists: pg.NodeAlreadyExists,
@@ -90,7 +90,7 @@ const present = <K extends string, V>(key: K, value: Option.Option<V>) =>
     onSome: (defined) => R.singleton(key, defined),
   });
 
-/** A `-pg/chain` leaf chain over the kernel's in-memory one. */
+/** A `-pg/Chain` leaf chain over the kernel's in-memory one. */
 const fakeLeafChain = (
   memory: InMemoryVersionChain,
   roots: RootLog,

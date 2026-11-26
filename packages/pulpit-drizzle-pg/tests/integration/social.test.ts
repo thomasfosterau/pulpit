@@ -9,8 +9,8 @@
  * deleting an account cascades.
  */
 
-import { executeRows } from "@thomasfosterau/effect-drizzle-ext/query";
-import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { executeRows } from "@thomasfosterau/effect-drizzle-ext/Query";
+import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import type { Relationship } from "@thomasfosterau/pulpit/Social";
 import { makeInMemorySocialStore } from "@thomasfosterau/pulpit/testing";
 import { getTableName, sql, type SQL } from "drizzle-orm";

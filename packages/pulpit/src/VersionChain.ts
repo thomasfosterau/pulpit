@@ -55,7 +55,7 @@
  * application supplies, one per leaf: the operations above, each holding
  * the invariants, plus a `head` read and the erasure's whole-chain `purge`
  *. In production it is `@thomasfosterau/pulpit-drizzle-pg`
- * delegating to effect-drizzle-ext's `-pg/chain`, which owns
+ * delegating to effect-drizzle-ext's `-pg/Chain`, which owns
  * the discipline over the tables; in the kernel's tests it is
  * `./testing`'s `makeInMemoryVersionChain`, and `./testing`'s
  * `versionChainConformance` is the suite both must pass, so they cannot
@@ -315,7 +315,7 @@ export class BrokenChain extends Schema.TaggedError<
  * requirements (a Drizzle store's `CurrentTransaction` — no operation opens
  * a transaction itself: the boundary belongs to the caller).
  *
- * The operations and their error channels are effect-drizzle-ext `-pg/chain`'s
+ * The operations and their error channels are effect-drizzle-ext `-pg/Chain`'s
  * `LeafChain` (`create`, `update`, `restore`, `delete`, `restoreVersion`,
  * `getVersion`, `history`, `head`), in the kernel's own input types, plus
  * `purge`. **Every invariant in the module doc is the implementation's

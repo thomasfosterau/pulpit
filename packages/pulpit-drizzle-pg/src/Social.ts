@@ -10,7 +10,7 @@
  * @since 0.0.0
  */
 
-import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
+import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import type { Relationship, RelationshipKind, SocialStore } from "@thomasfosterau/pulpit/Social";
 import { and, asc, desc, eq, sql, type AnyRelations, type SQL } from "drizzle-orm";
 import {

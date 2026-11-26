@@ -7,7 +7,7 @@
  * row"), and `scheduled` against the facts' own rule.
  */
 
-import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import { always, eq, isNull, never, ne, type ListFilter } from "@thomasfosterau/pulpit/Filter";
 import type { LeafRow, ListOrder, PublicationFact } from "@thomasfosterau/pulpit/Subtype";
 import {

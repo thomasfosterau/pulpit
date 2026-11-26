@@ -8,7 +8,7 @@
  * second transaction, the CHECKs on a closed row, and the purge cascade.
  */
 
-import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { makePgDatabase, pgClientFromUrl } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import { always, and, eq, type ListFilter } from "@thomasfosterau/pulpit/Filter";
 import type { ReportRow } from "@thomasfosterau/pulpit/Moderation";
 import { makeInMemoryReportStore } from "@thomasfosterau/pulpit/testing";

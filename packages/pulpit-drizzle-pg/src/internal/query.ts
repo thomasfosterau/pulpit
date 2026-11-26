@@ -6,7 +6,7 @@
  * keeps its `EffectDrizzleQueryError`.
  */
 
-import { executeRows } from "@thomasfosterau/effect-drizzle-ext/query";
+import { executeRows } from "@thomasfosterau/effect-drizzle-ext/Query";
 import { sql, type SQLWrapper } from "drizzle-orm";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";

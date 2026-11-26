@@ -9,9 +9,9 @@
  * `proposedBy`, and the `entry` branch view projects a `search` vector.
  */
 
-import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
-import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
-import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg";
+import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext/Annotation";
+import { makeTreeTables, makeTreeViews } from "@thomasfosterau/effect-drizzle-ext/VersionedChain";
+import { makePgDatabase } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import { makeCollectionTable } from "@thomasfosterau/pulpit-drizzle-pg/Collections";
 import { makeDocumentTable } from "@thomasfosterau/pulpit-drizzle-pg/Documents";
 import { makeEdgeTable } from "@thomasfosterau/pulpit-drizzle-pg/Edges";

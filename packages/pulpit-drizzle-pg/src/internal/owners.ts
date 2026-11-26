@@ -8,7 +8,7 @@
  * @since 0.0.0
  */
 
-import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
+import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import type { AnyRelations } from "drizzle-orm";
 import { index, text, uuid, type AnyPgColumn, type PgSchema } from "drizzle-orm/pg-core";
 import type * as Effect from "effect/Effect";

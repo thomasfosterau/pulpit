@@ -15,7 +15,7 @@
  */
 
 import { selectRows } from "./internal/query.ts";
-import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
+import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import {
   MembershipRole,
   type GroupOwnerStore,

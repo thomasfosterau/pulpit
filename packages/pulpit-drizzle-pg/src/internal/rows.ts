@@ -12,8 +12,8 @@
  * @since 0.0.0
  */
 
-import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
-import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
+import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
+import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/Derive";
 import {
   always,
   LOCALE_COLUMN,

@@ -15,9 +15,9 @@
  * @since 0.0.0
  */
 
-import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
+import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/Derive";
 import { selectRows } from "./internal/query.ts";
-import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
+import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import type { CloseValidity, EdgeRow, EdgeStore, EdgeValues } from "@thomasfosterau/pulpit/Edges";
 import { MAX_SET_VALUES, type ListFilter } from "@thomasfosterau/pulpit/Filter";
 import {
@@ -66,8 +66,8 @@ import type { VersionChainTables } from "./VersionChain.ts";
  * @example
  * ```ts
  * import { strictEqual } from "node:assert";
- * import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext";
- * import { makeTreeTables } from "@thomasfosterau/effect-drizzle-ext/versioned-chain";
+ * import { dbColumn, defineTree } from "@thomasfosterau/effect-drizzle-ext/Annotation";
+ * import { makeTreeTables } from "@thomasfosterau/effect-drizzle-ext/VersionedChain";
  * import { makeEdgeTable } from "@thomasfosterau/pulpit-drizzle-pg/Edges";
  * import { getTableName } from "drizzle-orm";
  * import { pgSchema, text } from "drizzle-orm/pg-core";

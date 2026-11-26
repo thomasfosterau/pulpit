@@ -5,7 +5,7 @@
  */
 
 import { selectRows } from "./query.ts";
-import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg";
+import type { PgTransaction } from "@thomasfosterau/effect-drizzle-ext-pg/PgDatabase";
 import { sql, type AnyRelations, type SQL } from "drizzle-orm";
 import type { AnyPgColumn, PgTable } from "drizzle-orm/pg-core";
 import * as Arr from "effect/Array";

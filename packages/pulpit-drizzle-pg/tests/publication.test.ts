@@ -4,7 +4,7 @@
  * against PostgreSQL in `tests/integration/publication.test.ts`.
  */
 
-import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/derive";
+import { DerivationError } from "@thomasfosterau/effect-drizzle-ext/Derive";
 import { always, eq } from "@thomasfosterau/pulpit/Filter";
 import type { PgView } from "drizzle-orm/pg-core";
 import * as Arr from "effect/Array";
