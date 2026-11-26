@@ -1,0 +1,4 @@
+#!/bin/sh
+# @effect/docgen spawns `tsx --tsconfig <path> <file>` to run the examples;
+# vpx takes the same arguments.
+exec vpx "$@"

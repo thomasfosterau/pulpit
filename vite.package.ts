@@ -130,9 +130,10 @@ export const packageConfig = (dir: string, options: PackageOptions = {}) => {
         // proves the package still emits; an example's import of the
         // package by name still resolves to `src/`, never `dist/`: docgen
         // rewrites no imports, and the name resolves through the package's
-        // own `exports`, which point at `src/`.
+        // own `exports`, which point at `src/`. docgen spawns `tsx` to run
+        // the examples; `scripts/tsx` on the PATH hands them to `vpx`.
         docgen: {
-          command: "docgen",
+          command: `PATH="${import.meta.dirname}/scripts:$PATH" docgen`,
           dependsOn: ["build"],
           cache: false,
         },

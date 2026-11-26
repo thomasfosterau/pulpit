@@ -32,8 +32,6 @@ catalog:
   drizzle-kit: 1.0.0-rc.6
   effect: 4.1.5
   fallow: 3.48.0
-  # Only for @effect/docgen, which spawns it.
-  tsx: ^4.23.13
   # TS6 for JS-API consumers (docgen, editors); `@typescript/native` is TS7.
   typescript: "npm:@typescript/typescript6@6.0.2"
   "@typescript/native": "npm:typescript@7.0.2"
@@ -58,6 +56,8 @@ catalogs:
 
 overrides:
   effect: "catalog:"
+  # @effect/docgen's peer; `scripts/tsx` runs its examples with `vpx` instead.
+  tsx: "-"
   vite@*: "catalog:"
   vitest@*: "catalog:"
 nodeLinker: hoisted

@@ -81,7 +81,6 @@
     "@effect/language-service",
     "@typescript/native",
     "typescript",
-    "tsx",
     "vite",
     "vitest",
     "vite-plus",
