@@ -15,7 +15,7 @@ import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as TestClock from "effect/testing/TestClock";
-import { published } from "../src/Filter.ts";
+import { isNull, notPublished, or, published } from "../src/Filter.ts";
 import { defineVersionChain } from "../src/VersionChain.ts";
 import {
   makeInMemoryVersionChain,
@@ -93,6 +93,39 @@ describe("makeInMemoryLeafStore", () => {
       expect(yield* listed(stamp - 1)).toBe(0);
       expect(yield* listed(stamp)).toBe(1);
     }),
+  );
+
+  it.effect(
+    "reads a node over a column the view lacks as never, as the SQL renderer does, even where a NULL would satisfy it",
+    () =>
+      Effect.gen(function* () {
+        const chain = makeInMemoryVersionChain("notes");
+        const leaves = makeInMemoryLeafStore(chain, { columns: ["title"], now: NOW });
+        // `extra` is in the state but not the view; `missing` is in neither.
+        yield* defineVersionChain("notes", chain).create({
+          id: Option.none(),
+          state: { title: null, extra: null },
+          actorId: Option.none(),
+        });
+        const total = (where: Parameters<typeof leaves.list>[0]["where"]) =>
+          Effect.map(
+            leaves.list({ where, orderBy: [], limit: 10, offset: 0 }),
+            (page) => page.total,
+          );
+        expect(yield* total(isNull("title"))).toBe(1);
+        expect(yield* total(isNull("missing"))).toBe(0);
+        expect(yield* total(isNull("extra"))).toBe(0);
+        expect(yield* total(notPublished("missing"))).toBe(0);
+        expect(yield* total(or(isNull("missing"), isNull("title")))).toBe(1);
+        expect(
+          (yield* leaves.distinct({
+            column: "title",
+            where: isNull("missing"),
+            limit: 10,
+            offset: 0,
+          })).total,
+        ).toBe(0);
+      }),
   );
 });
 

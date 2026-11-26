@@ -398,6 +398,8 @@ describe("LeafStore over PostgreSQL agrees with the in-memory store", () => {
       ["eq ownerId", eq("ownerId", "u-2")],
       ["isNull ownerId (an ownerless node)", isNull("ownerId")],
       ["a column the view lacks", eq("missing", "x")],
+      ["isNull of a column the view lacks", isNull("missing")],
+      ["notPublished of a column the view lacks", notPublished("missing")],
       ["and / or", or(and(eq("visibility", "group"), isNull("groupId")), eq("rank", 9))],
       ["the tombstones", eq("action", "delete")],
     ];
