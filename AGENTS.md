@@ -4,7 +4,7 @@ Read [README.md](README.md) and [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) fir
 
 ## Process
 
-- You may open PRs in this repository (draft first, ready once the gates pass) and keep the body current. Never merge, version or publish.
+- You may open PRs in this repository and keep the body current. Never merge, version or publish.
 - Out-of-scope work you spot: file an issue here and move on.
 - Use the GitHub MCP tools or `gh` (with `-R thomasfosterau/pulpit` when the cwd may be another checkout). Write only to this repository.
 - The issue is the spec; re-verify its claims against current `trunk` before editing.
@@ -30,6 +30,12 @@ The five default triage roles, each label equal to its name (`needs-triage`, `ne
 ### Domain docs
 
 No `CONTEXT.md` or `docs/adr/`: the module guides in `docs/`, SECURITY.md's invariant IDs and each export's TSDoc are the domain docs. See `docs/agents/domain.md`.
+
+## Pull requests
+
+- **Write the PR body with the `pr` skill** from Matt Pocock's skills (`mattpocock-skills:pr`), filling in the repository's pull request template where there is one.
+- **Resolve merge conflicts before you hand a PR over.** Rebase onto `origin/trunk` and push; a PR that conflicts with `trunk` isn't finished.
+- **Mark the PR ready for review as soon as the initial draft is finished.** Don't wait for CI to run, for reviews, or for the owner to do it. Keep fixing CI failures and review findings on the ready PR.
 
 ## Fallow
 
