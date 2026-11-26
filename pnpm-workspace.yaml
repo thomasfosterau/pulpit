@@ -26,7 +26,7 @@ catalog:
   "@thomasfosterau/effect-auth": ^0.8.0
   "@types/node": ^26.6.10
   # Must equal the vitest vite-plus bundles.
-  "@vitest/coverage-istanbul": 5.1.1
+  "@vitest/coverage-istanbul": 5.1.2
   # Exact: a release candidate; effect-drizzle-ext is built against it. Kit and ORM move together.
   drizzle-orm: 1.0.0-rc.6
   drizzle-kit: 1.0.0-rc.6
@@ -39,7 +39,7 @@ catalog:
   # dependencies`), not vite-plus itself; the devcontainer image tag follows vite-plus.
   vite-plus: 1.8.0
   vite: npm:@voidzero-dev/vite-plus-core@8.3.8000
-  vitest: 5.1.1
+  vitest: 5.1.2
 
 # Published peer ranges (the adapters peer on the kernel with `workspace:^`).
 catalogs:
