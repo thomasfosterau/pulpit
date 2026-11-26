@@ -55,18 +55,32 @@ export default defineConfig({
       "eslint/no-shadow": "error",
       // The suites assert through helpers named `expect…` (`expectAgreement`
       // in tests/subtype.test.ts) as well as `expect` itself.
-      // `@effect/vitest`'s `it.effect` registers a test like `it` does.
+      // `@effect/vitest`'s `it.effect` (and its `.prop`) registers a test like `it` does.
       "vitest/expect-expect": [
         "error",
         {
           assertFunctionNames: ["expect", "expect*"],
-          additionalTestBlockFunctions: ["it.effect", "it.live"],
+          additionalTestBlockFunctions: [
+            "it.effect",
+            "it.live",
+            "it.prop",
+            "it.effect.prop",
+            "it.live.prop",
+          ],
         },
       ],
       "vitest/no-standalone-expect": [
         "error",
         {
-          additionalTestBlockFunctions: ["it.effect", "it.effect.each", "it.live", "it.live.each"],
+          additionalTestBlockFunctions: [
+            "it.effect",
+            "it.effect.each",
+            "it.live",
+            "it.live.each",
+            "it.prop",
+            "it.effect.prop",
+            "it.live.prop",
+          ],
         },
       ],
       // The `Buffer` global is typed `any` wherever a consumer loads

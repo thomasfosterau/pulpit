@@ -76,6 +76,7 @@ import {
 import {
   evaluate,
   LOCALE_COLUMN,
+  never as neverFilter,
   type EvaluationContext,
   type FilterRow,
   type ListFilter,
@@ -181,6 +182,24 @@ const contextAt = (now: Date): EvaluationContext<InMemoryFollowing> => ({
 });
 
 /**
+ * `filter` as a view over `columns` reads it: a node over a column the view
+ * lacks is `never`, as the SQL renderer renders it (fail closed), so an
+ * `isNull`, `notIn` or `notPublished` over such a column admits no row.
+ */
+const overColumns = <Following>(
+  filter: ListFilter<Following>,
+  columns: HashSet.HashSet<string>,
+): ListFilter<Following> => {
+  if (filter.kind === "and" || filter.kind === "or") {
+    return {
+      kind: filter.kind,
+      filters: Arr.map(filter.filters, (part) => overColumns(part, columns)),
+    };
+  }
+  return "column" in filter && !HashSet.has(columns, filter.column) ? neverFilter : filter;
+};
+
+/**
  * A node's rows in a localised view: one per locale its version
  * carries, the locale's columns over the shared row and the tag in
  * {@link LOCALE_COLUMN}; a version carrying none is its shared row alone,
@@ -207,15 +226,17 @@ const localesAt = (chain: InMemoryVersionChain, id: string, version: bigint): Lo
  * `now`, in code-point order, paged: `LeafStore.distinct`'s contract.
  */
 const distinctPage = (
+  columns: HashSet.HashSet<string>,
   rows: ReadonlyArray<LeafRow>,
   query: DistinctQuery<InMemoryFollowing>,
   now: Date,
 ): Page<string> => {
+  const where = overColumns(query.where, columns);
   const values = Arr.sort(
     Arr.dedupe(
       Arr.flatMap(rows, (row) => {
         const value = row[query.column];
-        return evaluate(query.where, row, contextAt(now)) && P.isString(value) ? [value] : [];
+        return evaluate(where, row, contextAt(now)) && P.isString(value) ? [value] : [];
       }),
     ),
     byCodePoint,
@@ -228,6 +249,7 @@ const distinctPage = (
 
 /** A view page: the rows matching `where` at `now`, in the list order contract's order. */
 const viewPage = (
+  columns: HashSet.HashSet<string>,
   rows: ReadonlyArray<LeafRow>,
   query: {
     readonly where: ListFilter<InMemoryFollowing>;
@@ -237,8 +259,9 @@ const viewPage = (
   },
   now: Date,
 ) => {
+  const where = overColumns(query.where, columns);
   const matching = Arr.sort(
-    rows.filter((row) => evaluate(query.where, row, contextAt(now))),
+    rows.filter((row) => evaluate(where, row, contextAt(now))),
     rowOrder(query.orderBy),
   );
   return {
@@ -254,6 +277,7 @@ const viewPage = (
  * counting nodes. `LeafStore.listLocalised`'s contract.
  */
 const fallbackPage = (
+  columns: HashSet.HashSet<string>,
   rows: ReadonlyArray<LeafRow>,
   query: LocalisedListQuery<InMemoryFollowing>,
   now: Date,
@@ -263,7 +287,9 @@ const fallbackPage = (
     return P.isString(tag) ? query.locales.indexOf(tag) : -1;
   };
   const chosen = Arr.reduce(
-    rows.filter((row) => rank(row) >= 0 && evaluate(query.where, row, contextAt(now))),
+    rows.filter(
+      (row) => rank(row) >= 0 && evaluate(overColumns(query.where, columns), row, contextAt(now)),
+    ),
     HashMap.empty<string, LeafRow>(),
     (best, row) =>
       Option.match(HashMap.get(best, row.id), {
@@ -271,7 +297,7 @@ const fallbackPage = (
         onSome: (held) => (rank(row) < rank(held) ? HashMap.set(best, row.id, row) : best),
       }),
   );
-  return viewPage(HashMap.toValues(chosen), query, now);
+  return viewPage(columns, HashMap.toValues(chosen), query, now);
 };
 
 /**
@@ -1181,22 +1207,24 @@ export const makeInMemoryLeafStore = (
       ),
       rowOrder([]),
     );
+  const columns = HashSet.make(
+    "id",
+    "version",
+    "action",
+    "ownerId",
+    ...options.columns,
+    ...(options.localised === true ? [LOCALE_COLUMN] : []),
+  );
   return {
-    columns: HashSet.make(
-      "id",
-      "version",
-      "action",
-      "ownerId",
-      ...options.columns,
-      ...(options.localised === true ? [LOCALE_COLUMN] : []),
-    ),
+    columns,
     get: (id) => Effect.sync(() => Arr.findFirst(view(), (row) => row.id === id)),
     getMany: (ids) => Effect.sync(() => view().filter((row) => ids.includes(row.id))),
-    list: (query) => Effect.map(instantOf(fixedNow), (now) => viewPage(listed(), query, now)),
+    list: (query) =>
+      Effect.map(instantOf(fixedNow), (now) => viewPage(columns, listed(), query, now)),
     listLocalised: (query) =>
-      Effect.map(instantOf(fixedNow), (now) => fallbackPage(listed(), query, now)),
+      Effect.map(instantOf(fixedNow), (now) => fallbackPage(columns, listed(), query, now)),
     distinct: (query) =>
-      Effect.map(instantOf(fixedNow), (now) => distinctPage(listed(), query, now)),
+      Effect.map(instantOf(fixedNow), (now) => distinctPage(columns, listed(), query, now)),
     ownerOf: (id) => Effect.sync(() => HashMap.get(owners, id)),
     stampOwner: (id, ownerId) =>
       Effect.sync(() => {
@@ -2133,14 +2161,22 @@ export const makeInMemoryPublication = (options: {
         ),
       ),
     list: (query) =>
-      atNow((now) => Effect.map(chosen(query.headFor, now), (rows) => viewPage(rows, query, now))),
+      atNow((now) =>
+        Effect.map(chosen(query.headFor, now), (rows) =>
+          viewPage(options.leaves.columns, rows, query, now),
+        ),
+      ),
     listLocalised: (query) =>
       atNow((now) =>
-        Effect.map(chosen(query.headFor, now), (rows) => fallbackPage(rows, query, now)),
+        Effect.map(chosen(query.headFor, now), (rows) =>
+          fallbackPage(options.leaves.columns, rows, query, now),
+        ),
       ),
     distinct: (query) =>
       atNow((now) =>
-        Effect.map(chosen(query.headFor, now), (rows) => distinctPage(rows, query, now)),
+        Effect.map(chosen(query.headFor, now), (rows) =>
+          distinctPage(options.leaves.columns, rows, query, now),
+        ),
       ),
   };
   const leaves: LeafStore<LeafRow, InMemoryFollowing, never, never> = {
@@ -2157,6 +2193,7 @@ export const makeInMemoryPublication = (options: {
       atNow((now) =>
         Effect.map(heads(), (rows) =>
           viewPage(
+            options.leaves.columns,
             Arr.flatMap(rows, (row) => listed(headOf(row, now))),
             query,
             now,
@@ -2167,6 +2204,7 @@ export const makeInMemoryPublication = (options: {
       atNow((now) =>
         Effect.map(heads(), (rows) =>
           fallbackPage(
+            options.leaves.columns,
             Arr.flatMap(rows, (row) => listed(headOf(row, now))),
             query,
             now,
@@ -2177,6 +2215,7 @@ export const makeInMemoryPublication = (options: {
       atNow((now) =>
         Effect.map(heads(), (rows) =>
           distinctPage(
+            options.leaves.columns,
             Arr.flatMap(rows, (row) => listed(headOf(row, now))),
             query,
             now,

@@ -9,9 +9,12 @@
 
 import { it } from "@effect/vitest";
 import { describe, expect } from "vite-plus/test";
+import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Eq from "effect/Equal";
 import * as Exit from "effect/Exit";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
 import * as R from "effect/Record";
@@ -22,9 +25,11 @@ import {
   diffStates,
   StaleVersion,
   VersionNotFound,
+  type AttributeChange,
   type ChainAppendEvent,
   type ChainPatch,
   type ChainState,
+  type StateDiff,
   type VersionChain,
 } from "../src/VersionChain.ts";
 import {
@@ -565,6 +570,163 @@ describe("beforeAppend — the kernel's hook layer over the port", () => {
         Exit.hasDies(yield* Effect.exit(chain.update({ id: ID, patch: {}, actorId: ACTOR }))),
       ).toBe(true);
     }),
+  );
+});
+
+// ── The laws, over generated states and write sequences ───────────────
+
+/**
+ * A small value domain over few columns, so generated states often share a
+ * column and a value: every `ColumnValue` kind, `null` as a present value.
+ */
+const Value = Schema.Union([
+  Schema.Null,
+  Schema.Boolean,
+  Schema.Int.check(Schema.isBetween({ minimum: -2, maximum: 2 })),
+  Schema.Literals(["", "a", "b"]),
+  Schema.BigInt,
+  Schema.Date,
+  Schema.Array(Schema.Literals(["a", "b"])).check(Schema.isMaxLength(2)),
+  Schema.Struct({ k: Schema.Literals(["a", "b"]) }),
+]);
+const State = Schema.Struct({
+  a: Schema.optionalKey(Value),
+  b: Schema.optionalKey(Value),
+  c: Schema.optionalKey(Value),
+});
+const Patch = Schema.Struct({
+  a: Schema.optionalKey(Schema.Union([Value, Schema.Undefined])),
+  b: Schema.optionalKey(Schema.Union([Value, Schema.Undefined])),
+  c: Schema.optionalKey(Schema.Union([Value, Schema.Undefined])),
+});
+/** One write to an existing node; `restoreVersion`'s `pick` is reduced modulo the chain's length. */
+const Write = Schema.Union([
+  Schema.TaggedStruct("update", { patch: Patch }),
+  Schema.TaggedStruct("restore", { patch: Patch }),
+  Schema.TaggedStruct("delete", {}),
+  Schema.TaggedStruct("restoreVersion", {
+    pick: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 16 })),
+  }),
+]);
+const Writes = Schema.Array(Write).check(Schema.isMaxLength(10));
+
+/** `diff` read the other way: `added` ↔ `removed`, `before` ↔ `after`. */
+const flipped = (diff: StateDiff): StateDiff =>
+  R.map(diff, (change) =>
+    Match.valueTags(change, {
+      added: ({ after }): AttributeChange => ({ _tag: "removed", before: after }),
+      removed: ({ before }): AttributeChange => ({ _tag: "added", after: before }),
+      changed: ({ before, after }): AttributeChange => ({
+        _tag: "changed",
+        before: after,
+        after: before,
+      }),
+    }),
+  );
+
+/** What the chain should hold: each version's state, oldest first, and whether the head is a tombstone. */
+interface Model {
+  readonly states: Arr.NonEmptyReadonlyArray<ChainState>;
+  readonly deleted: boolean;
+}
+const headOf = (model: Model) => BigInt(model.states.length - 1);
+
+/** `model` after a write that must land at its head + 1 with `state`. */
+const appended = (model: Model, version: bigint, state: ChainState, deleted: boolean): Model => {
+  expect(version).toBe(headOf(model) + 1n);
+  return { states: Arr.append(model.states, state), deleted };
+};
+
+/** Run one generated write against `chain` and check it against `model`; the model after it. */
+type Chain = ReturnType<typeof setup>["chain"];
+type ChainError =
+  | Effect.Error<ReturnType<Chain["update"]>>
+  | Effect.Error<ReturnType<Chain["restoreVersion"]>>;
+
+const step =
+  (chain: Chain) =>
+  (model: Model, write: typeof Write.Type): Effect.Effect<Model, ChainError> => {
+    const current = Arr.lastNonEmpty(model.states);
+    return Match.valueTags(write, {
+      // Only `restore` / `restoreVersion` write over a tombstone (`VERSION-CHAIN-006`).
+      update: ({ patch }) =>
+        model.deleted
+          ? Effect.map(Effect.exit(chain.update({ id: ID, patch, actorId: ACTOR })), (result) => {
+              expect(tagOf(result)).toStrictEqual(Option.some("NodeNotFound"));
+              return model;
+            })
+          : Effect.map(chain.update({ id: ID, patch, actorId: ACTOR }), ({ version }) =>
+              appended(model, version, applyPatch(current, patch), false),
+            ),
+      restore: ({ patch }) =>
+        Effect.map(chain.restore({ id: ID, patch, actorId: ACTOR }), ({ version }) =>
+          appended(model, version, applyPatch(current, patch), false),
+        ),
+      // Idempotent on a tombstone: the existing one, nothing written.
+      delete: () =>
+        Effect.map(chain.delete(ID, ACTOR), ({ version, alreadyDeleted }) => {
+          expect([version, alreadyDeleted]).toStrictEqual(
+            model.deleted ? [headOf(model), true] : [headOf(model) + 1n, false],
+          );
+          return model.deleted ? model : appended(model, version, current, true);
+        }),
+      restoreVersion: ({ pick }) =>
+        Effect.gen(function* () {
+          const k = BigInt(pick) % (headOf(model) + 1n);
+          const { version } = yield* chain.restoreVersion(ID, k, ACTOR);
+          const original = yield* chain.getVersion(ID, k);
+          const restored = yield* chain.getVersion(ID, version);
+          expect(diffStates(original.state, restored.state)).toStrictEqual({});
+          return appended(model, version, original.state, false);
+        }),
+    });
+  };
+
+describe("the version-chain laws, by property", () => {
+  it.prop(
+    "diffStates is empty exactly when the states are structurally equal",
+    { from: State, patch: Patch },
+    ({ from, patch }) => {
+      // A patch apart over a small domain, so equal pairs are generated too.
+      const to = applyPatch(from, patch);
+      expect(R.isEmptyRecord(diffStates(from, to))).toBe(Eq.equals(from, to));
+      expect(diffStates(from, structuredClone(from))).toStrictEqual({});
+    },
+  );
+
+  it.prop(
+    "swapping the arguments swaps added / removed and each before / after",
+    { from: State, to: State },
+    ({ from, to }) => {
+      expect(diffStates(to, from)).toStrictEqual(flipped(diffStates(from, to)));
+    },
+  );
+
+  it.effect.prop(
+    "every write lands at the head + 1, restoring version k yields k's state, and a tombstone refuses a plain update",
+    { origin: State, writes: Writes },
+    ({ origin, writes }) =>
+      Effect.gen(function* () {
+        const { chain } = setup();
+        yield* chain.create({ id: Option.some(ID), state: origin, actorId: ACTOR });
+        const start: Model = { states: [origin], deleted: false };
+        const model = yield* Effect.reduce(writes, () => start, step(chain));
+        const history = yield* chain.history(ID);
+        expect(Arr.map(history, (entry) => entry.version)).toStrictEqual(
+          Arr.map(model.states, (_, index) => BigInt(index)),
+        );
+        expect(
+          Arr.last(history).pipe(Option.map((entry) => entry.action === "delete")),
+        ).toStrictEqual(Option.some(model.deleted));
+        yield* Effect.forEach(
+          model.states,
+          (expected, index) =>
+            Effect.map(chain.getVersion(ID, BigInt(index)), (snapshot) => {
+              expect(diffStates(expected, snapshot.state)).toStrictEqual({});
+            }),
+          { concurrency: 1, discard: true },
+        );
+      }),
   );
 });
 
