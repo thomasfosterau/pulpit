@@ -46,7 +46,7 @@ deepStrictEqual(Effect.runSync(ids.decode(["1", "7", "0", "1.5"])), [
 
 ## `./Api`
 
-`defineWordPress(config)` declares a `wp/v2` read API over the leaves an application binds to WordPress's post types, and returns `{ handle }`, which answers one request (its method, its path from the site root, and its query pairs in order) with a status, headers and a JSON body. `handle` never fails: a WordPress error is its envelope (`{ code, message, data: { status } }`), and a failure of a store, the codec or the renderer is `500 internal_server_error`. It is framework-free; [`./Http`](#http) mounts it on `effect/http`.
+`defineWordPress(config)` declares a `wp/v2` read API over the leaves an application binds to WordPress's post types, and returns `{ prefix, handle }`: `prefix` is the REST prefix with no trailing slash, and `handle` answers one request (its method, its path from the site root, and its query pairs in order) with a status, headers and a JSON body. `handle` never fails: a WordPress error is its envelope (`{ code, message, data: { status } }`), and a failure of a store, the codec or the renderer is `500 internal_server_error`. It is framework-free; [`./Http`](#http) mounts it on `effect/http`.
 
 ```ts
 import { bind, bindTaxonomy, defineWordPress } from "@thomasfosterau/pulpit-wordpress/Api";
@@ -129,7 +129,14 @@ const wp = defineWordPress({
 
 ## `./Http`
 
-`wordPressHttp(api)` is the API as an `effect/http` handler, `Effect<HttpServerResponse, never, HttpServerRequest | R>`: it reads the method, path and query pairs from the request URL, and the `If-None-Match` header, and answers a JSON response (an empty one for `HEAD`) with the API's status and headers. Mount it on the application's router under the prefix.
+`wordPressRoutes(api)` is the API as an `HttpRouter` layer: one route, every method on `api.prefix` and every path below it, so a write or a path no binding routes answers WordPress's `404 rest_no_route` envelope rather than the router's own 404, and the mount can't drift from the configured prefix. Merge it into the application's routes. `wordPressHttp(api)` is the effect that route serves, `Effect<HttpServerResponse, never, HttpServerRequest | R>`, for an application that mounts it itself: it reads the method, path and query pairs from the request URL, and the `If-None-Match` header, and answers a JSON response (an empty one for `HEAD`) with the API's status and headers.
+
+**Why `./Api` keeps its own dispatch.** Declaring each `wp/v2` route on `HttpRouter`, or as an `effect/http-api` `HttpApi` endpoint, was weighed and not adopted:
+
+- The routes aren't static. A post type or taxonomy is routed only when it is bound, `/users` only when a post type is, and an item route matches digits only under `integerIds` (core's `(?P<id>[\d]+)`). The discovery index (`/wp-json`, `/wp/v2`) is built from the same bindings, so one table has to answer both.
+- Every miss under the prefix is WordPress's `rest_no_route` envelope, any method or path, so a per-route table still needs the catch-all this module mounts.
+- `HttpApi`'s gain is schema-described endpoints and OpenAPI, but the bodies are shaped per request by `_fields`, `_embed` and `context`, the errors are WordPress's envelope rather than `HttpApiError`, and `304` and `HEAD` are answered from the same handler; an honest schema for that surface is `Schema.Json`, which an OpenAPI document gains nothing from. WordPress's own discovery is the index above.
+- `handle` is plain data in and out, so its suite (`tests/api.test.ts`) needs no request plumbing; `HttpApiTest` would add it. Only `tests/http.test.ts` touches `effect/http`.
 
 ## `./testing`
 

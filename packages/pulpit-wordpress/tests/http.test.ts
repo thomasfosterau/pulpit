@@ -8,14 +8,15 @@ import { describe, expect } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Formatter from "effect/Formatter";
 import * as HashMap from "effect/HashMap";
+import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as P from "effect/Predicate";
-import { defineWordPress, type WordPressRequest } from "../src/Api.ts";
-import { wordPressHttp } from "../src/Http.ts";
+import { defineWordPress, type WordPressConfig, type WordPressRequest } from "../src/Api.ts";
+import { wordPressHttp, wordPressRoutes } from "../src/Http.ts";
 import { stringIds } from "../src/Ids.ts";
 
 const seen: Array<WordPressRequest> = [];
-const base = defineWordPress({
+const config: WordPressConfig<never> = {
   site: { url: "https://example.org", name: "Example", description: "", timezone: "UTC" },
   ids: stringIds(),
   viewer: Effect.succeedNone,
@@ -32,8 +33,10 @@ const base = defineWordPress({
   link: (_, fields) => `https://example.org/${fields.slug}`,
   types: {},
   authors: { ids: stringIds(), getMany: () => Effect.succeed(HashMap.empty()) },
-});
+};
+const base = defineWordPress(config);
 const api = {
+  prefix: base.prefix,
   handle: (request: WordPressRequest) =>
     Effect.andThen(
       Effect.sync(() => seen.push(request)),
@@ -93,6 +96,54 @@ describe("wordPressHttp", () => {
         '<https://example.org/wp-json/>; rel="https://api.w.org/"',
         "Empty",
       ]);
+    }),
+  );
+});
+
+describe("wordPressRoutes", () => {
+  const prefixed = defineWordPress({ ...config, prefix: "/api/" });
+
+  /** Serve `url` through the route layer, as the application's router would. */
+  const route = (url: string, method = "GET") =>
+    Effect.scoped(
+      Effect.flatMap(HttpRouter.toHttpEffect(wordPressRoutes(prefixed)), (handler) =>
+        Effect.provideService(
+          handler,
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(new Request(url, { method })),
+        ),
+      ),
+    );
+
+  it.effect("mounts the API at its own prefix, without the trailing slash", () =>
+    Effect.gen(function* () {
+      expect(prefixed.prefix).toBe("/api");
+      const answers = yield* Effect.forEach(
+        ["https://example.org/api", "https://example.org/api/", "https://example.org/api/wp/v2"],
+        (url) => route(url),
+        { concurrency: 1 },
+      );
+      expect(answers.map(({ status }) => status)).toEqual([200, 200, 200]);
+    }),
+  );
+
+  it.effect("answers a write and an unrouted path under the prefix as rest_no_route", () =>
+    Effect.gen(function* () {
+      const answers = [
+        yield* route("https://example.org/api/wp/v2/posts", "POST"),
+        yield* route("https://example.org/api/wp/v2/widgets"),
+      ];
+      expect(answers).toMatchObject([
+        { status: 404, body: { text: expect.stringContaining('"code":"rest_no_route"') } },
+        { status: 404, body: { text: expect.stringContaining('"code":"rest_no_route"') } },
+      ]);
+    }),
+  );
+
+  it.effect("leaves paths outside the prefix to the application's router", () =>
+    Effect.gen(function* () {
+      const outside = yield* Effect.flip(route("https://example.org/apix"));
+      expect(outside).toMatchObject({ reason: { _tag: "RouteNotFound" } });
     }),
   );
 });

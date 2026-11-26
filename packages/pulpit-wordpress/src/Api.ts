@@ -869,6 +869,12 @@ export interface WordPressResponse {
  */
 export interface WordPressApi<R> {
   /**
+   * The REST prefix every route sits under, with no trailing slash
+   * (`/wp-json` by default, from {@link WordPressConfig.prefix}). `./Http`
+   * mounts the API here.
+   */
+  readonly prefix: string;
+  /**
    * Answer one request. Never fails: a WordPress error is its envelope and
    * status, and a store, codec or render failure is
    * `500 internal_server_error`.
@@ -3128,6 +3134,7 @@ export const defineWordPress = <R, Following = never>(
     });
 
   return {
+    prefix,
     handle: (request) =>
       route(request).pipe(
         Effect.catchTag("WpRestError", (error) =>
