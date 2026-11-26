@@ -9,6 +9,7 @@
 
 import type * as Effect from "effect/Effect";
 import type * as HashMap from "effect/HashMap";
+import type * as Layer from "effect/Layer";
 import type * as Option from "effect/Option";
 import * as WordPress from "@thomasfosterau/pulpit-wordpress";
 import {
@@ -39,8 +40,9 @@ import {
   type WordPressRequest,
   type WordPressResponse,
 } from "@thomasfosterau/pulpit-wordpress/Api";
-import { wordPressHttp } from "@thomasfosterau/pulpit-wordpress/Http";
+import { wordPressHttp, wordPressRoutes } from "@thomasfosterau/pulpit-wordpress/Http";
 import type { ListFilter } from "@thomasfosterau/pulpit/Filter";
+import type * as HttpRouter from "effect/http/HttpRouter";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import type * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as Schema from "effect/Schema";
@@ -158,6 +160,10 @@ export type _InMemoryIdCodecHooks = Assert<
 
 export type _RootApi = Assert<Equals<typeof WordPress.Api.defineWordPress, typeof defineWordPress>>;
 export type _RootHttp = Assert<Equals<typeof WordPress.Http.wordPressHttp, typeof wordPressHttp>>;
+export type _RootRoutes = Assert<
+  Equals<typeof WordPress.Http.wordPressRoutes, typeof wordPressRoutes>
+>;
+export type _Prefix = Assert<Equals<WordPressApi<CodecDb>["prefix"], string>>;
 export type _MaxListParameter = Assert<Equals<typeof MAX_LIST_PARAMETER, 100>>;
 export type _DefineWordPress = Assert<
   Equals<
@@ -233,6 +239,13 @@ export type _WordPressHttp = Assert<
       never,
       HttpServerRequest.HttpServerRequest | CodecDb
     >
+  >
+>;
+
+export type _WordPressRoutes = Assert<
+  Equals<
+    ReturnType<typeof wordPressRoutes<never>>,
+    Layer.Layer<never, never, HttpRouter.HttpRouter>
   >
 >;
 
