@@ -1,5 +1,60 @@
 # @thomasfosterau/pulpit
 
+## 0.3.0
+
+### Minor Changes
+
+- [#384](https://github.com/thomasfosterau/pulpit/pull/384) [`fbfc292`](https://github.com/thomasfosterau/pulpit/commit/fbfc292123cc21c188118167aaa52cdac5b150eb) Thanks [@thomasfosterau](https://github.com/thomasfosterau)! - The kernel's read predicates now delegate to `@thomasfosterau/effect-auth` ([#5](https://github.com/thomasfosterau/pulpit/issues/5), option (c)), and the effect-auth peer floor rises from `>=0.2.0` to `>=0.3.0`. That is the first release with `ReferenceAccess`, `OwnedAccess.IsMember` and the extended `OwnedRow` / `serveableAxes`.
+
+  **What delegates where.** Every signature is unchanged; an internal bridge does the delegation.
+
+  - `canViewOwned`, and the owned reading in `defineSubtype`'s `get` / `getMany` and in `./edges`' `canViewEndpoint`, are now `OwnedAccess.canView`.
+  - The reference reading in the same places is now `ReferenceAccess.canView`.
+  - The kind of scope `readScopeFor` returns (`all`, `public` or `member`) is decided as effect-auth's `OwnedAccess.readScope` decides it. A `member` scope's `following` and `groups` sets still come from the kernel's follower seam.
+  - The owned arm of `isPubliclyServeable` (`{ owned: true }`) is now `Cacheability.publiclyServeable(OwnedAccess.serveableAxes)`.
+  - The list filters (`ownedListFilter`, `referencePrivacyFilter`, `endpointFilter`, `searchScopeFilter`) are still the kernel's, because effect-auth's drizzle filter renders no group or moderation arm (effect-auth#638).
+
+  **Behaviour changes.** Each one only refuses more; nothing that was refused before is now admitted.
+
+  - **A viewer whose id is `""` reads as anonymous** (effect-auth#661). This holds on every read path in `./subtype` and `./edges`: the row predicates, `readScopeFor`, `referencePrivacyFilter`, `searchScopeFilter`, `searchHeadFor`, `softDeleteFilter`, head selection on a publish-gated leaf, and the view-deleted rung at an edge's end.
+    - Before: `{ id: "", role: "user" }` got a `member` scope and read rows whose owner was `""`; `{ id: "", role: "moderator" }` got `all`.
+    - After: both get `public` and read only public, published rows.
+  - **An owner or followers-of value of `""` names nobody**, as a `NULL` already did.
+    - Before: a row whose owner was `""` was readable by the viewer whose id was `""`, and by that id's followers through the follower seam.
+    - After: no viewer owns it, the seam is never asked about it, and it reads like a row with no owner.
+  - **An `unapproved` attribute of `true` or `null` is no longer publicly serveable** on an owned family (`CACHE-AUTH-005`). Before, `isPubliclyServeable` ignored that attribute; now, when present, it must be exactly `false`.
+  - **An explicit `deletedAt: undefined` is refused** on an owned family. Before, it was admitted, the same as an absent key; now any `deletedAt` key refuses.
+
+  The publish-stamp arm (`publishGated`), and families that aren't owned, keep the kernel's rule unchanged.
+
+- [#407](https://github.com/thomasfosterau/pulpit/pull/407) [`58df48d`](https://github.com/thomasfosterau/pulpit/commit/58df48d761fcd143c3f70724518d1b43fb7d26a5) Thanks [@thomasfosterau](https://github.com/thomasfosterau)! - An account whose id is `""` is now anonymous kernel-wide, not only on the read paths. Every module reads its viewer seam through the same rule, so a hand-built `{ id: "", … }` viewer gets `Unauthorized` from the write gates in `./subtype`, `./edges`, `./comments`, `./moderation`, `./proposals`, `./social`, `./reactions`, `./audience`, `./notifications` and `./working-copy`. `accessPolicyFromGuards` also answers `false` on every axis for an empty id, so `{ id: "", role: "moderator" }` no longer passes `canModerate`.
+
+  Migration: a viewer built with `viewerFromGuards` is unaffected, because effect-auth's `Guard.make` already reads an empty id as none. If you build a `Viewer` by hand, give every signed-in account a non-empty id.
+
+- [#411](https://github.com/thomasfosterau/pulpit/pull/411) [`e7d888d`](https://github.com/thomasfosterau/pulpit/commit/e7d888da926f5ca0008498045f777cd6f166d57b) Thanks [@thomasfosterau](https://github.com/thomasfosterau)! - Every subpath is now the module's PascalCase name, matching its namespace on the root barrel (`@thomasfosterau/pulpit/version-chain` is now `@thomasfosterau/pulpit/VersionChain`, `./publication` is `./Publication`, and so on). The lowercase subpaths are gone: rename each import's specifier to the namespace's name. `./testing` is unchanged.
+
+- [#431](https://github.com/thomasfosterau/pulpit/pull/431) [`d5f4bb5`](https://github.com/thomasfosterau/pulpit/commit/d5f4bb5ff3b1c767887a06e7066b01538539739a) Thanks [@thomasfosterau](https://github.com/thomasfosterau)! - `./testing`: `makeInMemoryPurgeStore`'s `dependents` are now Effects, `(id) => Effect.Effect<void>`, run in order after the chains' rows are read, instead of synchronous callbacks. Wrap an existing callback in `Effect.sync`.
+
+- [#394](https://github.com/thomasfosterau/pulpit/pull/394) [`2541c79`](https://github.com/thomasfosterau/pulpit/commit/2541c79c9a79f700cfdd6f9b707071938079e888) Thanks [@thomasfosterau](https://github.com/thomasfosterau)! - Member reports now integrate with content moderation ([#360](https://github.com/thomasfosterau/pulpit/issues/360)), and the report lifecycle has an explicit state machine.
+
+  - **`isReportTransition(from, to)`** (`./moderation`) is the report state machine: a report is filed `open` and closes once, as `resolved` (upheld) or `dismissed`. `defineReports`' `resolve` checks it.
+  - **`defineReports` takes an optional `moderation`**: the leaf's `defineModeration` ops. When it is given, `resolve(id, "resolved", note)` is a content decision. It moderates the target `rejected`, then closes every open report against the target `resolved` with the same note. `resolve` can now also fail as `moderate` does (`StaleVersion`, `VersionConflict`, `WriteRejected`). A target that is already deleted still closes its reports. Dismissing a report still closes only that report.
+  - **`withReports({ moderation, reports, viewer })`** wraps a leaf's `ModerationOps`. Its `moderate(id, decision)` runs the decision, then settles the target's open reports as **`reportOutcomeOf(decision)`** says: `rejected` resolves them, `approved` dismisses them, and `pending` leaves them open.
+
+  **Breaking for `ReportStore` implementations:** the seam gains **`closeOpen(targetId, resolution)`**, which closes every open report against a target and returns how many it closed (docs/seams.md → `ReportStore`). `makeInMemoryReportStore` in `./testing` implements it.
+
+### Patch Changes
+
+- [#457](https://github.com/thomasfosterau/pulpit/pull/457) [`004cc7a`](https://github.com/thomasfosterau/pulpit/commit/004cc7afbcbe10c22781ad751ae2b87796f82884) Thanks [@thomasfosterau](https://github.com/thomasfosterau)! - `VersionChain`'s doc comments name effect-drizzle-ext-pg 0.8.0's `./Chain` subpath in place of the old `./chain`.
+
+- [#465](https://github.com/thomasfosterau/pulpit/pull/465) [`9784440`](https://github.com/thomasfosterau/pulpit/commit/97844405e9898e36bc10c4ce5807802bbc68ff84) Thanks [@thomasfosterau](https://github.com/thomasfosterau)! - Trace more operations and adopt Effect idioms internally, with no type changes. `defineDiscovery`'s `feed` and `sitemap`, `defineReferenceImport`'s `run` and `attach`, and `defineTranslation`'s `sweep` now open spans (`<type>.discovery.feed`, `<type>.discovery.sitemap`, `<type>.import.run`, `<type>.import.attach`, `translation.sweep`). Internal helpers move from `(…) => Effect.gen(…)` to `Effect.fnUntraced`, `sweepEmbeddings` repeats with `Effect.repeat` instead of hand recursion, and `sha256Hex` encodes with `effect/encoding`'s `Hex`. No migration is needed.
+
+- [#467](https://github.com/thomasfosterau/pulpit/pull/467) [`f04d33c`](https://github.com/thomasfosterau/pulpit/commit/f04d33cf7d7fea952263099b3fde1e34c795317b) Thanks [@thomasfosterau](https://github.com/thomasfosterau)! - `./testing`'s in-memory leaf store (`makeInMemoryLeafStore`, and the head and live views `makeInMemoryPublication` builds over it) now reads a filter node over a column outside its `columns` as `never`, as `@thomasfosterau/pulpit-drizzle-pg`'s SQL renderer does. Before, such a column read as `NULL`, so `isNull`, `notIn` and `notPublished` over it admitted every row in memory while PostgreSQL admitted none.
+
+- [#396](https://github.com/thomasfosterau/pulpit/pull/396) [`bd7204c`](https://github.com/thomasfosterau/pulpit/commit/bd7204c1fe575c8faf1505d058d164fc48a07895) Thanks [@thomasfosterau](https://github.com/thomasfosterau)! - Doc comments no longer cite issues or narrate history.
+
+- [#410](https://github.com/thomasfosterau/pulpit/pull/410) [`61d98ec`](https://github.com/thomasfosterau/pulpit/commit/61d98ec73e6d7b6f40efa5eb592fb7cc2b1069f5) Thanks [@thomasfosterau](https://github.com/thomasfosterau)! - Doc comments only: `SubtypeDeclarationError` and `EdgeDeclarationError` now list every declaration they refuse, `isPubliclyServeable` cites `CACHE-AUTH-005`, and a typo in `Forbidden`'s comment is fixed.
+
 ## 0.2.0
 
 ### Minor Changes
